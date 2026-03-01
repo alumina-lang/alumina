@@ -1,0 +1,553 @@
+// LLVM C API bindings for Alumina
+// Targeting LLVM 14
+
+use libc::c_char;
+
+// === Opaque types ===
+struct LLVMOpaqueContext {}
+struct LLVMOpaqueModule {}
+struct LLVMOpaqueType {}
+struct LLVMOpaqueValue {}
+struct LLVMOpaqueBasicBlock {}
+struct LLVMOpaqueBuilder {}
+struct LLVMOpaquePassManager {}
+struct LLVMOpaqueTargetData {}
+struct LLVMOpaqueTargetMachine {}
+struct LLVMTarget {}
+struct LLVMOpaqueMemoryBuffer {}
+struct LLVMOpaqueAttributeRef {}
+
+type LLVMContextRef = &mut LLVMOpaqueContext;
+type LLVMModuleRef = &mut LLVMOpaqueModule;
+type LLVMTypeRef = &mut LLVMOpaqueType;
+type LLVMValueRef = &mut LLVMOpaqueValue;
+type LLVMBasicBlockRef = &mut LLVMOpaqueBasicBlock;
+type LLVMBuilderRef = &mut LLVMOpaqueBuilder;
+type LLVMPassManagerRef = &mut LLVMOpaquePassManager;
+type LLVMTargetDataRef = &mut LLVMOpaqueTargetData;
+type LLVMTargetMachineRef = &mut LLVMOpaqueTargetMachine;
+type LLVMTargetRef = &mut LLVMTarget;
+type LLVMMemoryBufferRef = &mut LLVMOpaqueMemoryBuffer;
+type LLVMAttributeRef = &mut LLVMOpaqueAttributeRef;
+
+type LLVMBool = i32;
+type LLVMAttributeIndex = u32;
+
+// === Enums ===
+
+enum LLVMIntPredicate {
+    EQ = 32i32,
+    NE = 33i32,
+    UGT = 34i32,
+    UGE = 35i32,
+    ULT = 36i32,
+    ULE = 37i32,
+    SGT = 38i32,
+    SGE = 39i32,
+    SLT = 40i32,
+    SLE = 41i32,
+}
+
+enum LLVMRealPredicate {
+    PredicateFalse = 0i32,
+    OEQ = 1i32,
+    OGT = 2i32,
+    OGE = 3i32,
+    OLT = 4i32,
+    OLE = 5i32,
+    ONE = 6i32,
+    ORD = 7i32,
+    UNO = 8i32,
+    UEQ = 9i32,
+    UGT = 10i32,
+    UGE = 11i32,
+    ULT = 12i32,
+    ULE = 13i32,
+    UNE = 14i32,
+    PredicateTrue = 15i32,
+}
+
+enum LLVMLinkage {
+    External = 0i32,
+    AvailableExternally = 1i32,
+    LinkOnceAny = 2i32,
+    LinkOnceODR = 3i32,
+    LinkOnceODRAutoHide = 4i32,
+    WeakAny = 5i32,
+    WeakODR = 6i32,
+    Appending = 7i32,
+    Internal = 8i32,
+    Private = 9i32,
+    DLLImport = 10i32,
+    DLLExport = 11i32,
+    ExternalWeak = 12i32,
+    Ghost = 13i32,
+    Common = 14i32,
+    LinkerPrivate = 15i32,
+    LinkerPrivateWeak = 16i32,
+}
+
+enum LLVMCallConv {
+    C = 0u32,
+    Fast = 8u32,
+    Cold = 9u32,
+}
+
+enum LLVMCodeGenOptLevel {
+    None = 0i32,
+    Less = 1i32,
+    Default = 2i32,
+    Aggressive = 3i32,
+}
+
+enum LLVMRelocMode {
+    Default = 0i32,
+    Static = 1i32,
+    PIC = 2i32,
+    DynamicNoPic = 3i32,
+}
+
+enum LLVMCodeModel {
+    Default = 0i32,
+    JITDefault = 1i32,
+    Tiny = 2i32,
+    Small = 3i32,
+    Kernel = 4i32,
+    Medium = 5i32,
+    Large = 6i32,
+}
+
+enum LLVMCodeGenFileType {
+    Assembly = 0i32,
+    Object = 1i32,
+}
+
+enum LLVMVerifierFailureAction {
+    AbortProcess = 0i32,
+    PrintMessage = 1i32,
+    ReturnStatus = 2i32,
+}
+
+enum LLVMTypeKind {
+    Void = 0i32,
+    Half = 1i32,
+    Float = 2i32,
+    Double = 3i32,
+    Label = 7i32,
+    Integer = 8i32,
+    Function = 9i32,
+    Struct = 10i32,
+    Array = 11i32,
+    Pointer = 12i32,
+    Vector = 13i32,
+    Metadata = 14i32,
+    Token = 16i32,
+}
+
+enum LLVMOpcode {
+    Ret = 1i32,
+    Br = 2i32,
+    Switch = 3i32,
+    Unreachable = 7i32,
+    Add = 8i32,
+    FAdd = 9i32,
+    Sub = 10i32,
+    FSub = 11i32,
+    Mul = 12i32,
+    FMul = 13i32,
+    UDiv = 14i32,
+    SDiv = 15i32,
+    FDiv = 16i32,
+    URem = 17i32,
+    SRem = 18i32,
+    FRem = 19i32,
+    Shl = 20i32,
+    LShr = 21i32,
+    AShr = 22i32,
+    And = 23i32,
+    Or = 24i32,
+    Xor = 25i32,
+    Alloca = 26i32,
+    Load = 27i32,
+    Store = 28i32,
+    GetElementPtr = 29i32,
+    Trunc = 30i32,
+    ZExt = 31i32,
+    SExt = 32i32,
+    FPToUI = 33i32,
+    FPToSI = 34i32,
+    UIToFP = 35i32,
+    SIToFP = 36i32,
+    FPTrunc = 37i32,
+    FPExt = 38i32,
+    PtrToInt = 39i32,
+    IntToPtr = 40i32,
+    BitCast = 41i32,
+    ICmp = 42i32,
+    FCmp = 43i32,
+    PHI = 44i32,
+    Call = 45i32,
+    Select = 46i32,
+}
+
+enum LLVMAtomicOrdering {
+    NotAtomic = 0i32,
+    Unordered = 1i32,
+    Monotonic = 2i32,
+    Acquire = 4i32,
+    Release = 5i32,
+    AcquireRelease = 6i32,
+    SequentiallyConsistent = 7i32,
+}
+
+enum LLVMAtomicRMWBinOp {
+    Xchg = 0i32,
+    Add = 1i32,
+    Sub = 2i32,
+    And = 3i32,
+    Nand = 4i32,
+    Or = 5i32,
+    Xor = 6i32,
+    Max = 7i32,
+    Min = 8i32,
+    UMax = 9i32,
+    UMin = 10i32,
+    FAdd = 11i32,
+    FSub = 12i32,
+}
+
+// === Extern functions ===
+
+// --- Context ---
+extern "C" fn LLVMContextCreate() -> LLVMContextRef;
+extern "C" fn LLVMGetGlobalContext() -> LLVMContextRef;
+extern "C" fn LLVMContextDispose(c: LLVMContextRef);
+
+// --- Module ---
+extern "C" fn LLVMModuleCreateWithName(name: &c_char) -> LLVMModuleRef;
+extern "C" fn LLVMModuleCreateWithNameInContext(name: &c_char, c: LLVMContextRef) -> LLVMModuleRef;
+extern "C" fn LLVMDisposeModule(m: LLVMModuleRef);
+extern "C" fn LLVMSetDataLayout(m: LLVMModuleRef, layout: &c_char);
+extern "C" fn LLVMSetTarget(m: LLVMModuleRef, triple: &c_char);
+extern "C" fn LLVMDumpModule(m: LLVMModuleRef);
+extern "C" fn LLVMPrintModuleToFile(m: LLVMModuleRef, filename: &c_char, error: &mut &mut c_char) -> LLVMBool;
+extern "C" fn LLVMPrintModuleToString(m: LLVMModuleRef) -> &mut c_char;
+extern "C" fn LLVMGetModuleContext(m: LLVMModuleRef) -> LLVMContextRef;
+
+// --- Message ---
+extern "C" fn LLVMDisposeMessage(msg: &mut c_char);
+
+// --- Types: Integer ---
+extern "C" fn LLVMInt1TypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMInt8TypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMInt16TypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMInt32TypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMInt64TypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMInt128TypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMIntTypeInContext(c: LLVMContextRef, num_bits: u32) -> LLVMTypeRef;
+extern "C" fn LLVMGetIntTypeWidth(ty: LLVMTypeRef) -> u32;
+
+// --- Types: Float ---
+extern "C" fn LLVMFloatTypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMDoubleTypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+
+// --- Types: Other ---
+extern "C" fn LLVMVoidTypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+extern "C" fn LLVMGetTypeKind(ty: LLVMTypeRef) -> LLVMTypeKind;
+extern "C" fn LLVMTypeIsSized(ty: LLVMTypeRef) -> LLVMBool;
+
+// --- Types: Function ---
+extern "C" fn LLVMFunctionType(ret: LLVMTypeRef, params: &LLVMTypeRef, param_count: u32, is_var_arg: LLVMBool) -> LLVMTypeRef;
+extern "C" fn LLVMIsFunctionVarArg(ty: LLVMTypeRef) -> LLVMBool;
+extern "C" fn LLVMGetReturnType(ty: LLVMTypeRef) -> LLVMTypeRef;
+extern "C" fn LLVMCountParamTypes(ty: LLVMTypeRef) -> u32;
+extern "C" fn LLVMGetParamTypes(ty: LLVMTypeRef, dest: &mut LLVMTypeRef);
+
+// --- Types: Struct ---
+extern "C" fn LLVMStructTypeInContext(c: LLVMContextRef, elem_types: &LLVMTypeRef, elem_count: u32, packed: LLVMBool) -> LLVMTypeRef;
+extern "C" fn LLVMStructCreateNamed(c: LLVMContextRef, name: &c_char) -> LLVMTypeRef;
+extern "C" fn LLVMStructSetBody(ty: LLVMTypeRef, elem_types: &LLVMTypeRef, elem_count: u32, packed: LLVMBool);
+extern "C" fn LLVMCountStructElementTypes(ty: LLVMTypeRef) -> u32;
+extern "C" fn LLVMStructGetTypeAtIndex(ty: LLVMTypeRef, idx: u32) -> LLVMTypeRef;
+extern "C" fn LLVMIsPackedStruct(ty: LLVMTypeRef) -> LLVMBool;
+extern "C" fn LLVMIsOpaqueStruct(ty: LLVMTypeRef) -> LLVMBool;
+
+// --- Types: Array ---
+extern "C" fn LLVMArrayType(elem: LLVMTypeRef, count: u32) -> LLVMTypeRef;
+extern "C" fn LLVMGetArrayLength(ty: LLVMTypeRef) -> u32;
+
+// --- Types: Pointer ---
+extern "C" fn LLVMPointerType(elem: LLVMTypeRef, addr_space: u32) -> LLVMTypeRef;
+
+// --- Types: Other ---
+extern "C" fn LLVMGetElementType(ty: LLVMTypeRef) -> LLVMTypeRef;
+
+// --- Values: General ---
+extern "C" fn LLVMTypeOf(val: LLVMValueRef) -> LLVMTypeRef;
+extern "C" fn LLVMGlobalGetValueType(global: LLVMValueRef) -> LLVMTypeRef;
+extern "C" fn LLVMSetValueName2(val: LLVMValueRef, name: &c_char, name_len: usize);
+extern "C" fn LLVMDumpValue(val: LLVMValueRef);
+extern "C" fn LLVMPrintValueToString(val: LLVMValueRef) -> &mut c_char;
+extern "C" fn LLVMReplaceAllUsesWith(old: LLVMValueRef, new: LLVMValueRef);
+extern "C" fn LLVMIsConstant(val: LLVMValueRef) -> LLVMBool;
+extern "C" fn LLVMIsUndef(val: LLVMValueRef) -> LLVMBool;
+
+// --- Values: Constants ---
+extern "C" fn LLVMConstNull(ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstAllOnes(ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMGetUndef(ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstPointerNull(ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstInt(ty: LLVMTypeRef, n: u64, sign_extend: LLVMBool) -> LLVMValueRef;
+extern "C" fn LLVMConstReal(ty: LLVMTypeRef, n: f64) -> LLVMValueRef;
+extern "C" fn LLVMConstStringInContext(c: LLVMContextRef, str: &c_char, length: u32, dont_null_terminate: LLVMBool) -> LLVMValueRef;
+extern "C" fn LLVMConstStructInContext(c: LLVMContextRef, vals: &LLVMValueRef, count: u32, packed: LLVMBool) -> LLVMValueRef;
+extern "C" fn LLVMConstArray(elem_ty: LLVMTypeRef, vals: &LLVMValueRef, length: u32) -> LLVMValueRef;
+extern "C" fn LLVMConstNamedStruct(ty: LLVMTypeRef, vals: &LLVMValueRef, count: u32) -> LLVMValueRef;
+extern "C" fn LLVMSizeOf(ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMAlignOf(ty: LLVMTypeRef) -> LLVMValueRef;
+
+// --- Values: Constant Expressions ---
+extern "C" fn LLVMConstNeg(val: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMConstNot(val: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMConstAdd(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMConstSub(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMConstMul(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMConstGEP2(ty: LLVMTypeRef, val: LLVMValueRef, indices: &LLVMValueRef, num_indices: u32) -> LLVMValueRef;
+extern "C" fn LLVMConstInBoundsGEP2(ty: LLVMTypeRef, val: LLVMValueRef, indices: &LLVMValueRef, num_indices: u32) -> LLVMValueRef;
+extern "C" fn LLVMConstBitCast(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstIntToPtr(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstPtrToInt(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstTrunc(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstSExt(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMConstZExt(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
+
+// --- Globals ---
+extern "C" fn LLVMAddGlobal(m: LLVMModuleRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMGetNamedGlobal(m: LLVMModuleRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMDeleteGlobal(val: LLVMValueRef);
+extern "C" fn LLVMGetInitializer(val: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMSetInitializer(val: LLVMValueRef, const_val: LLVMValueRef);
+extern "C" fn LLVMSetGlobalConstant(val: LLVMValueRef, is_const: LLVMBool);
+extern "C" fn LLVMSetLinkage(val: LLVMValueRef, linkage: LLVMLinkage);
+extern "C" fn LLVMGetLinkage(val: LLVMValueRef) -> LLVMLinkage;
+extern "C" fn LLVMSetSection(val: LLVMValueRef, section: &c_char);
+extern "C" fn LLVMSetUnnamedAddr(val: LLVMValueRef, has_unnamed_addr: LLVMBool);
+extern "C" fn LLVMSetAlignment(val: LLVMValueRef, bytes: u32);
+
+// --- Functions ---
+extern "C" fn LLVMAddFunction(m: LLVMModuleRef, name: &c_char, ty: LLVMTypeRef) -> LLVMValueRef;
+extern "C" fn LLVMGetNamedFunction(m: LLVMModuleRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMDeleteFunction(val: LLVMValueRef);
+extern "C" fn LLVMGetFunctionCallConv(val: LLVMValueRef) -> u32;
+extern "C" fn LLVMSetFunctionCallConv(val: LLVMValueRef, cc: u32);
+extern "C" fn LLVMCountParams(val: LLVMValueRef) -> u32;
+extern "C" fn LLVMGetParams(val: LLVMValueRef, params: &mut LLVMValueRef);
+extern "C" fn LLVMGetParam(val: LLVMValueRef, idx: u32) -> LLVMValueRef;
+extern "C" fn LLVMSetParamAlignment(val: LLVMValueRef, align: u32);
+
+// --- Attributes ---
+extern "C" fn LLVMGetEnumAttributeKindForName(name: &c_char, slen: usize) -> u32;
+extern "C" fn LLVMCreateEnumAttribute(c: LLVMContextRef, kind_id: u32, val: u64) -> LLVMAttributeRef;
+extern "C" fn LLVMCreateStringAttribute(c: LLVMContextRef, k: &c_char, k_len: u32, v: &c_char, v_len: u32) -> LLVMAttributeRef;
+extern "C" fn LLVMCreateTypeAttribute(c: LLVMContextRef, kind_id: u32, type_ref: LLVMTypeRef) -> LLVMAttributeRef;
+extern "C" fn LLVMAddAttributeAtIndex(f: LLVMValueRef, idx: LLVMAttributeIndex, attr: LLVMAttributeRef);
+extern "C" fn LLVMAddCallSiteAttribute(c: LLVMValueRef, idx: LLVMAttributeIndex, attr: LLVMAttributeRef);
+
+// --- Basic Blocks ---
+extern "C" fn LLVMAppendBasicBlockInContext(c: LLVMContextRef, fn_val: LLVMValueRef, name: &c_char) -> LLVMBasicBlockRef;
+extern "C" fn LLVMAppendBasicBlock(fn_val: LLVMValueRef, name: &c_char) -> LLVMBasicBlockRef;
+extern "C" fn LLVMInsertBasicBlockInContext(c: LLVMContextRef, bb: LLVMBasicBlockRef, name: &c_char) -> LLVMBasicBlockRef;
+extern "C" fn LLVMDeleteBasicBlock(bb: LLVMBasicBlockRef);
+extern "C" fn LLVMGetEntryBasicBlock(fn_val: LLVMValueRef) -> LLVMBasicBlockRef;
+extern "C" fn LLVMGetFirstBasicBlock(fn_val: LLVMValueRef) -> LLVMBasicBlockRef;
+extern "C" fn LLVMGetLastBasicBlock(fn_val: LLVMValueRef) -> LLVMBasicBlockRef;
+extern "C" fn LLVMGetNextBasicBlock(bb: LLVMBasicBlockRef) -> LLVMBasicBlockRef;
+extern "C" fn LLVMCountBasicBlocks(fn_val: LLVMValueRef) -> u32;
+extern "C" fn LLVMMoveBasicBlockAfter(bb: LLVMBasicBlockRef, move_pos: LLVMBasicBlockRef);
+
+// --- Builder ---
+extern "C" fn LLVMCreateBuilderInContext(c: LLVMContextRef) -> LLVMBuilderRef;
+extern "C" fn LLVMCreateBuilder() -> LLVMBuilderRef;
+extern "C" fn LLVMPositionBuilderAtEnd(b: LLVMBuilderRef, bb: LLVMBasicBlockRef);
+extern "C" fn LLVMPositionBuilderBefore(b: LLVMBuilderRef, instr: LLVMValueRef);
+extern "C" fn LLVMGetInsertBlock(b: LLVMBuilderRef) -> LLVMBasicBlockRef;
+extern "C" fn LLVMClearInsertionPosition(b: LLVMBuilderRef);
+extern "C" fn LLVMDisposeBuilder(b: LLVMBuilderRef);
+
+// --- Builder: Terminators ---
+extern "C" fn LLVMBuildRetVoid(b: LLVMBuilderRef) -> LLVMValueRef;
+extern "C" fn LLVMBuildRet(b: LLVMBuilderRef, v: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMBuildBr(b: LLVMBuilderRef, dest: LLVMBasicBlockRef) -> LLVMValueRef;
+extern "C" fn LLVMBuildCondBr(b: LLVMBuilderRef, cond: LLVMValueRef, then_bb: LLVMBasicBlockRef, else_bb: LLVMBasicBlockRef) -> LLVMValueRef;
+extern "C" fn LLVMBuildSwitch(b: LLVMBuilderRef, v: LLVMValueRef, else_bb: LLVMBasicBlockRef, num_cases: u32) -> LLVMValueRef;
+extern "C" fn LLVMBuildUnreachable(b: LLVMBuilderRef) -> LLVMValueRef;
+extern "C" fn LLVMAddCase(switch_val: LLVMValueRef, on_val: LLVMValueRef, dest: LLVMBasicBlockRef);
+
+// --- Builder: Arithmetic ---
+extern "C" fn LLVMBuildAdd(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildNSWAdd(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildNUWAdd(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFAdd(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildSub(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildNSWSub(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFSub(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildMul(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildNSWMul(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFMul(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildUDiv(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildSDiv(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFDiv(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildURem(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildSRem(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFRem(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildShl(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildLShr(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildAShr(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildAnd(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildOr(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildXor(b: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildNeg(b: LLVMBuilderRef, v: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFNeg(b: LLVMBuilderRef, v: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildNot(b: LLVMBuilderRef, v: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+
+// --- Builder: Memory ---
+extern "C" fn LLVMBuildAlloca(b: LLVMBuilderRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildArrayAlloca(b: LLVMBuilderRef, ty: LLVMTypeRef, count: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildLoad2(b: LLVMBuilderRef, ty: LLVMTypeRef, ptr: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildStore(b: LLVMBuilderRef, val: LLVMValueRef, ptr: LLVMValueRef) -> LLVMValueRef;
+extern "C" fn LLVMBuildGEP2(b: LLVMBuilderRef, ty: LLVMTypeRef, ptr: LLVMValueRef, indices: &LLVMValueRef, num_indices: u32, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildInBoundsGEP2(b: LLVMBuilderRef, ty: LLVMTypeRef, ptr: LLVMValueRef, indices: &LLVMValueRef, num_indices: u32, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildStructGEP2(b: LLVMBuilderRef, ty: LLVMTypeRef, ptr: LLVMValueRef, idx: u32, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildMemSet(b: LLVMBuilderRef, ptr: LLVMValueRef, val: LLVMValueRef, len: LLVMValueRef, align: u32) -> LLVMValueRef;
+extern "C" fn LLVMBuildMemCpy(b: LLVMBuilderRef, dst: LLVMValueRef, dst_align: u32, src: LLVMValueRef, src_align: u32, size: LLVMValueRef) -> LLVMValueRef;
+
+// --- Builder: Casts ---
+extern "C" fn LLVMBuildTrunc(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildZExt(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildSExt(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFPToUI(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFPToSI(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildUIToFP(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildSIToFP(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFPTrunc(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFPExt(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildPtrToInt(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildIntToPtr(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildBitCast(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildPointerCast(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildIntCast2(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, is_signed: LLVMBool, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFPCast(b: LLVMBuilderRef, val: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+
+// --- Builder: Comparisons ---
+extern "C" fn LLVMBuildICmp(b: LLVMBuilderRef, op: LLVMIntPredicate, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildFCmp(b: LLVMBuilderRef, op: LLVMRealPredicate, lhs: LLVMValueRef, rhs: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+
+// --- Builder: Misc ---
+extern "C" fn LLVMBuildPhi(b: LLVMBuilderRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildCall2(b: LLVMBuilderRef, ty: LLVMTypeRef, fn_val: LLVMValueRef, args: &LLVMValueRef, num_args: u32, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildSelect(b: LLVMBuilderRef, cond: LLVMValueRef, then_val: LLVMValueRef, else_val: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildVAArg(b: LLVMBuilderRef, list: LLVMValueRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildExtractValue(b: LLVMBuilderRef, agg: LLVMValueRef, idx: u32, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildInsertValue(b: LLVMBuilderRef, agg: LLVMValueRef, elt: LLVMValueRef, idx: u32, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildGlobalStringPtr(b: LLVMBuilderRef, str: &c_char, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildIsNull(b: LLVMBuilderRef, val: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildIsNotNull(b: LLVMBuilderRef, val: LLVMValueRef, name: &c_char) -> LLVMValueRef;
+
+// --- PHI ---
+extern "C" fn LLVMAddIncoming(phi: LLVMValueRef, incoming_vals: &LLVMValueRef, incoming_blocks: &LLVMBasicBlockRef, count: u32);
+extern "C" fn LLVMCountIncoming(phi: LLVMValueRef) -> u32;
+
+// --- Instruction ---
+extern "C" fn LLVMGetInstructionParent(inst: LLVMValueRef) -> LLVMBasicBlockRef;
+extern "C" fn LLVMSetInstructionCallConv(instr: LLVMValueRef, cc: u32);
+extern "C" fn LLVMSetTailCall(call: LLVMValueRef, is_tail: LLVMBool);
+extern "C" fn LLVMGetBasicBlockTerminator(bb: LLVMBasicBlockRef) -> LLVMValueRef;
+
+// --- Analysis ---
+extern "C" fn LLVMVerifyModule(m: LLVMModuleRef, action: LLVMVerifierFailureAction, out_msg: &mut &mut c_char) -> LLVMBool;
+extern "C" fn LLVMVerifyFunction(fn_val: LLVMValueRef, action: LLVMVerifierFailureAction) -> LLVMBool;
+
+// --- BitWriter ---
+extern "C" fn LLVMWriteBitcodeToFile(m: LLVMModuleRef, path: &c_char) -> i32;
+
+// --- Target ---
+extern "C" fn LLVMInitializeX86TargetInfo();
+extern "C" fn LLVMInitializeX86Target();
+extern "C" fn LLVMInitializeX86TargetMC();
+extern "C" fn LLVMInitializeX86AsmPrinter();
+extern "C" fn LLVMInitializeX86AsmParser();
+
+extern "C" fn LLVMInitializeAArch64TargetInfo();
+extern "C" fn LLVMInitializeAArch64Target();
+extern "C" fn LLVMInitializeAArch64TargetMC();
+extern "C" fn LLVMInitializeAArch64AsmPrinter();
+extern "C" fn LLVMInitializeAArch64AsmParser();
+
+extern "C" fn LLVMGetDefaultTargetTriple() -> &mut c_char;
+extern "C" fn LLVMNormalizeTargetTriple(triple: &c_char) -> &mut c_char;
+extern "C" fn LLVMGetHostCPUName() -> &mut c_char;
+extern "C" fn LLVMGetHostCPUFeatures() -> &mut c_char;
+
+// --- TargetMachine ---
+extern "C" fn LLVMGetTargetFromTriple(triple: &c_char, target: &mut LLVMTargetRef, error: &mut &mut c_char) -> LLVMBool;
+extern "C" fn LLVMGetTargetFromName(name: &c_char) -> LLVMTargetRef;
+extern "C" fn LLVMCreateTargetMachine(
+    t: LLVMTargetRef,
+    triple: &c_char,
+    cpu: &c_char,
+    features: &c_char,
+    level: LLVMCodeGenOptLevel,
+    reloc: LLVMRelocMode,
+    code_model: LLVMCodeModel,
+) -> LLVMTargetMachineRef;
+extern "C" fn LLVMDisposeTargetMachine(t: LLVMTargetMachineRef);
+extern "C" fn LLVMCreateTargetDataLayout(t: LLVMTargetMachineRef) -> LLVMTargetDataRef;
+extern "C" fn LLVMTargetMachineEmitToFile(
+    t: LLVMTargetMachineRef,
+    m: LLVMModuleRef,
+    filename: &c_char,
+    codegen: LLVMCodeGenFileType,
+    error: &mut &mut c_char,
+) -> LLVMBool;
+
+// --- TargetData ---
+extern "C" fn LLVMSetModuleDataLayout(m: LLVMModuleRef, dl: LLVMTargetDataRef);
+extern "C" fn LLVMDisposeTargetData(td: LLVMTargetDataRef);
+extern "C" fn LLVMPointerSize(td: LLVMTargetDataRef) -> u32;
+extern "C" fn LLVMSizeOfTypeInBits(td: LLVMTargetDataRef, ty: LLVMTypeRef) -> u64;
+extern "C" fn LLVMStoreSizeOfType(td: LLVMTargetDataRef, ty: LLVMTypeRef) -> u64;
+extern "C" fn LLVMABISizeOfType(td: LLVMTargetDataRef, ty: LLVMTypeRef) -> u64;
+extern "C" fn LLVMABIAlignmentOfType(td: LLVMTargetDataRef, ty: LLVMTypeRef) -> u32;
+extern "C" fn LLVMOffsetOfElement(td: LLVMTargetDataRef, struct_ty: LLVMTypeRef, element: u32) -> u64;
+extern "C" fn LLVMCopyStringRepOfTargetData(td: LLVMTargetDataRef) -> &mut c_char;
+
+// --- PassManager ---
+extern "C" fn LLVMCreatePassManager() -> LLVMPassManagerRef;
+extern "C" fn LLVMRunPassManager(pm: LLVMPassManagerRef, m: LLVMModuleRef) -> LLVMBool;
+extern "C" fn LLVMDisposePassManager(pm: LLVMPassManagerRef);
+
+// --- Atomics ---
+extern "C" fn LLVMBuildFence(b: LLVMBuilderRef, ordering: LLVMAtomicOrdering, single_thread: LLVMBool, name: &c_char) -> LLVMValueRef;
+extern "C" fn LLVMBuildAtomicRMW(b: LLVMBuilderRef, op: LLVMAtomicRMWBinOp, ptr: LLVMValueRef, val: LLVMValueRef, ordering: LLVMAtomicOrdering, single_thread: LLVMBool) -> LLVMValueRef;
+extern "C" fn LLVMBuildAtomicCmpXchg(b: LLVMBuilderRef, ptr: LLVMValueRef, cmp: LLVMValueRef, new_val: LLVMValueRef, success_ordering: LLVMAtomicOrdering, failure_ordering: LLVMAtomicOrdering, single_thread: LLVMBool) -> LLVMValueRef;
+extern "C" fn LLVMSetOrdering(mem_access_inst: LLVMValueRef, ordering: LLVMAtomicOrdering);
+extern "C" fn LLVMSetVolatile(mem_access_inst: LLVMValueRef, is_volatile: LLVMBool);
+
+// === Helper functions ===
+
+fn initialize_native_target() {
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmPrinter();
+    LLVMInitializeX86AsmParser();
+}
+
+fn initialize_all_targets() {
+    initialize_native_target();
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmPrinter();
+    LLVMInitializeAArch64AsmParser();
+}

@@ -1,0 +1,49 @@
+// Simplified Result type for self-hosted compiler bootstrap
+
+struct Result<T, E> {
+    _is_ok: bool,
+    _ok: T,
+    _err: E,
+}
+
+impl Result<T, E> {
+    fn ok(value: T) -> Result<T, E> {
+        let r: Result<T, E> = std::mem::zeroed::<Result<T, E>>();
+        r._is_ok = true;
+        r._ok = value;
+        r
+    }
+
+    fn err(value: E) -> Result<T, E> {
+        let r: Result<T, E> = std::mem::zeroed::<Result<T, E>>();
+        r._is_ok = false;
+        r._err = value;
+        r
+    }
+
+    fn is_ok(self: &Result<T, E>) -> bool {
+        self._is_ok
+    }
+
+    fn is_err(self: &Result<T, E>) -> bool {
+        !self._is_ok
+    }
+
+    fn unwrap(self: &Result<T, E>) -> T {
+        self._ok
+    }
+
+    fn unwrap_err(self: &Result<T, E>) -> E {
+        self._err
+    }
+}
+
+macro try($expr) {
+    {
+        let _result = $expr;
+        if _result.is_err() {
+            return Result::err(_result.unwrap_err());
+        }
+        _result.unwrap()
+    }
+}

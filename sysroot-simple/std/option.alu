@@ -1,0 +1,35 @@
+// Simplified Option type for self-hosted compiler bootstrap
+
+struct Option<T> {
+    _is_some: usize,
+    _inner: T,
+}
+
+impl Option<T> {
+    fn some(inner: T) -> Option<T> {
+        Option::<T> {
+            _is_some: 1usize,
+            _inner: inner,
+        }
+    }
+
+    fn none() -> Option<T> {
+        std::mem::zeroed::<Option<T>>()
+    }
+
+    fn is_some(self: &Option<T>) -> bool {
+        self._is_some != 0usize
+    }
+
+    fn is_none(self: &Option<T>) -> bool {
+        self._is_some == 0usize
+    }
+
+    fn unwrap(self: &Option<T>) -> T {
+        self._inner
+    }
+
+    fn unwrap_or(self: &Option<T>, default: T) -> T {
+        if self._is_some != 0usize { self._inner } else { default }
+    }
+}

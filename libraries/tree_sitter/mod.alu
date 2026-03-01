@@ -58,6 +58,7 @@ extern "C" fn ts_tree_delete(self: &mut TSTree);
 
 extern "C" fn ts_parser_set_language(self: &mut TSParser, language: &TSLanguage) -> bool;
 extern "C" fn ts_parser_parse(self: &mut TSParser, old_tree: &TSTree, input: TSInput) -> &mut TSTree;
+extern "C" fn ts_parser_parse_string(self: &mut TSParser, old_tree: &TSTree, string: &u8, length: u32) -> &mut TSTree;
 extern "C" fn ts_tree_root_node(self: &TSTree) -> TSNode;
 extern "C" fn ts_node_string(self: TSNode) -> &c_char;
 extern "C" fn ts_node_symbol(self: TSNode) -> TSSymbol;
@@ -164,6 +165,13 @@ impl Parser {
         }
     }
 
+    /// Parse using ts_parser_parse_string (no closure callback needed)
+    fn parse_string(self: &mut Parser, text: &[u8]) -> Tree {
+        Tree {
+            inner: ts_parser_parse_string(self.inner, null, &text[0], text.len() as u32)
+        }
+    }
+
     fn set_language(self: &mut Parser, language: &TSLanguage) -> Result<(), Error> {
         if ts_parser_set_language(self.inner, language) {
             Result::ok(())
@@ -212,10 +220,17 @@ impl TSTreeCursor {
         Node { inner: ts_tree_cursor_current_node(self) }
     }
 
+    fn none_field_id() -> Option<TSFieldId> {
+        Option::<TSFieldId> {
+            _is_some: false,
+            _inner: 0 as TSFieldId,
+        }
+    }
+
     fn field_id(self: &TSTreeCursor) -> Option<TSFieldId> {
         let id = ts_tree_cursor_current_field_id(self);
         if id == 0 {
-            Option::none()
+            TSTreeCursor::none_field_id()
         } else {
             Option::some(id)
         }
@@ -233,11 +248,18 @@ impl TSTreeCursor {
         ts_tree_cursor_goto_next_sibling(self)
     }
 
+    fn none_usize() -> Option<usize> {
+        Option::<usize> {
+            _is_some: false,
+            _inner: 0usize,
+        }
+    }
+
     fn goto_first_child_for_byte(self: &mut TSTreeCursor, index: usize) -> Option<usize> {
         let result =
             ts_tree_cursor_goto_first_child_for_byte(self, index as u32);
         if result < 0 {
-            Option::none()
+            TSTreeCursor::none_usize()
         } else {
             Option::some(result as usize)
         }
@@ -247,7 +269,7 @@ impl TSTreeCursor {
         let result =
             ts_tree_cursor_goto_first_child_for_point(self, point);
         if result < 0 {
-            Option::none()
+            TSTreeCursor::none_usize()
         } else {
             Option::some(result as usize)
         }
@@ -285,7 +307,7 @@ impl ChildrenIterator {
                 while self.cursor.field_id() != self.field_id {
                     if !self.cursor.goto_next_sibling() {
                         self.done = true;
-                        return Option::none()
+                        return Node::none_node()
                     }
                 }
             }
@@ -296,7 +318,7 @@ impl ChildrenIterator {
             }
             return Option::some(result);
         }
-        Option::none()
+        Node::none_node()
     }
 
     mixin Iterator<ChildrenIterator, Node>;
@@ -308,9 +330,16 @@ struct Node {
 }
 
 impl Node {
+    fn none_node() -> Option<Node> {
+        Option::<Node> {
+            _is_some: false,
+            _inner: Node { inner: TSNode { context: [0u32, 0u32, 0u32, 0u32], id: null, tree: null } },
+        }
+    }
+
     fn from_raw(raw: TSNode) -> Option<Node> {
         if ts_node_is_null(raw) {
-            Option::none()
+            Node::none_node()
         } else {
             Option::some(Node {
                 inner: raw
@@ -374,7 +403,7 @@ impl Node {
 
         ChildrenIterator {
             cursor: cursor,
-            field_id: Option::none(),
+            field_id: TSTreeCursor::none_field_id(),
             done: false
         }
     }
@@ -391,7 +420,7 @@ impl Node {
     }
 
     fn child_by_field_id(self: &Node, field_id: TSFieldId) -> Option<Node> {
-        from_raw(ts_node_child_by_field_id(self.inner, field_id))
+        Node::from_raw(ts_node_child_by_field_id(self.inner, field_id))
     }
 
     fn fmt<F: Formatter<F>>(self: &Node, f: &mut F) -> std::fmt::Result {

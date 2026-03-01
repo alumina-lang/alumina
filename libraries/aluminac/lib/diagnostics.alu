@@ -1,0 +1,164 @@
+// Diagnostics and error reporting for the self-hosted compiler
+
+use ast::Span;
+
+enum DiagLevel {
+    Error,
+    Warning,
+    Note,
+}
+
+struct Diagnostic {
+    level: DiagLevel,
+    message: &[u8],
+    span: Span,
+}
+
+struct SourceFile {
+    path: &[u8],
+    contents: &[u8],
+    // Line start offsets for line number lookup
+    line_starts: &[u32],
+}
+
+impl SourceFile {
+    fn line_col(self: &SourceFile, offset: u32) -> (u32, u32) {
+        // Binary search for line number
+        let lo: usize = 0;
+        let hi: usize = self.line_starts.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.line_starts[mid] <= offset {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let line = lo as u32; // 1-based
+        let col = offset - self.line_starts[lo - 1] + 1; // 1-based
+        (line, col)
+    }
+}
+
+fn compute_line_starts(contents: &[u8], arena: &mut arena::Arena) -> &[u32] {
+    // Count lines first
+    let count: usize = 1;
+    for i in 0usize..contents.len() {
+        if contents[i] == '\n' as u8 {
+            count = count + 1;
+        }
+    }
+    let starts = arena.alloc_slice::<u32>(count);
+    starts[0] = 0;
+    let idx: usize = 1;
+    for i in 0usize..contents.len() {
+        if contents[i] == '\n' as u8 {
+            if idx < count {
+                starts[idx] = (i + 1) as u32;
+                idx = idx + 1;
+            }
+        }
+    }
+    starts[0..idx]
+}
+
+struct DiagnosticContext {
+    files: std::collections::Vector<SourceFile>,
+    errors: std::collections::Vector<Diagnostic>,
+    has_errors: bool,
+}
+
+impl DiagnosticContext {
+    fn new() -> DiagnosticContext {
+        DiagnosticContext {
+            files: std::collections::Vector::new(),
+            errors: std::collections::Vector::new(),
+            has_errors: false,
+        }
+    }
+
+    fn add_file(self: &mut DiagnosticContext, path: &[u8], contents: &[u8], arena: &mut arena::Arena) -> u32 {
+        let id = self.files.len() as u32;
+        let line_starts = compute_line_starts(contents, arena);
+        self.files.push(SourceFile {
+            path: path,
+            contents: contents,
+            line_starts: line_starts,
+        });
+        id
+    }
+
+    fn error(self: &mut DiagnosticContext, span: Span, message: &[u8]) {
+        self.has_errors = true;
+        self.errors.push(Diagnostic {
+            level: DiagLevel::Error,
+            message: message,
+            span: span,
+        });
+    }
+
+    fn warning(self: &mut DiagnosticContext, span: Span, message: &[u8]) {
+        self.errors.push(Diagnostic {
+            level: DiagLevel::Warning,
+            message: message,
+            span: span,
+        });
+    }
+
+    fn _write_stderr(s: &[u8]) {
+        if s.len() > 0usize {
+            libc::write(2i32, &s[0] as &libc::c_void, s.len());
+        }
+    }
+
+    fn _write_u32(n: u32) {
+        let buf: [u8; 12] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+        let pos: usize = 11;
+        let val = n;
+        if val == 0u32 {
+            buf[pos] = '0' as u8;
+            pos = pos - 1;
+        } else {
+            while val > 0u32 {
+                buf[pos] = ('0' as u8) + (val % 10u32) as u8;
+                val = val / 10u32;
+                pos = pos - 1;
+            }
+        }
+        let start = pos + 1;
+        DiagnosticContext::_write_stderr(buf[start..12]);
+    }
+
+    fn emit_all(self: &DiagnosticContext) {
+        let i: usize = 0;
+        while i < self.errors.len() {
+            let diag = self.errors[i];
+            let level_str: &[u8] = if diag.level as i32 == DiagLevel::Error as i32 {
+                "error"
+            } else if diag.level as i32 == DiagLevel::Warning as i32 {
+                "warning"
+            } else {
+                "note"
+            };
+
+            DiagnosticContext::_write_stderr(level_str);
+            DiagnosticContext::_write_stderr(": ");
+            DiagnosticContext::_write_stderr(diag.message);
+
+            if diag.span.start != 0 && diag.span.file_id < self.files.len() as u32 {
+                let file = &self.files[diag.span.file_id as usize];
+                let (line, col) = file.line_col(diag.span.start);
+                DiagnosticContext::_write_stderr(" at ");
+                DiagnosticContext::_write_stderr(file.path);
+            }
+            DiagnosticContext::_write_stderr("\n");
+
+            i = i + 1;
+        }
+    }
+
+    fn free(self: &mut DiagnosticContext) {
+        self.files.free();
+        self.errors.free();
+    }
+}

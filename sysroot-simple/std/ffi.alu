@@ -1,0 +1,30 @@
+// Simplified CString for self-hosted compiler bootstrap
+
+struct CString {
+    ptr: &libc::c_char,
+}
+
+impl CString {
+    fn from_slice(s: &[u8]) -> CString {
+        let ret = std::mem::slice_alloc::<u8>(s.len() + 1usize);
+        s.copy_to_nonoverlapping(&ret[0]);
+        ret[s.len()] = 0u8;
+        CString { ptr: &ret[0] as &libc::c_char }
+    }
+
+    fn from_raw(ptr: &libc::c_char) -> CString {
+        CString { ptr: ptr }
+    }
+
+    fn free(self: &mut CString) {
+        libc::free(self.ptr as &mut void);
+    }
+
+    fn len(self: &CString) -> usize {
+        libc::strlen(self.ptr) as usize
+    }
+
+    fn as_slice(self: &CString) -> &[u8] {
+        std::mem::slice_from_raw_const(self.ptr as &u8, self.len())
+    }
+}

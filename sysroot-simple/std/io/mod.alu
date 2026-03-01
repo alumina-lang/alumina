@@ -1,0 +1,25 @@
+// Simplified IO for self-hosted compiler bootstrap
+
+extern "C" fn write(fd: i32, buf: &void, count: usize) -> isize;
+
+fn _write_stderr(s: &[u8]) {
+    if s.len() > 0usize {
+        write(2i32, &s[0] as &void, s.len());
+    }
+}
+
+fn _write_stderr_ln(s: &[u8]) {
+    _write_stderr(s);
+    let nl: [u8; 1] = [10u8];
+    write(2i32, &nl[0] as &void, 1usize);
+}
+
+// eprintln! macro - supports string literal only
+// For format strings, use separate calls
+macro eprintln($s) {
+    std::io::_write_stderr_ln($s)
+}
+
+macro eprint($s) {
+    std::io::_write_stderr($s)
+}

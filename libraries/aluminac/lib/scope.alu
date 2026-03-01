@@ -1,0 +1,393 @@
+// Scope and name resolution for the self-hosted Alumina compiler
+
+use ast::{Id, IdGen, Item, ItemRef, Ty, GenericParam, FnDef, StructDef, EnumDef,
+          ProtocolDef, TypeAlias, StaticDef, MacroDef, UseDef, ModuleDef, ImplDef, BuiltinType};
+use arena::Arena;
+use std::collections::HashMap;
+
+// What kind of thing a name refers to - tag constants
+const NIK_FUNCTION: i32 = 0i32;
+const NIK_METHOD: i32 = 1i32;
+const NIK_STRUCT: i32 = 2i32;
+const NIK_ENUM: i32 = 3i32;
+const NIK_ENUM_VARIANT: i32 = 4i32;
+const NIK_PROTOCOL: i32 = 5i32;
+const NIK_TYPE_ALIAS: i32 = 6i32;
+const NIK_STATIC: i32 = 7i32;
+const NIK_CONST: i32 = 8i32;
+const NIK_MACRO: i32 = 9i32;
+const NIK_MODULE: i32 = 10i32;
+const NIK_LOCAL: i32 = 11i32;
+const NIK_PARAM: i32 = 12i32;
+const NIK_USE_ALIAS: i32 = 13i32;
+const NIK_BOUND_VALUE: i32 = 14i32;
+const NIK_GENERIC_PARAM: i32 = 15i32;
+const NIK_BUILTIN_TYPE: i32 = 16i32;
+
+struct NamedItemKind {
+    tag: i32,
+    // Data fields reused depending on tag:
+    id: Id,                 // NIK_FUNCTION, NIK_STRUCT, NIK_ENUM, NIK_PROTOCOL, NIK_TYPE_ALIAS,
+                            // NIK_STATIC, NIK_CONST, NIK_MACRO, NIK_LOCAL, NIK_PARAM,
+                            // NIK_BOUND_VALUE, NIK_GENERIC_PARAM
+    id2: Id,                // NIK_METHOD (fn_id), NIK_ENUM_VARIANT (variant_id)
+    scope_idx: u32,         // NIK_MODULE, NIK_USE_ALIAS
+    path_segments: &[&[u8]], // NIK_USE_ALIAS
+    builtin: BuiltinType,  // NIK_BUILTIN_TYPE
+}
+
+impl NamedItemKind {
+    fn function(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_FUNCTION, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn method(type_id: Id, fn_id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_METHOD, id: type_id, id2: fn_id,
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn struct_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_STRUCT, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn struct_kind_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NIK_STRUCT, id: id, id2: Id { _value: 0 },
+                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn enum_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_ENUM, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn enum_kind_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NIK_ENUM, id: id, id2: Id { _value: 0 },
+                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn enum_variant(enum_id: Id, variant_id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_ENUM_VARIANT, id: enum_id, id2: variant_id,
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn protocol(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_PROTOCOL, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn type_alias(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_TYPE_ALIAS, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn static_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_STATIC, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn const_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_CONST, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn macro_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_MACRO, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn module(scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NIK_MODULE, id: Id { _value: 0 }, id2: Id { _value: 0 },
+                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn local(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_LOCAL, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn param(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_PARAM, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn use_alias(scope_idx: u32, segments: &[&[u8]]) -> NamedItemKind {
+        NamedItemKind { tag: NIK_USE_ALIAS, id: Id { _value: 0 }, id2: Id { _value: 0 },
+                        scope_idx: scope_idx, path_segments: segments, builtin: BuiltinType::Void }
+    }
+    fn bound_value(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_BOUND_VALUE, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn generic_param(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NIK_GENERIC_PARAM, id: id, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+    }
+    fn builtin_type(bt: BuiltinType) -> NamedItemKind {
+        NamedItemKind { tag: NIK_BUILTIN_TYPE, id: Id { _value: 0 }, id2: Id { _value: 0 },
+                        scope_idx: 0, path_segments: &[], builtin: bt }
+    }
+}
+
+struct NamedItem {
+    name: &[u8],
+    kind: NamedItemKind,
+    span: ast::Span,
+}
+
+enum ScopeKind {
+    Root,
+    Module,
+    Function,
+    Block,
+    Impl,
+    Protocol,
+}
+
+struct Scope {
+    kind: ScopeKind,
+    parent: Option<u32>,    // index into ScopeArena
+    items: HashMap<&[u8], NamedItem>,
+    star_imports: &[u32],   // scope indices to search for star imports
+    // For impl blocks: what type is being implemented
+    impl_target: Option<&Ty>,
+    // For functions: generic params
+    generic_params: &[GenericParam],
+}
+
+impl Scope {
+    fn new(kind: ScopeKind, parent: Option<u32>) -> Scope {
+        Scope {
+            kind: kind,
+            parent: parent,
+            items: HashMap::new(),
+            star_imports: &[],
+            impl_target: Option::none(),
+            generic_params: &[],
+        }
+    }
+}
+
+struct ScopeArena {
+    scopes: std::collections::Vector<Scope>,
+}
+
+impl ScopeArena {
+    fn new() -> ScopeArena {
+        ScopeArena {
+            scopes: std::collections::Vector::new(),
+        }
+    }
+
+    fn create_scope(self: &mut ScopeArena, kind: ScopeKind, parent: Option<u32>) -> u32 {
+        let idx = self.scopes.len() as u32;
+        self.scopes.push(Scope::new(kind, parent));
+        idx
+    }
+
+    fn get(self: &ScopeArena, idx: u32) -> &Scope {
+        &self.scopes[idx as usize]
+    }
+
+    fn get_mut(self: &mut ScopeArena, idx: u32) -> &mut Scope {
+        &self.scopes[idx as usize]
+    }
+
+    fn add_item(self: &mut ScopeArena, scope_idx: u32, item: NamedItem) {
+        let scope = self.get_mut(scope_idx);
+        scope.items.insert(item.name, item);
+    }
+
+    fn add_star_import(self: &mut ScopeArena, scope_idx: u32, import_scope: u32, arena: &mut Arena) {
+        let scope = self.get_mut(scope_idx);
+        let old = scope.star_imports;
+        let new_imports = arena.alloc_slice::<u32>(old.len() + 1);
+        for i in 0usize..old.len() {
+            new_imports[i] = old[i];
+        }
+        new_imports[old.len()] = import_scope;
+        scope.star_imports = new_imports;
+    }
+
+    // Resolve a name starting from the given scope
+    fn resolve(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let found = self.resolve_raw(scope_idx, name);
+        if found.is_some() {
+            let item = found.unwrap();
+            // Follow use aliases
+            if item.kind.tag == NIK_USE_ALIAS {
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+            }
+            return found;
+        }
+        Option::none()
+    }
+
+    // Resolve without following use aliases
+    fn resolve_raw(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let scope = self.get(scope_idx);
+
+        // 1. Check current scope
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            return found;
+        }
+
+        // 2. Check star imports
+        for import_idx in scope.star_imports {
+            let imp_found = self.get(import_idx).items.get(&name);
+            if imp_found.is_some() {
+                return imp_found;
+            }
+        }
+
+        // 3. Check parent scope
+        if scope.parent.is_some() {
+            return self.resolve_raw(scope.parent.unwrap(), name);
+        }
+
+        Option::none()
+    }
+
+    // Resolve a multi-segment path (e.g. std::io::println)
+    fn resolve_path(self: &ScopeArena, scope_idx: u32, segments: &[&[u8]]) -> Option<NamedItem> {
+        if segments.len() == 0 {
+            return Option::none();
+        }
+
+        if segments.len() == 1 {
+            return self.resolve(scope_idx, segments[0]);
+        }
+
+        // For multi-segment paths, resolve the first segment but only accept
+        // items that can have children (modules, structs, enums). This prevents
+        // local variables/parameters from shadowing module names.
+        let first = self.resolve_scoped(scope_idx, segments[0]);
+        if first.is_none() {
+            return Option::none();
+        }
+
+        // Walk through remaining segments
+        let item = first.unwrap();
+        let result = if item.kind.tag == NIK_MODULE {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NIK_STRUCT && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NIK_ENUM && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else {
+            Option::none()
+        };
+        result
+    }
+
+    // Resolve a name but only return items that can have :: children
+    // (modules, structs with scopes, enums with scopes). Skips locals/params.
+    fn resolve_scoped(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let found = self.resolve_scoped_raw(scope_idx, name);
+        if found.is_some() {
+            let item = found.unwrap();
+            // Follow use aliases
+            if item.kind.tag == NIK_USE_ALIAS {
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+            }
+            return found;
+        }
+        Option::none()
+    }
+
+    // Like resolve_raw but only matches scope-bearing items
+    fn resolve_scoped_raw(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let scope = self.get(scope_idx);
+
+        // Check current scope for scope-bearing items
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            let item = found.unwrap();
+            let tag = item.kind.tag;
+            if tag == NIK_MODULE || tag == NIK_STRUCT || tag == NIK_ENUM || tag == NIK_USE_ALIAS {
+                return found;
+            }
+            // Found something but it's not a scope-bearing item; continue looking
+        }
+
+        // Check star imports
+        for import_idx in scope.star_imports {
+            let imp_found = self.get(import_idx).items.get(&name);
+            if imp_found.is_some() {
+                let imp_item = imp_found.unwrap();
+                let imp_tag = imp_item.kind.tag;
+                if imp_tag == NIK_MODULE || imp_tag == NIK_STRUCT || imp_tag == NIK_ENUM || imp_tag == NIK_USE_ALIAS {
+                    return imp_found;
+                }
+            }
+        }
+
+        // Check parent scope
+        if scope.parent.is_some() {
+            return self.resolve_scoped_raw(scope.parent.unwrap(), name);
+        }
+
+        Option::none()
+    }
+
+    // Follow use aliases to their target
+    fn follow_use_alias(self: &ScopeArena, item: NamedItem) -> Option<NamedItem> {
+        if item.kind.tag == NIK_USE_ALIAS {
+            return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+        }
+        Option::some(item)
+    }
+
+    // Resolve a path within a specific module scope (no parent lookup)
+    fn resolve_in_module(self: &ScopeArena, scope_idx: u32, segments: &[&[u8]]) -> Option<NamedItem> {
+        if segments.len() == 0 {
+            return Option::none();
+        }
+
+        let scope = self.get(scope_idx);
+        let found = scope.items.get(&segments[0]);
+        if found.is_none() {
+            // Check star imports in module scope too
+            for import_idx in scope.star_imports {
+                let imp_found = self.get(import_idx).items.get(&segments[0]);
+                if imp_found.is_some() {
+                    if segments.len() == 1 {
+                        // Follow use aliases before returning
+                        let imp_item = imp_found.unwrap();
+                        if imp_item.kind.tag == NIK_USE_ALIAS {
+                            return self.resolve_path(imp_item.kind.scope_idx, imp_item.kind.path_segments);
+                        }
+                        return imp_found;
+                    }
+                    let imp_resolved = self.follow_use_alias(imp_found.unwrap());
+                    if imp_resolved.is_some() && imp_resolved.unwrap().kind.tag == NIK_MODULE {
+                        return self.resolve_in_module(imp_resolved.unwrap().kind.scope_idx, segments[1..]);
+                    } else {
+                        return Option::none();
+                    }
+                }
+            }
+            return Option::none();
+        }
+
+        if segments.len() == 1 {
+            // Follow use aliases before returning
+            let item = found.unwrap();
+            if item.kind.tag == NIK_USE_ALIAS {
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+            }
+            return found;
+        }
+
+        let resolved = self.follow_use_alias(found.unwrap());
+        if resolved.is_some() {
+            let ritem = resolved.unwrap();
+            if ritem.kind.tag == NIK_MODULE {
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else if ritem.kind.tag == NIK_STRUCT && ritem.kind.scope_idx != 0 {
+                // Look up methods in struct's associated scope
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else if ritem.kind.tag == NIK_ENUM && ritem.kind.scope_idx != 0 {
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else {
+                Option::none()
+            }
+        } else {
+            Option::none()
+        }
+    }
+
+    fn free(self: &mut ScopeArena) {
+        for scope in self.scopes.iter_mut() {
+            scope.items.free();
+        }
+        self.scopes.free();
+    }
+}

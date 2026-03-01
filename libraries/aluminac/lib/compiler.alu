@@ -1,0 +1,749 @@
+// Compiler pipeline for the self-hosted Alumina compiler
+//
+// Orchestrates the full compilation pipeline:
+// 1. Parse source files using tree-sitter
+// 2. Build scopes and resolve names
+// 3. Monomorphize generic code
+// 4. Generate LLVM IR and emit object/executable
+
+use aluminac::lib::arena::Arena;
+use aluminac::lib::ast::*;
+use aluminac::lib::scope::*;
+use aluminac::lib::diagnostics::DiagnosticContext;
+use tree_sitter::{Parser, Tree, TSLanguage};
+use std::collections::Vector;
+use std::option::Option;
+use std::string::StringBuf;
+use std::fs::{Path, PathBuf, FileType, read_directory};
+
+extern "C" fn tree_sitter_alumina() -> &TSLanguage;
+
+extern "C" fn exit(code: i32) -> !;
+
+enum OutputFormat {
+    Object,
+    Assembly,
+    LlvmIr,
+    Bitcode,
+    Executable,
+}
+
+struct CompilerOptions {
+    output_file: &[u8],
+    output_format: OutputFormat,
+    optimize: bool,
+    dump_ir: bool,
+    verify_ir: bool,
+    sysroot: &[u8],
+    cfg_flags: Vector<&[u8]>,
+    extra_link_args: &[u8],
+}
+
+impl CompilerOptions {
+    fn default() -> CompilerOptions {
+        CompilerOptions {
+            output_file: "a.out",
+            output_format: OutputFormat::Executable,
+            optimize: false,
+            dump_ir: false,
+            verify_ir: true,
+            sysroot: "",
+            cfg_flags: Vector::new(),
+            extra_link_args: "",
+        }
+    }
+}
+
+struct Compiler {
+    arena: Arena,
+    id_gen: IdGen,
+    diag: DiagnosticContext,
+    scopes: ScopeArena,
+    options: CompilerOptions,
+    source_files: Vector<SourceEntry>,
+    all_items: Vector<Item>,
+}
+
+struct SourceEntry {
+    path: &[u8],
+    contents: &[u8],
+    module_path: &[u8], // e.g. "aluminac::lib::ast" or "" for root
+}
+
+impl Compiler {
+    fn new(options: CompilerOptions) -> Compiler {
+        Compiler {
+            arena: Arena::new(),
+            id_gen: IdGen::new(),
+            diag: DiagnosticContext::new(),
+            scopes: ScopeArena::new(),
+            options: options,
+            source_files: Vector::new(),
+            all_items: Vector::new(),
+        }
+    }
+
+    fn add_source(self: &mut Compiler, path: &[u8], contents: &[u8], module_path: &[u8]) {
+        // Register with diagnostics
+        self.diag.add_file(path, contents, &self.arena);
+
+        self.source_files.push(SourceEntry {
+            path: path,
+            contents: contents,
+            module_path: module_path,
+        });
+    }
+
+    fn add_source_file(self: &mut Compiler, path: &[u8], module_path: &[u8]) -> bool {
+        // Need null-terminated path for libc
+        let path_nt = self.arena.alloc_slice::<u8>(path.len() + 1);
+        path.copy_to_nonoverlapping(&path_nt[0]);
+        path_nt[path.len()] = 0u8;
+
+        // Read file from disk
+        let fd = libc::open(&path_nt[0] as &libc::c_char, 0i32 /* O_RDONLY */);
+        if fd < 0i32 {
+            DiagnosticContext::_write_stderr("error: cannot open file\n");
+            return false;
+        }
+
+        // Get file size using lseek
+        let size = libc::lseek(fd, 0i64, 2i32) as usize; // SEEK_END = 2
+        libc::lseek(fd, 0i64, 0i32); // SEEK_SET = 0
+
+        if size == 0 {
+            libc::close(fd);
+            return true;
+        }
+
+        let buf = self.arena.alloc_slice::<u8>(size);
+        let read_bytes = libc::read(fd, &buf[0] as &mut libc::c_void, size);
+        libc::close(fd);
+
+        if read_bytes < 0isize {
+            DiagnosticContext::_write_stderr("error: cannot read file\n");
+            return false;
+        }
+
+        let contents = buf[0..(read_bytes as usize)];
+        self.add_source(path, contents, module_path);
+        true
+    }
+
+    /// Load all .alu files from the sysroot directory recursively.
+    /// Each file gets a module path derived from its relative path within sysroot.
+    /// e.g. sysroot/std/mem.alu -> "std::mem", sysroot/std/mod.alu -> "std"
+    fn load_sysroot(self: &mut Compiler) -> bool {
+        let sysroot = self.options.sysroot;
+        if sysroot.len() == 0 {
+            return true;
+        }
+
+        // Use a stack for iterative directory traversal
+        // Each entry is (directory_path, module_prefix)
+        // module_prefix is like "" for root, "std" for std/, "std::collections" etc.
+        let dir_stack: Vector<(PathBuf, StringBuf)> = Vector::new();
+        defer dir_stack.free();
+
+        let root_path = PathBuf::from_str(sysroot);
+        let root_prefix = StringBuf::new();
+        dir_stack.push((root_path, root_prefix));
+
+        while dir_stack.len() > 0 {
+            let entry_pair = dir_stack.pop().unwrap();
+            let dir_path = entry_pair.0;
+            let mod_prefix = entry_pair.1;
+
+            let dir_iter_result = read_directory(dir_path.as_path());
+            if dir_iter_result.is_err() {
+                DiagnosticContext::_write_stderr("error: cannot open sysroot directory\n");
+                dir_path.free();
+                mod_prefix.free();
+                return false;
+            }
+            let dir_iter = dir_iter_result.unwrap();
+
+            loop {
+                let entry_opt = dir_iter.next();
+                if entry_opt.is_none() {
+                    break;
+                }
+                let entry_result = entry_opt.unwrap();
+                if entry_result.is_err() {
+                    continue;
+                }
+                let entry = entry_result.unwrap();
+                let name = entry.name();
+
+                // Skip . and ..
+                // Use character-level comparison to avoid potential slice == issues
+                let skip = false;
+                if name.len() == 1 && name[0] == '.' as u8 {
+                    skip = true;
+                }
+                if name.len() == 2 && name[0] == '.' as u8 && name[1] == '.' as u8 {
+                    skip = true;
+                }
+                if skip {
+                    continue;
+                }
+
+                if entry.file_type() == FileType::Directory {
+                    // Build child path and module prefix
+                    let child_path = PathBuf::from_path(dir_path.as_path());
+                    child_path.push(Path::new(name));
+
+                    let child_prefix = StringBuf::new();
+                    if mod_prefix.len() > 0 {
+                        child_prefix.extend_from_slice(mod_prefix.as_slice());
+                        child_prefix.extend_from_slice("::");
+                    }
+                    child_prefix.extend_from_slice(name);
+
+                    dir_stack.push((child_path, child_prefix));
+                } else if name.len() > 4 && name[name.len() - 4..] == ".alu" {
+                    // Skip test.alu in the sysroot root
+                    if name == "test.alu" && mod_prefix.len() == 0 {
+                        continue;
+                    }
+
+                    // Build full file path
+                    let file_path = PathBuf::from_path(dir_path.as_path());
+                    file_path.push(Path::new(name));
+
+                    // Build module path: strip .alu suffix, handle "mod" specially
+                    let stem = name[0..name.len() - 4]; // strip ".alu"
+                    let module_path = StringBuf::new();
+
+                    if stem == "mod" {
+                        // mod.alu -> just the directory's module prefix
+                        if mod_prefix.len() > 0 {
+                            module_path.extend_from_slice(mod_prefix.as_slice());
+                        }
+                        // root mod.alu has empty module_path (maps to root scope)
+                    } else {
+                        if mod_prefix.len() > 0 {
+                            module_path.extend_from_slice(mod_prefix.as_slice());
+                            module_path.extend_from_slice("::");
+                        }
+                        module_path.extend_from_slice(stem);
+                    }
+
+                    // Read the file using std::fs
+                    let file_path_slice = file_path.inner.as_slice();
+                    let read_result = std::fs::File::read_to_string(file_path.as_path());
+                    if read_result.is_err() {
+                        DiagnosticContext::_write_stderr("error: cannot read sysroot file\n");
+                        file_path.free();
+                        module_path.free();
+                        continue;
+                    }
+                    let file_contents = read_result.unwrap();
+
+                    // Copy path and contents into arena for lifetime management
+                    let path_copy: &[u8] = if file_path_slice.len() > 0 {
+                        let p = self.arena.alloc_slice::<u8>(file_path_slice.len());
+                        file_path_slice.copy_to_nonoverlapping(&p[0]);
+                        p as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    let contents_copy: &[u8] = if file_contents.len() > 0 {
+                        let c = self.arena.alloc_slice::<u8>(file_contents.len());
+                        file_contents.as_slice().copy_to_nonoverlapping(&c[0]);
+                        c as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    let mod_path_copy: &[u8] = if module_path.len() > 0 {
+                        let m = self.arena.alloc_slice::<u8>(module_path.len());
+                        module_path.as_slice().copy_to_nonoverlapping(&m[0]);
+                        m as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    self.add_source(
+                        path_copy as &[u8],
+                        contents_copy as &[u8],
+                        mod_path_copy as &[u8],
+                    );
+
+                    file_path.free();
+                    file_contents.free();
+                    module_path.free();
+                }
+            }
+
+            dir_iter.close();
+            dir_path.free();
+            mod_prefix.free();
+        }
+
+        true
+    }
+
+    fn compile(self: &mut Compiler) -> bool {
+        if self.source_files.len() == 0 {
+            DiagnosticContext::_write_stderr("error: no source files\n");
+            return false;
+        }
+
+        // Create root scope
+        let root_scope = self.scopes.create_scope(ScopeKind::Root, Option::none());
+
+        // Register builtin types in root scope
+        self.register_builtins(root_scope);
+
+        // Parse all source files
+        let parser = Parser::new();
+        let _ = parser.set_language(tree_sitter_alumina());
+
+        // Build cfg flags slice from options
+        let cfg_flags = self.arena.alloc_slice::<&[u8]>(self.options.cfg_flags.len());
+        for i in 0usize..self.options.cfg_flags.len() {
+            cfg_flags[i] = self.options.cfg_flags[i];
+        }
+
+        // Two-phase parsing: first register all names across all files (Pass 1),
+        // then parse all function bodies (Pass 2). This ensures cross-module
+        // references resolve correctly regardless of file processing order.
+        let trees: Vector<Tree> = Vector::new();
+        let contexts: Vector<aluminac::lib::parser::ParseContext> = Vector::new();
+        defer trees.free();
+        defer contexts.free();
+
+        // Phase 0: Create all module scopes first so use imports can resolve across files
+        let file_scopes: Vector<u32> = Vector::new();
+        defer file_scopes.free();
+        for i in 0usize..self.source_files.len() {
+            let entry = &self.source_files[i];
+            let file_scope = if entry.module_path.len() == 0 || entry.module_path == "main" {
+                root_scope
+            } else {
+                self.resolve_or_create_module_scope(root_scope, entry.module_path)
+            };
+            file_scopes.push(file_scope);
+        }
+
+        // Phase 1: Parse all files, run Pass 1 to register names in scopes
+        for i in 0usize..self.source_files.len() {
+            let entry = &self.source_files[i];
+            let file_scope = file_scopes[i];
+
+            let tree = parser.parse_string(entry.contents);
+            let raw_node = tree_sitter::ts_tree_root_node(tree.inner);
+            let root = tree_sitter::Node { inner: raw_node };
+
+            let ctx = aluminac::lib::parser::parse_file_pass1(
+                root,
+                entry.contents,
+                i as u32,
+                &self.arena,
+                &self.scopes,
+                &self.id_gen,
+                &self.diag,
+                file_scope,
+                cfg_flags,
+            );
+
+            trees.push(tree);
+            contexts.push(ctx);
+        }
+
+        // Phase 1.5: Collect macro definitions from all files
+        for i in 0usize..trees.len() {
+            let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
+            let root = tree_sitter::Node { inner: raw };
+            aluminac::lib::parser::collect_macros(&contexts.as_slice_mut()[i], root);
+        }
+        // Share macros across all contexts
+        aluminac::lib::parser::share_macros(contexts.as_slice_mut());
+
+        // Phase 2: Parse all function bodies (all names are now registered)
+        for i in 0usize..trees.len() {
+            let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
+            let root = tree_sitter::Node { inner: raw };
+            let items = aluminac::lib::parser::parse_file_pass2(&contexts.as_slice_mut()[i], root);
+
+            for j in 0usize..items.len() {
+                self.all_items.push(items[j]);
+            }
+        }
+
+        // Cleanup
+        for i in 0usize..trees.len() {
+            trees[i].free();
+            contexts.as_slice_mut()[i].free();
+        }
+        parser.free();
+
+        if self.diag.has_errors {
+            self.diag.emit_all();
+            return false;
+        }
+
+        // Convert items to a slice for mono
+        let items_slice = self.arena.alloc_slice::<Item>(self.all_items.len());
+        for i in 0usize..self.all_items.len() {
+            items_slice[i] = self.all_items[i];
+        }
+        // Monomorphize
+        let unit = aluminac::lib::mono::monomorphize(
+            &self.arena,
+            &self.scopes,
+            &self.id_gen,
+            &self.diag,
+            items_slice,
+        );
+
+        if self.diag.has_errors {
+            self.diag.emit_all();
+            return false;
+        }
+
+
+        // Code generation
+        let ctx = aluminac::lib::codegen::generate(
+            &self.arena,
+            &self.diag,
+            &unit,
+            "alumina_module",
+        );
+        if self.diag.has_errors {
+            self.diag.emit_all();
+            ctx.free();
+            return false;
+        }
+
+        if self.options.dump_ir {
+            ctx.dump();
+        }
+
+        if self.options.verify_ir {
+            if !ctx.verify() {
+                DiagnosticContext::_write_stderr("error: LLVM IR verification failed\n");
+                if !self.options.dump_ir {
+                    ctx.dump();
+                }
+                ctx.free();
+                return false;
+            }
+        }
+
+        // Emit output
+        let success = switch self.options.output_format {
+            OutputFormat::Object => {
+                ctx.emit_to_object(self.options.output_file)
+            },
+            OutputFormat::Assembly => {
+                ctx.emit_to_assembly(self.options.output_file)
+            },
+            OutputFormat::LlvmIr => {
+                ctx.print_ir(self.options.output_file)
+            },
+            OutputFormat::Bitcode => {
+                ctx.write_bitcode(self.options.output_file)
+            },
+            OutputFormat::Executable => {
+                // Emit object file, then link
+                let obj_file = ".aluminac_temp.o";
+                if !ctx.emit_to_object(obj_file) {
+                    DiagnosticContext::_write_stderr("error: failed to emit object file\n");
+                    ctx.free();
+                    return false;
+                }
+                ctx.free();
+                return self.link(obj_file, self.options.output_file);
+            },
+            _ => false,
+        };
+
+        if !success {
+            DiagnosticContext::_write_stderr("error: failed to write output file\n");
+        }
+
+        ctx.free();
+        success
+    }
+
+    fn link(self: &mut Compiler, obj_file: &[u8], output: &[u8]) -> bool {
+        // Use cc to link
+        // Build command: cc -o <output> <obj_file> -lm [extra_link_args]
+        let extra = self.options.extra_link_args;
+        let cmd_len = 6usize + output.len() + 1usize + obj_file.len() + 4usize + 1usize + extra.len();
+        let cmd = self.arena.alloc_slice::<u8>(cmd_len + 1usize);
+        let pos: usize = 0;
+
+        let prefix = "cc -o ";
+        prefix.copy_to_nonoverlapping(&cmd[pos]);
+        pos = pos + prefix.len();
+
+        output.copy_to_nonoverlapping(&cmd[pos]);
+        pos = pos + output.len();
+
+        cmd[pos] = ' ' as u8;
+        pos = pos + 1;
+
+        obj_file.copy_to_nonoverlapping(&cmd[pos]);
+        pos = pos + obj_file.len();
+
+        let suffix = " -lm";
+        suffix.copy_to_nonoverlapping(&cmd[pos]);
+        pos = pos + suffix.len();
+
+        if extra.len() > 0usize {
+            cmd[pos] = ' ' as u8;
+            pos = pos + 1;
+            extra.copy_to_nonoverlapping(&cmd[pos]);
+            pos = pos + extra.len();
+        }
+
+        cmd[pos] = 0u8;
+
+        let result = libc::system(&cmd[0] as &libc::c_char);
+
+        // Clean up temp file
+        let obj_nt = self.arena.alloc_slice::<u8>(obj_file.len() + 1);
+        obj_file.copy_to_nonoverlapping(&obj_nt[0]);
+        obj_nt[obj_file.len()] = 0u8;
+        libc::unlink(&obj_nt[0] as &libc::c_char);
+
+        result == 0i32
+    }
+
+    /// Given a module path like "aluminac::lib::ast", resolve or create
+    /// the nested module scope hierarchy, returning the innermost scope.
+    fn resolve_or_create_module_scope(self: &mut Compiler, root_scope: u32, module_path: &[u8]) -> u32 {
+        let current = root_scope;
+
+        // Split module_path by "::"
+        let seg_start: usize = 0;
+        let pos: usize = 0;
+        while pos < module_path.len() {
+            if pos + 1 < module_path.len() && module_path[pos] == ':' as u8 && module_path[pos + 1] == ':' as u8 {
+                if pos > seg_start {
+                    let seg = module_path[seg_start..pos];
+                    current = self.ensure_module_scope(current, seg);
+                }
+                pos = pos + 2;
+                seg_start = pos;
+            } else {
+                pos = pos + 1;
+            }
+        }
+
+        // Last segment
+        if seg_start < module_path.len() {
+            let seg = module_path[seg_start..module_path.len()];
+            current = self.ensure_module_scope(current, seg);
+        }
+
+        current
+    }
+
+    /// Ensure a child module scope exists under parent, or create one.
+    fn ensure_module_scope(self: &mut Compiler, parent: u32, name: &[u8]) -> u32 {
+        // Try to resolve existing module
+        let existing = self.scopes.resolve(parent, name);
+        if existing.is_some() {
+            let item = existing.unwrap();
+            if item.kind.tag == NIK_MODULE {
+                return item.kind.scope_idx;
+            }
+        }
+
+        // Create new module scope
+        let child = self.scopes.create_scope(ScopeKind::Module, Option::some(parent));
+        self.scopes.add_item(parent, NamedItem {
+            name: self.intern_name(name),
+            kind: NamedItemKind::module(child),
+            span: Span::empty(),
+        });
+        child
+    }
+
+    fn format_num(self: &mut Compiler, n: usize) -> &[u8] {
+        if n == 0 { return "0"; }
+        let buf = self.arena.alloc_slice::<u8>(20);
+        let pos: usize = 19;
+        let val = n;
+        while val > 0 && pos > 0 {
+            buf[pos] = ('0' as u8) + (val % 10) as u8;
+            val = val / 10;
+            pos = pos - 1;
+        }
+        buf[pos + 1..20]
+    }
+
+    fn intern_name(self: &mut Compiler, s: &[u8]) -> &[u8] {
+        let buf = self.arena.alloc_slice::<u8>(s.len());
+        s.copy_to_nonoverlapping(&buf[0]);
+        buf
+    }
+
+    fn register_builtins(self: &mut Compiler, scope_idx: u32) {
+        // Register builtin types
+        let builtins: [(&[u8], BuiltinType); 16] = [
+            ("void", BuiltinType::Void),
+            ("bool", BuiltinType::Bool),
+            ("u8", BuiltinType::U8),
+            ("u16", BuiltinType::U16),
+            ("u32", BuiltinType::U32),
+            ("u64", BuiltinType::U64),
+            ("u128", BuiltinType::U128),
+            ("usize", BuiltinType::USize),
+            ("i8", BuiltinType::I8),
+            ("i16", BuiltinType::I16),
+            ("i32", BuiltinType::I32),
+            ("i64", BuiltinType::I64),
+            ("i128", BuiltinType::I128),
+            ("isize", BuiltinType::ISize),
+            ("f32", BuiltinType::F32),
+            ("f64", BuiltinType::F64),
+        ];
+
+        for i in 0usize..16 {
+            let (name, bt) = builtins[i];
+            self.scopes.add_item(scope_idx, NamedItem {
+                name: name,
+                kind: NamedItemKind::builtin_type(bt),
+                span: Span::empty(),
+            });
+        }
+    }
+
+    fn free(self: &mut Compiler) {
+        self.options.cfg_flags.free();
+        self.scopes.free();
+        self.diag.free();
+        self.source_files.free();
+        self.all_items.free();
+        self.arena.free();
+    }
+}
+
+// ============================================================
+// CLI entry point
+// ============================================================
+
+struct SourceArg {
+    module_path: &[u8],
+    file_path: &[u8],
+}
+
+fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
+    let options = CompilerOptions::default();
+    let files: Vector<SourceArg> = Vector::new();
+
+    let i: usize = 1; // skip program name
+    while i < args.len() {
+        let arg = args[i];
+
+        if arg == "-o" {
+            i = i + 1;
+            if i < args.len() {
+                options.output_file = args[i];
+            }
+        } else if arg == "-S" {
+            options.output_format = OutputFormat::Assembly;
+        } else if arg == "-c" {
+            options.output_format = OutputFormat::Object;
+        } else if arg == "--emit-llvm" {
+            options.output_format = OutputFormat::LlvmIr;
+        } else if arg == "--emit-bc" {
+            options.output_format = OutputFormat::Bitcode;
+        } else if arg == "-O" || arg == "-O2" || arg == "-O3" {
+            options.optimize = true;
+        } else if arg == "--dump-ir" {
+            options.dump_ir = true;
+        } else if arg == "--no-verify" {
+            options.verify_ir = false;
+        } else if arg == "--link-args" {
+            i = i + 1;
+            if i < args.len() {
+                options.extra_link_args = args[i];
+            }
+        } else if arg == "--sysroot" {
+            i = i + 1;
+            if i < args.len() {
+                options.sysroot = args[i];
+            }
+        } else if arg == "--cfg" {
+            i = i + 1;
+            if i < args.len() {
+                options.cfg_flags.push(args[i]);
+            }
+        } else if arg == "--help" || arg == "-h" {
+            print_usage();
+            exit(0i32);
+        } else if arg.len() > 0 && arg[0] != '-' as u8 {
+            // Check for module::path=file.alu format
+            let eq_pos: usize = 0;
+            let found_eq = false;
+            while eq_pos < arg.len() {
+                if arg[eq_pos] == '=' as u8 {
+                    found_eq = true;
+                    break;
+                }
+                eq_pos = eq_pos + 1;
+            }
+            if found_eq {
+                files.push(SourceArg {
+                    module_path: arg[0..eq_pos],
+                    file_path: arg[eq_pos + 1..arg.len()],
+                });
+            } else {
+                files.push(SourceArg {
+                    module_path: "",
+                    file_path: arg,
+                });
+            }
+        } else {
+            DiagnosticContext::_write_stderr("unknown option\n");
+        }
+
+        i = i + 1;
+    }
+
+    (options, files)
+}
+
+fn print_usage() {
+    DiagnosticContext::_write_stderr("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help\n");
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let (options, files) = parse_args(args);
+
+    if files.len() == 0 {
+        print_usage();
+        files.free();
+        return 1i32;
+    }
+
+    let compiler = Compiler::new(options);
+
+    // Load sysroot files first (they go into module scopes like "std::mem", etc.)
+    if !compiler.load_sysroot() {
+        files.free();
+        compiler.free();
+        return 1i32;
+    }
+
+    for i in 0usize..files.len() {
+        if !compiler.add_source_file(files[i].file_path, files[i].module_path) {
+            files.free();
+            compiler.free();
+            return 1i32;
+        }
+    }
+
+    let success = compiler.compile();
+    files.free();
+    compiler.free();
+
+    if success { 0i32 } else { 1i32 }
+}

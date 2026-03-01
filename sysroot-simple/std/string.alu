@@ -1,0 +1,109 @@
+struct StringBuf {
+    _data: &mut [u8],
+    _length: usize,
+}
+
+impl StringBuf {
+    fn new() -> StringBuf {
+        StringBuf {
+            _data: std::mem::slice_empty::<u8>(),
+            _length: 0usize,
+        }
+    }
+
+    fn from_slice(s: &[u8]) -> StringBuf {
+        let buf = StringBuf::with_capacity(s.len());
+        if s.len() > 0 {
+            std::mem::memcpy(&buf._data[0] as &mut void, &s[0] as &void, s.len());
+        }
+        buf._length = s.len();
+        buf
+    }
+
+    fn with_capacity(cap: usize) -> StringBuf {
+        if cap == 0 {
+            return StringBuf::new();
+        }
+        let data = std::mem::slice_alloc::<u8>(cap);
+        StringBuf {
+            _data: data,
+            _length: 0usize,
+        }
+    }
+
+    fn len(self: &StringBuf) -> usize {
+        self._length
+    }
+
+    fn capacity(self: &StringBuf) -> usize {
+        self._data.len()
+    }
+
+    fn as_slice(self: &StringBuf) -> &mut [u8] {
+        self._data[0..self._length]
+    }
+
+    fn reserve(self: &mut StringBuf, additional: usize) {
+        let needed = self._length + additional;
+        if needed > self._data.len() {
+            self.grow(needed);
+        }
+    }
+
+    fn push(self: &mut StringBuf, b: u8) {
+        if self._length >= self._data.len() {
+            self.grow(self._length + 1);
+        }
+        self._data[self._length] = b;
+        self._length = self._length + 1;
+    }
+
+    fn extend_from_slice(self: &mut StringBuf, s: &[u8]) {
+        if s.len() == 0 {
+            return;
+        }
+        let needed = self._length + s.len();
+        if needed > self._data.len() {
+            self.grow(needed);
+        }
+        std::mem::memcpy(&self._data[self._length] as &mut void, &s[0] as &void, s.len());
+        self._length = self._length + s.len();
+    }
+
+    fn truncate(self: &mut StringBuf, len: usize) {
+        if len < self._length {
+            self._length = len;
+        }
+    }
+
+    fn clear(self: &mut StringBuf) {
+        self._length = 0;
+    }
+
+    fn grow(self: &mut StringBuf, min_cap: usize) {
+        let old_cap = self._data.len();
+        let new_cap = old_cap * 2;
+        if new_cap < min_cap {
+            new_cap = min_cap;
+        }
+        if new_cap < 8 {
+            new_cap = 8;
+        }
+        let new_data = std::mem::slice_alloc::<u8>(new_cap);
+        if self._length > 0 {
+            std::mem::memcpy(&new_data[0] as &mut void, &self._data[0] as &void, self._length);
+        }
+        if old_cap > 0 {
+            std::mem::slice_free::<u8>(self._data);
+        }
+        self._data = new_data;
+    }
+
+    fn free(self: &mut StringBuf) {
+        if self._data.len() > 0 {
+            std::mem::slice_free::<u8>(self._data);
+        }
+        self._data = std::mem::slice_empty::<u8>();
+        self._length = 0;
+    }
+}

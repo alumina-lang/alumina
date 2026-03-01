@@ -1,0 +1,270 @@
+// Open-addressing hash map with linear probing
+// Hashes raw bytes of keys using FNV-1a
+// Correctness relies on == for key comparison; hash is for bucket selection only
+
+struct HashMap<K, V> {
+    _keys: &mut [K],
+    _values: &mut [V],
+    _states: &mut [u8],  // 0=vacant, 1=occupied, 2=tombstone
+    _length: usize,
+    _capacity: usize,
+}
+
+impl HashMap<K, V> {
+    fn new() -> HashMap<K, V> {
+        HashMap::<K, V> {
+            _keys: std::mem::slice_empty::<K>(),
+            _values: std::mem::slice_empty::<V>(),
+            _states: std::mem::slice_empty::<u8>(),
+            _length: 0usize,
+            _capacity: 0usize,
+        }
+    }
+
+    fn len(self: &HashMap<K, V>) -> usize {
+        self._length
+    }
+
+    fn capacity(self: &HashMap<K, V>) -> usize {
+        self._capacity
+    }
+
+    fn is_empty(self: &HashMap<K, V>) -> bool {
+        self._length == 0usize
+    }
+
+    fn _keys_equal(a: &K, b: &K) -> bool {
+        when *a is &[u8] {
+            // Slice key (&[u8]): compare pointed-to content bytes
+            let raw_a = a as &K as &usize;
+            let ptr_a = *(&raw_a[0]) as &u8;
+            let len_a = *(&raw_a[1]);
+            let raw_b = b as &K as &usize;
+            let ptr_b = *(&raw_b[0]) as &u8;
+            let len_b = *(&raw_b[1]);
+            if len_a != len_b {
+                return false;
+            }
+            let i = 0usize;
+            while i < len_a {
+                if *(&ptr_a[i]) != *(&ptr_b[i]) {
+                    return false;
+                }
+                i = i + 1usize;
+            }
+            return true;
+        } else {
+            return *a == *b;
+        }
+    }
+
+    fn _hash_key(key: &K) -> usize {
+        let h = 14695981039346656037usize; // FNV offset basis
+
+        when *key is &[u8] {
+            // Slice key (&[u8]): hash the pointed-to content bytes
+            // Fat pointer layout is {ptr: &u8, len: usize}
+            let raw = key as &K as &usize;
+            let ptr = *(&raw[0]) as &u8;
+            let len = *(&raw[1]);
+            let i = 0usize;
+            while i < len {
+                let b = *(&ptr[i]) as usize;
+                h = h ^ b;
+                h = h * 1099511628211usize;
+                i = i + 1usize;
+            }
+        } else {
+            // Scalar type (usize, u64, etc.): hash raw bytes of value
+            let bytes = key as &K as &u8;
+            let key_size = std::mem::size_of::<K>();
+            let i = 0usize;
+            while i < key_size {
+                let b = *(&bytes[i]) as usize;
+                h = h ^ b;
+                h = h * 1099511628211usize;
+                i = i + 1usize;
+            }
+        }
+
+        h
+    }
+
+    fn _find_slot(self: &HashMap<K, V>, key: &K) -> usize {
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                return slot;
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                return slot;
+            }
+            // state==2 (tombstone) or occupied with different key: continue probing
+            i = i + 1usize;
+        }
+        // Should never reach here if load factor < 1
+        idx
+    }
+
+    fn _find_slot_for_insert(self: &HashMap<K, V>, key: &K) -> usize {
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let first_tombstone = self._capacity; // sentinel: not found
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                // Empty slot: key doesn't exist. Use tombstone if we found one.
+                if first_tombstone < self._capacity {
+                    return first_tombstone;
+                }
+                return slot;
+            }
+            if self._states[slot] == 2u8 && first_tombstone == self._capacity {
+                first_tombstone = slot;
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                return slot; // Key exists, return its slot for overwrite
+            }
+            i = i + 1usize;
+        }
+        if first_tombstone < self._capacity {
+            return first_tombstone;
+        }
+        idx
+    }
+
+    fn _grow(self: &mut HashMap<K, V>) {
+        let new_cap = if self._capacity == 0usize { 16usize } else { self._capacity * 2usize };
+        let old_keys = self._keys;
+        let old_values = self._values;
+        let old_states = self._states;
+        let old_cap = self._capacity;
+
+        self._keys = std::mem::slice_alloc::<K>(new_cap);
+        self._values = std::mem::slice_alloc::<V>(new_cap);
+        self._states = std::mem::slice_alloc::<u8>(new_cap);
+        self._capacity = new_cap;
+        self._length = 0usize;
+
+        // Zero new states
+        let i = 0usize;
+        while i < new_cap {
+            self._states[i] = 0u8;
+            i = i + 1usize;
+        }
+
+        // Re-insert existing entries
+        let j = 0usize;
+        while j < old_cap {
+            if old_states[j] == 1u8 {
+                self.insert(old_keys[j], old_values[j]);
+            }
+            j = j + 1usize;
+        }
+
+        if old_cap > 0usize {
+            std::mem::slice_free::<K>(old_keys);
+            std::mem::slice_free::<V>(old_values);
+            std::mem::slice_free::<u8>(old_states);
+        }
+    }
+
+    fn insert(self: &mut HashMap<K, V>, key: K, value: V) {
+        // Grow if load factor > 0.75
+        if self._capacity == 0usize || (self._length + 1usize) * 4usize > self._capacity * 3usize {
+            self._grow();
+        }
+
+        let slot = self._find_slot_for_insert(&key);
+        if self._states[slot] != 1u8 {
+            self._length = self._length + 1usize;
+        }
+        self._keys[slot] = key;
+        self._values[slot] = value;
+        self._states[slot] = 1u8;
+    }
+
+    fn get(self: &HashMap<K, V>, key: &K) -> std::option::Option<V> {
+        if self._capacity == 0usize {
+            return std::option::Option::none::<V>();
+        }
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                return std::option::Option::none::<V>();
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                return std::option::Option::some::<V>(self._values[slot]);
+            }
+            i = i + 1usize;
+        }
+        std::option::Option::none::<V>()
+    }
+
+    fn contains_key(self: &HashMap<K, V>, key: &K) -> bool {
+        if self._capacity == 0usize {
+            return false;
+        }
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                return false;
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                return true;
+            }
+            i = i + 1usize;
+        }
+        false
+    }
+
+    fn iter(self: &HashMap<K, V>) -> HashMapIterator<K, V> {
+        HashMapIterator::<K, V> {
+            _map: self,
+            _index: 0usize,
+        }
+    }
+
+    fn free(self: &mut HashMap<K, V>) {
+        if self._capacity > 0usize {
+            std::mem::slice_free::<K>(self._keys);
+            std::mem::slice_free::<V>(self._values);
+            std::mem::slice_free::<u8>(self._states);
+        }
+        self._keys = std::mem::slice_empty::<K>();
+        self._values = std::mem::slice_empty::<V>();
+        self._states = std::mem::slice_empty::<u8>();
+        self._length = 0usize;
+        self._capacity = 0usize;
+    }
+}
+
+struct HashMapIterator<K, V> {
+    _map: &HashMap<K, V>,
+    _index: usize,
+}
+
+impl HashMapIterator<K, V> {
+    fn next(self: &mut HashMapIterator<K, V>) -> std::option::Option<(K, V)> {
+        while self._index < self._map._capacity {
+            if self._map._states[self._index] == 1u8 {
+                let k = self._map._keys[self._index];
+                let v = self._map._values[self._index];
+                self._index = self._index + 1usize;
+                return std::option::Option::some::<(K, V)>((k, v));
+            }
+            self._index = self._index + 1usize;
+        }
+        std::option::Option::none::<(K, V)>()
+    }
+}
