@@ -21,6 +21,11 @@ struct ParseError {
     span: Span,
 }
 
+struct MacroEntry {
+    params: &[&[u8]],
+    body_node: Node,
+}
+
 struct ParseContext {
     arena: &mut Arena,
     scopes: &mut ScopeArena,
@@ -39,6 +44,12 @@ struct ParseContext {
     pending_statics: Vector<PendingStatic>,
     pending_impls: Vector<PendingImpl>,
     pending_macros: Vector<PendingMacro>,
+
+    // Macro definitions: name -> MacroEntry
+    macro_defs: HashMap<&[u8], MacroEntry>,
+
+    // Current macro expansion arguments (for $param substitution)
+    macro_args: HashMap<&[u8], &Expr>,
 
     // Items ready for compilation
     items: Vector<Item>,
@@ -142,6 +153,8 @@ impl ParseContext {
             pending_statics: Vector::new(),
             pending_impls: Vector::new(),
             pending_macros: Vector::new(),
+            macro_defs: HashMap::new(),
+            macro_args: HashMap::new(),
             items: Vector::new(),
         }
     }
@@ -198,7 +211,19 @@ impl ParseContext {
         self.pending_statics.free();
         self.pending_impls.free();
         self.pending_macros.free();
+        self.macro_defs.free();
+        self.macro_args.free();
         self.items.free();
+    }
+    fn collect_macro_entries(self: &mut ParseContext, names: &mut Vector<&[u8]>, entries: &mut Vector<MacroEntry>) {
+        let iter = self.macro_defs.iter();
+        loop {
+            let item = iter.next();
+            if item.is_none() { break; }
+            let pair = item.unwrap();
+            names.push(pair.0);
+            entries.push(pair.1);
+        }
     }
 }
 
@@ -681,8 +706,15 @@ impl Pass1 {
                 // use a::*; - star import
                 let path_node = child_by!(node, FieldKind::Path);
                 if !path_node.is_null() {
-                    let _segments = self.collect_path_segments(path_node.unwrap());
-                    // TODO: resolve the module scope and add star import
+                    let segments = self.collect_path_segments(path_node.unwrap());
+                    // Resolve the module path to get its scope
+                    let resolved = self.ctx.scopes.resolve_path(self.current_scope, segments);
+                    if resolved.is_some() {
+                        let item = resolved.unwrap();
+                        if item.kind.tag == scope::NIK_MODULE && item.kind.scope_idx != 0 {
+                            self.ctx.scopes.add_star_import(self.current_scope, item.kind.scope_idx, self.ctx.arena);
+                        }
+                    }
                 }
             },
             NodeKind::UseAsClause => {
@@ -945,11 +977,58 @@ impl Pass2 {
         // For each pending function, re-find the node and parse the body
         // We store byte offsets and walk the tree to find matching nodes
 
+        // Note: macros are collected separately via collect_macros()
         self.process_functions(root);
         self.process_structs(root);
         self.process_enums(root);
         self.process_type_aliases(root);
         self.process_statics(root);
+    }
+
+    fn process_macros(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_macros.len() {
+            let pending = &self.ctx.pending_macros[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+
+            // Parse parameter names
+            let params_node = child_by!(node, FieldKind::Parameters);
+            let param_names: Vector<&[u8]> = Vector::new();
+            defer param_names.free();
+
+            if !params_node.is_null() {
+                let cursor = params_node.unwrap().walk();
+                defer cursor.free();
+                for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
+                    let name_node = child_by!(param, FieldKind::Name);
+                    if !name_node.is_null() {
+                        let name_text = self.ctx.node_text(name_node.unwrap());
+                        // Strip the $ prefix
+                        let name = if name_text.len() > 0 && name_text[0] == 36u8 {
+                            self.ctx.intern_str(name_text[1..])
+                        } else {
+                            self.ctx.intern_str(name_text)
+                        };
+                        param_names.push(name);
+                    }
+                }
+            }
+
+            // Get body node position
+            let body_node = child_by!(node, FieldKind::Body);
+            if !body_node.is_null() {
+                let body = body_node.unwrap();
+                let params_slice = self.ctx.arena.alloc_slice::<&[u8]>(param_names.len());
+                for j in 0usize..param_names.len() {
+                    params_slice[j] = param_names[j];
+                }
+
+                let entry = MacroEntry {
+                    params: params_slice,
+                    body_node: body,
+                };
+                self.ctx.macro_defs.insert(pending.name, entry);
+            }
+        }
     }
 
     fn find_node_at(self: &Pass2, root: Node, start: u32, end: u32) -> Node {
@@ -1381,8 +1460,51 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::MacroIdentifier => {
+                // $T in macro body - look up in macro_args as a type
+                let text = self.ctx.node_text(node);
+                let name = if text.len() > 0 && text[0] == 36u8 {
+                    self.ctx.intern_str(text[1..])
+                } else {
+                    self.ctx.intern_str(text)
+                };
+                let arg = self.ctx.macro_args.get(&name);
+                if arg.is_some() {
+                    // The macro arg is an Expr, but we need a Ty
+                    // If it's a named ref, extract the type
+                    let expr = arg.unwrap();
+                    if expr.ty as &void as usize != 0usize {
+                        return expr.ty;
+                    }
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::Identifier => {
+                // Plain identifier used as a type (e.g. in macro expansion)
+                let name = self.ctx.node_text(node);
+                let builtin = parse_builtin_type(name);
+                if builtin.is_some() {
+                    return self.ctx.alloc_ty(Ty::builtin_ty(builtin.unwrap()));
+                }
+                let resolved = self.ctx.scopes.resolve(scope_idx, name);
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if item.kind.tag == scope::NIK_STRUCT {
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id));
+                    } else if item.kind.tag == scope::NIK_ENUM {
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id));
+                    } else if item.kind.tag == scope::NIK_GENERIC_PARAM {
+                        return self.ctx.alloc_ty(Ty::placeholder(item.kind.id));
+                    } else if item.kind.tag == scope::NIK_BUILTIN_TYPE {
+                        return self.ctx.alloc_ty(Ty::builtin_ty(item.kind.builtin));
+                    } else if item.kind.tag == scope::NIK_TYPE_ALIAS {
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id));
+                    }
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             _ => {
-                // Fall back: try treating as identifier
+                // Fall back: unhandled type node kind
                 self.ctx.alloc_ty(Ty::unresolved())
             },
         }
@@ -1445,6 +1567,27 @@ impl Pass2 {
                 let name = child_by!(node, FieldKind::Name);
                 if !name.is_null() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::GenericTypeWithTurbofish => {
+                // Extract just the type name, ignoring type arguments
+                let inner_type = child_by!(node, FieldKind::Type);
+                if !inner_type.is_null() {
+                    self.collect_type_path_inner(inner_type.unwrap(), segments);
+                }
+            },
+            NodeKind::GenericType => {
+                // GenericType can be aliased from GenericTypeWithTurbofish
+                let inner_type = child_by!(node, FieldKind::Type);
+                if !inner_type.is_null() {
+                    self.collect_type_path_inner(inner_type.unwrap(), segments);
+                }
+            },
+            NodeKind::Turbofish => {
+                // Extract just the function name, ignoring type arguments
+                let inner_fn = child_by!(node, FieldKind::Function);
+                if !inner_fn.is_null() {
+                    self.collect_type_path_inner(inner_fn.unwrap(), segments);
                 }
             },
             _ => {
@@ -1752,6 +1895,20 @@ impl ExprParser {
             },
             NodeKind::MacroInvocation => self.parse_macro_invocation(node, span),
             NodeKind::UniversalMacroInvocation => self.parse_universal_macro(node, span),
+            NodeKind::MacroIdentifier => {
+                // $param reference during macro expansion
+                let text = self.ctx.node_text(node);
+                let name = if text.len() > 0 && text[0] == 36u8 {
+                    self.ctx.intern_str(text[1..])
+                } else {
+                    self.ctx.intern_str(text)
+                };
+                let arg = self.ctx.macro_args.get(&name);
+                if arg.is_some() {
+                    return arg.unwrap();
+                }
+                self.alloc_void(span)
+            },
             NodeKind::StaticForExpression => self.parse_static_for(node, span),
             NodeKind::EtCeteraExpression => self.parse_et_cetera(node, span),
             NodeKind::EmptyStatement => self.alloc_void(span),
@@ -2054,6 +2211,42 @@ impl ExprParser {
             let turbofish_result = self.parse_turbofish_call(node, func_node, span);
             if turbofish_result.tag != EXPR_VOID {
                 return self.ctx.alloc_expr(turbofish_result);
+            }
+        }
+
+        // Check for ScopedIdentifier with turbofish in path, e.g. Wrapper::<i32>::new(args)
+        if func_kind == NodeKind::ScopedIdentifier {
+            let path_child = child_by!(func_node, FieldKind::Path);
+            if !path_child.is_null() {
+                let path_kind = NODE_KINDS[path_child.unwrap().symbol() as usize];
+                if path_kind == NodeKind::GenericTypeWithTurbofish || path_kind == NodeKind::Turbofish || path_kind == NodeKind::GenericType {
+                    // Extract type arguments from the turbofish in the path
+                    let turbo_node = path_child.unwrap();
+                    let type_args_node = child_by!(turbo_node, FieldKind::TypeArguments);
+                    let pass2 = Pass2 { ctx: self.ctx };
+                    let type_args = if !type_args_node.is_null() {
+                        pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
+                    } else {
+                        let empty: &[&Ty] = &[];
+                        empty
+                    };
+
+                    // Resolve the scoped identifier (which finds the method)
+                    let callee = self.parse_scoped_identifier(func_node, span);
+
+                    let call_args = if !args_node.is_null() {
+                        self.parse_arg_list(args_node.unwrap())
+                    } else {
+                        let empty: &[&Expr] = &[];
+                        empty
+                    };
+
+                    let e = self.make_expr(EXPR_CALL, span);
+                    e.lhs = callee;
+                    e.args = call_args;
+                    e.type_args = type_args;
+                    return self.ctx.alloc_expr(e);
+                }
             }
         }
 
@@ -2755,6 +2948,33 @@ impl ExprParser {
             empty
         };
 
+        // Try to expand the macro
+        let macro_entry = self.ctx.macro_defs.get(&name);
+        if macro_entry.is_some() {
+            let entry = macro_entry.unwrap();
+
+            // Save previous macro_args
+            let prev_args = self.ctx.macro_args;
+            self.ctx.macro_args = HashMap::new();
+
+            // Set up argument substitution
+            for i in 0usize..entry.params.len() {
+                if i < args.len() {
+                    self.ctx.macro_args.insert(entry.params[i], args[i]);
+                }
+            }
+
+            // Parse the macro body as an expression
+            let result = self.parse_expr(entry.body_node);
+
+            // Restore previous macro_args
+            self.ctx.macro_args.free();
+            self.ctx.macro_args = prev_args;
+
+            return result;
+        }
+
+        // Fallback: unresolved macro invocation
         let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
         e.str_val = name;
         e.args = args;
@@ -2785,14 +3005,36 @@ impl ExprParser {
             }
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Expr>(all_args.len());
+        let args_slice = self.ctx.arena.alloc_slice::<&Expr>(all_args.len());
         for i in 0usize..all_args.len() {
-            result[i] = all_args[i];
+            args_slice[i] = all_args[i];
+        }
+
+        // Try to expand the macro
+        let macro_entry = self.ctx.macro_defs.get(&name);
+        if macro_entry.is_some() {
+            let entry = macro_entry.unwrap();
+
+            let prev_args = self.ctx.macro_args;
+            self.ctx.macro_args = HashMap::new();
+
+            for i in 0usize..entry.params.len() {
+                if i < args_slice.len() {
+                    self.ctx.macro_args.insert(entry.params[i], args_slice[i]);
+                }
+            }
+
+            let result = self.parse_expr(entry.body_node);
+
+            self.ctx.macro_args.free();
+            self.ctx.macro_args = prev_args;
+
+            return result;
         }
 
         let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
         e.str_val = name;
-        e.args = result;
+        e.args = args_slice;
         self.ctx.alloc_expr(e)
     }
 
@@ -3032,6 +3274,74 @@ fn parse_file(
 
     // Copy items to arena
     let items = arena.alloc_slice::<Item>(ctx.items.len());
+    for i in 0usize..ctx.items.len() {
+        items[i] = ctx.items[i];
+    }
+    items
+}
+
+// Two-phase parsing: run all Pass1s across all files first to register all names
+// in scopes, then run all Pass2s to parse bodies (which may reference any name).
+// This fixes cross-module references where file B references a name defined in file A
+// but file A hasn't been parsed yet.
+
+fn parse_file_pass1(
+    root: Node,
+    source: &[u8],
+    file_id: u32,
+    arena: &mut Arena,
+    scopes: &mut ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    root_scope: u32,
+    cfg_flags: &[&[u8]],
+) -> ParseContext {
+    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg_flags);
+
+    // Pass 1: build scopes and register all names
+    let pass1 = Pass1::new(&ctx, root_scope);
+    pass1.run(root);
+
+    ctx
+}
+
+fn collect_macros(ctx: &mut ParseContext, root: Node) {
+    let pass2 = Pass2::new(ctx);
+    pass2.process_macros(root);
+}
+
+fn share_macros(contexts: &mut [ParseContext]) {
+    // Collect all macro names+entries from all contexts
+    let all_names: Vector<&[u8]> = Vector::new();
+    let all_entries: Vector<MacroEntry> = Vector::new();
+    defer all_names.free();
+    defer all_entries.free();
+
+    for i in 0usize..contexts.len() {
+        contexts[i].collect_macro_entries(&all_names, &all_entries);
+    }
+    // Note: &all_names and &all_entries auto-coerce to &mut since they're local vars
+
+    // Inject all macros into every context
+    for i in 0usize..contexts.len() {
+        for j in 0usize..all_names.len() {
+            if contexts[i].macro_defs.get(&all_names[j]).is_none() {
+                contexts[i].macro_defs.insert(all_names[j], all_entries[j]);
+            }
+        }
+    }
+}
+
+fn parse_file_pass2(
+    ctx: &mut ParseContext,
+    root: Node,
+) -> &[Item] {
+    // Pass 2: construct AST (all names are now registered across all files)
+    let pass2 = Pass2::new(ctx);
+    pass2.run(root);
+
+    // Copy items to arena
+    let items = ctx.arena.alloc_slice::<Item>(ctx.items.len());
     for i in 0usize..ctx.items.len() {
         items[i] = ctx.items[i];
     }

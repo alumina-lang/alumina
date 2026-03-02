@@ -1,0 +1,179 @@
+// Simplified filesystem types for self-hosted compiler bootstrap
+// Uses libc directly for all operations
+
+extern "C" fn opendir(name: &u8) -> &mut void;
+extern "C" fn readdir(dirp: &mut void) -> &dirent;
+extern "C" fn closedir(dirp: &mut void) -> i32;
+extern "C" fn stat(path: &u8, buf: &mut void) -> i32;
+
+// dirent struct - only need d_name and d_type
+// On Linux x86_64: d_ino(8) + d_off(8) + d_reclen(2) + d_type(1) + d_name(256)
+struct dirent {
+    d_ino: u64,
+    d_off: i64,
+    d_reclen: u16,
+    d_type: u8,
+    d_name: [u8; 256],
+}
+
+enum FileType {
+    Unknown,
+    File,
+    Directory,
+    Symlink,
+}
+
+struct Path {
+    _data: &[u8],
+}
+
+impl Path {
+    fn new(s: &[u8]) -> Path {
+        Path { _data: s }
+    }
+
+    fn as_slice(self: &Path) -> &[u8] {
+        self._data
+    }
+}
+
+struct PathBuf {
+    inner: std::string::StringBuf,
+}
+
+impl PathBuf {
+    fn from_str(s: &[u8]) -> PathBuf {
+        PathBuf { inner: std::string::StringBuf::from_slice(s) }
+    }
+
+    fn from_path(p: Path) -> PathBuf {
+        PathBuf { inner: std::string::StringBuf::from_slice(p._data) }
+    }
+
+    fn as_path(self: &PathBuf) -> Path {
+        Path { _data: self.inner.as_slice() }
+    }
+
+    fn push(self: &mut PathBuf, p: Path) {
+        if self.inner.len() > 0usize {
+            self.inner.push('/' as u8);
+        }
+        self.inner.extend_from_slice(p._data);
+    }
+
+    fn free(self: &mut PathBuf) {
+        self.inner.free();
+    }
+}
+
+struct DirEntry {
+    _name: &[u8],
+    _file_type: FileType,
+}
+
+impl DirEntry {
+    fn name(self: &DirEntry) -> &[u8] {
+        self._name
+    }
+
+    fn file_type(self: &DirEntry) -> FileType {
+        self._file_type
+    }
+}
+
+struct DirIter {
+    _dir: &mut void,
+    _arena: &mut void, // not used - names point into dirent
+}
+
+impl DirIter {
+    fn next(self: &mut DirIter) -> std::option::Option<std::result::Result<DirEntry, i32>> {
+        if self._dir as usize == 0usize {
+            return std::option::Option::none();
+        }
+        let ent = readdir(self._dir);
+        if ent as &void as usize == 0usize {
+            return std::option::Option::none();
+        }
+        // Get name length
+        let name_len: usize = 0;
+        while name_len < 256usize && ent.d_name[name_len] != 0u8 {
+            name_len = name_len + 1usize;
+        }
+        let name = std::mem::slice_from_raw_const::<u8>(&ent.d_name[0] as &u8, name_len);
+
+        let ft = if ent.d_type == 4u8 { // DT_DIR
+            FileType::Directory
+        } else if ent.d_type == 8u8 { // DT_REG
+            FileType::File
+        } else {
+            FileType::Unknown
+        };
+
+        std::option::Option::some(std::result::Result::ok(DirEntry {
+            _name: name,
+            _file_type: ft,
+        }))
+    }
+
+    fn close(self: &mut DirIter) {
+        if self._dir as usize != 0usize {
+            closedir(self._dir);
+            self._dir = 0usize as &mut void;
+        }
+    }
+}
+
+fn read_directory(path: Path) -> std::result::Result<DirIter, i32> {
+    // Need null-terminated path
+    let s = path._data;
+    let buf = std::mem::slice_alloc::<u8>(s.len() + 1usize);
+    s.copy_to_nonoverlapping(&buf[0]);
+    buf[s.len()] = 0u8;
+    let dir = opendir(&buf[0]);
+    std::mem::slice_free::<u8>(buf);
+
+    if dir as usize == 0usize {
+        return std::result::Result::err(-1i32);
+    }
+    std::result::Result::ok(DirIter {
+        _dir: dir,
+        _arena: 0usize as &mut void,
+    })
+}
+
+struct File {
+    _dummy: i32,
+}
+
+impl File {
+    fn read_to_string(path: Path) -> std::result::Result<std::string::StringBuf, i32> {
+        let s = path._data;
+        let buf = std::mem::slice_alloc::<u8>(s.len() + 1usize);
+        s.copy_to_nonoverlapping(&buf[0]);
+        buf[s.len()] = 0u8;
+
+        let fd = libc::open(&buf[0] as &libc::c_char, 0i32);
+        std::mem::slice_free::<u8>(buf);
+
+        if fd < 0i32 {
+            return std::result::Result::err(-1i32);
+        }
+
+        let size = libc::lseek(fd, 0i64, 2i32) as usize;
+        libc::lseek(fd, 0i64, 0i32);
+
+        let result = std::string::StringBuf::new();
+        if size > 0usize {
+            result.reserve(size);
+            let read_buf = std::mem::slice_alloc::<u8>(size);
+            let n = libc::read(fd, &read_buf[0] as &mut libc::c_void, size);
+            if n > 0isize {
+                result.extend_from_slice(std::mem::slice_from_raw_const::<u8>(&read_buf[0] as &u8, n as usize));
+            }
+            std::mem::slice_free::<u8>(read_buf);
+        }
+        libc::close(fd);
+        std::result::Result::ok(result)
+    }
+}

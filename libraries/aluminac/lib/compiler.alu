@@ -10,7 +10,7 @@ use aluminac::lib::arena::Arena;
 use aluminac::lib::ast::*;
 use aluminac::lib::scope::*;
 use aluminac::lib::diagnostics::DiagnosticContext;
-use tree_sitter::{Parser, TSLanguage};
+use tree_sitter::{Parser, Tree, TSLanguage};
 use std::collections::Vector;
 use std::option::Option;
 use std::string::StringBuf;
@@ -36,6 +36,7 @@ struct CompilerOptions {
     verify_ir: bool,
     sysroot: &[u8],
     cfg_flags: Vector<&[u8]>,
+    extra_link_args: &[u8],
 }
 
 impl CompilerOptions {
@@ -48,6 +49,7 @@ impl CompilerOptions {
             verify_ir: true,
             sysroot: "",
             cfg_flags: Vector::new(),
+            extra_link_args: "",
         }
     }
 }
@@ -286,6 +288,7 @@ impl Compiler {
 
         // Register builtin types in root scope
         self.register_builtins(root_scope);
+        std::io::eprintln!("DBG: parse");
 
         // Parse all source files
         let parser = Parser::new();
@@ -297,22 +300,28 @@ impl Compiler {
             cfg_flags[i] = self.options.cfg_flags[i];
         }
 
+        // Two-phase parsing: first register all names across all files (Pass 1),
+        // then parse all function bodies (Pass 2). This ensures cross-module
+        // references resolve correctly regardless of file processing order.
+        let trees: Vector<Tree> = Vector::new();
+        let contexts: Vector<aluminac::lib::parser::ParseContext> = Vector::new();
+        defer trees.free();
+        defer contexts.free();
+
+        // Phase 1: Parse all files, run Pass 1 to register names in scopes
         for i in 0usize..self.source_files.len() {
             let entry = &self.source_files[i];
 
-            // Resolve or create the module scope for this file
-            // "main" is a special module path meaning the entry point (root scope)
             let file_scope = if entry.module_path.len() == 0 || entry.module_path == "main" {
                 root_scope
             } else {
                 self.resolve_or_create_module_scope(root_scope, entry.module_path)
             };
 
-            // Parse with tree-sitter
             let tree = parser.parse(entry.contents);
             let root = tree.root_node().unwrap();
 
-            let items = aluminac::lib::parser::parse_file(
+            let ctx = aluminac::lib::parser::parse_file_pass1(
                 root,
                 entry.contents,
                 i as u32,
@@ -324,11 +333,32 @@ impl Compiler {
                 cfg_flags,
             );
 
-            tree.free();
+            trees.push(tree);
+            contexts.push(ctx);
+        }
+
+        // Phase 1.5: Collect macro definitions from all files
+        for i in 0usize..trees.len() {
+            let root = trees[i].root_node().unwrap();
+            aluminac::lib::parser::collect_macros(&contexts.as_slice_mut()[i], root);
+        }
+        // Share macros across all contexts
+        aluminac::lib::parser::share_macros(contexts.as_slice_mut());
+
+        // Phase 2: Parse all function bodies (all names are now registered)
+        for i in 0usize..trees.len() {
+            let root = trees[i].root_node().unwrap();
+            let items = aluminac::lib::parser::parse_file_pass2(&contexts.as_slice_mut()[i], root);
 
             for j in 0usize..items.len() {
                 self.all_items.push(items[j]);
             }
+        }
+
+        // Cleanup
+        for i in 0usize..trees.len() {
+            trees[i].free();
+            contexts.as_slice_mut()[i].free();
         }
         parser.free();
 
@@ -343,6 +373,7 @@ impl Compiler {
             items_slice[i] = self.all_items[i];
         }
 
+        std::io::eprintln!("DBG: mono");
         // Monomorphize
         let unit = aluminac::lib::mono::monomorphize(
             &self.arena,
@@ -357,6 +388,8 @@ impl Compiler {
             return false;
         }
 
+
+        std::io::eprintln!("DBG: codegen");
         // Code generation
         let ctx = aluminac::lib::codegen::generate(
             &self.arena,
@@ -364,7 +397,6 @@ impl Compiler {
             &unit,
             "alumina_module",
         );
-
         if self.diag.has_errors {
             self.diag.emit_all();
             ctx.free();
@@ -424,8 +456,9 @@ impl Compiler {
 
     fn link(self: &mut Compiler, obj_file: &[u8], output: &[u8]) -> bool {
         // Use cc to link
-        // Build command: cc -o <output> <obj_file> -lm
-        let cmd_len = 6usize + output.len() + 1usize + obj_file.len() + 4usize; // "cc -o " + output + " " + obj + " -lm"
+        // Build command: cc -o <output> <obj_file> -lm [extra_link_args]
+        let extra = self.options.extra_link_args;
+        let cmd_len = 6usize + output.len() + 1usize + obj_file.len() + 4usize + 1usize + extra.len();
         let cmd = self.arena.alloc_slice::<u8>(cmd_len + 1usize);
         let pos: usize = 0;
 
@@ -445,6 +478,13 @@ impl Compiler {
         let suffix = " -lm";
         suffix.copy_to_nonoverlapping(&cmd[pos]);
         pos = pos + suffix.len();
+
+        if extra.len() > 0usize {
+            cmd[pos] = ' ' as u8;
+            pos = pos + 1;
+            extra.copy_to_nonoverlapping(&cmd[pos]);
+            pos = pos + extra.len();
+        }
 
         cmd[pos] = 0u8;
 
@@ -593,6 +633,11 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             options.dump_ir = true;
         } else if arg == "--no-verify" {
             options.verify_ir = false;
+        } else if arg == "--link-args" {
+            i = i + 1;
+            if i < args.len() {
+                options.extra_link_args = args[i];
+            }
         } else if arg == "--sysroot" {
             i = i + 1;
             if i < args.len() {

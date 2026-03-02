@@ -1,2 +1,22 @@
 // Simplified standard library for self-hosted compiler bootstrap
 // Modules are auto-loaded from directory structure by the sysroot loader.
+
+extern "C" fn abort() -> !;
+
+macro panic($reason) {
+    {
+        std::io::eprint!("panic: ");
+        std::io::eprintln!($reason);
+        abort();
+    }
+}
+
+macro assert($cond) {
+    if !$cond {
+        panic!("assertion failed");
+    }
+}
+
+macro debug_assert($cond) {
+    // no-op in release mode
+}

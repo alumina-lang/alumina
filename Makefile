@@ -200,6 +200,32 @@ $(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(MINICORO)
 .PHONY: aluminac
 aluminac: $(ALUMINAC)
 
+ALUMINAC_BOOTSTRAP = $(BUILD_DIR)/aluminac-bootstrap
+LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
+
+ALUMINAC_MODULES = \
+	::tree_sitter=libraries/tree_sitter/mod.alu \
+	::aluminac=libraries/aluminac/mod.alu \
+	::aluminac::lib=libraries/aluminac/lib/mod.alu \
+	::aluminac::lib::arena=libraries/aluminac/lib/arena.alu \
+	::aluminac::lib::ast=libraries/aluminac/lib/ast.alu \
+	::aluminac::lib::codegen=libraries/aluminac/lib/codegen.alu \
+	::aluminac::lib::common=libraries/aluminac/lib/common.alu \
+	::aluminac::lib::diagnostics=libraries/aluminac/lib/diagnostics.alu \
+	::aluminac::lib::llvm=libraries/aluminac/lib/llvm.alu \
+	::aluminac::lib::mono=libraries/aluminac/lib/mono.alu \
+	::aluminac::lib::node_kinds=libraries/aluminac/lib/node_kinds.alu \
+	::aluminac::lib::parser=libraries/aluminac/lib/parser.alu \
+	::aluminac::lib::scope=libraries/aluminac/lib/scope.alu \
+	libraries/aluminac/lib/compiler.alu
+
+.PHONY: bootstrap
+bootstrap: $(ALUMINAC)
+	$(ALUMINAC) --sysroot sysroot-simple \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		-o $(ALUMINAC_BOOTSTRAP) \
+		$(ALUMINAC_MODULES)
+
 ## --------------------------------Tools -------------------------------
 
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc

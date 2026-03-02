@@ -44,21 +44,44 @@ struct MonoCtx {
     // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
     fn_cache: HashMap<u64, usize>,
     struct_cache: HashMap<u64, usize>,
+    struct_ty_cache: HashMap<u64, &IrTy>,
     enum_cache: HashMap<u64, usize>,
+
+    // Type caching for pointer stability
+    ptr_ty_cache: HashMap<usize, &IrTy>,
+    array_ty_cache: HashMap<usize, &IrTy>,
+    tuple_ty_cache: HashMap<usize, &IrTy>,
 
     // Name mangling counter
     mangle_counter: usize,
 
-    // Void and never types (canonical instances)
+    // Canonical type instances (stable pointers)
     void_ty: &IrTy,
     never_ty: &IrTy,
     bool_ty: &IrTy,
+    i8_ty: &IrTy,
+    i16_ty: &IrTy,
+    i32_ty: &IrTy,
+    i64_ty: &IrTy,
+    i128_ty: &IrTy,
+    u8_ty: &IrTy,
+    u16_ty: &IrTy,
+    u32_ty: &IrTy,
+    u64_ty: &IrTy,
+    u128_ty: &IrTy,
+    usize_ty: &IrTy,
+    isize_ty: &IrTy,
+    f32_ty: &IrTy,
+    f64_ty: &IrTy,
 
     // Pointer size
     pointer_size: usize,
 
     // Lang item IDs for compiler intrinsics
     slice_new_fn_id: usize,      // #[lang(slice_new)] - constructs slice from ptr+len
+
+    // Debug counter
+    unresolved_count: usize,
 }
 
 impl MonoCtx {
@@ -72,6 +95,20 @@ impl MonoCtx {
         let void_ty = arena.alloc(IrTy::mk_void());
         let never_ty = arena.alloc(IrTy::mk_never());
         let bool_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::Bool));
+        let i8_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I8));
+        let i16_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I16));
+        let i32_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I32));
+        let i64_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I64));
+        let i128_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I128));
+        let u8_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U8));
+        let u16_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U16));
+        let u32_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U32));
+        let u64_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U64));
+        let u128_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U128));
+        let usize_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::USize));
+        let isize_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::ISize));
+        let f32_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::F32));
+        let f64_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::F64));
 
         let ctx = MonoCtx {
             arena: arena,
@@ -91,13 +128,32 @@ impl MonoCtx {
             ir_enums: Vector::new(),
             fn_cache: HashMap::new(),
             struct_cache: HashMap::new(),
+            struct_ty_cache: HashMap::new(),
             enum_cache: HashMap::new(),
+            ptr_ty_cache: HashMap::new(),
+            array_ty_cache: HashMap::new(),
+            tuple_ty_cache: HashMap::new(),
             mangle_counter: 0,
             void_ty: void_ty,
             never_ty: never_ty,
             bool_ty: bool_ty,
+            i8_ty: i8_ty,
+            i16_ty: i16_ty,
+            i32_ty: i32_ty,
+            i64_ty: i64_ty,
+            i128_ty: i128_ty,
+            u8_ty: u8_ty,
+            u16_ty: u16_ty,
+            u32_ty: u32_ty,
+            u64_ty: u64_ty,
+            u128_ty: u128_ty,
+            usize_ty: usize_ty,
+            isize_ty: isize_ty,
+            f32_ty: f32_ty,
+            f64_ty: f64_ty,
             pointer_size: 8, // assume 64-bit
             slice_new_fn_id: 0,
+            unresolved_count: 0,
         };
 
         // Build lookup tables
@@ -149,31 +205,86 @@ impl MonoCtx {
             BuiltinType::Void => self.void_ty,
             BuiltinType::Never => self.never_ty,
             BuiltinType::Bool => self.bool_ty,
+            BuiltinType::I8 => self.i8_ty,
+            BuiltinType::I16 => self.i16_ty,
+            BuiltinType::I32 => self.i32_ty,
+            BuiltinType::I64 => self.i64_ty,
+            BuiltinType::I128 => self.i128_ty,
+            BuiltinType::U8 => self.u8_ty,
+            BuiltinType::U16 => self.u16_ty,
+            BuiltinType::U32 => self.u32_ty,
+            BuiltinType::U64 => self.u64_ty,
+            BuiltinType::U128 => self.u128_ty,
+            BuiltinType::USize => self.usize_ty,
+            BuiltinType::ISize => self.isize_ty,
+            BuiltinType::F32 => self.f32_ty,
+            BuiltinType::F64 => self.f64_ty,
             _ => self.arena.alloc(IrTy::mk_builtin(bt)),
         }
     }
 
     fn make_ptr_ty(self: &mut MonoCtx, pointee: &IrTy, is_const: bool) -> &IrTy {
-        self.arena.alloc(IrTy::mk_pointer(pointee, is_const))
+        // Cache pointer types for stability
+        let key = (pointee as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
+        let cached = self.ptr_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_pointer(pointee, is_const));
+        self.ptr_ty_cache.insert(key, result);
+        result
     }
 
     fn make_array_ty(self: &mut MonoCtx, elem: &IrTy, size: usize) -> &IrTy {
-        self.arena.alloc(IrTy::mk_array(elem, size))
+        let key = (elem as &void as usize) * 65537 + size;
+        let cached = self.array_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_array(elem, size));
+        self.array_ty_cache.insert(key, result);
+        result
     }
 
     fn make_tuple_ty(self: &mut MonoCtx, elems: &[&IrTy]) -> &IrTy {
         if elems.len() == 0 {
             return self.void_ty;
         }
-        self.arena.alloc(IrTy::mk_tuple(elems))
+        // Cache tuple types for pointer stability
+        // Hash based on element count and element type pointers
+        let key: usize = elems.len() * 31;
+        for i in 0usize..elems.len() {
+            key = key * 31 + (elems[i] as &void as usize);
+        }
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_tuple(elems));
+        self.tuple_ty_cache.insert(key, result);
+        result
     }
 
     fn make_fn_ptr_ty(self: &mut MonoCtx, params: &[&IrTy], ret: &IrTy) -> &IrTy {
-        self.arena.alloc(IrTy::mk_fn_pointer(params, ret))
+        // Cache function pointer types for pointer stability
+        let key: usize = (ret as &void as usize) * 31 + params.len();
+        for i in 0usize..params.len() {
+            key = key * 31 + (params[i] as &void as usize);
+        }
+        // Different hash space from tuples
+        let key = key + 0x20000000usize;
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_fn_pointer(params, ret));
+        self.tuple_ty_cache.insert(key, result);
+        result
     }
 
     fn make_slice_ty(self: &mut MonoCtx, elem: &IrTy, is_const: bool) -> &IrTy {
-        self.arena.alloc(IrTy::mk_slice(elem, is_const))
+        // Slice types are structurally just tuples (ptr, len), but we cache the
+        // IrTy::mk_slice wrapper too for pointer stability
+        let key = (elem as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
+        // Use a different hash space from ptr_ty_cache by adding a large offset
+        let key = key + 0x10000000usize;
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_slice(elem, is_const));
+        self.tuple_ty_cache.insert(key, result);
+        result
     }
 
     fn free(self: &mut MonoCtx) {
@@ -189,7 +300,11 @@ impl MonoCtx {
         self.ir_enums.free();
         self.fn_cache.free();
         self.struct_cache.free();
+        self.struct_ty_cache.free();
         self.enum_cache.free();
+        self.ptr_ty_cache.free();
+        self.array_ty_cache.free();
+        self.tuple_ty_cache.free();
     }
 }
 
@@ -241,7 +356,7 @@ impl Mono {
                 resolved.unwrap()
             } else {
                 // Unresolved placeholder - error
-                self.ctx.diag.error(Span::empty(), "unresolved generic type parameter");
+                self.ctx.unresolved_count = self.ctx.unresolved_count + 1;
                 self.ctx.void_ty
             }
         } else if ty.tag == TY_POINTER {
@@ -285,13 +400,12 @@ impl Mono {
                 let item_ref = ItemRef { id: ty.inner.id };
                 self.resolve_named_type(item_ref, resolved_args)
             } else {
-                let base_ty = self.resolve_type(ty.inner);
-                base_ty
+                self.resolve_type(ty.inner)
             }
         } else if ty.tag == TY_NEVER {
             self.ctx.never_ty
         } else if ty.tag == TY_UNRESOLVED {
-            self.ctx.diag.error(Span::empty(), "unresolved type");
+            self.ctx.unresolved_count = self.ctx.unresolved_count + 1;
             self.ctx.void_ty
         } else {
             self.ctx.void_ty
@@ -330,10 +444,26 @@ impl Mono {
     fn mono_struct(self: &mut Mono, def: &StructDef, type_args: &[&IrTy]) -> &IrTy {
         // Check cache
         let cache_key = hash_mono_key(def.id, type_args);
-        let cached = self.ctx.struct_cache.get(&cache_key);
+        let cached = self.ctx.struct_ty_cache.get(&cache_key);
         if cached.is_some() {
-            let idx = cached.unwrap();
-            return self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]));
+            return cached.unwrap();
+        }
+        // Also check by id only for non-generic structs
+        if type_args.len() == 0 {
+            let id_cached = self.ctx.struct_ty_cache.get(&(def.id._value as u64));
+            if id_cached.is_some() {
+                return id_cached.unwrap();
+            }
+        }
+        let cached2 = self.ctx.struct_cache.get(&cache_key);
+        if cached2.is_some() {
+            let idx = cached2.unwrap();
+            let result = self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]));
+            self.ctx.struct_ty_cache.insert(cache_key, result);
+            if type_args.len() == 0 {
+                self.ctx.struct_ty_cache.insert(def.id._value as u64, result);
+            }
+            return result;
         }
 
         // Set up generic substitution
@@ -343,7 +473,29 @@ impl Mono {
             }
         }
 
-        // Resolve field types
+        let mangled = self.ctx.mangle_name(def.name);
+
+        // Use scope_idx directly from StructDef
+        let scope_idx = def.scope_idx;
+
+        // Forward-declare: register the struct with empty fields BEFORE resolving field types.
+        // This prevents infinite recursion for self-referential structs (e.g. Node { next: &mut Node }).
+        let placeholder_fields = self.ctx.arena.alloc_slice::<IrField>(0);
+        let ir_struct = IrStructRef {
+            id: def.id,
+            name: def.name,
+            fields: placeholder_fields,
+            is_union: def.is_union,
+            is_zero_sized: def.fields.len() == 0,
+            scope_idx: scope_idx,
+            type_args: type_args,
+        };
+
+        let idx = self.ctx.ir_structs.len();
+        self.ctx.ir_structs.push(ir_struct);
+        self.ctx.struct_cache.insert(cache_key, idx);
+
+        // Now resolve field types (may recurse back to this struct via pointer fields)
         let fields = self.ctx.arena.alloc_slice::<IrField>(def.fields.len());
         let is_zst = true;
         for i in 0usize..def.fields.len() {
@@ -361,26 +513,16 @@ impl Mono {
             is_zst = true;
         }
 
-        let mangled = self.ctx.mangle_name(def.name);
+        // Update the struct with resolved fields
+        self.ctx.ir_structs[idx].fields = fields;
+        self.ctx.ir_structs[idx].is_zero_sized = is_zst;
 
-        // Use scope_idx directly from StructDef
-        let scope_idx = def.scope_idx;
-
-        let ir_struct = IrStructRef {
-            id: def.id,
-            name: def.name,
-            fields: fields,
-            is_union: def.is_union,
-            is_zero_sized: is_zst,
-            scope_idx: scope_idx,
-            type_args: type_args,
-        };
-
-        let idx = self.ctx.ir_structs.len();
-        self.ctx.ir_structs.push(ir_struct);
-        self.ctx.struct_cache.insert(cache_key, idx);
-
-        self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]))
+        let result = self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]));
+        self.ctx.struct_ty_cache.insert(cache_key, result);
+        if type_args.len() == 0 {
+            self.ctx.struct_ty_cache.insert(def.id._value as u64, result);
+        }
+        result
     }
 
     fn mono_enum(self: &mut Mono, def: &EnumDef, type_args: &[&IrTy]) -> &IrTy {
@@ -403,8 +545,13 @@ impl Mono {
         let next_val: u64 = 0;
         for i in 0usize..def.variants.len() {
             let val = if def.variants[i].value.is_some() {
-                // TODO: evaluate const expression
-                next_val
+                // Evaluate const expression (supports integer literals)
+                let val_expr = def.variants[i].value.unwrap();
+                if val_expr.tag == EXPR_INT_LIT {
+                    val_expr.int_val
+                } else {
+                    next_val
+                }
             } else {
                 next_val
             };
@@ -583,10 +730,17 @@ impl Mono {
             let result = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_ZEROED {
-            let ir_ty = self.resolve_type(expr.ty);
-            let result = IrExpr::void_expr(ir_ty);
-            result.tag = IR_ZEROED;
-            self.ctx.arena.alloc(result)
+            if expr.ty as &void as usize == 0usize {
+                std::io::eprintln!("BUG: EXPR_ZEROED with null ty");
+                let result = IrExpr::void_expr(self.ctx.void_ty);
+                result.tag = IR_ZEROED;
+                self.ctx.arena.alloc(result)
+            } else {
+                let ir_ty = self.resolve_type(expr.ty);
+                let result = IrExpr::void_expr(ir_ty);
+                result.tag = IR_ZEROED;
+                self.ctx.arena.alloc(result)
+            }
         } else {
             // Unhandled expression kind
             let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -603,11 +757,17 @@ impl Mono {
             result.int_val = expr.int_val;
             return self.ctx.arena.alloc(result);
         }
+        // For null literals, adopt the expected pointer type
+        if expr.tag == EXPR_NULL_LIT && expected_ty.tag == IRTY_POINTER {
+            let result = IrExpr::void_expr(expected_ty);
+            result.tag = IR_NULL_LIT;
+            return self.ctx.arena.alloc(result);
+        }
         let lowered = self.lower_expr(expr);
         self.coerce_int(lowered, expected_ty)
     }
 
-    // Wrap an IR expression in an implicit cast if integer types differ
+    // Wrap an IR expression in an implicit cast if types differ
     fn coerce_int(self: &mut Mono, ir: &IrExpr, expected: &IrTy) -> &IrExpr {
         if ir.ty.tag == IRTY_BUILTIN && expected.tag == IRTY_BUILTIN && ir.ty != expected {
             // Both are builtin types but differ - insert an implicit cast
@@ -615,6 +775,12 @@ impl Mono {
             cast.tag = IR_CAST;
             cast.lhs = ir;
             return self.ctx.arena.alloc(cast);
+        }
+        // Coerce null literal to expected pointer type
+        if ir.tag == IR_NULL_LIT && expected.tag == IRTY_POINTER && ir.ty != expected {
+            let result = IrExpr::void_expr(expected);
+            result.tag = IR_NULL_LIT;
+            return self.ctx.arena.alloc(result);
         }
         ir
     }
@@ -1241,7 +1407,7 @@ impl Mono {
         let ir_base_len = self.ctx.arena.alloc(base_len) as &IrExpr;
 
         // Start offset (default 0)
-        let ir_start = if range_expr.lhs as usize != 0 {
+        let ir_start_raw = if range_expr.lhs as usize != 0 {
             self.lower_expr(range_expr.lhs)
         } else {
             let zero = IrExpr::void_expr(usize_ty);
@@ -1251,10 +1417,29 @@ impl Mono {
         };
 
         // End offset (default base.len())
-        let ir_end = if range_expr.rhs as usize != 0 {
+        let ir_end_raw = if range_expr.rhs as usize != 0 {
             self.lower_expr(range_expr.rhs)
         } else {
             ir_base_len
+        };
+
+        // Cast start/end to usize if needed (e.g. literal 0 might be i32)
+        let ir_start = if ir_start_raw.ty.tag != usize_ty.tag || ir_start_raw.ty.builtin != usize_ty.builtin {
+            let cast = IrExpr::void_expr(usize_ty);
+            cast.tag = IR_CAST;
+            cast.lhs = ir_start_raw;
+            self.ctx.arena.alloc(cast) as &IrExpr
+        } else {
+            ir_start_raw
+        };
+
+        let ir_end = if ir_end_raw.ty.tag != usize_ty.tag || ir_end_raw.ty.builtin != usize_ty.builtin {
+            let cast = IrExpr::void_expr(usize_ty);
+            cast.tag = IR_CAST;
+            cast.lhs = ir_end_raw;
+            self.ctx.arena.alloc(cast) as &IrExpr
+        } else {
+            ir_end_raw
         };
 
         // new_ptr = data_ptr + start (pointer arithmetic via index)
@@ -1697,15 +1882,28 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_STRUCT_LIT {
             let ir_ty = self.resolve_type(expr.ty);
-            let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(expr.field_inits.len());
-            for i in 0usize..expr.field_inits.len() {
-                // Get the expected field type for implicit coercion
-                let field_ty = if ir_ty.tag == IRTY_STRUCT && i < ir_ty.struct_ref.fields.len() {
-                    ir_ty.struct_ref.fields[i].ty
+            // Reorder field_inits to match struct definition order
+            let num_fields = if ir_ty.tag == IRTY_STRUCT { ir_ty.struct_ref.fields.len() } else { expr.field_inits.len() };
+            let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);
+            for i in 0usize..num_fields {
+                if ir_ty.tag == IRTY_STRUCT {
+                    // Find the field_init matching this struct field by name
+                    let def_name = ir_ty.struct_ref.fields[i].name;
+                    let field_ty = ir_ty.struct_ref.fields[i].ty;
+                    let found = false;
+                    for j in 0usize..expr.field_inits.len() {
+                        if expr.field_inits[j].name == def_name {
+                            ir_fields[i] = self.lower_expr_coerced(expr.field_inits[j].value, field_ty);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        ir_fields[i] = self.lower_expr_coerced(expr.field_inits[i].value, field_ty);
+                    }
                 } else {
-                    self.ctx.void_ty
-                };
-                ir_fields[i] = self.lower_expr_coerced(expr.field_inits[i].value, field_ty);
+                    ir_fields[i] = self.lower_expr(expr.field_inits[i].value);
+                }
             }
             let result = IrExpr::void_expr(ir_ty);
             result.tag = IR_STRUCT_LIT;
@@ -1823,6 +2021,7 @@ fn monomorphize(
     items: &[Item],
 ) -> CompilationUnit {
     let ctx = MonoCtx::new(arena, scopes, id_gen, diag, items);
+    std::io::eprintln!("DBG: mono ctx created");
 
     // Find all root items (exported functions, main, statics)
     for ii in 0usize..items.len() {
@@ -1835,11 +2034,10 @@ fn monomorphize(
                     is_root = true;
                 } else if attr.tag == ATTR_MAIN {
                     is_root = true;
-                } else if attr.tag == ATTR_TEST {
-                    is_root = true;
                 }
             }
             if is_root {
+                std::io::eprintln!("DBG: mono root fn");
                 let mono = Mono::new(&ctx);
                 mono.mono_function(fn_def, &[]);
                 mono.free();

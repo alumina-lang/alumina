@@ -117,6 +117,13 @@ impl HashMap<K, V> {
         false
     }
 
+    fn iter(self: &HashMap<K, V>) -> HashMapIterator<K, V> {
+        HashMapIterator::<K, V> {
+            _map: self,
+            _index: 0usize,
+        }
+    }
+
     fn free(self: &mut HashMap<K, V>) {
         if self._capacity > 0usize {
             std::mem::slice_free::<K>(self._keys);
@@ -128,5 +135,25 @@ impl HashMap<K, V> {
         self._states = std::mem::slice_empty::<u8>();
         self._length = 0usize;
         self._capacity = 0usize;
+    }
+}
+
+struct HashMapIterator<K, V> {
+    _map: &HashMap<K, V>,
+    _index: usize,
+}
+
+impl HashMapIterator<K, V> {
+    fn next(self: &mut HashMapIterator<K, V>) -> std::option::Option<(K, V)> {
+        while self._index < self._map._capacity {
+            if self._map._states[self._index] == 1u8 {
+                let k = self._map._keys[self._index];
+                let v = self._map._values[self._index];
+                self._index = self._index + 1usize;
+                return std::option::Option::some::<(K, V)>((k, v));
+            }
+            self._index = self._index + 1usize;
+        }
+        std::option::Option::none::<(K, V)>()
     }
 }

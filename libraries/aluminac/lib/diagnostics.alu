@@ -1,7 +1,6 @@
 // Diagnostics and error reporting for the self-hosted compiler
 
 use ast::Span;
-use std::fmt::{Formatter, write};
 
 enum DiagLevel {
     Error,
@@ -106,29 +105,37 @@ impl DiagnosticContext {
         });
     }
 
+    fn _write_stderr(s: &[u8]) {
+        if s.len() > 0usize {
+            libc::write(2i32, &s[0] as &libc::c_void, s.len());
+        }
+    }
+
     fn emit_all(self: &DiagnosticContext) {
-        for diag in self.errors.iter() {
-            let level_str: &[u8] = switch diag.level {
-                DiagLevel::Error => "error",
-                DiagLevel::Warning => "warning",
-                DiagLevel::Note => "note",
-                _ => "unknown",
+        let i: usize = 0;
+        while i < self.errors.len() {
+            let diag = self.errors[i];
+            let level_str: &[u8] = if diag.level as i32 == DiagLevel::Error as i32 {
+                "error"
+            } else if diag.level as i32 == DiagLevel::Warning as i32 {
+                "warning"
+            } else {
+                "note"
             };
 
-            if diag.span.file_id < self.files.len() as u32 {
+            DiagnosticContext::_write_stderr(level_str);
+            DiagnosticContext::_write_stderr(": ");
+            DiagnosticContext::_write_stderr(diag.message);
+
+            if diag.span.start != 0 && diag.span.file_id < self.files.len() as u32 {
                 let file = &self.files[diag.span.file_id as usize];
                 let (line, col) = file.line_col(diag.span.start);
-                std::io::eprintln!(
-                    "{}: {} at {}:{}:{}",
-                    level_str,
-                    diag.message,
-                    file.path,
-                    line,
-                    col
-                );
-            } else {
-                std::io::eprintln!("{}: {}", level_str, diag.message);
+                DiagnosticContext::_write_stderr(" at ");
+                DiagnosticContext::_write_stderr(file.path);
             }
+            DiagnosticContext::_write_stderr("\n");
+
+            i = i + 1;
         }
     }
 
