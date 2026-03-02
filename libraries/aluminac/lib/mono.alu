@@ -1243,20 +1243,12 @@ impl Mono {
             incr.rhs = ir_add;
             let ir_incr = self.ctx.arena.alloc(incr) as &IrExpr;
 
-            // while body block: { body; i = i + 1; }
-            let body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-            body_stmts[0] = ir_body;
-            body_stmts[1] = ir_incr;
-            let body_block = IrExpr::void_expr(self.ctx.void_ty);
-            body_block.tag = IR_BLOCK;
-            body_block.items = body_stmts;
-            let ir_body_block = self.ctx.arena.alloc(body_block) as &IrExpr;
-
-            // while i < _end { body; i = i + 1; }
+            // while i < _end { body } with continue -> increment
             let while_expr = IrExpr::void_expr(self.ctx.void_ty);
             while_expr.tag = IR_WHILE;
             while_expr.cond = ir_cond;
-            while_expr.lhs = ir_body_block;
+            while_expr.lhs = ir_body;
+            while_expr.opt_expr = Option::some(ir_incr); // continue target: i = i + 1
             let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
 
             // Full block: { let i = start; let _end = end; while ... }

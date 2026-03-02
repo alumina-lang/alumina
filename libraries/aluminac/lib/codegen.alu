@@ -1346,7 +1346,7 @@ impl FnCodegen {
         } else if expr.tag == IR_IF {
             self.gen_if(expr)
         } else if expr.tag == IR_WHILE {
-            self.gen_while(expr.cond, expr.lhs)
+            self.gen_while(expr.cond, expr.lhs, expr.opt_expr)
         } else if expr.tag == IR_LOOP {
             self.gen_loop(expr.lhs)
         } else if expr.tag == IR_BREAK {
@@ -2501,7 +2501,7 @@ impl FnCodegen {
         LLVMGetUndef(self.ctx.void_type)
     }
 
-    fn gen_while(self: &mut FnCodegen, cond: &IrExpr, body: &IrExpr) -> LLVMValueRef {
+    fn gen_while(self: &mut FnCodegen, cond: &IrExpr, body: &IrExpr, incr: Option<&IrExpr>) -> LLVMValueRef {
         let cond_bb = LLVMAppendBasicBlockInContext(
             self.ctx.context, self.llvm_fn, &"while.cond\0"[0] as &libc::c_char
         );
@@ -2511,6 +2511,16 @@ impl FnCodegen {
         let end_bb = LLVMAppendBasicBlockInContext(
             self.ctx.context, self.llvm_fn, &"while.end\0"[0] as &libc::c_char
         );
+
+        // If there's an increment (for-loop), create a separate block for it
+        // so that `continue` jumps to increment, not directly to condition
+        let continue_target = if incr.is_some() {
+            LLVMAppendBasicBlockInContext(
+                self.ctx.context, self.llvm_fn, &"while.incr\0"[0] as &libc::c_char
+            )
+        } else {
+            cond_bb
+        };
 
         LLVMBuildBr(self.ctx.builder, cond_bb);
 
@@ -2525,17 +2535,24 @@ impl FnCodegen {
         let old_break = self.break_bb;
         let old_continue = self.continue_bb;
         self.break_bb = Option::some(end_bb);
-        self.continue_bb = Option::some(cond_bb);
+        self.continue_bb = Option::some(continue_target);
 
         LLVMPositionBuilderAtEnd(self.ctx.builder, body_bb);
         self.gen_expr(body);
         let body_end = LLVMGetInsertBlock(self.ctx.builder);
         if (LLVMGetBasicBlockTerminator(body_end) as usize) == 0 {
-            LLVMBuildBr(self.ctx.builder, cond_bb);
+            LLVMBuildBr(self.ctx.builder, continue_target);
         }
 
         self.break_bb = old_break;
         self.continue_bb = old_continue;
+
+        // Increment block (for-loop only)
+        if incr.is_some() {
+            LLVMPositionBuilderAtEnd(self.ctx.builder, continue_target);
+            self.gen_expr(incr.unwrap());
+            LLVMBuildBr(self.ctx.builder, cond_bb);
+        }
 
         LLVMPositionBuilderAtEnd(self.ctx.builder, end_bb);
         LLVMGetUndef(self.ctx.void_type)
