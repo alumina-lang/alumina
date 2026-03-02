@@ -111,6 +111,24 @@ impl DiagnosticContext {
         }
     }
 
+    fn _write_u32(n: u32) {
+        let buf: [u8; 12] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+        let pos: usize = 11;
+        let val = n;
+        if val == 0u32 {
+            buf[pos] = '0' as u8;
+            pos = pos - 1;
+        } else {
+            while val > 0u32 {
+                buf[pos] = ('0' as u8) + (val % 10u32) as u8;
+                val = val / 10u32;
+                pos = pos - 1;
+            }
+        }
+        let start = pos + 1;
+        DiagnosticContext::_write_stderr(buf[start..12]);
+    }
+
     fn emit_all(self: &DiagnosticContext) {
         let i: usize = 0;
         while i < self.errors.len() {

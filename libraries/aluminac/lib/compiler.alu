@@ -103,7 +103,7 @@ impl Compiler {
         // Read file from disk
         let fd = libc::open(&path_nt[0] as &libc::c_char, 0i32 /* O_RDONLY */);
         if fd < 0i32 {
-            std::io::eprintln!("error: cannot open file");
+            DiagnosticContext::_write_stderr("error: cannot open file\n");
             return false;
         }
 
@@ -121,7 +121,7 @@ impl Compiler {
         libc::close(fd);
 
         if read_bytes < 0isize {
-            std::io::eprintln!("error: cannot read file");
+            DiagnosticContext::_write_stderr("error: cannot read file\n");
             return false;
         }
 
@@ -156,7 +156,7 @@ impl Compiler {
 
             let dir_iter_result = read_directory(dir_path.as_path());
             if dir_iter_result.is_err() {
-                std::io::eprintln!("error: cannot open sysroot directory");
+                DiagnosticContext::_write_stderr("error: cannot open sysroot directory\n");
                 dir_path.free();
                 mod_prefix.free();
                 return false;
@@ -176,7 +176,15 @@ impl Compiler {
                 let name = entry.name();
 
                 // Skip . and ..
-                if name == "." || name == ".." {
+                // Use character-level comparison to avoid potential slice == issues
+                let skip = false;
+                if name.len() == 1 && name[0] == '.' as u8 {
+                    skip = true;
+                }
+                if name.len() == 2 && name[0] == '.' as u8 && name[1] == '.' as u8 {
+                    skip = true;
+                }
+                if skip {
                     continue;
                 }
 
@@ -225,7 +233,7 @@ impl Compiler {
                     let file_path_slice = file_path.inner.as_slice();
                     let read_result = std::fs::File::read_to_string(file_path.as_path());
                     if read_result.is_err() {
-                        std::io::eprintln!("error: cannot read sysroot file");
+                        DiagnosticContext::_write_stderr("error: cannot read sysroot file\n");
                         file_path.free();
                         module_path.free();
                         continue;
@@ -279,7 +287,7 @@ impl Compiler {
 
     fn compile(self: &mut Compiler) -> bool {
         if self.source_files.len() == 0 {
-            std::io::eprintln!("error: no source files");
+            DiagnosticContext::_write_stderr("error: no source files\n");
             return false;
         }
 
@@ -288,7 +296,6 @@ impl Compiler {
 
         // Register builtin types in root scope
         self.register_builtins(root_scope);
-        std::io::eprintln!("DBG: parse");
 
         // Parse all source files
         let parser = Parser::new();
@@ -308,18 +315,27 @@ impl Compiler {
         defer trees.free();
         defer contexts.free();
 
-        // Phase 1: Parse all files, run Pass 1 to register names in scopes
+        // Phase 0: Create all module scopes first so use imports can resolve across files
+        let file_scopes: Vector<u32> = Vector::new();
+        defer file_scopes.free();
         for i in 0usize..self.source_files.len() {
             let entry = &self.source_files[i];
-
             let file_scope = if entry.module_path.len() == 0 || entry.module_path == "main" {
                 root_scope
             } else {
                 self.resolve_or_create_module_scope(root_scope, entry.module_path)
             };
+            file_scopes.push(file_scope);
+        }
 
-            let tree = parser.parse(entry.contents);
-            let root = tree.root_node().unwrap();
+        // Phase 1: Parse all files, run Pass 1 to register names in scopes
+        for i in 0usize..self.source_files.len() {
+            let entry = &self.source_files[i];
+            let file_scope = file_scopes[i];
+
+            let tree = parser.parse_string(entry.contents);
+            let raw_node = tree_sitter::ts_tree_root_node(tree.inner);
+            let root = tree_sitter::Node { inner: raw_node };
 
             let ctx = aluminac::lib::parser::parse_file_pass1(
                 root,
@@ -338,29 +354,46 @@ impl Compiler {
         }
 
         // Phase 1.5: Collect macro definitions from all files
+        DiagnosticContext::_write_stderr("phase1.5: collecting macros\n");
         for i in 0usize..trees.len() {
-            let root = trees[i].root_node().unwrap();
+            DiagnosticContext::_write_stderr("collect_macros file\n");
+            let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
+            let root = tree_sitter::Node { inner: raw };
             aluminac::lib::parser::collect_macros(&contexts.as_slice_mut()[i], root);
+            DiagnosticContext::_write_stderr("collect_macros done\n");
         }
+        DiagnosticContext::_write_stderr("sharing macros\n");
         // Share macros across all contexts
         aluminac::lib::parser::share_macros(contexts.as_slice_mut());
+        DiagnosticContext::_write_stderr("macros shared\n");
 
         // Phase 2: Parse all function bodies (all names are now registered)
+        DiagnosticContext::_write_stderr("phase2: parsing function bodies\n");
         for i in 0usize..trees.len() {
-            let root = trees[i].root_node().unwrap();
+            DiagnosticContext::_write_stderr("pass2 file\n");
+            let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
+            let root = tree_sitter::Node { inner: raw };
             let items = aluminac::lib::parser::parse_file_pass2(&contexts.as_slice_mut()[i], root);
+            DiagnosticContext::_write_stderr("pass2 done, items=");
+            DiagnosticContext::_write_stderr(self.format_num(items.len()));
+            DiagnosticContext::_write_stderr("\n");
 
             for j in 0usize..items.len() {
                 self.all_items.push(items[j]);
             }
+            DiagnosticContext::_write_stderr("items pushed\n");
         }
 
         // Cleanup
+        DiagnosticContext::_write_stderr("cleanup\n");
         for i in 0usize..trees.len() {
+            DiagnosticContext::_write_stderr("freeing tree+ctx\n");
             trees[i].free();
             contexts.as_slice_mut()[i].free();
         }
+        DiagnosticContext::_write_stderr("freeing parser\n");
         parser.free();
+        DiagnosticContext::_write_stderr("cleanup done\n");
 
         if self.diag.has_errors {
             self.diag.emit_all();
@@ -368,12 +401,13 @@ impl Compiler {
         }
 
         // Convert items to a slice for mono
+        DiagnosticContext::_write_stderr("converting items\n");
         let items_slice = self.arena.alloc_slice::<Item>(self.all_items.len());
         for i in 0usize..self.all_items.len() {
             items_slice[i] = self.all_items[i];
         }
+        DiagnosticContext::_write_stderr("monomorphizing\n");
 
-        std::io::eprintln!("DBG: mono");
         // Monomorphize
         let unit = aluminac::lib::mono::monomorphize(
             &self.arena,
@@ -389,7 +423,7 @@ impl Compiler {
         }
 
 
-        std::io::eprintln!("DBG: codegen");
+        DiagnosticContext::_write_stderr("mono done, codegen\n");
         // Code generation
         let ctx = aluminac::lib::codegen::generate(
             &self.arena,
@@ -409,7 +443,7 @@ impl Compiler {
 
         if self.options.verify_ir {
             if !ctx.verify() {
-                std::io::eprintln!("error: LLVM IR verification failed");
+                DiagnosticContext::_write_stderr("error: LLVM IR verification failed\n");
                 if !self.options.dump_ir {
                     ctx.dump();
                 }
@@ -436,7 +470,7 @@ impl Compiler {
                 // Emit object file, then link
                 let obj_file = ".aluminac_temp.o";
                 if !ctx.emit_to_object(obj_file) {
-                    std::io::eprintln!("error: failed to emit object file");
+                    DiagnosticContext::_write_stderr("error: failed to emit object file\n");
                     ctx.free();
                     return false;
                 }
@@ -447,7 +481,7 @@ impl Compiler {
         };
 
         if !success {
-            std::io::eprintln!("error: failed to write output file");
+            DiagnosticContext::_write_stderr("error: failed to write output file\n");
         }
 
         ctx.free();
@@ -535,19 +569,42 @@ impl Compiler {
         let existing = self.scopes.resolve(parent, name);
         if existing.is_some() {
             let item = existing.unwrap();
-            if item.kind.tag == scope::NIK_MODULE {
+            if item.kind.tag == NIK_MODULE {
+                if name == "llvm" || name == "lib" || name == "codegen" {
+                    DiagnosticContext::_write_stderr("DBG: ensure reuse '");
+                    DiagnosticContext::_write_stderr(name);
+                    DiagnosticContext::_write_stderr("'\n");
+                }
                 return item.kind.scope_idx;
             }
         }
 
         // Create new module scope
         let child = self.scopes.create_scope(ScopeKind::Module, Option::some(parent));
-        self.scopes.add_item(parent, scope::NamedItem {
+        self.scopes.add_item(parent, NamedItem {
             name: self.intern_name(name),
-            kind: scope::NamedItemKind::module(child),
+            kind: NamedItemKind::module(child),
             span: Span::empty(),
         });
+        if name == "llvm" || name == "lib" || name == "codegen" {
+            DiagnosticContext::_write_stderr("DBG: ensure create '");
+            DiagnosticContext::_write_stderr(name);
+            DiagnosticContext::_write_stderr("'\n");
+        }
         child
+    }
+
+    fn format_num(self: &mut Compiler, n: usize) -> &[u8] {
+        if n == 0 { return "0"; }
+        let buf = self.arena.alloc_slice::<u8>(20);
+        let pos: usize = 19;
+        let val = n;
+        while val > 0 && pos > 0 {
+            buf[pos] = ('0' as u8) + (val % 10) as u8;
+            val = val / 10;
+            pos = pos - 1;
+        }
+        buf[pos + 1..20]
     }
 
     fn intern_name(self: &mut Compiler, s: &[u8]) -> &[u8] {
@@ -579,9 +636,9 @@ impl Compiler {
 
         for i in 0usize..16 {
             let (name, bt) = builtins[i];
-            self.scopes.add_item(scope_idx, scope::NamedItem {
+            self.scopes.add_item(scope_idx, NamedItem {
                 name: name,
-                kind: scope::NamedItemKind::builtin_type(bt),
+                kind: NamedItemKind::builtin_type(bt),
                 span: Span::empty(),
             });
         }
@@ -674,7 +731,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
                 });
             }
         } else {
-            std::io::eprintln!("unknown option");
+            DiagnosticContext::_write_stderr("unknown option\n");
         }
 
         i = i + 1;
@@ -684,17 +741,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
 }
 
 fn print_usage() {
-    std::io::eprintln!("Usage: aluminac [options] <source-files...>");
-    std::io::eprintln!("Options:");
-    std::io::eprintln!("  -o <file>     Output file (default: a.out)");
-    std::io::eprintln!("  -S            Emit assembly");
-    std::io::eprintln!("  -c            Emit object file");
-    std::io::eprintln!("  --emit-llvm   Emit LLVM IR");
-    std::io::eprintln!("  --emit-bc     Emit LLVM bitcode");
-    std::io::eprintln!("  --dump-ir     Dump LLVM IR to stderr");
-    std::io::eprintln!("  --sysroot     Path to sysroot");
-    std::io::eprintln!("  -O, -O2, -O3  Enable optimizations");
-    std::io::eprintln!("  --help, -h    Show this help");
+    DiagnosticContext::_write_stderr("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help\n");
 }
 
 fn main(args: &[&[u8]]) -> i32 {

@@ -62,3 +62,16 @@ fn slice_free<T>(data: &mut [T]) {
         free(&data[0] as &mut void);
     }
 }
+
+// Slice namespace for std::mem::slice::from_raw calls
+struct slice<T> {
+    _ptr: T,
+    _len: usize,
+}
+
+impl slice<T> {
+    #[lang(slice_new)]
+    fn from_raw(ptr: T, len: usize) -> slice<T> {
+        slice::<T> { _ptr: ptr, _len: len }
+    }
+}

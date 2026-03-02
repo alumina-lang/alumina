@@ -231,6 +231,11 @@ impl ScopeArena {
             return self.resolve_raw(scope.parent.unwrap(), name);
         }
 
+        // Debug: log when resolution fails for "llvm" name
+        if name == "llvm" {
+            diagnostics::DiagnosticContext::_write_stderr("DBG: resolve_raw FAILED for 'llvm' at root scope\n");
+        }
+
         Option::none()
     }
 
@@ -244,8 +249,10 @@ impl ScopeArena {
             return self.resolve(scope_idx, segments[0]);
         }
 
-        // Resolve first segment
-        let first = self.resolve(scope_idx, segments[0]);
+        // For multi-segment paths, resolve the first segment but only accept
+        // items that can have children (modules, structs, enums). This prevents
+        // local variables/parameters from shadowing module names.
+        let first = self.resolve_scoped(scope_idx, segments[0]);
         if first.is_none() {
             return Option::none();
         }
@@ -262,6 +269,56 @@ impl ScopeArena {
         } else {
             Option::none()
         }
+    }
+
+    // Resolve a name but only return items that can have :: children
+    // (modules, structs with scopes, enums with scopes). Skips locals/params.
+    fn resolve_scoped(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let found = self.resolve_scoped_raw(scope_idx, name);
+        if found.is_some() {
+            let item = found.unwrap();
+            // Follow use aliases
+            if item.kind.tag == NIK_USE_ALIAS {
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+            }
+            return found;
+        }
+        Option::none()
+    }
+
+    // Like resolve_raw but only matches scope-bearing items
+    fn resolve_scoped_raw(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let scope = self.get(scope_idx);
+
+        // Check current scope for scope-bearing items
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            let item = found.unwrap();
+            let tag = item.kind.tag;
+            if tag == NIK_MODULE || tag == NIK_STRUCT || tag == NIK_ENUM || tag == NIK_USE_ALIAS {
+                return found;
+            }
+            // Found something but it's not a scope-bearing item; continue looking
+        }
+
+        // Check star imports
+        for import_idx in scope.star_imports {
+            let found = self.get(import_idx).items.get(&name);
+            if found.is_some() {
+                let item = found.unwrap();
+                let tag = item.kind.tag;
+                if tag == NIK_MODULE || tag == NIK_STRUCT || tag == NIK_ENUM || tag == NIK_USE_ALIAS {
+                    return found;
+                }
+            }
+        }
+
+        // Check parent scope
+        if scope.parent.is_some() {
+            return self.resolve_scoped_raw(scope.parent.unwrap(), name);
+        }
+
+        Option::none()
     }
 
     // Follow use aliases to their target
@@ -320,6 +377,74 @@ impl ScopeArena {
             }
         } else {
             Option::none()
+        }
+    }
+
+    fn dump_scope_chain(self: &ScopeArena, scope_idx: u32, name: &[u8]) {
+        use diagnostics::DiagnosticContext;
+        DiagnosticContext::_write_stderr("SCOPE_CHAIN for '");
+        DiagnosticContext::_write_stderr(name);
+        DiagnosticContext::_write_stderr("' from scope ");
+        DiagnosticContext::_write_u32(scope_idx);
+        DiagnosticContext::_write_stderr(":\n");
+
+        let idx = scope_idx;
+        let depth: u32 = 0;
+        while depth < 20u32 {
+            let scope = self.get(idx);
+            let kind_str: &[u8] = switch scope.kind {
+                ScopeKind::Root => "Root",
+                ScopeKind::Module => "Module",
+                ScopeKind::Function => "Function",
+                ScopeKind::Block => "Block",
+                ScopeKind::Impl => "Impl",
+                ScopeKind::Protocol => "Protocol",
+                _ => "???",
+            };
+            DiagnosticContext::_write_stderr("  [");
+            DiagnosticContext::_write_u32(idx);
+            DiagnosticContext::_write_stderr("] ");
+            DiagnosticContext::_write_stderr(kind_str);
+            DiagnosticContext::_write_stderr(" (");
+            // Print item count
+            DiagnosticContext::_write_u32(scope.items.len() as u32);
+            DiagnosticContext::_write_stderr(" items");
+            // Check if name is in this scope
+            let found = scope.items.get(&name);
+            if found.is_some() {
+                DiagnosticContext::_write_stderr(", HAS '");
+                DiagnosticContext::_write_stderr(name);
+                DiagnosticContext::_write_stderr("' tag=");
+                DiagnosticContext::_write_u32(found.unwrap().kind.tag as u32);
+            }
+            DiagnosticContext::_write_stderr(")\n");
+
+            // Print some item names
+            let iter = scope.items.iter();
+            let count: u32 = 0;
+            loop {
+                let entry = iter.next();
+                if entry.is_none() { break; }
+                if count < 10u32 {
+                    let pair = entry.unwrap();
+                    DiagnosticContext::_write_stderr("    - '");
+                    DiagnosticContext::_write_stderr(pair.0);
+                    DiagnosticContext::_write_stderr("' tag=");
+                    DiagnosticContext::_write_u32(pair.1.kind.tag as u32);
+                    DiagnosticContext::_write_stderr("\n");
+                }
+                count = count + 1;
+            }
+            if count > 10u32 {
+                DiagnosticContext::_write_stderr("    ... and more\n");
+            }
+
+            if scope.parent.is_none() {
+                DiagnosticContext::_write_stderr("  (no parent - end of chain)\n");
+                break;
+            }
+            idx = scope.parent.unwrap();
+            depth = depth + 1;
         }
     }
 

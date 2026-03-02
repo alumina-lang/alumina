@@ -9,7 +9,7 @@ use scope::*;
 use diagnostics::DiagnosticContext;
 use arena::Arena;
 use node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
-use common::{child_by, children_by, NodeVisitorExt};
+use common::{child_by, children_by, NodeVisitorExt, NullableNode};
 use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 
 use std::collections::{HashMap, Vector};
@@ -24,6 +24,7 @@ struct ParseError {
 struct MacroEntry {
     params: &[&[u8]],
     body_node: Node,
+    source: &[u8],
 }
 
 struct ParseContext {
@@ -255,7 +256,14 @@ impl Pass1 {
     }
 
     fn visit_node(self: &mut Pass1, node: Node) {
-        let kind = NODE_KINDS[node.symbol() as usize];
+        let sym = node.symbol() as usize;
+        let kind = NODE_KINDS[sym];
+        if kind == NodeKind::FunctionDefinition {
+            DiagnosticContext::_write_stderr("P1:switch->FN\n");
+        }
+        if kind == NodeKind::SourceFile {
+            DiagnosticContext::_write_stderr("P1:switch->SF\n");
+        }
         switch kind {
             NodeKind::SourceFile => self.visit_source_file_p1(node),
             NodeKind::ModDefinition => self.visit_mod_p1(node),
@@ -299,11 +307,17 @@ impl Pass1 {
     }
 
     fn visit_children_by_field(self: &mut Pass1, node: Node, field: FieldKind) {
+        DiagnosticContext::_write_stderr("P1:vcbf\n");
         let cursor = node.walk();
         defer cursor.free();
+        let count: usize = 0;
         for child in children_by!(node, field, &cursor) {
+            count = count + 1;
             self.visit_node(child);
         }
+        DiagnosticContext::_write_stderr("P1:vcbf_done count=");
+        DiagnosticContext::_write_stderr(format_num_small(count));
+        DiagnosticContext::_write_stderr("\n");
     }
 
     fn get_name(self: &mut Pass1, node: Node) -> &[u8] {
@@ -398,6 +412,7 @@ impl Pass1 {
     }
 
     fn visit_source_file_p1(self: &mut Pass1, node: Node) {
+        DiagnosticContext::_write_stderr("P1:visit_source_file\n");
         self.visit_children_by_field(node, FieldKind::Body);
     }
 
@@ -428,6 +443,7 @@ impl Pass1 {
     }
 
     fn visit_function_p1(self: &mut Pass1, node: Node) {
+        DiagnosticContext::_write_stderr("P1:visit_fn\n");
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
@@ -455,6 +471,9 @@ impl Pass1 {
             is_method: self.in_container,
             impl_generic_param_ids: self.impl_generic_param_ids,
         });
+        DiagnosticContext::_write_stderr("P1:pushed fn, name=");
+        DiagnosticContext::_write_stderr(name);
+        DiagnosticContext::_write_stderr("\n");
 
         // Visit generic params and parameters in child scope
         let prev = self.current_scope;
@@ -713,7 +732,18 @@ impl Pass1 {
                         let item = resolved.unwrap();
                         if item.kind.tag == scope::NIK_MODULE && item.kind.scope_idx != 0 {
                             self.ctx.scopes.add_star_import(self.current_scope, item.kind.scope_idx, self.ctx.arena);
+                        } else {
+                            DiagnosticContext::_write_stderr("DBG: use *: resolved but not module, kind=");
+                            DiagnosticContext::_write_stderr(if item.kind.tag == scope::NIK_MODULE { "MODULE" } else { "OTHER" });
+                            DiagnosticContext::_write_stderr("\n");
                         }
+                    } else {
+                        DiagnosticContext::_write_stderr("DBG: use *: path not resolved: ");
+                        for seg in segments {
+                            DiagnosticContext::_write_stderr(seg);
+                            DiagnosticContext::_write_stderr("::");
+                        }
+                        DiagnosticContext::_write_stderr("\n");
                     }
                 }
             },
@@ -986,7 +1016,13 @@ impl Pass2 {
     }
 
     fn process_macros(self: &mut Pass2, root: Node) {
-        for i in 0usize..self.ctx.pending_macros.len() {
+        let mac_len = self.ctx.pending_macros.len();
+        if mac_len == 0usize {
+            DiagnosticContext::_write_stderr("MACROS: 0\n");
+            return;
+        }
+        DiagnosticContext::_write_stderr("MACROS: >0\n");
+        for i in 0usize..mac_len {
             let pending = &self.ctx.pending_macros[i];
             let node = self.find_node_at(root, pending.node_start, pending.node_end);
 
@@ -1025,6 +1061,7 @@ impl Pass2 {
                 let entry = MacroEntry {
                     params: params_slice,
                     body_node: body,
+                    source: self.ctx.source,
                 };
                 self.ctx.macro_defs.insert(pending.name, entry);
             }
@@ -1087,12 +1124,20 @@ impl Pass2 {
         let return_type = self.parse_return_type(node, pending.scope_idx);
 
         // Parse ABI
-        let abi_node = child_by!(node, FieldKind::Extern);
-        let abi: Option<&[u8]> = if !abi_node.is_null() {
-            let abi_text = self.ctx.node_text(abi_node.unwrap());
-            if abi_text.len() >= 2 && abi_text[0] == '"' as u8 {
-                Option::some(self.ctx.intern_str(abi_text[1..abi_text.len()-1]))
+        let extern_node = child_by!(node, FieldKind::Extern);
+        let abi: Option<&[u8]> = if !extern_node.is_null() {
+            // Check for explicit ABI string (e.g., extern "C", extern "intrinsic")
+            let abi_node = child_by!(node, FieldKind::Abi);
+            if !abi_node.is_null() {
+                let abi_text = self.ctx.node_text(abi_node.unwrap());
+                // Strip quotes from string literal
+                if abi_text.len() >= 2 && abi_text[0] == '"' as u8 {
+                    Option::some(self.ctx.intern_str(abi_text[1..abi_text.len()-1]))
+                } else {
+                    Option::some("C")
+                }
             } else {
+                // Just `extern fn` with no ABI string - default to "C"
                 Option::some("C")
             }
         } else {
@@ -1271,21 +1316,59 @@ impl Pass2 {
     }
 
     fn parse_return_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
+        DiagnosticContext::_write_stderr("DBG:parse_ret_type ENTER\n");
         let ret_node = child_by!(node, FieldKind::ReturnType);
         if ret_node.is_null() {
+            DiagnosticContext::_write_stderr("DBG:parse_ret_type NULL\n");
             return self.ctx.alloc_ty(Ty::void_ty());
         }
-        self.parse_type(ret_node.unwrap(), scope_idx)
+        DiagnosticContext::_write_stderr("DBG:parse_ret_type NOT-NULL\n");
+        let unwrapped = ret_node.unwrap();
+        let text = self.ctx.node_text(unwrapped);
+        DiagnosticContext::_write_stderr("DBG:parse_ret_type text=");
+        DiagnosticContext::_write_stderr(text);
+        DiagnosticContext::_write_stderr("\n");
+        let result = self.parse_type(unwrapped, scope_idx);
+        DiagnosticContext::_write_stderr("DBG:parse_ret_type result_tag=");
+        if result.tag == TY_BUILTIN {
+            DiagnosticContext::_write_stderr("BUILTIN\n");
+        } else if result.tag == TY_PLACEHOLDER {
+            DiagnosticContext::_write_stderr("PLACEHOLDER\n");
+        } else if result.tag == TY_UNRESOLVED {
+            DiagnosticContext::_write_stderr("UNRESOLVED\n");
+        } else {
+            DiagnosticContext::_write_stderr("OTHER\n");
+        }
+        result
     }
 
     fn parse_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
         let kind = NODE_KINDS[node.symbol() as usize];
         switch kind {
             NodeKind::PrimitiveType => {
+                DiagnosticContext::_write_stderr("DBG:parse_type PrimitiveType\n");
                 let text = self.ctx.node_text(node);
+                DiagnosticContext::_write_stderr("DBG:parse_type text=");
+                DiagnosticContext::_write_stderr(text);
+                DiagnosticContext::_write_stderr("\n");
                 let builtin = parse_builtin_type(text);
                 if builtin.is_some() {
-                    return self.ctx.alloc_ty(Ty::builtin_ty(builtin.unwrap()));
+                    DiagnosticContext::_write_stderr("DBG:parse_type BUILTIN-MATCH\n");
+                    let ty = Ty::builtin_ty(builtin.unwrap());
+                    DiagnosticContext::_write_stderr("DBG:parse_type ty.tag before alloc=");
+                    if ty.tag == TY_BUILTIN {
+                        DiagnosticContext::_write_stderr("BUILTIN\n");
+                    } else {
+                        DiagnosticContext::_write_stderr("NOTBUILTIN\n");
+                    }
+                    let result = self.ctx.alloc_ty(ty);
+                    DiagnosticContext::_write_stderr("DBG:parse_type result.tag after alloc=");
+                    if result.tag == TY_BUILTIN {
+                        DiagnosticContext::_write_stderr("BUILTIN\n");
+                    } else {
+                        DiagnosticContext::_write_stderr("NOTBUILTIN\n");
+                    }
+                    return result;
                 }
                 // Unknown primitive
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -1319,6 +1402,18 @@ impl Pass2 {
                     } else if item.kind.tag == scope::NIK_BUILTIN_TYPE {
                         let bt = item.kind.builtin;
                         return self.ctx.alloc_ty(Ty::builtin_ty(bt));
+                    } else {
+                        // Found but unrecognized kind
+                        DiagnosticContext::_write_stderr("DBG: type ");
+                        DiagnosticContext::_write_stderr(name);
+                        DiagnosticContext::_write_stderr(" found-unexpected-kind\n");
+                    }
+                } else {
+                    // Truly not found
+                    if name.len() > 3 && name[0] == 'L' as u8 && name[1] == 'L' as u8 {
+                        DiagnosticContext::_write_stderr("DBG: type ");
+                        DiagnosticContext::_write_stderr(name);
+                        DiagnosticContext::_write_stderr(" NOT-FOUND\n");
                     }
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -2034,6 +2129,11 @@ impl ExprParser {
                 let e = self.make_expr(EXPR_FN_REF, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_METHOD {
+                let fn_id = item.kind.id2;
+                let e = self.make_expr(EXPR_FN_REF, span);
+                e.id = fn_id;
+                return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NIK_STATIC {
                 let id = item.kind.id;
                 let e = self.make_expr(EXPR_STATIC_REF, span);
@@ -2363,8 +2463,23 @@ impl ExprParser {
         if obj.is_null() || field.is_null() {
             return self.alloc_void(span);
         }
+
+        // Check if the field child is a tuple_index_expression (e.g. t.0)
+        let field_node = field.unwrap();
+        let field_kind = NODE_KINDS[field_node.symbol() as usize];
+        if field_kind == NodeKind::TupleIndexExpression {
+            // Parse as tuple index access
+            let obj_expr = self.parse_expr(obj.unwrap());
+            let idx_text = self.ctx.node_text(field_node);
+            let idx = parse_usize(idx_text);
+            let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+            e.lhs = obj_expr;
+            e.index_val = idx;
+            return self.ctx.alloc_expr(e);
+        }
+
         let obj_expr = self.parse_expr(obj.unwrap());
-        let field_name = self.ctx.intern_str(self.ctx.node_text(field.unwrap()));
+        let field_name = self.ctx.intern_str(self.ctx.node_text(field_node));
 
         let e = self.make_expr(EXPR_FIELD_ACCESS, span);
         e.lhs = obj_expr;
@@ -2483,7 +2598,19 @@ impl ExprParser {
             Option::none()
         };
 
-        let e = self.make_expr(EXPR_IF, span);
+        // Check if this is "when" (static if) vs "if"
+        let kind_node = child_by!(node, FieldKind::Kind);
+        let is_when = if !kind_node.is_null() {
+            self.ctx.node_text(kind_node.unwrap()) == "when"
+        } else {
+            false
+        };
+
+        if is_when {
+            DiagnosticContext::_write_stderr("DBG: detected WHEN expression\n");
+        }
+        let tag = if is_when { EXPR_WHEN } else { EXPR_IF };
+        let e = self.make_expr(tag, span);
         e.cond = cond_expr;
         e.lhs = then_expr;
         e.opt_expr = else_expr;
@@ -2641,13 +2768,6 @@ impl ExprParser {
             let var_id = self.ctx.next_id();
             let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
-            // Register in scope
-            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
-                name: var_name,
-                kind: NamedItemKind::local(var_id),
-                span: self.ctx.make_span(name_node.unwrap()),
-            });
-
             let pass2 = Pass2 { ctx: self.ctx };
             let ty: Option<&Ty> = if !type_node.is_null() {
                 Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
@@ -2660,6 +2780,16 @@ impl ExprParser {
             } else {
                 Option::none()
             };
+
+            // Register in scope AFTER parsing the initializer
+            // This ensures the initializer can reference shadowed variables
+            // (e.g., `let x = x.method()` where x in the initializer refers
+            // to the previously defined x, not the one being defined)
+            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                name: var_name,
+                kind: NamedItemKind::local(var_id),
+                span: self.ctx.make_span(name_node.unwrap()),
+            });
 
             let e = self.make_expr(EXPR_LET, span);
             e.id = var_id;
@@ -2964,8 +3094,11 @@ impl ExprParser {
                 }
             }
 
-            // Parse the macro body as an expression
+            // Parse the macro body using the macro's source buffer
+            let prev_source = self.ctx.source;
+            self.ctx.source = entry.source;
             let result = self.parse_expr(entry.body_node);
+            self.ctx.source = prev_source;
 
             // Restore previous macro_args
             self.ctx.macro_args.free();
@@ -3024,7 +3157,10 @@ impl ExprParser {
                 }
             }
 
+            let prev_source = self.ctx.source;
+            self.ctx.source = entry.source;
             let result = self.parse_expr(entry.body_node);
+            self.ctx.source = prev_source;
 
             self.ctx.macro_args.free();
             self.ctx.macro_args = prev_args;
@@ -3302,6 +3438,12 @@ fn parse_file_pass1(
     let pass1 = Pass1::new(&ctx, root_scope);
     pass1.run(root);
 
+    DiagnosticContext::_write_stderr("P1 done: pending_fns=");
+    DiagnosticContext::_write_stderr(format_num_small(ctx.pending_functions.len()));
+    DiagnosticContext::_write_stderr(" pending_structs=");
+    DiagnosticContext::_write_stderr(format_num_small(ctx.pending_structs.len()));
+    DiagnosticContext::_write_stderr("\n");
+
     ctx
 }
 
@@ -3346,4 +3488,21 @@ fn parse_file_pass2(
         items[i] = ctx.items[i];
     }
     items
+}
+
+fn format_num_small(n: usize) -> &[u8] {
+    if n == 0usize { return "0"; }
+    if n == 1usize { return "1"; }
+    if n == 2usize { return "2"; }
+    if n == 3usize { return "3"; }
+    if n == 4usize { return "4"; }
+    if n == 5usize { return "5"; }
+    if n == 6usize { return "6"; }
+    if n == 7usize { return "7"; }
+    if n == 8usize { return "8"; }
+    if n == 9usize { return "9"; }
+    if n < 20usize { return "1X"; }
+    if n < 50usize { return "2X-4X"; }
+    if n < 100usize { return "5X-9X"; }
+    "100++"
 }

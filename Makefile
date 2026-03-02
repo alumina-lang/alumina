@@ -221,7 +221,7 @@ ALUMINAC_MODULES = \
 
 .PHONY: bootstrap
 bootstrap: $(ALUMINAC)
-	$(ALUMINAC) --sysroot sysroot-simple \
+	$(ALUMINAC) --no-verify --sysroot sysroot-simple \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_BOOTSTRAP) \
 		$(ALUMINAC_MODULES)
