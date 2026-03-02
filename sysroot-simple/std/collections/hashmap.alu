@@ -34,17 +34,34 @@ impl HashMap<K, V> {
     }
 
     fn _hash_key(key: &K) -> usize {
-        // FNV-1a hash over the raw bytes of the key
-        let bytes = key as &K as &u8;
-        let key_size = std::mem::size_of::<K>();
         let h = 14695981039346656037usize; // FNV offset basis
-        let i = 0usize;
-        while i < key_size {
-            let b = *(&bytes[i]) as usize;
-            h = h ^ b;
-            h = h * 1099511628211usize; // FNV prime
-            i = i + 1usize;
+
+        when *key is &[u8] {
+            // Slice key (&[u8]): hash the pointed-to content bytes
+            // Fat pointer layout is {ptr: &u8, len: usize}
+            let raw = key as &K as &usize;
+            let ptr = *(&raw[0]) as &u8;
+            let len = *(&raw[1]);
+            let i = 0usize;
+            while i < len {
+                let b = *(&ptr[i]) as usize;
+                h = h ^ b;
+                h = h * 1099511628211usize;
+                i = i + 1usize;
+            }
+        } else {
+            // Scalar type (usize, u64, etc.): hash raw bytes of value
+            let bytes = key as &K as &u8;
+            let key_size = std::mem::size_of::<K>();
+            let i = 0usize;
+            while i < key_size {
+                let b = *(&bytes[i]) as usize;
+                h = h ^ b;
+                h = h * 1099511628211usize;
+                i = i + 1usize;
+            }
         }
+
         h
     }
 
