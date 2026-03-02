@@ -266,7 +266,7 @@ impl MonoCtx {
             key = key * 31 + (params[i] as &void as usize);
         }
         // Different hash space from tuples
-        let key = key + 0x20000000usize;
+        key = key + 0x20000000usize;
         let cached = self.tuple_ty_cache.get(&key);
         if cached.is_some() { return cached.unwrap(); }
         let result = self.arena.alloc(IrTy::mk_fn_pointer(params, ret));
@@ -279,7 +279,7 @@ impl MonoCtx {
         // IrTy::mk_slice wrapper too for pointer stability
         let key = (elem as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
         // Use a different hash space from ptr_ty_cache by adding a large offset
-        let key = key + 0x10000000usize;
+        key = key + 0x10000000usize;
         let cached = self.tuple_ty_cache.get(&key);
         if cached.is_some() { return cached.unwrap(); }
         // Build elems = {ptr_ty, usize_ty} so code that assumes tuple representation works
@@ -630,6 +630,7 @@ impl Mono {
 
         let prev_fn_name = self.current_fn_name;
         self.current_fn_name = def.name;
+
 
         let cache_key = hash_mono_key(def.id, type_args);
         let cached = self.ctx.fn_cache.get(&cache_key);
@@ -1269,6 +1270,8 @@ impl Mono {
                     let pat_expr = self.lower_expr(expr.switch_arms[i].pattern[j]);
                     if pat_expr.tag == IR_INT_LIT {
                         values[j] = pat_expr.int_val;
+                    } else if pat_expr.tag == IR_CAST && pat_expr.lhs.tag == IR_INT_LIT {
+                        values[j] = pat_expr.lhs.int_val;
                     } else {
                         values[j] = 0;
                     }
@@ -1858,22 +1861,22 @@ impl Mono {
                         slice_field.field_idx = fi as u32;
                         let slice_ref = self.ctx.arena.alloc(slice_field);
                         // Index through the slice
-                        let elem_ty = self.slice_elem_ty(sr.fields[fi].ty);
-                        let data_ptr_ty = if sr.fields[fi].ty.tag == IRTY_SLICE {
-                            self.ctx.make_ptr_ty(elem_ty, false)
+                        let sf_elem_ty = self.slice_elem_ty(sr.fields[fi].ty);
+                        let sf_data_ptr_ty = if sr.fields[fi].ty.tag == IRTY_SLICE {
+                            self.ctx.make_ptr_ty(sf_elem_ty, false)
                         } else {
                             sr.fields[fi].ty.elems[0]
                         };
-                        let data_ptr = IrExpr::void_expr(data_ptr_ty);
-                        data_ptr.tag = IR_FIELD_ACCESS;
-                        data_ptr.lhs = slice_ref;
-                        data_ptr.field_idx = 0u32;
-                        let data_ptr_ref = self.ctx.arena.alloc(data_ptr);
-                        let result = IrExpr::void_expr(elem_ty);
-                        result.tag = IR_INDEX;
-                        result.lhs = data_ptr_ref;
-                        result.rhs = ir_index;
-                        return self.ctx.arena.alloc(result);
+                        let sf_data_ptr = IrExpr::void_expr(sf_data_ptr_ty);
+                        sf_data_ptr.tag = IR_FIELD_ACCESS;
+                        sf_data_ptr.lhs = slice_ref;
+                        sf_data_ptr.field_idx = 0u32;
+                        let sf_data_ptr_ref = self.ctx.arena.alloc(sf_data_ptr);
+                        let sf_result = IrExpr::void_expr(sf_elem_ty);
+                        sf_result.tag = IR_INDEX;
+                        sf_result.lhs = sf_data_ptr_ref;
+                        sf_result.rhs = ir_index;
+                        return self.ctx.arena.alloc(sf_result);
                     }
                 }
             }
@@ -2213,8 +2216,8 @@ impl Mono {
             if param_ty.tag == TY_PLACEHOLDER {
                 for g in 0usize..num_generics {
                     if def.generic_params[g].id._value == param_ty.id._value {
-                        let arg_ty = self.lower_expr(args[p]).ty;
-                        inferred[g] = arg_ty;
+                        let direct_arg_ty = self.lower_expr(args[p]).ty;
+                        inferred[g] = direct_arg_ty;
                         found[g] = true;
                         break;
                     }
@@ -2224,10 +2227,10 @@ impl Mono {
             if param_ty.tag == TY_POINTER && param_ty.inner.tag == TY_PLACEHOLDER {
                 for g in 0usize..num_generics {
                     if def.generic_params[g].id._value == param_ty.inner.id._value {
-                        let arg_ty = self.lower_expr(args[p]).ty;
+                        let ptr_arg_ty = self.lower_expr(args[p]).ty;
                         // Unwrap pointer
-                        if arg_ty.tag == IRTY_POINTER {
-                            inferred[g] = arg_ty.inner;
+                        if ptr_arg_ty.tag == IRTY_POINTER {
+                            inferred[g] = ptr_arg_ty.inner;
                             found[g] = true;
                         }
                         break;
@@ -2238,13 +2241,13 @@ impl Mono {
             if param_ty.tag == TY_SLICE && param_ty.inner.tag == TY_PLACEHOLDER {
                 for g in 0usize..num_generics {
                     if def.generic_params[g].id._value == param_ty.inner.id._value {
-                        let arg_ty = self.lower_expr(args[p]).ty;
+                        let slice_arg_ty = self.lower_expr(args[p]).ty;
                         // Unwrap slice (tuple of ptr + len)
-                        if arg_ty.tag == IRTY_TUPLE && arg_ty.elems.len() == 2 && arg_ty.elems[0].tag == IRTY_POINTER {
-                            inferred[g] = arg_ty.elems[0].inner;
+                        if slice_arg_ty.tag == IRTY_TUPLE && slice_arg_ty.elems.len() == 2 && slice_arg_ty.elems[0].tag == IRTY_POINTER {
+                            inferred[g] = slice_arg_ty.elems[0].inner;
                             found[g] = true;
-                        } else if arg_ty.tag == IRTY_SLICE {
-                            inferred[g] = arg_ty.inner;
+                        } else if slice_arg_ty.tag == IRTY_SLICE {
+                            inferred[g] = slice_arg_ty.inner;
                             found[g] = true;
                         }
                         break;
@@ -2329,7 +2332,9 @@ impl Mono {
             inferred as &[&IrTy]
         } else {
             // Return empty - couldn't infer any types
-            &[]
+            // Note: use alloc_slice(0) instead of &[] because &[] in an if-else branch
+            // generates a broken bitcast that reads garbage for the slice length
+            self.ctx.arena.alloc_slice::<&IrTy>(0usize)
         }
     }
 
@@ -2666,8 +2671,8 @@ impl Mono {
                 if param_ty.tag == TY_PLACEHOLDER {
                     for g in 0usize..num_generics {
                         if def.generic_params[g].id._value == param_ty.id._value {
-                            let arg_ty = self.lower_expr(expr.args[p]).ty;
-                            inferred[g] = arg_ty;
+                            let m_direct_arg_ty = self.lower_expr(expr.args[p]).ty;
+                            inferred[g] = m_direct_arg_ty;
                             found_count = found_count + 1usize;
                             break;
                         }
@@ -2677,9 +2682,9 @@ impl Mono {
                 if param_ty.tag == TY_POINTER && param_ty.inner.tag == TY_PLACEHOLDER {
                     for g in 0usize..num_generics {
                         if def.generic_params[g].id._value == param_ty.inner.id._value {
-                            let arg_ty = self.lower_expr(expr.args[p]).ty;
-                            if arg_ty.tag == IRTY_POINTER {
-                                inferred[g] = arg_ty.inner;
+                            let m_ptr_arg_ty = self.lower_expr(expr.args[p]).ty;
+                            if m_ptr_arg_ty.tag == IRTY_POINTER {
+                                inferred[g] = m_ptr_arg_ty.inner;
                                 found_count = found_count + 1usize;
                             }
                             break;
@@ -2690,12 +2695,12 @@ impl Mono {
                 if param_ty.tag == TY_SLICE && param_ty.inner.tag == TY_PLACEHOLDER {
                     for g in 0usize..num_generics {
                         if def.generic_params[g].id._value == param_ty.inner.id._value {
-                            let arg_ty = self.lower_expr(expr.args[p]).ty;
-                            if arg_ty.tag == IRTY_SLICE {
-                                inferred[g] = arg_ty.inner;
+                            let m_slice_arg_ty = self.lower_expr(expr.args[p]).ty;
+                            if m_slice_arg_ty.tag == IRTY_SLICE {
+                                inferred[g] = m_slice_arg_ty.inner;
                                 found_count = found_count + 1usize;
-                            } else if arg_ty.tag == IRTY_TUPLE && arg_ty.elems.len() == 2 && arg_ty.elems[0].tag == IRTY_POINTER {
-                                inferred[g] = arg_ty.elems[0].inner;
+                            } else if m_slice_arg_ty.tag == IRTY_TUPLE && m_slice_arg_ty.elems.len() == 2 && m_slice_arg_ty.elems[0].tag == IRTY_POINTER {
+                                inferred[g] = m_slice_arg_ty.elems[0].inner;
                                 found_count = found_count + 1usize;
                             }
                             break;
@@ -3118,9 +3123,10 @@ impl Mono {
                     // Lower arguments
                     let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
                     for i in 0usize..expr.args.len() {
-                        ir_args[i] = self.lower_expr(expr.args[i]);
                         if i < ir_fn.params.len() {
-                            ir_args[i] = self.coerce_to_type(ir_args[i], ir_fn.params[i].ty);
+                            ir_args[i] = self.lower_expr_coerced(expr.args[i], ir_fn.params[i].ty);
+                        } else {
+                            ir_args[i] = self.lower_expr(expr.args[i]);
                         }
                     }
 
@@ -3171,15 +3177,33 @@ impl Mono {
 
                         // Infer type args from argument types
                         let inferred = self.infer_type_args(def, expr.args);
-                        if inferred.len() > 0 {
-                            let fn_idx = self.mono_function(def, inferred);
+                        // If inference from args failed (e.g. Option::none() with no args),
+                        // try to infer from expected return type context
+                        let call_ta = inferred;
+                        if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
+                            // Try to extract type args from expected_type (e.g. Option<usize>)
+                            if self.expected_type.tag == IRTY_STRUCT && self.expected_type.struct_ref.type_args.len() == def.generic_params.len() {
+                                call_ta = self.expected_type.struct_ref.type_args;
+                            } else if self.expected_type.tag == IRTY_STRUCT && def.generic_params.len() == 1usize {
+                                // For single-generic functions returning a wrapper struct,
+                                // the expected type's first type arg is probably the generic param
+                                if self.expected_type.struct_ref.type_args.len() > 0usize {
+                                    let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
+                                    ctx_ta[0] = self.expected_type.struct_ref.type_args[0];
+                                    call_ta = ctx_ta;
+                                }
+                            }
+                        }
+                        if call_ta.len() > 0usize {
+                            let fn_idx = self.mono_function(def, call_ta);
                             let ir_fn = &self.ctx.ir_functions[fn_idx];
 
                             let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
                             for i in 0usize..expr.args.len() {
-                                ir_args[i] = self.lower_expr(expr.args[i]);
                                 if i < ir_fn.params.len() {
-                                    ir_args[i] = self.coerce_to_type(ir_args[i], ir_fn.params[i].ty);
+                                    ir_args[i] = self.lower_expr_coerced(expr.args[i], ir_fn.params[i].ty);
+                                } else {
+                                    ir_args[i] = self.lower_expr(expr.args[i]);
                                 }
                             }
 
@@ -3187,11 +3211,11 @@ impl Mono {
                                 id: ir_fn.id,
                                 mangled_name: ir_fn.mangled_name,
                             };
-                            let result = IrExpr::void_expr(ir_fn.return_type);
-                            result.tag = IR_CALL;
-                            result.call_target = IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
-                            result.items = ir_args;
-                            return self.ctx.arena.alloc(result);
+                            let inferred_result = IrExpr::void_expr(ir_fn.return_type);
+                            inferred_result.tag = IR_CALL;
+                            inferred_result.call_target = IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+                            inferred_result.items = ir_args;
+                            return self.ctx.arena.alloc(inferred_result);
                         }
                     } else {
                         // Non-generic function call: emit as CALL_DIRECT
@@ -3200,10 +3224,10 @@ impl Mono {
 
                         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
                         for i in 0usize..expr.args.len() {
-                            ir_args[i] = self.lower_expr(expr.args[i]);
-                            // Coerce args (e.g. &[T; N] to &[T])
                             if i < ir_fn.params.len() {
-                                ir_args[i] = self.coerce_to_type(ir_args[i], ir_fn.params[i].ty);
+                                ir_args[i] = self.lower_expr_coerced(expr.args[i], ir_fn.params[i].ty);
+                            } else {
+                                ir_args[i] = self.lower_expr(expr.args[i]);
                             }
                         }
 
@@ -3226,18 +3250,19 @@ impl Mono {
                 ir_args[i] = self.lower_expr(expr.args[i]);
             }
 
-            // Determine return type from callee
-            let ret_ty = if ir_callee.ty.tag == IRTY_FN_POINTER {
-                ir_callee.ty.ret_ty
+            // Determine return type from callee - only emit indirect call if callee is a function pointer
+            if ir_callee.ty.tag == IRTY_FN_POINTER {
+                let ret_ty = ir_callee.ty.ret_ty;
+                let result = IrExpr::void_expr(ret_ty);
+                result.tag = IR_CALL;
+                result.call_target = IrCallTarget { tag: CALL_INDIRECT, fn_ref: IrFnRef::empty(), callee: ir_callee };
+                result.items = ir_args;
+                self.ctx.arena.alloc(result)
             } else {
-                self.ctx.void_ty
-            };
-
-            let result = IrExpr::void_expr(ret_ty);
-            result.tag = IR_CALL;
-            result.call_target = IrCallTarget { tag: CALL_INDIRECT, fn_ref: IrFnRef::empty(), callee: ir_callee };
-            result.items = ir_args;
-            self.ctx.arena.alloc(result)
+                // Not a function pointer - method resolution failed, emit void
+                let r = IrExpr::void_expr(self.ctx.void_ty);
+                self.ctx.arena.alloc(r)
+            }
         } else if expr.tag == EXPR_STRUCT_LIT {
             let ir_ty = self.resolve_type(expr.ty);
             // Reorder field_inits to match struct definition order

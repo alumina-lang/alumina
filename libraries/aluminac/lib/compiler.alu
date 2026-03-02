@@ -354,46 +354,31 @@ impl Compiler {
         }
 
         // Phase 1.5: Collect macro definitions from all files
-        DiagnosticContext::_write_stderr("phase1.5: collecting macros\n");
         for i in 0usize..trees.len() {
-            DiagnosticContext::_write_stderr("collect_macros file\n");
             let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
             let root = tree_sitter::Node { inner: raw };
             aluminac::lib::parser::collect_macros(&contexts.as_slice_mut()[i], root);
-            DiagnosticContext::_write_stderr("collect_macros done\n");
         }
-        DiagnosticContext::_write_stderr("sharing macros\n");
         // Share macros across all contexts
         aluminac::lib::parser::share_macros(contexts.as_slice_mut());
-        DiagnosticContext::_write_stderr("macros shared\n");
 
         // Phase 2: Parse all function bodies (all names are now registered)
-        DiagnosticContext::_write_stderr("phase2: parsing function bodies\n");
         for i in 0usize..trees.len() {
-            DiagnosticContext::_write_stderr("pass2 file\n");
             let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
             let root = tree_sitter::Node { inner: raw };
             let items = aluminac::lib::parser::parse_file_pass2(&contexts.as_slice_mut()[i], root);
-            DiagnosticContext::_write_stderr("pass2 done, items=");
-            DiagnosticContext::_write_stderr(self.format_num(items.len()));
-            DiagnosticContext::_write_stderr("\n");
 
             for j in 0usize..items.len() {
                 self.all_items.push(items[j]);
             }
-            DiagnosticContext::_write_stderr("items pushed\n");
         }
 
         // Cleanup
-        DiagnosticContext::_write_stderr("cleanup\n");
         for i in 0usize..trees.len() {
-            DiagnosticContext::_write_stderr("freeing tree+ctx\n");
             trees[i].free();
             contexts.as_slice_mut()[i].free();
         }
-        DiagnosticContext::_write_stderr("freeing parser\n");
         parser.free();
-        DiagnosticContext::_write_stderr("cleanup done\n");
 
         if self.diag.has_errors {
             self.diag.emit_all();
@@ -401,13 +386,10 @@ impl Compiler {
         }
 
         // Convert items to a slice for mono
-        DiagnosticContext::_write_stderr("converting items\n");
         let items_slice = self.arena.alloc_slice::<Item>(self.all_items.len());
         for i in 0usize..self.all_items.len() {
             items_slice[i] = self.all_items[i];
         }
-        DiagnosticContext::_write_stderr("monomorphizing\n");
-
         // Monomorphize
         let unit = aluminac::lib::mono::monomorphize(
             &self.arena,
@@ -423,7 +405,6 @@ impl Compiler {
         }
 
 
-        DiagnosticContext::_write_stderr("mono done, codegen\n");
         // Code generation
         let ctx = aluminac::lib::codegen::generate(
             &self.arena,
@@ -570,11 +551,6 @@ impl Compiler {
         if existing.is_some() {
             let item = existing.unwrap();
             if item.kind.tag == NIK_MODULE {
-                if name == "llvm" || name == "lib" || name == "codegen" {
-                    DiagnosticContext::_write_stderr("DBG: ensure reuse '");
-                    DiagnosticContext::_write_stderr(name);
-                    DiagnosticContext::_write_stderr("'\n");
-                }
                 return item.kind.scope_idx;
             }
         }
@@ -586,11 +562,6 @@ impl Compiler {
             kind: NamedItemKind::module(child),
             span: Span::empty(),
         });
-        if name == "llvm" || name == "lib" || name == "codegen" {
-            DiagnosticContext::_write_stderr("DBG: ensure create '");
-            DiagnosticContext::_write_stderr(name);
-            DiagnosticContext::_write_stderr("'\n");
-        }
         child
     }
 

@@ -258,12 +258,6 @@ impl Pass1 {
     fn visit_node(self: &mut Pass1, node: Node) {
         let sym = node.symbol() as usize;
         let kind = NODE_KINDS[sym];
-        if kind == NodeKind::FunctionDefinition {
-            DiagnosticContext::_write_stderr("P1:switch->FN\n");
-        }
-        if kind == NodeKind::SourceFile {
-            DiagnosticContext::_write_stderr("P1:switch->SF\n");
-        }
         switch kind {
             NodeKind::SourceFile => self.visit_source_file_p1(node),
             NodeKind::ModDefinition => self.visit_mod_p1(node),
@@ -307,17 +301,11 @@ impl Pass1 {
     }
 
     fn visit_children_by_field(self: &mut Pass1, node: Node, field: FieldKind) {
-        DiagnosticContext::_write_stderr("P1:vcbf\n");
         let cursor = node.walk();
         defer cursor.free();
-        let count: usize = 0;
         for child in children_by!(node, field, &cursor) {
-            count = count + 1;
             self.visit_node(child);
         }
-        DiagnosticContext::_write_stderr("P1:vcbf_done count=");
-        DiagnosticContext::_write_stderr(format_num_small(count));
-        DiagnosticContext::_write_stderr("\n");
     }
 
     fn get_name(self: &mut Pass1, node: Node) -> &[u8] {
@@ -412,7 +400,6 @@ impl Pass1 {
     }
 
     fn visit_source_file_p1(self: &mut Pass1, node: Node) {
-        DiagnosticContext::_write_stderr("P1:visit_source_file\n");
         self.visit_children_by_field(node, FieldKind::Body);
     }
 
@@ -443,7 +430,6 @@ impl Pass1 {
     }
 
     fn visit_function_p1(self: &mut Pass1, node: Node) {
-        DiagnosticContext::_write_stderr("P1:visit_fn\n");
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
@@ -471,9 +457,6 @@ impl Pass1 {
             is_method: self.in_container,
             impl_generic_param_ids: self.impl_generic_param_ids,
         });
-        DiagnosticContext::_write_stderr("P1:pushed fn, name=");
-        DiagnosticContext::_write_stderr(name);
-        DiagnosticContext::_write_stderr("\n");
 
         // Visit generic params and parameters in child scope
         let prev = self.current_scope;
@@ -732,18 +715,7 @@ impl Pass1 {
                         let item = resolved.unwrap();
                         if item.kind.tag == scope::NIK_MODULE && item.kind.scope_idx != 0 {
                             self.ctx.scopes.add_star_import(self.current_scope, item.kind.scope_idx, self.ctx.arena);
-                        } else {
-                            DiagnosticContext::_write_stderr("DBG: use *: resolved but not module, kind=");
-                            DiagnosticContext::_write_stderr(if item.kind.tag == scope::NIK_MODULE { "MODULE" } else { "OTHER" });
-                            DiagnosticContext::_write_stderr("\n");
                         }
-                    } else {
-                        DiagnosticContext::_write_stderr("DBG: use *: path not resolved: ");
-                        for seg in segments {
-                            DiagnosticContext::_write_stderr(seg);
-                            DiagnosticContext::_write_stderr("::");
-                        }
-                        DiagnosticContext::_write_stderr("\n");
                     }
                 }
             },
@@ -1018,10 +990,8 @@ impl Pass2 {
     fn process_macros(self: &mut Pass2, root: Node) {
         let mac_len = self.ctx.pending_macros.len();
         if mac_len == 0usize {
-            DiagnosticContext::_write_stderr("MACROS: 0\n");
             return;
         }
-        DiagnosticContext::_write_stderr("MACROS: >0\n");
         for i in 0usize..mac_len {
             let pending = &self.ctx.pending_macros[i];
             let node = self.find_node_at(root, pending.node_start, pending.node_end);
@@ -1316,29 +1286,12 @@ impl Pass2 {
     }
 
     fn parse_return_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
-        DiagnosticContext::_write_stderr("DBG:parse_ret_type ENTER\n");
         let ret_node = child_by!(node, FieldKind::ReturnType);
         if ret_node.is_null() {
-            DiagnosticContext::_write_stderr("DBG:parse_ret_type NULL\n");
             return self.ctx.alloc_ty(Ty::void_ty());
         }
-        DiagnosticContext::_write_stderr("DBG:parse_ret_type NOT-NULL\n");
         let unwrapped = ret_node.unwrap();
-        let text = self.ctx.node_text(unwrapped);
-        DiagnosticContext::_write_stderr("DBG:parse_ret_type text=");
-        DiagnosticContext::_write_stderr(text);
-        DiagnosticContext::_write_stderr("\n");
         let result = self.parse_type(unwrapped, scope_idx);
-        DiagnosticContext::_write_stderr("DBG:parse_ret_type result_tag=");
-        if result.tag == TY_BUILTIN {
-            DiagnosticContext::_write_stderr("BUILTIN\n");
-        } else if result.tag == TY_PLACEHOLDER {
-            DiagnosticContext::_write_stderr("PLACEHOLDER\n");
-        } else if result.tag == TY_UNRESOLVED {
-            DiagnosticContext::_write_stderr("UNRESOLVED\n");
-        } else {
-            DiagnosticContext::_write_stderr("OTHER\n");
-        }
         result
     }
 
@@ -1346,28 +1299,11 @@ impl Pass2 {
         let kind = NODE_KINDS[node.symbol() as usize];
         switch kind {
             NodeKind::PrimitiveType => {
-                DiagnosticContext::_write_stderr("DBG:parse_type PrimitiveType\n");
                 let text = self.ctx.node_text(node);
-                DiagnosticContext::_write_stderr("DBG:parse_type text=");
-                DiagnosticContext::_write_stderr(text);
-                DiagnosticContext::_write_stderr("\n");
                 let builtin = parse_builtin_type(text);
                 if builtin.is_some() {
-                    DiagnosticContext::_write_stderr("DBG:parse_type BUILTIN-MATCH\n");
                     let ty = Ty::builtin_ty(builtin.unwrap());
-                    DiagnosticContext::_write_stderr("DBG:parse_type ty.tag before alloc=");
-                    if ty.tag == TY_BUILTIN {
-                        DiagnosticContext::_write_stderr("BUILTIN\n");
-                    } else {
-                        DiagnosticContext::_write_stderr("NOTBUILTIN\n");
-                    }
                     let result = self.ctx.alloc_ty(ty);
-                    DiagnosticContext::_write_stderr("DBG:parse_type result.tag after alloc=");
-                    if result.tag == TY_BUILTIN {
-                        DiagnosticContext::_write_stderr("BUILTIN\n");
-                    } else {
-                        DiagnosticContext::_write_stderr("NOTBUILTIN\n");
-                    }
                     return result;
                 }
                 // Unknown primitive
@@ -1402,18 +1338,6 @@ impl Pass2 {
                     } else if item.kind.tag == scope::NIK_BUILTIN_TYPE {
                         let bt = item.kind.builtin;
                         return self.ctx.alloc_ty(Ty::builtin_ty(bt));
-                    } else {
-                        // Found but unrecognized kind
-                        DiagnosticContext::_write_stderr("DBG: type ");
-                        DiagnosticContext::_write_stderr(name);
-                        DiagnosticContext::_write_stderr(" found-unexpected-kind\n");
-                    }
-                } else {
-                    // Truly not found
-                    if name.len() > 3 && name[0] == 'L' as u8 && name[1] == 'L' as u8 {
-                        DiagnosticContext::_write_stderr("DBG: type ");
-                        DiagnosticContext::_write_stderr(name);
-                        DiagnosticContext::_write_stderr(" NOT-FOUND\n");
                     }
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -2018,6 +1942,12 @@ impl ExprParser {
     }
 
     fn parse_block(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Create a child scope for this block to properly handle variable shadowing.
+        // Inner `let` declarations will be in the child scope and won't overwrite
+        // outer variables in the parent scope.
+        let block_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
+        let block_parser = ExprParser::new(self.ctx, block_scope);
+
         let stmts: Vector<&Expr> = Vector::new();
         defer stmts.free();
 
@@ -2025,7 +1955,7 @@ impl ExprParser {
         defer cursor.free();
         for child in children_by!(node, FieldKind::Statements, &cursor) {
             if child.is_named() {
-                let expr = self.parse_expr(child);
+                let expr = block_parser.parse_expr(child);
                 stmts.push(expr);
             }
         }
@@ -2033,7 +1963,7 @@ impl ExprParser {
         // Also check for a result expression
         let result_node = child_by!(node, FieldKind::Result);
         if !result_node.is_null() {
-            stmts.push(self.parse_expr(result_node.unwrap()));
+            stmts.push(block_parser.parse_expr(result_node.unwrap()));
         }
 
         let result = self.ctx.arena.alloc_slice::<&Expr>(stmts.len());
@@ -2606,9 +2536,6 @@ impl ExprParser {
             false
         };
 
-        if is_when {
-            DiagnosticContext::_write_stderr("DBG: detected WHEN expression\n");
-        }
         let tag = if is_when { EXPR_WHEN } else { EXPR_IF };
         let e = self.make_expr(tag, span);
         e.cond = cond_expr;
@@ -2715,8 +2642,12 @@ impl ExprParser {
         let var_id = self.ctx.next_id();
         let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
-        // Register the loop variable in scope
-        self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+        // Create a child scope for the loop so the loop variable doesn't pollute the parent scope
+        let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
+        let loop_parser = ExprParser::new(self.ctx, loop_scope);
+
+        // Register the loop variable in the loop's child scope
+        self.ctx.scopes.add_item(loop_scope, NamedItem {
             name: var_name,
             kind: NamedItemKind::local(var_id),
             span: self.ctx.make_span(name_node.unwrap()),
@@ -2724,8 +2655,8 @@ impl ExprParser {
 
         let e = self.make_expr(EXPR_FOR, span);
         e.id = var_id;
-        e.lhs = self.parse_expr(iter_node.unwrap());
-        e.rhs = self.parse_expr(body.unwrap());
+        e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
+        e.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
         self.ctx.alloc_expr(e)
     }
 
@@ -3437,12 +3368,6 @@ fn parse_file_pass1(
     // Pass 1: build scopes and register all names
     let pass1 = Pass1::new(&ctx, root_scope);
     pass1.run(root);
-
-    DiagnosticContext::_write_stderr("P1 done: pending_fns=");
-    DiagnosticContext::_write_stderr(format_num_small(ctx.pending_functions.len()));
-    DiagnosticContext::_write_stderr(" pending_structs=");
-    DiagnosticContext::_write_stderr(format_num_small(ctx.pending_structs.len()));
-    DiagnosticContext::_write_stderr("\n");
 
     ctx
 }

@@ -492,8 +492,8 @@ impl CodegenCtx {
             for i in 0usize..ir_fn.params.len() {
                 let orig_ty = self.llvm_type(ir_fn.params[i].ty);
                 if self.needs_byval(orig_ty) {
-                    let attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
-                    LLVMAddAttributeAtIndex(llvm_fn, (i + 1) as u32, attr);
+                    let byval_attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
+                    LLVMAddAttributeAtIndex(llvm_fn, (i + 1) as u32, byval_attr);
                 }
             }
         }
@@ -505,10 +505,10 @@ impl CodegenCtx {
             let is_export = false;
             let is_main = false;
             for i in 0usize..ir_fn.attributes.len() {
-                let attr = &ir_fn.attributes[i];
-                if attr.tag == ATTR_EXPORT {
+                let linkage_attr = &ir_fn.attributes[i];
+                if linkage_attr.tag == ATTR_EXPORT {
                     is_export = true;
-                } else if attr.tag == ATTR_MAIN {
+                } else if linkage_attr.tag == ATTR_MAIN {
                     is_main = true;
                 }
             }
@@ -838,11 +838,11 @@ impl CodegenCtx {
             let strlen_param = self.arena.alloc_slice::<LLVMTypeRef>(1);
             strlen_param[0] = i8_ptr_ty;
             let strlen_ty = LLVMFunctionType(self.i64_type, &strlen_param[0], 1u32, 0i32);
-            let strlen_fn = LLVMGetNamedFunction(self.module, &"strlen\0"[0] as &libc::c_char);
-            let strlen_fn = if (strlen_fn as usize) == 0 {
+            let strlen_fn_lookup = LLVMGetNamedFunction(self.module, &"strlen\0"[0] as &libc::c_char);
+            let strlen_fn = if (strlen_fn_lookup as usize) == 0 {
                 LLVMAddFunction(self.module, &"strlen\0"[0] as &libc::c_char, strlen_ty)
             } else {
-                strlen_fn
+                strlen_fn_lookup
             };
 
             LLVMBuildBr(self.builder, loop_bb);
@@ -1257,6 +1257,12 @@ impl FnCodegen {
                 return LLVMGetUndef(result_ty);
             }
             let obj_ptr = self.gen_lvalue(expr.lhs);
+            // Safety: ensure obj_ty has enough fields for the field_idx
+            let num_fields = LLVMCountStructElementTypes(obj_ty);
+            if expr.field_idx >= num_fields {
+                let result_ty = self.ctx.llvm_type(expr.ty);
+                return LLVMGetUndef(if self.is_void_type(result_ty) { self.ctx.i8_type } else { result_ty });
+            }
             let field_ptr = LLVMBuildStructGEP2(
                 self.ctx.builder, obj_ty, obj_ptr, expr.field_idx,
                 self.temp_cname()
@@ -1502,17 +1508,17 @@ impl FnCodegen {
             LLVMGetUndef(self.ctx.void_type)
         } else if expr.tag == IR_TRAP {
             // Call llvm.trap intrinsic
-            let trap_fn = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
-            let trap_fn = if (trap_fn as usize) == 0 {
-                let void_ty = LLVMVoidTypeInContext(self.ctx.context);
-                let trap_ty = LLVMFunctionType(void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
-                LLVMAddFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char, trap_ty)
+            let trap_fn_lookup = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
+            let trap_fn = if (trap_fn_lookup as usize) == 0 {
+                let trap_void_ty = LLVMVoidTypeInContext(self.ctx.context);
+                let trap_fn_ty = LLVMFunctionType(trap_void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+                LLVMAddFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char, trap_fn_ty)
             } else {
-                trap_fn
+                trap_fn_lookup
             };
-            let void_ty = LLVMVoidTypeInContext(self.ctx.context);
-            let trap_ty = LLVMFunctionType(void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
-            LLVMBuildCall2(self.ctx.builder, trap_ty, trap_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
+            let trap_call_void_ty = LLVMVoidTypeInContext(self.ctx.context);
+            let trap_call_ty = LLVMFunctionType(trap_call_void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+            LLVMBuildCall2(self.ctx.builder, trap_call_ty, trap_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
             LLVMBuildUnreachable(self.ctx.builder);
             LLVMGetUndef(self.ctx.void_type)
         } else if expr.tag == IR_UNDEF {
@@ -1552,17 +1558,17 @@ impl FnCodegen {
                 let alloca = LLVMBuildArrayAlloca(self.ctx.builder, i8_ty, arg_vals[0], self.temp_cname());
                 LLVMBuildBitCast(self.ctx.builder, alloca, self.ctx.llvm_type(expr.ty), self.temp_cname())
             } else if name == "__builtin_trap" {
-                let trap_fn = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
-                let trap_fn = if (trap_fn as usize) == 0 {
-                    let void_ty = LLVMVoidTypeInContext(self.ctx.context);
-                    let trap_ty = LLVMFunctionType(void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
-                    LLVMAddFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char, trap_ty)
+                let builtin_trap_lookup = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
+                let builtin_trap_fn = if (builtin_trap_lookup as usize) == 0 {
+                    let bt_void_ty = LLVMVoidTypeInContext(self.ctx.context);
+                    let bt_fn_ty = LLVMFunctionType(bt_void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+                    LLVMAddFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char, bt_fn_ty)
                 } else {
-                    trap_fn
+                    builtin_trap_lookup
                 };
-                let void_ty = LLVMVoidTypeInContext(self.ctx.context);
-                let trap_ty = LLVMFunctionType(void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
-                LLVMBuildCall2(self.ctx.builder, trap_ty, trap_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
+                let bt_call_void_ty = LLVMVoidTypeInContext(self.ctx.context);
+                let bt_call_ty = LLVMFunctionType(bt_call_void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+                LLVMBuildCall2(self.ctx.builder, bt_call_ty, builtin_trap_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
                 LLVMBuildUnreachable(self.ctx.builder);
                 LLVMGetUndef(self.ctx.void_type)
             } else if name == "__builtin_unreachable" {
@@ -1605,17 +1611,18 @@ impl FnCodegen {
                     LLVMFunctionType(ret_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32)
                 };
 
-                let callee = LLVMGetNamedFunction(self.ctx.module, &fn_name[0] as &libc::c_char);
-                let callee = if (callee as usize) == 0 {
+                let callee_lookup = LLVMGetNamedFunction(self.ctx.module, &fn_name[0] as &libc::c_char);
+                let callee = if (callee_lookup as usize) == 0 {
                     LLVMAddFunction(self.ctx.module, &fn_name[0] as &libc::c_char, fn_ty)
                 } else {
-                    callee
+                    callee_lookup
                 };
 
+                let cname = if self.is_void_type(ret_ty) { self.empty_name() } else { self.temp_cname() };
                 if arg_count > 0 {
-                    LLVMBuildCall2(self.ctx.builder, fn_ty, callee, &arg_vals[0], arg_count as u32, self.temp_cname())
+                    LLVMBuildCall2(self.ctx.builder, fn_ty, callee, &arg_vals[0], arg_count as u32, cname)
                 } else {
-                    LLVMBuildCall2(self.ctx.builder, fn_ty, callee, std::mem::zeroed::<&LLVMValueRef>(), 0u32, self.temp_cname())
+                    LLVMBuildCall2(self.ctx.builder, fn_ty, callee, std::mem::zeroed::<&LLVMValueRef>(), 0u32, cname)
                 }
             }
         } else if expr.tag == IR_TRANSMUTE {
@@ -2222,6 +2229,12 @@ impl FnCodegen {
                                 arg_vals[i] = LLVMBuildIntToPtr(self.ctx.builder, arg_vals[i], expected, self.temp_cname());
                             } else if expected_kind == LLVMTypeKind::Integer && actual_kind == LLVMTypeKind::Pointer {
                                 arg_vals[i] = LLVMBuildPtrToInt(self.ctx.builder, arg_vals[i], expected, self.temp_cname());
+                            } else if expected_kind == LLVMTypeKind::Struct && actual_kind == LLVMTypeKind::Struct {
+                                // Struct-to-struct: store-and-load reinterpret
+                                let alloca = LLVMBuildAlloca(self.ctx.builder, actual, self.temp_cname());
+                                LLVMBuildStore(self.ctx.builder, arg_vals[i], alloca);
+                                let cast_ptr = LLVMBuildBitCast(self.ctx.builder, alloca, LLVMPointerType(expected, 0u32), self.temp_cname());
+                                arg_vals[i] = LLVMBuildLoad2(self.ctx.builder, expected, cast_ptr, self.temp_cname());
                             } else {
                                 arg_vals[i] = LLVMGetUndef(expected);
                             }
@@ -2591,11 +2604,24 @@ impl FnCodegen {
         let val = self.gen_expr(value);
         let val_ty = LLVMTypeOf(val);
         // Switch value must be integer; coerce if necessary
-        if LLVMGetTypeKind(val_ty) == LLVMTypeKind::Void {
+        let val_kind = LLVMGetTypeKind(val_ty);
+        if val_kind == LLVMTypeKind::Void {
             val = LLVMConstInt(self.ctx.i8_type, 0u64, 0i32);
             val_ty = self.ctx.i8_type;
-        } else if LLVMGetTypeKind(val_ty) == LLVMTypeKind::Pointer {
+        } else if val_kind == LLVMTypeKind::Pointer {
             val = LLVMBuildPtrToInt(self.ctx.builder, val, self.ctx.i64_type, self.temp_cname());
+            val_ty = self.ctx.i64_type;
+        } else if val_kind == LLVMTypeKind::Struct {
+            // Struct value used as switch discriminant - extract first integer field
+            // or convert to integer
+            val = LLVMBuildExtractValue(self.ctx.builder, val, 0u32, self.temp_cname());
+            val_ty = LLVMTypeOf(val);
+            if LLVMGetTypeKind(val_ty) != LLVMTypeKind::Integer {
+                val = LLVMBuildBitCast(self.ctx.builder, val, self.ctx.i32_type, self.temp_cname());
+                val_ty = self.ctx.i32_type;
+            }
+        } else if val_kind == LLVMTypeKind::Double || val_kind == LLVMTypeKind::Float {
+            val = LLVMBuildFPToSI(self.ctx.builder, val, self.ctx.i64_type, self.temp_cname());
             val_ty = self.ctx.i64_type;
         }
         let is_void_result = result_ty.is_void() || result_ty.is_never();

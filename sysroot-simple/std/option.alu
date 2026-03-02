@@ -1,14 +1,14 @@
 // Simplified Option type for self-hosted compiler bootstrap
 
 struct Option<T> {
-    _is_some: bool,
+    _is_some: usize,
     _inner: T,
 }
 
 impl Option<T> {
     fn some(inner: T) -> Option<T> {
         Option::<T> {
-            _is_some: true,
+            _is_some: 1usize,
             _inner: inner,
         }
     }
@@ -18,11 +18,11 @@ impl Option<T> {
     }
 
     fn is_some(self: &Option<T>) -> bool {
-        self._is_some
+        self._is_some != 0usize
     }
 
     fn is_none(self: &Option<T>) -> bool {
-        !self._is_some
+        self._is_some == 0usize
     }
 
     fn unwrap(self: &Option<T>) -> T {
@@ -30,6 +30,6 @@ impl Option<T> {
     }
 
     fn unwrap_or(self: &Option<T>, default: T) -> T {
-        if self._is_some { self._inner } else { default }
+        if self._is_some != 0usize { self._inner } else { default }
     }
 }
