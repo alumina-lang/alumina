@@ -459,7 +459,15 @@ impl Mono {
             self.ctx.make_tuple_ty(fields)
         } else if ty.tag == TY_ARRAY {
             let inner_ty = self.resolve_type(ty.inner);
-            self.ctx.make_array_ty(inner_ty, ty.array_size)
+            // Array size can be an expression that needs const evaluation
+            let size: usize = if ty.typeof_expr as &void as usize != 0 {
+                let ir_size = self.lower_expr(ty.typeof_expr);
+                let val = self.try_const_eval_u64(ir_size);
+                if val.is_some() { val.unwrap() as usize } else { ty.array_size }
+            } else {
+                ty.array_size
+            };
+            self.ctx.make_array_ty(inner_ty, size)
         } else if ty.tag == TY_TUPLE {
             let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
             for i in 0usize..ty.elems.len() {
@@ -1901,112 +1909,24 @@ impl Mono {
     }
 
     // ========== Const Evaluator ==========
-    // Attempts to evaluate an IR expression to a u64 value at compile time.
-    // Returns Option::some(value) if successful, Option::none() if the expression
-    // is not const-evaluable. Used for `when` condition evaluation.
+    // Delegates to the full const evaluator in const_eval.alu
+
     fn try_const_eval_u64(self: &mut Mono, expr: &IrExpr) -> Option<u64> {
-        if expr.tag == IR_INT_LIT {
-            return Option::some(expr.int_val);
-        } else if expr.tag == IR_BOOL_LIT {
-            return Option::some(if expr.bool_val { 1u64 } else { 0u64 });
-        } else if expr.tag == IR_SIZE_OF {
-            // size_of<T>() - compute from type layout
-            let sz = self.compute_type_size(expr.ir_ty);
-            return Option::some(sz as u64);
-        } else if expr.tag == IR_ALIGN_OF {
-            let al = self.compute_type_align(expr.ir_ty);
-            return Option::some(al as u64);
-        } else if expr.tag == IR_CAST {
-            // Cast: try to evaluate the inner expression
-            return self.try_const_eval_u64(expr.lhs);
-        } else if expr.tag == IR_BINARY {
-            let lhs_opt = self.try_const_eval_u64(expr.lhs);
-            // Short-circuit for && and ||
-            if expr.bin_op as i32 == BinOp::And as i32 {
-                if lhs_opt.is_some() && lhs_opt.unwrap() == 0u64 {
-                    return Option::some(0u64); // false && anything = false
-                }
-            } else if expr.bin_op as i32 == BinOp::Or as i32 {
-                if lhs_opt.is_some() && lhs_opt.unwrap() != 0u64 {
-                    return Option::some(1u64); // true || anything = true
-                }
-            }
-            if lhs_opt.is_none() { return Option::none(); }
-            let rhs_opt = self.try_const_eval_u64(expr.rhs);
-            if rhs_opt.is_none() { return Option::none(); }
-            let l = lhs_opt.unwrap();
-            let r = rhs_opt.unwrap();
-            let result: u64 = switch expr.bin_op {
-                BinOp::Add => l + r,
-                BinOp::Sub => l - r,
-                BinOp::Mul => l * r,
-                BinOp::Div => if r != 0u64 { l / r } else { 0u64 },
-                BinOp::Rem => if r != 0u64 { l % r } else { 0u64 },
-                BinOp::BitAnd => l & r,
-                BinOp::BitOr => l | r,
-                BinOp::BitXor => l ^ r,
-                BinOp::Shl => l << (r as u32),
-                BinOp::Shr => l >> (r as u32),
-                BinOp::Eq => if l == r { 1u64 } else { 0u64 },
-                BinOp::Ne => if l != r { 1u64 } else { 0u64 },
-                BinOp::Lt => if l < r { 1u64 } else { 0u64 },
-                BinOp::Le => if l <= r { 1u64 } else { 0u64 },
-                BinOp::Gt => if l > r { 1u64 } else { 0u64 },
-                BinOp::Ge => if l >= r { 1u64 } else { 0u64 },
-                BinOp::And => if l != 0u64 && r != 0u64 { 1u64 } else { 0u64 },
-                BinOp::Or => if l != 0u64 || r != 0u64 { 1u64 } else { 0u64 },
-                _ => { return Option::none(); },
-            };
-            return Option::some(result);
-        } else if expr.tag == IR_UNARY {
-            let inner_opt = self.try_const_eval_u64(expr.lhs);
-            if inner_opt.is_none() { return Option::none(); }
-            let v = inner_opt.unwrap();
-            let result: u64 = switch expr.un_op {
-                UnOp::Not => if v == 0u64 { 1u64 } else { 0u64 },
-                UnOp::Neg => (0u64 - v),
-                UnOp::BitNot => ~v,
-                _ => { return Option::none(); },
-            };
-            return Option::some(result);
-        } else if expr.tag == IR_BLOCK {
-            // Block: evaluate last expression (ignoring side-effecting statements)
-            if expr.items.len() > 0 {
-                return self.try_const_eval_u64(expr.items[expr.items.len() - 1]);
-            }
-            return Option::some(0u64);
-        } else if expr.tag == IR_VOID {
-            return Option::some(0u64);
-        } else if expr.tag == IR_CALL {
-            // Try to const-evaluate a function call by looking at its monomorphized body
-            if expr.call_target.tag == CALL_DIRECT {
-                // Find the monomorphized function by mangled name (unique per monomorphization)
-                let target_name = expr.call_target.fn_ref.mangled_name;
-                for i in 0usize..self.ctx.ir_functions.len() {
-                    if self.ctx.ir_functions[i].mangled_name == target_name {
-                        if self.ctx.ir_functions[i].body.is_some() {
-                            return self.try_const_eval_u64(self.ctx.ir_functions[i].body.unwrap());
-                        }
-                        break;
-                    }
-                }
-            }
-            return Option::none();
-        } else if expr.tag == IR_RETURN {
-            // return expr - evaluate the inner expression
-            return self.try_const_eval_u64(expr.lhs);
-        }
-        // Not const-evaluable
-        Option::none()
+        const_eval::try_eval_u64(
+            self.ctx.arena,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.pointer_size,
+            expr,
+        )
     }
 
     fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
-        let result = self.try_const_eval_u64(expr);
-        if result.is_some() {
-            Option::some(result.unwrap() != 0u64)
-        } else {
-            Option::none()
-        }
+        const_eval::try_eval_bool(
+            self.ctx.arena,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.pointer_size,
+            expr,
+        )
     }
 
     // Try to redirect a bodyless protocol method call to the concrete type's impl.
@@ -2093,97 +2013,11 @@ impl Mono {
 
     // Compute the size of a type in bytes (for const evaluation of size_of)
     fn compute_type_size(self: &mut Mono, ty: &IrTy) -> usize {
-        if ty.tag == IRTY_BUILTIN {
-            switch ty.builtin {
-                BuiltinType::Void => 0usize,
-                BuiltinType::Never => 0usize,
-                BuiltinType::Bool => 1usize,
-                BuiltinType::U8 => 1usize,
-                BuiltinType::I8 => 1usize,
-                BuiltinType::U16 => 2usize,
-                BuiltinType::I16 => 2usize,
-                BuiltinType::U32 => 4usize,
-                BuiltinType::I32 => 4usize,
-                BuiltinType::U64 => 8usize,
-                BuiltinType::I64 => 8usize,
-                BuiltinType::U128 => 16usize,
-                BuiltinType::I128 => 16usize,
-                BuiltinType::USize => self.ctx.pointer_size,
-                BuiltinType::ISize => self.ctx.pointer_size,
-                BuiltinType::F32 => 4usize,
-                BuiltinType::F64 => 8usize,
-                _ => 0usize,
-            }
-        } else if ty.tag == IRTY_POINTER {
-            self.ctx.pointer_size
-        } else if ty.tag == IRTY_FN_POINTER {
-            self.ctx.pointer_size
-        } else if ty.tag == IRTY_ARRAY {
-            let elem_size = self.compute_type_size(ty.inner);
-            elem_size * ty.array_size
-        } else if ty.tag == IRTY_TUPLE || ty.tag == IRTY_SLICE {
-            // Compute struct-like layout
-            let size: usize = 0;
-            let max_align: usize = 1;
-            for i in 0usize..ty.elems.len() {
-                let elem_size = self.compute_type_size(ty.elems[i]);
-                let elem_align = self.compute_type_align(ty.elems[i]);
-                if elem_align > max_align { max_align = elem_align; }
-                // Align current offset
-                let padding = (elem_align - (size % elem_align)) % elem_align;
-                size = size + padding + elem_size;
-            }
-            // Pad to alignment
-            let padding = (max_align - (size % max_align)) % max_align;
-            size + padding
-        } else if ty.tag == IRTY_STRUCT {
-            let size: usize = 0;
-            let max_align: usize = 1;
-            for i in 0usize..ty.struct_ref.fields.len() {
-                let elem_size = self.compute_type_size(ty.struct_ref.fields[i].ty);
-                let elem_align = self.compute_type_align(ty.struct_ref.fields[i].ty);
-                if elem_align > max_align { max_align = elem_align; }
-                let padding = (elem_align - (size % elem_align)) % elem_align;
-                size = size + padding + elem_size;
-            }
-            let padding = (max_align - (size % max_align)) % max_align;
-            size + padding
-        } else if ty.tag == IRTY_ENUM {
-            // Enums are i32-backed in alumina
-            4usize
-        } else {
-            0usize
-        }
+        layout::compute_type_size(ty, self.ctx.pointer_size)
     }
 
-    // Compute the alignment of a type in bytes
     fn compute_type_align(self: &mut Mono, ty: &IrTy) -> usize {
-        if ty.tag == IRTY_BUILTIN {
-            let sz = self.compute_type_size(ty);
-            if sz > 0usize { sz } else { 1usize }
-        } else if ty.tag == IRTY_POINTER || ty.tag == IRTY_FN_POINTER {
-            self.ctx.pointer_size
-        } else if ty.tag == IRTY_ARRAY {
-            self.compute_type_align(ty.inner)
-        } else if ty.tag == IRTY_TUPLE || ty.tag == IRTY_SLICE {
-            let max_align: usize = 1;
-            for i in 0usize..ty.elems.len() {
-                let a = self.compute_type_align(ty.elems[i]);
-                if a > max_align { max_align = a; }
-            }
-            max_align
-        } else if ty.tag == IRTY_STRUCT {
-            let max_align: usize = 1;
-            for i in 0usize..ty.struct_ref.fields.len() {
-                let a = self.compute_type_align(ty.struct_ref.fields[i].ty);
-                if a > max_align { max_align = a; }
-            }
-            max_align
-        } else if ty.tag == IRTY_ENUM {
-            4usize
-        } else {
-            1usize
-        }
+        layout::compute_type_align(ty, self.ctx.pointer_size)
     }
 
     // Convert an IR type to a human-readable name string
@@ -2988,12 +2822,20 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_TUPLE_INDEX {
             let ir_obj = self.lower_expr(expr.lhs);
+            // Resolve index: either from literal index_val or from const-evaluated expression
+            let idx: usize = if expr.opt_expr.is_some() {
+                let ir_idx = self.lower_expr(expr.opt_expr.unwrap());
+                let val = self.try_const_eval_u64(ir_idx);
+                if val.is_some() { val.unwrap() as usize } else { expr.index_val }
+            } else {
+                expr.index_val
+            };
             let elem_ty = if ir_obj.ty.tag == IRTY_TUPLE {
-                if expr.index_val < ir_obj.ty.elems.len() { ir_obj.ty.elems[expr.index_val] } else { self.ctx.void_ty }
+                if idx < ir_obj.ty.elems.len() { ir_obj.ty.elems[idx] } else { self.ctx.void_ty }
             } else if ir_obj.ty.tag == IRTY_STRUCT && !ir_obj.ty.struct_ref.is_zero_sized {
                 // Tuples of non-trivial types may be lowered as anonymous structs
-                if expr.index_val < ir_obj.ty.struct_ref.fields.len() {
-                    ir_obj.ty.struct_ref.fields[expr.index_val].ty
+                if idx < ir_obj.ty.struct_ref.fields.len() {
+                    ir_obj.ty.struct_ref.fields[idx].ty
                 } else {
                     self.ctx.void_ty
                 }
@@ -3003,7 +2845,7 @@ impl Mono {
             let result = IrExpr::void_expr(elem_ty);
             result.tag = IR_FIELD_ACCESS;
             result.lhs = ir_obj;
-            result.field_idx = expr.index_val as u32;
+            result.field_idx = idx as u32;
             self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_INDEX {
             let ir_base = self.lower_expr(expr.lhs);
@@ -4291,8 +4133,50 @@ impl Mono {
     }
 
     fn lower_intrinsic(self: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
-        if name == "in_const_context" || name == "is_const_evaluable" {
-            // Always false at runtime
+        if name == "const_eval" {
+            // const_eval<T>(expr) -> T: evaluate expression at compile time
+            if expr.args.len() > 0 {
+                let ir_expr = self.lower_expr(expr.args[0]);
+                let val = const_eval::try_eval(
+                    self.ctx.arena,
+                    self.ctx.ir_functions.as_slice(),
+                    self.ctx.pointer_size,
+                    ir_expr,
+                );
+                if val.is_some() {
+                    let materialized = const_eval::materialize_to_ir(
+                        self.ctx.arena, val.unwrap(), ir_expr.ty, self.ctx.void_ty,
+                    );
+                    if materialized.is_some() {
+                        return materialized.unwrap();
+                    }
+                }
+                // If const eval fails, emit the expression as-is (runtime fallback)
+                return ir_expr;
+            }
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            return self.ctx.arena.alloc(result);
+        } else if name == "is_const_evaluable" {
+            // is_const_evaluable<T>(expr) -> bool: check if expression can be const-evaluated
+            if expr.args.len() > 0 {
+                let ir_expr = self.lower_expr(expr.args[0]);
+                let val = const_eval::try_eval(
+                    self.ctx.arena,
+                    self.ctx.ir_functions.as_slice(),
+                    self.ctx.pointer_size,
+                    ir_expr,
+                );
+                let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::Bool));
+                result.tag = IR_BOOL_LIT;
+                result.bool_val = val.is_some();
+                return self.ctx.arena.alloc(result);
+            }
+            let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::Bool));
+            result.tag = IR_BOOL_LIT;
+            result.bool_val = false;
+            return self.ctx.arena.alloc(result);
+        } else if name == "in_const_context" {
+            // Always false at runtime (we're not in a const context)
             let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::Bool));
             result.tag = IR_BOOL_LIT;
             result.bool_val = false;

@@ -1588,9 +1588,21 @@ impl Pass2 {
                 let size_node = child_by!(node, FieldKind::Size);
                 if !inner.is_none() && !size_node.is_none() {
                     let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
-                    let size_text = self.ctx.node_text(size_node.unwrap());
-                    let size = parse_usize(size_text);
-                    return self.ctx.alloc_ty(Ty::array_ty(inner_ty, size));
+                    // Parse size as expression for const evaluation
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let size_expr = expr_parser.parse_expr(size_node.unwrap());
+                    let ty = Ty {
+                        tag: TY_ARRAY,
+                        builtin: BuiltinType::Void,
+                        id: Id { _value: 0 },
+                        inner: inner_ty,
+                        is_const: false,
+                        array_size: 0,
+                        elems: &[],
+                        ret_ty: std::mem::zeroed::<&Ty>(),
+                        typeof_expr: size_expr,
+                    };
+                    return self.ctx.alloc_ty(ty);
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
@@ -2861,14 +2873,33 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        // Check if the field child is a tuple_index_expression (e.g. t.0)
+        // Check if the field child is a tuple_index_expression (e.g. t.0 or t.(expr))
         let field_node = field.unwrap();
         let field_kind = NODE_KINDS[field_node.symbol() as usize];
         if field_kind == NodeKind::TupleIndexExpression {
-            // Parse as tuple index access
             let obj_expr = self.parse_expr(obj.unwrap());
-            let idx_text = self.ctx.node_text(field_node);
-            let idx = parse_usize(idx_text);
+            // TupleIndexExpression has a single "field" child containing the index
+            let idx_node = child_by!(field_node, FieldKind::Field);
+            if !idx_node.is_none() {
+                let idx_inner = idx_node.unwrap();
+                let idx_kind = NODE_KINDS[idx_inner.symbol() as usize];
+                if idx_kind == NodeKind::IntegerLiteral {
+                    // Simple literal index: t.0, t.1, etc.
+                    let idx = parse_usize(self.ctx.node_text(idx_inner));
+                    let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+                    e.lhs = obj_expr;
+                    e.index_val = idx;
+                    return self.ctx.alloc_expr(e);
+                }
+                // Expression index: t.(expr) - parse and const-eval later
+                let idx_expr = self.parse_expr(idx_inner);
+                let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+                e.lhs = obj_expr;
+                e.opt_expr = Option::some(idx_expr);
+                return self.ctx.alloc_expr(e);
+            }
+            // Fallback: try parsing the whole text as a number
+            let idx = parse_usize(self.ctx.node_text(field_node));
             let e = self.make_expr(EXPR_TUPLE_INDEX, span);
             e.lhs = obj_expr;
             e.index_val = idx;
@@ -2885,19 +2916,13 @@ impl ExprParser {
     }
 
     fn parse_tuple_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let obj = child_by!(node, FieldKind::Value);
-        let index = child_by!(node, FieldKind::Index);
-        if obj.is_none() || index.is_none() {
-            return self.alloc_void(span);
+        // TupleIndexExpression as top-level (shouldn't normally happen,
+        // as it's typically inside FieldExpression, but handle gracefully)
+        let field = child_by!(node, FieldKind::Field);
+        if !field.is_none() {
+            return self.parse_expr(field.unwrap());
         }
-        let obj_expr = self.parse_expr(obj.unwrap());
-        let idx_text = self.ctx.node_text(index.unwrap());
-        let idx = parse_usize(idx_text);
-
-        let e = self.make_expr(EXPR_TUPLE_INDEX, span);
-        e.lhs = obj_expr;
-        e.index_val = idx;
-        self.ctx.alloc_expr(e)
+        self.alloc_void(span)
     }
 
     fn parse_index(self: &ExprParser, node: Node, span: Span) -> &Expr {

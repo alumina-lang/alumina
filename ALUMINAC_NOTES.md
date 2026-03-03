@@ -26,7 +26,7 @@ Note that some of the paths have been changed for aluminac, it is now in src/
 | Parser | `src/parser.rs` (165 lines, thin tree-sitter wrapper) | `lib/parser.alu` (3619 lines, all-in-one) |
 | AST | `src/ast/*.rs` (8 files, ~5800 lines) | `lib/ast.alu` (926 lines) + `lib/node_kinds.alu` (915 lines) |
 | Scope/Resolution | `src/src/*.rs` (4 files, ~1500 lines) | `lib/scope.alu` (401 lines) |
-| IR/Mono | `src/ir/*.rs` (9 files, ~5600 lines) | `lib/mono.alu` (4369 lines) |
+| IR/Mono | `src/ir/*.rs` (9 files, ~5600 lines) | `lib/mono.alu` (4369 lines) + `lib/const_eval.alu` (~1400 lines) + `lib/layout.alu` (~115 lines) |
 | Codegen | `src/codegen/*.rs` (4 files, ~2050 lines) | `lib/codegen.alu` (3155 lines) |
 | Compiler driver | `src/compiler.rs` + `src/main.rs` (~510 lines) | `lib/compiler.alu` (755 lines) |
 | Diagnostics | `src/diagnostics.rs` (590 lines) | `lib/diagnostics.alu` (164 lines) |
@@ -36,7 +36,7 @@ Note that some of the paths have been changed for aluminac, it is now in src/
 
 **alumina-boot**: Parse (tree-sitter) -> Pass1 (scope building) -> Pass2 (AST building with name resolution + for-loop/try desugaring) -> Mono (monomorphization + type inference + const eval) -> ZST Elision -> DCE -> Codegen (C text) -> C compiler
 
-**aluminac**: Parse (tree-sitter) -> Pass1 (scope building) -> Pass2 (AST building) -> Mono (monomorphization + type inference + limited const eval + for-loop desugaring) -> Codegen (LLVM IR) -> LLVM backend
+**aluminac**: Parse (tree-sitter) -> Pass1 (scope building) -> Pass2 (AST building) -> Mono (monomorphization + type inference + const eval + for-loop desugaring) -> Codegen (LLVM IR) -> LLVM backend
 
 alumina-boot has separate ZST elision (613 lines) and DCE (215 lines) IR passes plus an IR fold/rewrite framework and IR inlining pass. These are largely unnecessary for aluminac since LLVM handles most of this. The exception is ZST elision -- we must guarantee no loads/stores are emitted for ZSTs (needs investigation whether LLVM handles this out of the box).
 
@@ -48,25 +48,31 @@ alumina-boot has separate ZST elision (613 lines) and DCE (215 lines) IR passes 
 
 #### 2.1. Full Const Evaluation
 
-**This is the single most important missing feature.** Even basic enum definitions depend on const eval (e.g., enum variants with expressions like `FOO = BAR + 1`, or references to other enum values). The stdlib is riddled with const contexts.
+~~**This is the single most important missing feature.**~~ **IMPLEMENTED** in `src/aluminac/const_eval.alu` (~1400 lines) + `src/aluminac/layout.alu` (~115 lines).
 
-**alumina-boot**: Full interpreter in `src/ir/const_eval.rs` (~1800 lines):
-- Complete value representation: `Void`, `Bool`, all integer types up to `u128`/`i128`, `F32`, `F64`, `Bytes`, `Tuple`, `Array`, `Struct`, `FunctionPointer`, `Pointer(LValue)`, `LValue`
-- Statement evaluation with goto/label support for loops
+**alumina-boot**: Full interpreter in `src/ir/const_eval.rs` (~1800 lines).
+
+**aluminac**: Full IR interpreter in `src/aluminac/const_eval.alu`:
+- Complete value representation: `Void`, `Bool`, all integer types up to `u128`/`i128`, `F32`, `F64`, `Bytes`, `Tuple`, `Array`, `Struct`, `FunctionPointer`, `Pointer(LValue)`, `Uninitialized`
+- Statement evaluation with break/continue/return for loops
 - Recursive function evaluation with depth limit (100) and iteration limit (1M)
-- Full pointer arithmetic in const context
-- `transmute` via byte roundtrip
-- `const_alloc`/`const_free` for compile-time heap allocation
-- `const_panic`/`const_warning`/`const_note` for compile-time diagnostics
-- `const_bake` to force const evaluation and embed result
+- Type-aware integer arithmetic: wrapping for unsigned, sign-extension for signed
+- Cast handling: int↔int, int↔float, float↔float, bool↔int, pointer casts
+- Composite value support: tuples, arrays, structs with field access/mutation
+- Switch expressions, while/loop with break/continue, for-loop continue actions
+- `transmute` via pointer-cast reinterpretation (no std::typing::transmute dependency)
+- Type layout extracted to `src/aluminac/layout.alu` (shared by mono and const_eval)
+- **Still missing**: `const_alloc`/`const_free`, `const_panic`/`const_warning`/`const_note`, `const_bake`, full pointer arithmetic
 
-**aluminac**: Extremely limited `try_const_eval_u64()` in `mono.alu:1609-1703`:
-- Only produces `u64` values (not full value types)
-- Handles: int/bool literals, size_of, align_of, casts, binary ops, unary ops, blocks, void
-- Can evaluate simple direct function calls by recursing into body
-- **Missing**: pointer values, struct/tuple/array values, string values, assignments, loops, goto/labels, const_alloc/const_free, proper enum variant evaluation
+**Enum variant evaluation** (`mono.alu:629-695`): Uses two-pass approach matching alumina-boot: (1) evaluate all explicit variant values via `lower_expr` + `try_const_eval_u64`, supporting binary ops, casts, function calls (including recursive), etc.; (2) auto-increment non-valued variants from 0, skipping taken values. Duplicate detection via HashSet.
 
-**Enum variant evaluation** (`mono.alu:629-695`): ~~FIXED~~ Now uses two-pass approach matching alumina-boot: (1) evaluate all explicit variant values via `lower_expr` + `try_const_eval_u64`, supporting binary ops, casts, etc.; (2) auto-increment non-valued variants from 0, skipping taken values. Duplicate detection via HashSet. Test: `tests/aluminac/enum_const_eval.alu`.
+**Array size expressions**: Array types with const expressions as sizes (e.g. `[u8; size_of::<u32>()]`) are now supported. The parser parses array sizes as full expressions, and mono const-evaluates them.
+
+**Tuple index expressions**: Parenthesized tuple index expressions (e.g. `t.(1usize + 1usize)`) are now supported. Literal indices use direct access; expression indices are const-evaluated during mono.
+
+**Intrinsics**: `const_eval` (force compile-time evaluation, returns literal), `is_const_evaluable` (tries const-eval, returns bool literal), `in_const_context` (always false at runtime).
+
+**Tests**: `tests/aluminac/const_eval.alu` (recursive functions in enum values, size_of/align_of, bitwise expressions, when expressions, signed values, array size expressions, tuple index expressions, const_eval/is_const_evaluable intrinsics), `tests/aluminac/enum_const_eval.alu`.
 
 **Usage**: 45 explicit `const_eval`/`const_bake` calls in sysroot, plus every enum definition, every `when` expression, every `static for`, and every `const` item.
 
@@ -234,7 +240,7 @@ Key missing intrinsics (grouped by importance):
 - `stop_iteration` -- signals end of iteration during const eval. Used by `static_for_next` lang item (`sysroot/std/iter.alu:1950-1958`). NOT related to coroutines -- it's the termination mechanism for `for const` loops that use the proper iterator protocol.
 
 **Essential for stdlib:**
-- `const_eval` / `const_bake` -- force compile-time evaluation (45 uses)
+- `const_eval` -- **IMPLEMENTED** (force compile-time evaluation). `is_const_evaluable` also implemented. `const_bake` still missing.
 - `enum_variants` -- array of `{name, value}` descriptors (3 uses)
 - `fields` -- struct field reflection descriptors (2+ uses)
 - `tuple_invoke` -- call function with tuple-unpacked args (6 uses)

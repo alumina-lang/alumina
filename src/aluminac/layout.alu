@@ -1,0 +1,115 @@
+// Type layout computation: size and alignment for IR types.
+
+use ast::*;
+
+fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
+    if ty.tag == IRTY_BUILTIN {
+        switch ty.builtin {
+            BuiltinType::Void => 0usize,
+            BuiltinType::Never => 0usize,
+            BuiltinType::Bool => 1usize,
+            BuiltinType::U8 => 1usize,
+            BuiltinType::I8 => 1usize,
+            BuiltinType::U16 => 2usize,
+            BuiltinType::I16 => 2usize,
+            BuiltinType::U32 => 4usize,
+            BuiltinType::I32 => 4usize,
+            BuiltinType::U64 => 8usize,
+            BuiltinType::I64 => 8usize,
+            BuiltinType::U128 => 16usize,
+            BuiltinType::I128 => 16usize,
+            BuiltinType::USize => pointer_size,
+            BuiltinType::ISize => pointer_size,
+            BuiltinType::F32 => 4usize,
+            BuiltinType::F64 => 8usize,
+            _ => 0usize,
+        }
+    } else if ty.tag == IRTY_POINTER {
+        pointer_size
+    } else if ty.tag == IRTY_FN_POINTER {
+        pointer_size
+    } else if ty.tag == IRTY_ARRAY {
+        let elem_size = compute_type_size(ty.inner, pointer_size);
+        elem_size * ty.array_size
+    } else if ty.tag == IRTY_TUPLE || ty.tag == IRTY_SLICE {
+        let size: usize = 0;
+        let max_align: usize = 1;
+        for i in 0usize..ty.elems.len() {
+            let elem_size = compute_type_size(ty.elems[i], pointer_size);
+            let elem_align = compute_type_align(ty.elems[i], pointer_size);
+            if elem_align > max_align { max_align = elem_align; }
+            let padding = (elem_align - (size % elem_align)) % elem_align;
+            size = size + padding + elem_size;
+        }
+        let padding = (max_align - (size % max_align)) % max_align;
+        size + padding
+    } else if ty.tag == IRTY_STRUCT || ty.tag == IRTY_CLOSURE {
+        if ty.struct_ref.is_union {
+            // Union: size is max of all fields, aligned to max alignment
+            let max_size: usize = 0;
+            let max_align: usize = 1;
+            for i in 0usize..ty.struct_ref.fields.len() {
+                let fs = compute_type_size(ty.struct_ref.fields[i].ty, pointer_size);
+                let fa = compute_type_align(ty.struct_ref.fields[i].ty, pointer_size);
+                if fs > max_size { max_size = fs; }
+                if fa > max_align { max_align = fa; }
+            }
+            let padding = (max_align - (max_size % max_align)) % max_align;
+            max_size + padding
+        } else {
+            let size: usize = 0;
+            let max_align: usize = 1;
+            for i in 0usize..ty.struct_ref.fields.len() {
+                let elem_size = compute_type_size(ty.struct_ref.fields[i].ty, pointer_size);
+                let elem_align = compute_type_align(ty.struct_ref.fields[i].ty, pointer_size);
+                if elem_align > max_align { max_align = elem_align; }
+                let padding = (elem_align - (size % elem_align)) % elem_align;
+                size = size + padding + elem_size;
+            }
+            let padding = (max_align - (size % max_align)) % max_align;
+            size + padding
+        }
+    } else if ty.tag == IRTY_ENUM {
+        // Enum underlying type size
+        if ty.enum_ref.underlying.tag != 0i32 {
+            compute_type_size(ty.enum_ref.underlying, pointer_size)
+        } else {
+            4usize // default i32
+        }
+    } else {
+        0usize
+    }
+}
+
+fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
+    if ty.tag == IRTY_BUILTIN {
+        let sz = compute_type_size(ty, pointer_size);
+        if sz > 0usize { sz } else { 1usize }
+    } else if ty.tag == IRTY_POINTER || ty.tag == IRTY_FN_POINTER {
+        pointer_size
+    } else if ty.tag == IRTY_ARRAY {
+        compute_type_align(ty.inner, pointer_size)
+    } else if ty.tag == IRTY_TUPLE || ty.tag == IRTY_SLICE {
+        let max_align: usize = 1;
+        for i in 0usize..ty.elems.len() {
+            let a = compute_type_align(ty.elems[i], pointer_size);
+            if a > max_align { max_align = a; }
+        }
+        max_align
+    } else if ty.tag == IRTY_STRUCT || ty.tag == IRTY_CLOSURE {
+        let max_align: usize = 1;
+        for i in 0usize..ty.struct_ref.fields.len() {
+            let a = compute_type_align(ty.struct_ref.fields[i].ty, pointer_size);
+            if a > max_align { max_align = a; }
+        }
+        max_align
+    } else if ty.tag == IRTY_ENUM {
+        if ty.enum_ref.underlying.tag != 0i32 {
+            compute_type_align(ty.enum_ref.underlying, pointer_size)
+        } else {
+            4usize // default i32
+        }
+    } else {
+        1usize
+    }
+}

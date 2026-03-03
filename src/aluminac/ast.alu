@@ -944,6 +944,186 @@ struct IrGlobal {
     attributes: &[Attribute],
 }
 
+// === Const evaluation value types ===
+
+// ConstValue tags
+const CVAL_VOID: i32 = 0i32;
+const CVAL_BOOL: i32 = 1i32;
+const CVAL_INT: i32 = 2i32;       // integer value (u64 storage, BuiltinType for width)
+const CVAL_FLOAT: i32 = 3i32;     // float value (f64 storage, BuiltinType for width)
+const CVAL_BYTES: i32 = 4i32;     // string/byte slice data
+const CVAL_TUPLE: i32 = 5i32;
+const CVAL_ARRAY: i32 = 6i32;
+const CVAL_STRUCT: i32 = 7i32;
+const CVAL_FN_PTR: i32 = 8i32;
+const CVAL_POINTER: i32 = 9i32;
+const CVAL_LVALUE: i32 = 10i32;
+const CVAL_UNINITIALIZED: i32 = 11i32;
+
+// ConstLValue tags
+const CLV_VARIABLE: i32 = 0i32;
+const CLV_ALLOC: i32 = 1i32;
+const CLV_FIELD: i32 = 2i32;
+const CLV_INDEX: i32 = 3i32;
+const CLV_TUPLE_INDEX: i32 = 4i32;
+const CLV_CONST_ITEM: i32 = 5i32;
+
+struct ConstLValue {
+    tag: i32,
+    id: Id,                  // for CLV_VARIABLE, CLV_ALLOC, CLV_CONST_ITEM
+    inner: &ConstLValue,     // for CLV_FIELD, CLV_INDEX, CLV_TUPLE_INDEX
+    field_idx: u32,          // for CLV_FIELD
+    index: usize,            // for CLV_INDEX, CLV_TUPLE_INDEX
+}
+
+struct ConstField {
+    field_idx: u32,
+    value: ConstValue,
+}
+
+struct ConstValue {
+    tag: i32,
+    builtin_type: BuiltinType,  // precise type for CVAL_INT, CVAL_FLOAT
+    int_val: u64,               // CVAL_INT (two's complement for signed), CVAL_BOOL (0/1)
+    float_val: f64,             // CVAL_FLOAT
+    bytes: &[u8],               // CVAL_BYTES
+    bytes_offset: usize,        // CVAL_BYTES offset
+    elems: &[ConstValue],       // CVAL_TUPLE, CVAL_ARRAY
+    fields: &[ConstField],      // CVAL_STRUCT
+    fn_ref: IrFnRef,            // CVAL_FN_PTR
+    lvalue: &ConstLValue,       // CVAL_POINTER, CVAL_LVALUE
+    pointee_ty: &IrTy,          // CVAL_POINTER
+}
+
+impl ConstValue {
+    fn make_void() -> ConstValue {
+        ConstValue {
+            tag: CVAL_VOID, builtin_type: BuiltinType::Void,
+            int_val: 0, float_val: 0.0, bytes: "", bytes_offset: 0,
+            elems: &[], fields: &[],
+            fn_ref: IrFnRef::empty(),
+            lvalue: std::mem::zeroed::<&ConstLValue>(),
+            pointee_ty: std::mem::zeroed::<&IrTy>(),
+        }
+    }
+
+    fn make_bool(v: bool) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_BOOL;
+        r.builtin_type = BuiltinType::Bool;
+        r.int_val = if v { 1u64 } else { 0u64 };
+        r
+    }
+
+    fn make_int(v: u64, bt: BuiltinType) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_INT;
+        r.builtin_type = bt;
+        r.int_val = v;
+        r
+    }
+
+    fn make_float(v: f64, bt: BuiltinType) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_FLOAT;
+        r.builtin_type = bt;
+        r.float_val = v;
+        r
+    }
+
+    fn make_bytes(data: &[u8], offset: usize) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_BYTES;
+        r.bytes = data;
+        r.bytes_offset = offset;
+        r
+    }
+
+    fn make_tuple(elems: &[ConstValue]) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_TUPLE;
+        r.elems = elems;
+        r
+    }
+
+    fn make_array(elems: &[ConstValue]) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_ARRAY;
+        r.elems = elems;
+        r
+    }
+
+    fn make_struct(fields: &[ConstField]) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_STRUCT;
+        r.fields = fields;
+        r
+    }
+
+    fn make_fn_ptr(fr: IrFnRef) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_FN_PTR;
+        r.fn_ref = fr;
+        r
+    }
+
+    fn make_pointer(lv: &ConstLValue, ty: &IrTy) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_POINTER;
+        r.lvalue = lv;
+        r.pointee_ty = ty;
+        r
+    }
+
+    fn make_lvalue(lv: &ConstLValue) -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_LVALUE;
+        r.lvalue = lv;
+        r
+    }
+
+    fn make_uninitialized() -> ConstValue {
+        let r = ConstValue::make_void();
+        r.tag = CVAL_UNINITIALIZED;
+        r
+    }
+
+    fn is_truthy(self: &ConstValue) -> bool {
+        if self.tag == CVAL_BOOL { return self.int_val != 0u64; }
+        if self.tag == CVAL_INT { return self.int_val != 0u64; }
+        false
+    }
+
+    /// Extract a u64 value (for enum variants, array sizes, etc.)
+    fn as_u64(self: &ConstValue) -> Option<u64> {
+        if self.tag == CVAL_INT || self.tag == CVAL_BOOL {
+            Option::some(self.int_val)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Extract a bool value
+    fn as_bool(self: &ConstValue) -> Option<bool> {
+        if self.tag == CVAL_BOOL {
+            Option::some(self.int_val != 0u64)
+        } else if self.tag == CVAL_INT {
+            Option::some(self.int_val != 0u64)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Extract a usize value
+    fn as_usize(self: &ConstValue) -> Option<usize> {
+        if self.tag == CVAL_INT || self.tag == CVAL_BOOL {
+            Option::some(self.int_val as usize)
+        } else {
+            Option::none()
+        }
+    }
+}
+
 // === Compilation unit ===
 
 struct CompilationUnit {

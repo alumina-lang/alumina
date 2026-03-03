@@ -357,6 +357,13 @@ quick: $(BUILD_DIR)/quick
 	ln -sf $^.c $@.c
 	ln -sf $^ $@
 
+$(BUILD_DIR)/quick_ss: $(BUILD_DIR)/aluminac quick.alu
+	$(BUILD_DIR)/aluminac --sysroot $(SYSROOT_SIMPLE) -o $@ quick=./quick.alu
+
+quick_ss: $(BUILD_DIR)/quick_ss
+	ln -sf $^.c $@.c
+	ln -sf $^ $@
+
 ## ------------------------------ Benchmarking -------------------------
 
 .PHONY: bench-std bench-std-cc flamegraph samply

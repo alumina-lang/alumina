@@ -1,0 +1,1466 @@
+// Const evaluator: an IR interpreter for constant expressions.
+//
+// Evaluates IrExpr nodes at compile time, producing ConstValue results.
+// Used for enum variant values, `when` conditions, const items, array lengths,
+// and `const_eval`/`const_bake` intrinsics.
+
+use ast::*;
+use layout::{compute_type_size, compute_type_align};
+use aluminac_common::arena::Arena;
+use std::collections::HashMap;
+use std::option::Option;
+
+const MAX_RECURSION_DEPTH: usize = 100;
+const MAX_ITERATIONS: usize = 1000000;
+
+// Error codes from const evaluation
+const CE_OK: i32 = 0i32;
+const CE_UNSUPPORTED: i32 = 1i32;
+const CE_OVERFLOW: i32 = 2i32;
+const CE_DIV_ZERO: i32 = 3i32;
+const CE_INDEX_OOB: i32 = 4i32;
+const CE_TOO_DEEP: i32 = 5i32;
+const CE_TOO_MANY_ITERS: i32 = 6i32;
+const CE_BREAK: i32 = 7i32;      // break from loop (not a real error)
+const CE_CONTINUE: i32 = 8i32;   // continue in loop (not a real error)
+const CE_RETURN: i32 = 9i32;     // return from function (not a real error)
+const CE_STOP_ITER: i32 = 10i32; // stop_iteration signal
+const CE_CONST_PANIC: i32 = 11i32;
+const CE_UNREACHABLE: i32 = 12i32;
+
+struct ConstEvalError {
+    code: i32,
+    jump_id: Id,  // unused, kept for structure
+}
+
+impl ConstEvalError {
+    fn unsupported() -> ConstEvalError {
+        ConstEvalError { code: CE_UNSUPPORTED, jump_id: Id { _value: 0 } }
+    }
+    fn overflow() -> ConstEvalError {
+        ConstEvalError { code: CE_OVERFLOW, jump_id: Id { _value: 0 } }
+    }
+    fn div_zero() -> ConstEvalError {
+        ConstEvalError { code: CE_DIV_ZERO, jump_id: Id { _value: 0 } }
+    }
+    fn index_oob() -> ConstEvalError {
+        ConstEvalError { code: CE_INDEX_OOB, jump_id: Id { _value: 0 } }
+    }
+    fn too_deep() -> ConstEvalError {
+        ConstEvalError { code: CE_TOO_DEEP, jump_id: Id { _value: 0 } }
+    }
+    fn too_many_iters() -> ConstEvalError {
+        ConstEvalError { code: CE_TOO_MANY_ITERS, jump_id: Id { _value: 0 } }
+    }
+    fn break_err() -> ConstEvalError {
+        ConstEvalError { code: CE_BREAK, jump_id: Id { _value: 0 } }
+    }
+    fn continue_err() -> ConstEvalError {
+        ConstEvalError { code: CE_CONTINUE, jump_id: Id { _value: 0 } }
+    }
+    fn return_err() -> ConstEvalError {
+        ConstEvalError { code: CE_RETURN, jump_id: Id { _value: 0 } }
+    }
+    fn stop_iteration() -> ConstEvalError {
+        ConstEvalError { code: CE_STOP_ITER, jump_id: Id { _value: 0 } }
+    }
+    fn const_panic() -> ConstEvalError {
+        ConstEvalError { code: CE_CONST_PANIC, jump_id: Id { _value: 0 } }
+    }
+    fn unreachable_err() -> ConstEvalError {
+        ConstEvalError { code: CE_UNREACHABLE, jump_id: Id { _value: 0 } }
+    }
+}
+
+// Result type: either a ConstValue or an error
+struct ConstResult {
+    ok: bool,
+    value: ConstValue,
+    error: ConstEvalError,
+}
+
+impl ConstResult {
+    fn success(v: ConstValue) -> ConstResult {
+        ConstResult { ok: true, value: v, error: ConstEvalError::unsupported() }
+    }
+    fn fail(e: ConstEvalError) -> ConstResult {
+        ConstResult { ok: false, value: ConstValue::make_void(), error: e }
+    }
+}
+
+struct ConstEvaluator {
+    arena: &mut Arena,
+    // Variable storage: id._value -> ConstValue
+    variables: HashMap<usize, ConstValue>,
+    // Variable remapping for function calls: original_id -> new_id
+    remapped: HashMap<usize, usize>,
+    // Function lookup (already monomorphized)
+    ir_functions: &[IrFunction],
+    // Return slot for function calls
+    return_slot: ConstValue,
+    has_return: bool,
+    // Limits
+    remaining_depth: usize,
+    steps_remaining: usize,
+    // Type layout
+    pointer_size: usize,
+}
+
+impl ConstEvaluator {
+    fn new(
+        arena: &mut Arena,
+        ir_functions: &[IrFunction],
+        pointer_size: usize,
+    ) -> ConstEvaluator {
+        ConstEvaluator {
+            arena: arena,
+            variables: HashMap::new(),
+            remapped: HashMap::new(),
+            ir_functions: ir_functions,
+            return_slot: ConstValue::make_void(),
+            has_return: false,
+            remaining_depth: MAX_RECURSION_DEPTH,
+            steps_remaining: MAX_ITERATIONS,
+            pointer_size: pointer_size,
+        }
+    }
+
+    fn step(self: &mut ConstEvaluator) -> bool {
+        if self.steps_remaining == 0 {
+            return false;
+        }
+        self.steps_remaining = self.steps_remaining - 1;
+        true
+    }
+
+    fn var_id(self: &ConstEvaluator, id: Id) -> usize {
+        let remapped = self.remapped.get(&id._value);
+        if remapped.is_some() {
+            remapped.unwrap()
+        } else {
+            id._value
+        }
+    }
+
+    fn load_var(self: &ConstEvaluator, id: Id) -> ConstValue {
+        let vid = self.var_id(id);
+        let v = self.variables.get(&vid);
+        if v.is_some() {
+            v.unwrap()
+        } else {
+            ConstValue::make_uninitialized()
+        }
+    }
+
+    fn store_var(self: &mut ConstEvaluator, id: Id, val: ConstValue) {
+        let vid = self.var_id(id);
+        self.variables.insert(vid, val);
+    }
+
+    // Main entry point: evaluate an expression to an rvalue
+    fn eval(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let r = self.eval_inner(expr);
+        if !r.ok { return r; }
+        // Materialize lvalues
+        if r.value.tag == CVAL_LVALUE {
+            return self.materialize_lvalue(r.value.lvalue);
+        }
+        r
+    }
+
+    fn materialize_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue) -> ConstResult {
+        if lv.tag == CLV_VARIABLE {
+            ConstResult::success(self.load_var(Id { _value: lv.id._value }))
+        } else if lv.tag == CLV_FIELD {
+            let base = self.materialize_lvalue(lv.inner);
+            if !base.ok { return base; }
+            self.access_field(base.value, lv.field_idx)
+        } else if lv.tag == CLV_INDEX {
+            let base = self.materialize_lvalue(lv.inner);
+            if !base.ok { return base; }
+            self.access_index(base.value, lv.index)
+        } else if lv.tag == CLV_TUPLE_INDEX {
+            let base = self.materialize_lvalue(lv.inner);
+            if !base.ok { return base; }
+            self.access_tuple_index(base.value, lv.index)
+        } else {
+            ConstResult::fail(ConstEvalError::unsupported())
+        }
+    }
+
+    fn access_field(self: &ConstEvaluator, val: ConstValue, field_idx: u32) -> ConstResult {
+        if val.tag == CVAL_STRUCT {
+            for i in 0usize..val.fields.len() {
+                if val.fields[i].field_idx == field_idx {
+                    return ConstResult::success(val.fields[i].value);
+                }
+            }
+            ConstResult::success(ConstValue::make_uninitialized())
+        } else {
+            ConstResult::fail(ConstEvalError::unsupported())
+        }
+    }
+
+    fn access_index(self: &ConstEvaluator, val: ConstValue, idx: usize) -> ConstResult {
+        if val.tag == CVAL_ARRAY {
+            if idx < val.elems.len() {
+                ConstResult::success(val.elems[idx])
+            } else {
+                ConstResult::fail(ConstEvalError::index_oob())
+            }
+        } else {
+            ConstResult::fail(ConstEvalError::unsupported())
+        }
+    }
+
+    fn access_tuple_index(self: &ConstEvaluator, val: ConstValue, idx: usize) -> ConstResult {
+        if val.tag == CVAL_TUPLE {
+            if idx < val.elems.len() {
+                ConstResult::success(val.elems[idx])
+            } else {
+                ConstResult::success(ConstValue::make_uninitialized())
+            }
+        } else {
+            ConstResult::fail(ConstEvalError::unsupported())
+        }
+    }
+
+    fn eval_inner(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        if !self.step() {
+            return ConstResult::fail(ConstEvalError::too_many_iters());
+        }
+
+        if expr.tag == IR_INT_LIT {
+            // Determine the BuiltinType from the IrTy
+            let bt = self.irty_to_builtin(expr.ty);
+            return ConstResult::success(ConstValue::make_int(expr.int_val, bt));
+        } else if expr.tag == IR_FLOAT_LIT {
+            let bt = self.irty_to_builtin(expr.ty);
+            return ConstResult::success(ConstValue::make_float(expr.float_val, bt));
+        } else if expr.tag == IR_BOOL_LIT {
+            return ConstResult::success(ConstValue::make_bool(expr.bool_val));
+        } else if expr.tag == IR_STRING_LIT {
+            return ConstResult::success(ConstValue::make_bytes(expr.str_val, 0));
+        } else if expr.tag == IR_VOID {
+            return ConstResult::success(ConstValue::make_void());
+        } else if expr.tag == IR_NULL_LIT {
+            return ConstResult::success(ConstValue::make_int(0u64, BuiltinType::USize));
+        } else if expr.tag == IR_SIZE_OF {
+            let sz = compute_type_size(expr.ir_ty, self.pointer_size);
+            return ConstResult::success(ConstValue::make_int(sz as u64, BuiltinType::USize));
+        } else if expr.tag == IR_ALIGN_OF {
+            let al = compute_type_align(expr.ir_ty, self.pointer_size);
+            return ConstResult::success(ConstValue::make_int(al as u64, BuiltinType::USize));
+        } else if expr.tag == IR_CAST {
+            return self.eval_cast(expr);
+        } else if expr.tag == IR_BINARY {
+            return self.eval_binary(expr);
+        } else if expr.tag == IR_UNARY {
+            return self.eval_unary(expr);
+        } else if expr.tag == IR_LOCAL {
+            // Return an lvalue reference to the variable
+            let lv = self.arena.alloc(ConstLValue {
+                tag: CLV_VARIABLE,
+                id: Id { _value: self.var_id(expr.id) },
+                inner: std::mem::zeroed::<&ConstLValue>(),
+                field_idx: 0,
+                index: 0,
+            });
+            return ConstResult::success(ConstValue::make_lvalue(lv));
+        } else if expr.tag == IR_PARAM {
+            // Params are stored as variables (by their id)
+            let lv = self.arena.alloc(ConstLValue {
+                tag: CLV_VARIABLE,
+                id: Id { _value: self.var_id(expr.id) },
+                inner: std::mem::zeroed::<&ConstLValue>(),
+                field_idx: 0,
+                index: 0,
+            });
+            return ConstResult::success(ConstValue::make_lvalue(lv));
+        } else if expr.tag == IR_BLOCK {
+            return self.eval_block(expr);
+        } else if expr.tag == IR_IF {
+            return self.eval_if(expr);
+        } else if expr.tag == IR_LET {
+            return self.eval_let(expr);
+        } else if expr.tag == IR_ASSIGN {
+            return self.eval_assign(expr);
+        } else if expr.tag == IR_RETURN {
+            if expr.opt_expr.is_some() {
+                let val = self.eval(expr.opt_expr.unwrap());
+                if !val.ok { return val; }
+                self.return_slot = val.value;
+            } else {
+                self.return_slot = ConstValue::make_void();
+            }
+            self.has_return = true;
+            return ConstResult::fail(ConstEvalError::return_err());
+        } else if expr.tag == IR_CALL {
+            return self.eval_call(expr);
+        } else if expr.tag == IR_FIELD_ACCESS {
+            return self.eval_field_access(expr);
+        } else if expr.tag == IR_INDEX {
+            return self.eval_index(expr);
+        } else if expr.tag == IR_TUPLE_LIT {
+            return self.eval_tuple_lit(expr);
+        } else if expr.tag == IR_ARRAY_LIT {
+            return self.eval_array_lit(expr);
+        } else if expr.tag == IR_STRUCT_LIT {
+            return self.eval_struct_lit(expr);
+        } else if expr.tag == IR_REF {
+            return self.eval_ref(expr);
+        } else if expr.tag == IR_DEREF {
+            return self.eval_deref(expr);
+        } else if expr.tag == IR_UNREACHABLE {
+            return ConstResult::fail(ConstEvalError::unreachable_err());
+        } else if expr.tag == IR_UNDEF {
+            return ConstResult::success(ConstValue::make_uninitialized());
+        } else if expr.tag == IR_ZEROED {
+            return ConstResult::success(self.make_zeroed(expr.ty));
+        } else if expr.tag == IR_FN_REF {
+            return ConstResult::success(ConstValue::make_fn_ptr(expr.fn_ref));
+        } else if expr.tag == IR_WHILE {
+            return self.eval_while(expr);
+        } else if expr.tag == IR_LOOP {
+            return self.eval_loop(expr);
+        } else if expr.tag == IR_BREAK {
+            return ConstResult::fail(ConstEvalError::break_err());
+        } else if expr.tag == IR_CONTINUE {
+            return ConstResult::fail(ConstEvalError::continue_err());
+        } else if expr.tag == IR_SWITCH {
+            return self.eval_switch(expr);
+        } else if expr.tag == IR_TRANSMUTE {
+            return self.eval_transmute(expr);
+        } else if expr.tag == IR_CODEGEN_FUNC {
+            // Check for const-eval intrinsics encoded as codegen_func
+            return self.eval_codegen_func(expr);
+        } else if expr.tag == IR_TRAP {
+            return ConstResult::fail(ConstEvalError::unreachable_err());
+        }
+
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn irty_to_builtin(self: &ConstEvaluator, ty: &IrTy) -> BuiltinType {
+        if ty.tag == IRTY_BUILTIN {
+            ty.builtin
+        } else if ty.tag == IRTY_ENUM {
+            // Use the enum's underlying type
+            if ty.enum_ref.underlying.tag == IRTY_BUILTIN {
+                ty.enum_ref.underlying.builtin
+            } else {
+                BuiltinType::I32 // default
+            }
+        } else if ty.tag == IRTY_POINTER || ty.tag == IRTY_FN_POINTER {
+            BuiltinType::USize
+        } else {
+            BuiltinType::Void
+        }
+    }
+
+    // ========== Binary operations ==========
+
+    fn eval_binary(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let lhs_r = self.eval(expr.lhs);
+        if !lhs_r.ok { return lhs_r; }
+
+        // Short-circuit for && and ||
+        if expr.bin_op as i32 == BinOp::And as i32 {
+            if lhs_r.value.tag == CVAL_BOOL {
+                if !lhs_r.value.is_truthy() {
+                    return ConstResult::success(ConstValue::make_bool(false));
+                }
+                let rhs_r = self.eval(expr.rhs);
+                if !rhs_r.ok { return rhs_r; }
+                return ConstResult::success(ConstValue::make_bool(rhs_r.value.is_truthy()));
+            }
+        } else if expr.bin_op as i32 == BinOp::Or as i32 {
+            if lhs_r.value.tag == CVAL_BOOL {
+                if lhs_r.value.is_truthy() {
+                    return ConstResult::success(ConstValue::make_bool(true));
+                }
+                let rhs_r = self.eval(expr.rhs);
+                if !rhs_r.ok { return rhs_r; }
+                return ConstResult::success(ConstValue::make_bool(rhs_r.value.is_truthy()));
+            }
+        }
+
+        let rhs_r = self.eval(expr.rhs);
+        if !rhs_r.ok { return rhs_r; }
+
+        let lhs = lhs_r.value;
+        let rhs = rhs_r.value;
+
+        // Integer binary ops
+        if lhs.tag == CVAL_INT && rhs.tag == CVAL_INT {
+            return self.int_bin_op(lhs, rhs, expr.bin_op);
+        }
+        // Float binary ops
+        if lhs.tag == CVAL_FLOAT && rhs.tag == CVAL_FLOAT {
+            return self.float_bin_op(lhs, rhs, expr.bin_op);
+        }
+        // Bool comparisons
+        if lhs.tag == CVAL_BOOL && rhs.tag == CVAL_BOOL {
+            return self.bool_bin_op(lhs, rhs, expr.bin_op);
+        }
+        // Pointer arithmetic
+        if lhs.tag == CVAL_BYTES {
+            return self.bytes_bin_op(lhs, rhs, expr.bin_op);
+        }
+        if lhs.tag == CVAL_POINTER && rhs.tag == CVAL_INT {
+            return self.pointer_int_bin_op(lhs, rhs, expr.bin_op);
+        }
+
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn int_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
+        let a = lhs.int_val;
+        let b = rhs.int_val;
+        let bt = lhs.builtin_type;
+        let is_signed = bt.is_signed();
+        let width = bt.bit_width();
+
+        // For comparisons, handle signed/unsigned properly
+        if op as i32 == BinOp::Eq as i32 {
+            return ConstResult::success(ConstValue::make_bool(a == b));
+        } else if op as i32 == BinOp::Ne as i32 {
+            return ConstResult::success(ConstValue::make_bool(a != b));
+        } else if op as i32 == BinOp::Lt as i32 {
+            if is_signed {
+                return ConstResult::success(ConstValue::make_bool((a as i64) < (b as i64)));
+            } else {
+                return ConstResult::success(ConstValue::make_bool(a < b));
+            }
+        } else if op as i32 == BinOp::Le as i32 {
+            if is_signed {
+                return ConstResult::success(ConstValue::make_bool((a as i64) <= (b as i64)));
+            } else {
+                return ConstResult::success(ConstValue::make_bool(a <= b));
+            }
+        } else if op as i32 == BinOp::Gt as i32 {
+            if is_signed {
+                return ConstResult::success(ConstValue::make_bool((a as i64) > (b as i64)));
+            } else {
+                return ConstResult::success(ConstValue::make_bool(a > b));
+            }
+        } else if op as i32 == BinOp::Ge as i32 {
+            if is_signed {
+                return ConstResult::success(ConstValue::make_bool((a as i64) >= (b as i64)));
+            } else {
+                return ConstResult::success(ConstValue::make_bool(a >= b));
+            }
+        }
+
+        // Arithmetic - compute then mask to width
+        let result: u64 = 0;
+
+        if op as i32 == BinOp::Add as i32 {
+            result = a + b;
+        } else if op as i32 == BinOp::Sub as i32 {
+            result = a - b;
+        } else if op as i32 == BinOp::Mul as i32 {
+            result = a * b;
+        } else if op as i32 == BinOp::Div as i32 {
+            if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
+            if is_signed {
+                result = ((a as i64) / (b as i64)) as u64;
+            } else {
+                result = a / b;
+            }
+        } else if op as i32 == BinOp::Rem as i32 {
+            if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
+            if is_signed {
+                result = ((a as i64) % (b as i64)) as u64;
+            } else {
+                result = a % b;
+            }
+        } else if op as i32 == BinOp::BitAnd as i32 {
+            result = a & b;
+        } else if op as i32 == BinOp::BitOr as i32 {
+            result = a | b;
+        } else if op as i32 == BinOp::BitXor as i32 {
+            result = a ^ b;
+        } else if op as i32 == BinOp::Shl as i32 {
+            let shift = b as u32;
+            if shift >= width { return ConstResult::fail(ConstEvalError::overflow()); }
+            result = a << shift;
+        } else if op as i32 == BinOp::Shr as i32 {
+            let shift = b as u32;
+            if shift >= width { return ConstResult::fail(ConstEvalError::overflow()); }
+            if is_signed {
+                result = ((a as i64) >> shift) as u64;
+            } else {
+                result = a >> shift;
+            }
+        } else if op as i32 == BinOp::And as i32 {
+            result = if a != 0u64 && b != 0u64 { 1u64 } else { 0u64 };
+            return ConstResult::success(ConstValue::make_bool(result != 0u64));
+        } else if op as i32 == BinOp::Or as i32 {
+            result = if a != 0u64 || b != 0u64 { 1u64 } else { 0u64 };
+            return ConstResult::success(ConstValue::make_bool(result != 0u64));
+        } else {
+            return ConstResult::fail(ConstEvalError::unsupported());
+        }
+
+        // Mask to width
+        result = self.mask_to_width(result, width);
+
+        ConstResult::success(ConstValue::make_int(result, bt))
+    }
+
+    fn mask_to_width(self: &ConstEvaluator, val: u64, width: u32) -> u64 {
+        if width >= 64 { return val; }
+        if width == 0 { return 0u64; }
+        val & ((1u64 << (width as u32)) - 1u64)
+    }
+
+    fn float_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
+        let a = lhs.float_val;
+        let b = rhs.float_val;
+        let bt = lhs.builtin_type;
+
+        if op as i32 == BinOp::Add as i32 {
+            return ConstResult::success(ConstValue::make_float(a + b, bt));
+        } else if op as i32 == BinOp::Sub as i32 {
+            return ConstResult::success(ConstValue::make_float(a - b, bt));
+        } else if op as i32 == BinOp::Mul as i32 {
+            return ConstResult::success(ConstValue::make_float(a * b, bt));
+        } else if op as i32 == BinOp::Div as i32 {
+            return ConstResult::success(ConstValue::make_float(a / b, bt));
+        } else if op as i32 == BinOp::Eq as i32 {
+            return ConstResult::success(ConstValue::make_bool(a == b));
+        } else if op as i32 == BinOp::Ne as i32 {
+            return ConstResult::success(ConstValue::make_bool(a != b));
+        } else if op as i32 == BinOp::Lt as i32 {
+            return ConstResult::success(ConstValue::make_bool(a < b));
+        } else if op as i32 == BinOp::Le as i32 {
+            return ConstResult::success(ConstValue::make_bool(a <= b));
+        } else if op as i32 == BinOp::Gt as i32 {
+            return ConstResult::success(ConstValue::make_bool(a > b));
+        } else if op as i32 == BinOp::Ge as i32 {
+            return ConstResult::success(ConstValue::make_bool(a >= b));
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn bool_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
+        let a = lhs.int_val != 0u64;
+        let b = rhs.int_val != 0u64;
+
+        if op as i32 == BinOp::Eq as i32 {
+            return ConstResult::success(ConstValue::make_bool(a == b));
+        } else if op as i32 == BinOp::Ne as i32 {
+            return ConstResult::success(ConstValue::make_bool(a != b));
+        } else if op as i32 == BinOp::And as i32 {
+            return ConstResult::success(ConstValue::make_bool(a && b));
+        } else if op as i32 == BinOp::Or as i32 {
+            return ConstResult::success(ConstValue::make_bool(a || b));
+        } else if op as i32 == BinOp::BitAnd as i32 {
+            return ConstResult::success(ConstValue::make_bool(a && b));
+        } else if op as i32 == BinOp::BitOr as i32 {
+            return ConstResult::success(ConstValue::make_bool(a || b));
+        } else if op as i32 == BinOp::BitXor as i32 {
+            return ConstResult::success(ConstValue::make_bool(a != b));
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn bytes_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
+        // Byte pointer + integer offset
+        if rhs.tag == CVAL_INT {
+            if op as i32 == BinOp::Add as i32 {
+                let new_off = lhs.bytes_offset + (rhs.int_val as usize);
+                if new_off > lhs.bytes.len() {
+                    return ConstResult::fail(ConstEvalError::index_oob());
+                }
+                return ConstResult::success(ConstValue::make_bytes(lhs.bytes, new_off));
+            } else if op as i32 == BinOp::Sub as i32 {
+                let offset = rhs.int_val as usize;
+                if offset > lhs.bytes_offset {
+                    return ConstResult::fail(ConstEvalError::index_oob());
+                }
+                return ConstResult::success(ConstValue::make_bytes(lhs.bytes, lhs.bytes_offset - offset));
+            }
+        }
+        // Byte pointer - byte pointer (same provenance)
+        if rhs.tag == CVAL_BYTES && op as i32 == BinOp::Sub as i32 {
+            let diff = (lhs.bytes_offset as i64) - (rhs.bytes_offset as i64);
+            return ConstResult::success(ConstValue::make_int(diff as u64, BuiltinType::ISize));
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn pointer_int_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
+        if lhs.lvalue.tag == CLV_INDEX {
+            let offset = lhs.lvalue.index;
+            let new_offset: usize = 0;
+            if op as i32 == BinOp::Add as i32 {
+                new_offset = offset + (rhs.int_val as usize);
+            } else if op as i32 == BinOp::Sub as i32 {
+                if (rhs.int_val as usize) > offset {
+                    return ConstResult::fail(ConstEvalError::index_oob());
+                }
+                new_offset = offset - (rhs.int_val as usize);
+            } else {
+                return ConstResult::fail(ConstEvalError::unsupported());
+            }
+            let new_lv = self.arena.alloc(ConstLValue {
+                tag: CLV_INDEX,
+                id: lhs.lvalue.id,
+                inner: lhs.lvalue.inner,
+                field_idx: lhs.lvalue.field_idx,
+                index: new_offset,
+            });
+            return ConstResult::success(ConstValue::make_pointer(new_lv, lhs.pointee_ty));
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Unary operations ==========
+
+    fn eval_unary(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let inner_r = self.eval(expr.lhs);
+        if !inner_r.ok { return inner_r; }
+        let inner = inner_r.value;
+
+        if inner.tag == CVAL_BOOL {
+            if expr.un_op as i32 == UnOp::Not as i32 {
+                return ConstResult::success(ConstValue::make_bool(!inner.is_truthy()));
+            }
+        } else if inner.tag == CVAL_INT {
+            if expr.un_op as i32 == UnOp::Neg as i32 {
+                let result = (0u64 - inner.int_val);
+                let result = self.mask_to_width(result, inner.builtin_type.bit_width());
+                return ConstResult::success(ConstValue::make_int(result, inner.builtin_type));
+            } else if expr.un_op as i32 == UnOp::BitNot as i32 {
+                let result = ~inner.int_val;
+                let result = self.mask_to_width(result, inner.builtin_type.bit_width());
+                return ConstResult::success(ConstValue::make_int(result, inner.builtin_type));
+            } else if expr.un_op as i32 == UnOp::Not as i32 {
+                // logical not on integer (shouldn't happen but handle it)
+                return ConstResult::success(ConstValue::make_bool(inner.int_val == 0u64));
+            }
+        } else if inner.tag == CVAL_FLOAT {
+            if expr.un_op as i32 == UnOp::Neg as i32 {
+                return ConstResult::success(ConstValue::make_float(-inner.float_val, inner.builtin_type));
+            }
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Cast ==========
+
+    fn eval_cast(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let inner_r = self.eval(expr.lhs);
+        if !inner_r.ok { return inner_r; }
+        let inner = inner_r.value;
+        let target_bt = self.irty_to_builtin(expr.ir_ty);
+
+        // Same type - no-op
+        if inner.tag == CVAL_INT && target_bt as i32 == inner.builtin_type as i32 {
+            return ConstResult::success(inner);
+        }
+
+        // Int -> Int
+        if inner.tag == CVAL_INT && target_bt.is_integer() {
+            let val = inner.int_val;
+            // Sign-extend if source is signed
+            let promoted: i64 = 0;
+            if inner.builtin_type.is_signed() {
+                let width = inner.builtin_type.bit_width();
+                // Sign extend to i64
+                promoted = self.sign_extend(val, width);
+            } else {
+                promoted = val as i64;
+            }
+            // Truncate to target width
+            let result: u64 = promoted as u64;
+            result = self.mask_to_width(result, target_bt.bit_width());
+            return ConstResult::success(ConstValue::make_int(result, target_bt));
+        }
+
+        // Bool -> Int
+        if inner.tag == CVAL_BOOL && target_bt.is_integer() {
+            return ConstResult::success(ConstValue::make_int(inner.int_val, target_bt));
+        }
+
+        // Int -> Bool
+        if inner.tag == CVAL_INT && target_bt as i32 == BuiltinType::Bool as i32 {
+            return ConstResult::success(ConstValue::make_bool(inner.int_val != 0u64));
+        }
+
+        // Int -> Float
+        if inner.tag == CVAL_INT && target_bt.is_float() {
+            let fval: f64 = 0.0;
+            if inner.builtin_type.is_signed() {
+                fval = self.sign_extend(inner.int_val, inner.builtin_type.bit_width()) as f64;
+            } else {
+                fval = inner.int_val as f64;
+            }
+            if target_bt as i32 == BuiltinType::F32 as i32 {
+                fval = (fval as f32) as f64;
+            }
+            return ConstResult::success(ConstValue::make_float(fval, target_bt));
+        }
+
+        // Float -> Int
+        if inner.tag == CVAL_FLOAT && target_bt.is_integer() {
+            let ival: u64 = 0;
+            if target_bt.is_signed() {
+                ival = (inner.float_val as i64) as u64;
+            } else {
+                ival = inner.float_val as u64;
+            }
+            ival = self.mask_to_width(ival, target_bt.bit_width());
+            return ConstResult::success(ConstValue::make_int(ival, target_bt));
+        }
+
+        // Float -> Float (f64 -> f32 or f32 -> f64)
+        if inner.tag == CVAL_FLOAT && target_bt.is_float() {
+            let fval = inner.float_val;
+            if target_bt as i32 == BuiltinType::F32 as i32 {
+                fval = (fval as f32) as f64;
+            }
+            return ConstResult::success(ConstValue::make_float(fval, target_bt));
+        }
+
+        // Pointer casts (ptr -> ptr, fn -> fn_ptr, int -> ptr, ptr -> int)
+        if inner.tag == CVAL_POINTER {
+            if target_bt.is_integer() {
+                // ptr -> int: unsupported in general
+                return ConstResult::fail(ConstEvalError::unsupported());
+            }
+            // ptr -> ptr: just change the type
+            return ConstResult::success(ConstValue::make_pointer(inner.lvalue, inner.pointee_ty));
+        }
+        if inner.tag == CVAL_FN_PTR {
+            return ConstResult::success(inner);
+        }
+
+        // Int -> Pointer (e.g. dangling pointer from align value)
+        if inner.tag == CVAL_INT && (expr.ty.tag == IRTY_POINTER || expr.ty.tag == IRTY_FN_POINTER) {
+            // Store as int, will work for dangling pointers
+            return ConstResult::success(inner);
+        }
+
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn sign_extend(self: &ConstEvaluator, val: u64, width: u32) -> i64 {
+        if width == 0 || width >= 64 { return val as i64; }
+        let sign_bit = 1u64 << (width - 1u32);
+        if val & sign_bit != 0u64 {
+            // Negative: extend with 1s
+            let mask = ~((1u64 << width) - 1u64);
+            (val | mask) as i64
+        } else {
+            val as i64
+        }
+    }
+
+    // ========== Block ==========
+
+    fn eval_block(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // Items are the block's statements + trailing expression
+        // Last item is the block's value
+        if expr.items.len() == 0 {
+            return ConstResult::success(ConstValue::make_void());
+        }
+
+        // Build label index for goto support
+        // (We don't have IR labels in aluminac's IR, but we handle break/continue via
+        // the structured control flow in eval_while/eval_loop)
+
+        for i in 0usize..expr.items.len() - 1 {
+            let r = self.eval(expr.items[i]);
+            if !r.ok { return r; }
+        }
+
+        // Last item is the value
+        self.eval(expr.items[expr.items.len() - 1])
+    }
+
+    // ========== If ==========
+
+    fn eval_if(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let cond_r = self.eval(expr.cond);
+        if !cond_r.ok { return cond_r; }
+
+        if cond_r.value.is_truthy() {
+            self.eval(expr.lhs)
+        } else if expr.opt_expr.is_some() {
+            self.eval(expr.opt_expr.unwrap())
+        } else {
+            ConstResult::success(ConstValue::make_void())
+        }
+    }
+
+    // ========== Let ==========
+
+    fn eval_let(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // IR_LET: id, opt_expr = initializer, ir_ty = type
+        if expr.opt_expr.is_some() {
+            let init_r = self.eval(expr.opt_expr.unwrap());
+            if !init_r.ok { return init_r; }
+            self.store_var(expr.id, init_r.value);
+        } else {
+            self.store_var(expr.id, ConstValue::make_uninitialized());
+        }
+        ConstResult::success(ConstValue::make_void())
+    }
+
+    // ========== Assign ==========
+
+    fn eval_assign(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // lhs is the target (lvalue), rhs is the value
+        let target_r = self.eval_inner(expr.lhs);
+        if !target_r.ok { return target_r; }
+        let val_r = self.eval(expr.rhs);
+        if !val_r.ok { return val_r; }
+
+        let target = target_r.value;
+        if target.tag == CVAL_LVALUE {
+            self.assign_to_lvalue(target.lvalue, val_r.value)
+        } else {
+            ConstResult::fail(ConstEvalError::unsupported())
+        }
+    }
+
+    fn assign_to_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue, val: ConstValue) -> ConstResult {
+        if lv.tag == CLV_VARIABLE {
+            self.variables.insert(lv.id._value, val);
+            return ConstResult::success(ConstValue::make_void());
+        } else if lv.tag == CLV_FIELD {
+            // Read base, update field, write back
+            let base_r = self.materialize_lvalue(lv.inner);
+            if !base_r.ok { return base_r; }
+            let base = base_r.value;
+            if base.tag == CVAL_STRUCT {
+                // Create new fields array with updated field
+                let new_fields = self.arena.alloc_slice::<ConstField>(base.fields.len());
+                let found = false;
+                for i in 0usize..base.fields.len() {
+                    if base.fields[i].field_idx == lv.field_idx {
+                        new_fields[i] = ConstField { field_idx: lv.field_idx, value: val };
+                        found = true;
+                    } else {
+                        new_fields[i] = base.fields[i];
+                    }
+                }
+                if !found {
+                    // Add new field - need to grow
+                    let grown = self.arena.alloc_slice::<ConstField>(base.fields.len() + 1);
+                    for i in 0usize..base.fields.len() {
+                        grown[i] = new_fields[i];
+                    }
+                    grown[base.fields.len()] = ConstField { field_idx: lv.field_idx, value: val };
+                    return self.assign_to_lvalue(lv.inner, ConstValue::make_struct(grown));
+                }
+                return self.assign_to_lvalue(lv.inner, ConstValue::make_struct(new_fields));
+            }
+            return ConstResult::fail(ConstEvalError::unsupported());
+        } else if lv.tag == CLV_INDEX {
+            let base_r = self.materialize_lvalue(lv.inner);
+            if !base_r.ok { return base_r; }
+            let base = base_r.value;
+            if base.tag == CVAL_ARRAY {
+                if lv.index >= base.elems.len() {
+                    return ConstResult::fail(ConstEvalError::index_oob());
+                }
+                let new_elems = self.arena.alloc_slice::<ConstValue>(base.elems.len());
+                for i in 0usize..base.elems.len() {
+                    if i == lv.index {
+                        new_elems[i] = val;
+                    } else {
+                        new_elems[i] = base.elems[i];
+                    }
+                }
+                return self.assign_to_lvalue(lv.inner, ConstValue::make_array(new_elems));
+            }
+            return ConstResult::fail(ConstEvalError::unsupported());
+        } else if lv.tag == CLV_TUPLE_INDEX {
+            let base_r = self.materialize_lvalue(lv.inner);
+            if !base_r.ok { return base_r; }
+            let base = base_r.value;
+            if base.tag == CVAL_TUPLE {
+                if lv.index >= base.elems.len() {
+                    return ConstResult::fail(ConstEvalError::index_oob());
+                }
+                let new_elems = self.arena.alloc_slice::<ConstValue>(base.elems.len());
+                for i in 0usize..base.elems.len() {
+                    if i == lv.index {
+                        new_elems[i] = val;
+                    } else {
+                        new_elems[i] = base.elems[i];
+                    }
+                }
+                return self.assign_to_lvalue(lv.inner, ConstValue::make_tuple(new_elems));
+            }
+            return ConstResult::fail(ConstEvalError::unsupported());
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Field access ==========
+
+    fn eval_field_access(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let base_r = self.eval_inner(expr.lhs);
+        if !base_r.ok { return base_r; }
+        let base = base_r.value;
+
+        if base.tag == CVAL_LVALUE {
+            let new_lv = self.arena.alloc(ConstLValue {
+                tag: CLV_FIELD,
+                id: Id { _value: 0 },
+                inner: base.lvalue,
+                field_idx: expr.field_idx,
+                index: 0,
+            });
+            return ConstResult::success(ConstValue::make_lvalue(new_lv));
+        }
+
+        // Direct field access on a struct value
+        if base.tag == CVAL_STRUCT {
+            return self.access_field(base, expr.field_idx);
+        }
+        // Tuple field access (field_idx used as index)
+        if base.tag == CVAL_TUPLE {
+            return self.access_tuple_index(base, expr.field_idx as usize);
+        }
+
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Index ==========
+
+    fn eval_index(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let base_r = self.eval_inner(expr.lhs);
+        if !base_r.ok { return base_r; }
+        let idx_r = self.eval(expr.rhs);
+        if !idx_r.ok { return idx_r; }
+
+        let idx = idx_r.value.as_usize();
+        if idx.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }
+        let idx_val = idx.unwrap();
+
+        let base = base_r.value;
+        if base.tag == CVAL_LVALUE {
+            let new_lv = self.arena.alloc(ConstLValue {
+                tag: CLV_INDEX,
+                id: Id { _value: 0 },
+                inner: base.lvalue,
+                field_idx: 0,
+                index: idx_val,
+            });
+            return ConstResult::success(ConstValue::make_lvalue(new_lv));
+        }
+        if base.tag == CVAL_ARRAY {
+            return self.access_index(base, idx_val);
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Composite literals ==========
+
+    fn eval_tuple_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let elems = self.arena.alloc_slice::<ConstValue>(expr.items.len());
+        for i in 0usize..expr.items.len() {
+            let r = self.eval(expr.items[i]);
+            if !r.ok { return r; }
+            elems[i] = r.value;
+        }
+        ConstResult::success(ConstValue::make_tuple(elems))
+    }
+
+    fn eval_array_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let elems = self.arena.alloc_slice::<ConstValue>(expr.items.len());
+        for i in 0usize..expr.items.len() {
+            let r = self.eval(expr.items[i]);
+            if !r.ok { return r; }
+            elems[i] = r.value;
+        }
+        ConstResult::success(ConstValue::make_array(elems))
+    }
+
+    fn eval_struct_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // IR_STRUCT_LIT: items are field value exprs, keyed by field_idx pattern
+        // Actually in aluminac, struct lits use items array where each item
+        // has field_idx set. Let me check...
+        // In the IR, struct lit items are IrExprs with field_idx indicating which field.
+        let fields = self.arena.alloc_slice::<ConstField>(expr.items.len());
+        for i in 0usize..expr.items.len() {
+            let r = self.eval(expr.items[i]);
+            if !r.ok { return r; }
+            fields[i] = ConstField {
+                field_idx: expr.items[i].field_idx,
+                value: r.value,
+            };
+        }
+        ConstResult::success(ConstValue::make_struct(fields))
+    }
+
+    // ========== Ref/Deref ==========
+
+    fn eval_ref(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let inner_r = self.eval_inner(expr.lhs);
+        if !inner_r.ok { return inner_r; }
+        let inner = inner_r.value;
+
+        if inner.tag == CVAL_LVALUE {
+            return ConstResult::success(ConstValue::make_pointer(inner.lvalue, expr.lhs.ty));
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    fn eval_deref(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let inner_r = self.eval(expr.lhs);
+        if !inner_r.ok { return inner_r; }
+        let inner = inner_r.value;
+
+        if inner.tag == CVAL_POINTER {
+            return ConstResult::success(ConstValue::make_lvalue(inner.lvalue));
+        }
+        if inner.tag == CVAL_BYTES {
+            if inner.bytes_offset >= inner.bytes.len() {
+                return ConstResult::fail(ConstEvalError::index_oob());
+            }
+            return ConstResult::success(ConstValue::make_int(inner.bytes[inner.bytes_offset] as u64, BuiltinType::U8));
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== While loop ==========
+
+    fn eval_while(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // cond = condition, lhs = body, opt_expr = continue action (for for-loops)
+        loop {
+            let cond_r = self.eval(expr.cond);
+            if !cond_r.ok { return cond_r; }
+            if !cond_r.value.is_truthy() {
+                break;
+            }
+            let body_r = self.eval(expr.lhs);
+            if !body_r.ok {
+                if body_r.error.code == CE_BREAK {
+                    break;
+                }
+                if body_r.error.code == CE_CONTINUE {
+                    if expr.opt_expr.is_some() {
+                        let cont_r = self.eval(expr.opt_expr.unwrap());
+                        if !cont_r.ok { return cont_r; }
+                    }
+                    continue;
+                }
+                return body_r;
+            }
+            if expr.opt_expr.is_some() {
+                let cont_r = self.eval(expr.opt_expr.unwrap());
+                if !cont_r.ok { return cont_r; }
+            }
+        }
+        ConstResult::success(ConstValue::make_void())
+    }
+
+    // ========== Loop ==========
+
+    fn eval_loop(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // lhs = body
+        loop {
+            let body_r = self.eval(expr.lhs);
+            if !body_r.ok {
+                if body_r.error.code == CE_BREAK {
+                    break;
+                }
+                if body_r.error.code == CE_CONTINUE {
+                    continue;
+                }
+                return body_r;
+            }
+        }
+        ConstResult::success(ConstValue::make_void())
+    }
+
+    // ========== Switch ==========
+
+    fn eval_switch(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let disc_r = self.eval(expr.lhs);
+        if !disc_r.ok { return disc_r; }
+        let disc_val = disc_r.value.as_u64();
+        if disc_val.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }
+        let disc = disc_val.unwrap();
+
+        let default_body: Option<&IrExpr> = Option::none();
+
+        for i in 0usize..expr.switch_arms.len() {
+            let arm = expr.switch_arms[i];
+            if arm.is_default {
+                default_body = Option::some(arm.body);
+                continue;
+            }
+            for j in 0usize..arm.values.len() {
+                if arm.values[j] == disc {
+                    return self.eval(arm.body);
+                }
+            }
+        }
+
+        if default_body.is_some() {
+            return self.eval(default_body.unwrap());
+        }
+
+        ConstResult::success(ConstValue::make_void())
+    }
+
+    // ========== Function call ==========
+
+    fn eval_call(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        if self.remaining_depth == 0 {
+            return ConstResult::fail(ConstEvalError::too_deep());
+        }
+
+        // Find the function to call
+        let target_name: &[u8] = "";
+        if expr.call_target.tag == CALL_DIRECT {
+            target_name = expr.call_target.fn_ref.mangled_name;
+        } else {
+            // Indirect call: try to eval the callee
+            let callee_r = self.eval(expr.call_target.callee);
+            if !callee_r.ok { return callee_r; }
+            if callee_r.value.tag == CVAL_FN_PTR {
+                target_name = callee_r.value.fn_ref.mangled_name;
+            } else {
+                return ConstResult::fail(ConstEvalError::unsupported());
+            }
+        }
+
+        // Find function body in already-monomorphized IR
+        let func: Option<&IrFunction> = Option::none();
+        for i in 0usize..self.ir_functions.len() {
+            if self.ir_functions[i].mangled_name == target_name {
+                func = Option::some(&self.ir_functions[i]);
+                break;
+            }
+        }
+        if func.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }
+        let f = func.unwrap();
+        if !f.body.is_some() { return ConstResult::fail(ConstEvalError::unsupported()); }
+
+        // Evaluate arguments
+        let arg_values = self.arena.alloc_slice::<ConstValue>(expr.items.len());
+        for i in 0usize..expr.items.len() {
+            let r = self.eval(expr.items[i]);
+            if !r.ok { return r; }
+            arg_values[i] = r.value;
+        }
+
+        // Create child evaluator with remapped variables
+        let child = ConstEvaluator {
+            arena: self.arena,
+            variables: HashMap::new(),
+            remapped: HashMap::new(),
+            ir_functions: self.ir_functions,
+            return_slot: ConstValue::make_void(),
+            has_return: false,
+            remaining_depth: self.remaining_depth - 1,
+            steps_remaining: self.steps_remaining,
+            pointer_size: self.pointer_size,
+        };
+
+        // Bind parameters
+        for i in 0usize..f.params.len() {
+            if i < arg_values.len() {
+                child.variables.insert(f.params[i].id._value, arg_values[i]);
+            }
+        }
+
+        // Initialize local variables
+        for i in 0usize..f.local_defs.len() {
+            child.variables.insert(f.local_defs[i].id._value, ConstValue::make_uninitialized());
+        }
+
+        // Evaluate function body
+        let result = child.eval(f.body.unwrap());
+
+        // Propagate remaining steps back
+        self.steps_remaining = child.steps_remaining;
+
+        if result.ok {
+            return result;
+        }
+
+        // Handle return
+        if result.error.code == CE_RETURN && child.has_return {
+            return ConstResult::success(child.return_slot);
+        }
+
+        // Propagate other errors
+        result
+    }
+
+    // ========== Transmute ==========
+
+    fn eval_transmute(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // For simple cases: int-to-int of same size, float-to-int, int-to-float
+        let inner_r = self.eval(expr.lhs);
+        if !inner_r.ok { return inner_r; }
+        let inner = inner_r.value;
+        let target_bt = self.irty_to_builtin(expr.ir_ty);
+
+        // Int -> Float (reinterpret bits via pointer cast)
+        if inner.tag == CVAL_INT && target_bt as i32 == BuiltinType::F32 as i32 {
+            let bits = inner.int_val as u32;
+            let f = *(&bits as &f32);
+            return ConstResult::success(ConstValue::make_float(f as f64, BuiltinType::F32));
+        }
+        if inner.tag == CVAL_INT && target_bt as i32 == BuiltinType::F64 as i32 {
+            let bits = inner.int_val;
+            let f = *(&bits as &f64);
+            return ConstResult::success(ConstValue::make_float(f, BuiltinType::F64));
+        }
+
+        // Float -> Int (reinterpret bits via pointer cast)
+        if inner.tag == CVAL_FLOAT && target_bt.is_integer() {
+            if inner.builtin_type as i32 == BuiltinType::F32 as i32 {
+                let f32_val = inner.float_val as f32;
+                let bits = *(&f32_val as &u32);
+                return ConstResult::success(ConstValue::make_int(bits as u64, target_bt));
+            } else {
+                let fval = inner.float_val;
+                let bits = *(&fval as &u64);
+                return ConstResult::success(ConstValue::make_int(bits, target_bt));
+            }
+        }
+
+        // Int -> Int of same size: just reinterpret
+        if inner.tag == CVAL_INT && target_bt.is_integer() {
+            let result = self.mask_to_width(inner.int_val, target_bt.bit_width());
+            return ConstResult::success(ConstValue::make_int(result, target_bt));
+        }
+
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Codegen func (intrinsics) ==========
+
+    fn eval_codegen_func(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        // Some intrinsics are lowered to IR_CODEGEN_FUNC by mono
+        // Check str_val for the function name
+        let name = expr.str_val;
+
+        if name == "llvm.expect.i1" || name == "llvm.expect.i64" {
+            // expect(val, expected) -> val
+            if expr.items.len() > 0 {
+                return self.eval(expr.items[0]);
+            }
+        }
+
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== Zeroed value construction ==========
+
+    fn make_zeroed(self: &mut ConstEvaluator, ty: &IrTy) -> ConstValue {
+        if ty.tag == IRTY_BUILTIN {
+            if ty.builtin as i32 == BuiltinType::Bool as i32 {
+                ConstValue::make_bool(false)
+            } else if ty.builtin.is_integer() {
+                ConstValue::make_int(0u64, ty.builtin)
+            } else if ty.builtin.is_float() {
+                ConstValue::make_float(0.0, ty.builtin)
+            } else {
+                ConstValue::make_void()
+            }
+        } else if ty.tag == IRTY_POINTER || ty.tag == IRTY_FN_POINTER {
+            ConstValue::make_int(0u64, BuiltinType::USize)
+        } else if ty.tag == IRTY_ARRAY {
+            let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size);
+            let zero = self.make_zeroed(ty.inner);
+            for i in 0usize..ty.array_size {
+                elems[i] = zero;
+            }
+            ConstValue::make_array(elems)
+        } else if ty.tag == IRTY_TUPLE {
+            let elems = self.arena.alloc_slice::<ConstValue>(ty.elems.len());
+            for i in 0usize..ty.elems.len() {
+                elems[i] = self.make_zeroed(ty.elems[i]);
+            }
+            ConstValue::make_tuple(elems)
+        } else if ty.tag == IRTY_STRUCT || ty.tag == IRTY_CLOSURE {
+            let fields = self.arena.alloc_slice::<ConstField>(ty.struct_ref.fields.len());
+            for i in 0usize..ty.struct_ref.fields.len() {
+                fields[i] = ConstField {
+                    field_idx: i as u32,
+                    value: self.make_zeroed(ty.struct_ref.fields[i].ty),
+                };
+            }
+            ConstValue::make_struct(fields)
+        } else if ty.tag == IRTY_ENUM {
+            let underlying_bt = if ty.enum_ref.underlying.tag == IRTY_BUILTIN {
+                ty.enum_ref.underlying.builtin
+            } else {
+                BuiltinType::I32
+            };
+            ConstValue::make_int(0u64, underlying_bt)
+        } else {
+            ConstValue::make_void()
+        }
+    }
+}
+
+// ========== Convenience functions for mono.alu integration ==========
+
+/// Try to const-evaluate an expression to a u64 value.
+/// This is the main entry point used by mono for enum variants, array sizes, etc.
+fn try_eval_u64(
+    arena: &mut Arena,
+    ir_functions: &[IrFunction],
+    pointer_size: usize,
+    expr: &IrExpr,
+) -> Option<u64> {
+    let evaluator = ConstEvaluator::new(arena, ir_functions, pointer_size);
+    let result = evaluator.eval(expr);
+    if result.ok {
+        result.value.as_u64()
+    } else {
+        Option::none()
+    }
+}
+
+/// Try to const-evaluate an expression to a bool value.
+fn try_eval_bool(
+    arena: &mut Arena,
+    ir_functions: &[IrFunction],
+    pointer_size: usize,
+    expr: &IrExpr,
+) -> Option<bool> {
+    let evaluator = ConstEvaluator::new(arena, ir_functions, pointer_size);
+    let result = evaluator.eval(expr);
+    if result.ok {
+        result.value.as_bool()
+    } else {
+        Option::none()
+    }
+}
+
+/// Try to const-evaluate an expression to a full ConstValue.
+fn try_eval(
+    arena: &mut Arena,
+    ir_functions: &[IrFunction],
+    pointer_size: usize,
+    expr: &IrExpr,
+) -> Option<ConstValue> {
+    let evaluator = ConstEvaluator::new(arena, ir_functions, pointer_size);
+    let result = evaluator.eval(expr);
+    if result.ok {
+        Option::some(result.value)
+    } else {
+        Option::none()
+    }
+}
+
+/// Materialize a ConstValue back into an IrExpr for embedding in IR.
+fn materialize_to_ir(
+    arena: &mut Arena,
+    val: ConstValue,
+    ty: &IrTy,
+    void_ty: &IrTy,
+) -> Option<&IrExpr> {
+    if val.tag == CVAL_INT {
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_INT_LIT;
+        r.int_val = val.int_val;
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_BOOL {
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_BOOL_LIT;
+        r.bool_val = val.int_val != 0u64;
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_FLOAT {
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_FLOAT_LIT;
+        r.float_val = val.float_val;
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_VOID {
+        let r = IrExpr::void_expr(void_ty);
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_BYTES {
+        // Materialize as a string literal
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_STRING_LIT;
+        if val.bytes_offset > 0 {
+            // Slice the bytes
+            let remaining = val.bytes.len() - val.bytes_offset;
+            let buf = arena.alloc_slice::<u8>(remaining);
+            for i in 0usize..remaining {
+                buf[i] = val.bytes[val.bytes_offset + i];
+            }
+            r.str_val = buf;
+        } else {
+            r.str_val = val.bytes;
+        }
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_TUPLE {
+        let items = arena.alloc_slice::<&IrExpr>(val.elems.len());
+        if ty.tag == IRTY_TUPLE {
+            for i in 0usize..val.elems.len() {
+                let elem_ty = if i < ty.elems.len() { ty.elems[i] } else { void_ty };
+                let m = materialize_to_ir(arena, val.elems[i], elem_ty, void_ty);
+                if m.is_none() { return Option::none(); }
+                items[i] = m.unwrap();
+            }
+        } else {
+            for i in 0usize..val.elems.len() {
+                let m = materialize_to_ir(arena, val.elems[i], void_ty, void_ty);
+                if m.is_none() { return Option::none(); }
+                items[i] = m.unwrap();
+            }
+        }
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_TUPLE_LIT;
+        r.items = items;
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_ARRAY {
+        let items = arena.alloc_slice::<&IrExpr>(val.elems.len());
+        let elem_ty = if ty.tag == IRTY_ARRAY { ty.inner } else { void_ty };
+        for i in 0usize..val.elems.len() {
+            let m = materialize_to_ir(arena, val.elems[i], elem_ty, void_ty);
+            if m.is_none() { return Option::none(); }
+            items[i] = m.unwrap();
+        }
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_ARRAY_LIT;
+        r.items = items;
+        return Option::some(arena.alloc(r) as &IrExpr);
+    } else if val.tag == CVAL_STRUCT {
+        let items = arena.alloc_slice::<&IrExpr>(val.fields.len());
+        for i in 0usize..val.fields.len() {
+            let field_ty = void_ty;
+            if ty.tag == IRTY_STRUCT || ty.tag == IRTY_CLOSURE {
+                let fidx = val.fields[i].field_idx as usize;
+                if fidx < ty.struct_ref.fields.len() {
+                    field_ty = ty.struct_ref.fields[fidx].ty;
+                }
+            }
+            let m = materialize_to_ir(arena, val.fields[i].value, field_ty, void_ty);
+            if m.is_none() { return Option::none(); }
+            let item = m.unwrap();
+            // Struct lit items need field_idx set - but IrExpr is immutable ref...
+            // We need to create a new expr with field_idx
+            let field_expr = IrExpr::void_expr(field_ty);
+            field_expr.tag = item.tag;
+            field_expr.int_val = item.int_val;
+            field_expr.float_val = item.float_val;
+            field_expr.bool_val = item.bool_val;
+            field_expr.str_val = item.str_val;
+            field_expr.items = item.items;
+            field_expr.field_idx = val.fields[i].field_idx;
+            items[i] = arena.alloc(field_expr) as &IrExpr;
+        }
+        let r = IrExpr::void_expr(ty);
+        r.tag = IR_STRUCT_LIT;
+        r.items = items;
+        return Option::some(arena.alloc(r) as &IrExpr);
+    }
+    Option::none()
+}
