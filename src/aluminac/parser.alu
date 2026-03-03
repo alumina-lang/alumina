@@ -1161,6 +1161,96 @@ impl Pass2 {
         self.process_statics(root);
     }
 
+    /// Process pending items added after the given starting indices.
+    /// Used by parse_block to handle items defined inside function bodies.
+    fn process_items_from(
+        self: &mut Pass2,
+        root: Node,
+        structs_start: usize,
+        enums_start: usize,
+        protocols_start: usize,
+        mixins_start: usize,
+        functions_start: usize,
+        type_aliases_start: usize,
+        statics_start: usize,
+    ) {
+        for i in structs_start..self.ctx.pending_structs.len() {
+            let pending = &self.ctx.pending_structs[i];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_struct(item_node, pending);
+        }
+        for i in enums_start..self.ctx.pending_enums.len() {
+            let pending = &self.ctx.pending_enums[i];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_enum(item_node, pending);
+        }
+        for i in protocols_start..self.ctx.pending_protocols.len() {
+            let pending = &self.ctx.pending_protocols[i];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_protocol(item_node, pending);
+        }
+        // Mixins reference protocol items, so they must come after protocols
+        self.process_mixins_from(root, mixins_start);
+        // Functions are processed last since they may contain nested blocks
+        for i in functions_start..self.ctx.pending_functions.len() {
+            let pending = &self.ctx.pending_functions[i];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_function(item_node, pending);
+        }
+        for i in type_aliases_start..self.ctx.pending_type_aliases.len() {
+            let pending = &self.ctx.pending_type_aliases[i];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_type_alias(item_node, pending);
+        }
+        for i in statics_start..self.ctx.pending_statics.len() {
+            let pending = &self.ctx.pending_statics[i];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_static(item_node, pending);
+        }
+    }
+
+    fn process_mixins_from(self: &mut Pass2, root: Node, start: usize) {
+        for i in start..self.ctx.pending_mixins.len() {
+            let pending = &self.ctx.pending_mixins[i];
+            let mixin_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let proto_node = child_by!(mixin_node, FieldKind::Protocol);
+            if proto_node.is_none() {
+                continue;
+            }
+            let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
+            let proto_id_val: usize = 0usize;
+            let has_proto_id = false;
+            if proto_ty.tag == TyTag::Named {
+                proto_id_val = proto_ty.id._value;
+                has_proto_id = true;
+            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner.tag == TyTag::Named {
+                proto_id_val = proto_ty.inner.id._value;
+                has_proto_id = true;
+            }
+            if !has_proto_id {
+                continue;
+            }
+            let impl_scope_idx = pending.impl_scope_idx;
+            for j in 0usize..self.ctx.items.len() {
+                if self.ctx.items[j].tag == ItemTag::Protocol && self.ctx.items[j].protocol_def.id._value == proto_id_val {
+                    let proto_def = &self.ctx.items[j].protocol_def;
+                    for k in 0usize..proto_def.methods.len() {
+                        let method = &proto_def.methods[k];
+                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&method.name);
+                        if existing.is_none() {
+                            self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
+                                name: method.name,
+                                kind: NamedItemKind::function(method.id),
+                                span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                            });
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     fn process_macros(self: &mut Pass2, root: Node) {
         let mac_len = self.ctx.pending_macros.len();
         if mac_len == 0usize {
@@ -1244,16 +1334,22 @@ impl Pass2 {
     }
 
     fn find_node_at(self: &Pass2, root: Node, start: u32, end: u32) -> Node {
-        // Find a node by its byte range
+        // Find the deepest node matching the given byte range.
+        // We recurse even when a match is found, because wrapper nodes (e.g.
+        // statement) can have the same byte range as their inner content node
+        // (e.g. struct_definition).
         let cursor = root.walk();
         defer cursor.free();
-        // Try to navigate to the right position
         if cursor.goto_first_child_for_byte(start as usize).is_some() {
             let node = cursor.node();
             if node.start_byte() as u32 == start && node.end_byte() as u32 == end {
+                // Try to find a deeper match
+                let deeper = self.find_node_at(node, start, end);
+                if deeper.start_byte() as u32 == start && deeper.end_byte() as u32 == end {
+                    return deeper;
+                }
                 return node;
             }
-            // Try children
             return self.find_node_at(node, start, end);
         }
         root
@@ -2315,6 +2411,69 @@ impl ExprParser {
         // outer variables in the parent scope.
         let block_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
         let block_parser = ExprParser::new(self.ctx, block_scope);
+
+        // Pre-pass: run Pass 1 + Pass 2 on any item definitions (struct, enum,
+        // impl, etc.) inside this block so their scopes, names, fields, and methods
+        // are fully registered before we parse expressions. Without this, nested
+        // structs/impls would never get registered and trait dispatch (e.g. .fmt())
+        // would fail.
+        {
+            // Capture current pending lengths so we can process only newly added items
+            let structs_start = self.ctx.pending_structs.len();
+            let enums_start = self.ctx.pending_enums.len();
+            let protocols_start = self.ctx.pending_protocols.len();
+            let mixins_start = self.ctx.pending_mixins.len();
+            let functions_start = self.ctx.pending_functions.len();
+            let type_aliases_start = self.ctx.pending_type_aliases.len();
+            let statics_start = self.ctx.pending_statics.len();
+
+            let pre_cursor = node.walk();
+            defer pre_cursor.free();
+            for stmt in children_by!(node, FieldKind::Statements, &pre_cursor) {
+                if !stmt.is_named() {
+                    continue;
+                }
+                // statement -> inner: (_declaration_statement | expression_statement)
+                // _declaration_statement is hidden, so the inner field points directly
+                // to struct_definition, impl_block, etc.
+                let inner_opt = child_by!(stmt, FieldKind::Inner);
+                if inner_opt.is_none() {
+                    continue;
+                }
+                let inner = inner_opt.unwrap();
+                let inner_kind = NODE_KINDS[inner.symbol() as usize];
+                switch inner_kind {
+                    NodeKind::StructDefinition,
+                    NodeKind::EnumDefinition,
+                    NodeKind::ProtocolDefinition,
+                    NodeKind::ImplBlock,
+                    NodeKind::TypeDefinition,
+                    NodeKind::FunctionDefinition,
+                    NodeKind::UseDeclaration,
+                    NodeKind::StaticDeclaration,
+                    NodeKind::ConstDeclaration,
+                    NodeKind::MacroDefinition => {
+                        let pass1 = Pass1::new(self.ctx, block_scope);
+                        pass1.visit_node(inner);
+                    },
+                    _ => {},
+                }
+            }
+
+            // Now run Pass 2 on any newly added pending items so their fields,
+            // methods, variants, etc. are fully built.
+            let pass2 = Pass2::new(self.ctx);
+            pass2.process_items_from(
+                node,
+                structs_start,
+                enums_start,
+                protocols_start,
+                mixins_start,
+                functions_start,
+                type_aliases_start,
+                statics_start,
+            );
+        }
 
         let stmts: Vector<&Expr> = Vector::new();
         defer stmts.free();

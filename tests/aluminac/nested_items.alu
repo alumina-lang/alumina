@@ -1,0 +1,53 @@
+// Test: structs, enums, impls, and functions defined inside function bodies
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: Struct with impl inside function body
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    impl Point {
+        fn sum(self: &Point) -> i32 {
+            self.x + self.y
+        }
+    }
+
+    let p = Point { x: 10, y: 20 };
+    if p.sum() != 30 { return 1; }
+    if p.x != 10 { return 2; }
+    if p.y != 20 { return 3; }
+
+    // Test 2: Enum inside function body
+    enum Dir {
+        Left = 0i32,
+        Right = 1i32,
+    }
+
+    let d = Dir::Right;
+    switch d {
+        Dir::Left => { return 4; },
+        Dir::Right => {},
+        _ => { return 5; },
+    }
+
+    // Test 3: Nested function inside function body
+    fn add(a: i32, b: i32) -> i32 { a + b }
+    if add(3, 4) != 7 { return 6; }
+
+    // Test 4: Multiple structs with impls
+    struct A { v: i32 }
+    struct B { v: i32 }
+    impl A {
+        fn get(self: &A) -> i32 { self.v }
+    }
+    impl B {
+        fn get(self: &B) -> i32 { self.v * 2 }
+    }
+    let a = A { v: 5 };
+    let b = B { v: 5 };
+    if a.get() != 5 { return 7; }
+    if b.get() != 10 { return 8; }
+
+    0
+}

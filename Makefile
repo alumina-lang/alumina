@@ -8,6 +8,7 @@ ifdef RELEASE
 	CARGO_FLAGS += --profile release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
+	ALUMINAC_FLAGS += -O3
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
@@ -192,9 +193,9 @@ ALUMINAC_S1 = $(BUILD_DIR)/aluminac_s1
 ALUMINAC_S2 = $(BUILD_DIR)/aluminac_s2
 ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
 
-SYSROOT_SIMPLE = sysroot-simple/
+SYSROOT_ALUMINAC = sysroot-aluminac/
 
-SYSROOT_SIMPLE_FILES = $(shell find $(SYSROOT_SIMPLE) -type f -name '*.alu')
+SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
 ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
 ALUMINAC_MODULES_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu' | grep -v main.alu)
 ALUMINAC_MAIN = src/aluminac/main.alu
@@ -211,20 +212,20 @@ $(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALU
 $(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$(llvm-config-14 --ldflags --libs --system-libs)
 
-BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN) $(SYSROOT_SIMPLE_FILES)
+BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN) $(SYSROOT_ALUMINAC_FILES)
 BOOTSTRAP_INPUTS = $(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/) \
 		$(ALUMINAC_MAIN)
 
 $(ALUMINAC_S2): $(ALUMINAC_S1) $(BOOTSTRAP_DEPS)
-	$(ALUMINAC_S1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_SIMPLE) \
+	$(ALUMINAC_S1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_S2) \
 		$(BOOTSTRAP_INPUTS)
 
 $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
-	$(ALUMINAC_S2) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_SIMPLE) \
+	$(ALUMINAC_S2) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_S3) \
 		$(BOOTSTRAP_INPUTS)
@@ -352,7 +353,7 @@ all: alumina-boot
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
 $(BUILD_DIR)/quick: $(BUILD_DIR)/aluminac quick.alu
-	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_SIMPLE) -o $@ quick=./quick.alu
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) -o $@ quick=./quick.alu
 
 quick: $(BUILD_DIR)/quick
 	ln -sf $^ $@
