@@ -124,12 +124,13 @@ used exactly once and the unwrap could be inlined. Some cases are also
 
 ---
 
-## 9. Duplicate code in for-loop lowering
+## 9. ~~Duplicate code in for-loop lowering~~ DONE
 
-`lower_for_slice` and `lower_for_array` share ~80% of their code (the index
-variable setup, the while loop structure, the increment). They differ only in
-how the collection is stored and how length is obtained. Could be unified into
-a single method that takes a "get element at index" callback or similar.
+**Fixed:** Extracted `build_for_indexed_loop` helper that contains the common
+loop body (bindings, body lowering, increment, while construction). Both
+`lower_for_slice` and `lower_for_array` now only handle collection-specific
+setup (storing the collection, computing condition, element access) and
+delegate to the shared helper. Net reduction: ~20 lines.
 
 ---
 
@@ -165,5 +166,5 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
 6. ~~**#6 (magic numbers)** — Quick wins~~ DONE
 7. ~~**#7 (arena helper)** — Small utility addition~~ DONE
-8. **#9 (for-loop dedup)** — Moderate refactor
+8. ~~**#9 (for-loop dedup)** — Moderate refactor~~ DONE
 9. **#8, #11** — Minor quality-of-life

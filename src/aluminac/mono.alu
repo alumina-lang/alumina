@@ -2428,13 +2428,12 @@ impl Mono {
         self.local_defs.push(IrLocalDef { id: slice_var_id, ty: slice_ty, name: "_s" });
         let ir_let_s = self.mk_let(slice_var_id, slice_ty, slice_ir);
 
-        // let _i = 0usize
+        // let _i = 0usize; let _end = _s.len
         let idx_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(idx_var_id._value, usize_ty);
         self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i" });
         let ir_let_i = self.mk_let(idx_var_id, usize_ty, self.mk_int_lit(usize_ty, 0));
 
-        // let _end = _s.len (field 1 of slice)
         let end_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(end_var_id._value, usize_ty);
         self.local_defs.push(IrLocalDef { id: end_var_id, ty: usize_ty, name: "_end" });
@@ -2444,75 +2443,56 @@ impl Mono {
         // _i < _end
         let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(idx_var_id, usize_ty), self.mk_local(end_var_id, usize_ty), bool_ty);
 
-        // _s[_i] - slice indexing: get data pointer (field 0), then index
+        // _s[_i] - slice indexing: get data pointer, then index
         let ptr_ty = self.ctx.make_ptr_ty(elem_ty, slice_ty.is_const);
         let ir_data_ptr = self.mk_field(self.mk_local(slice_var_id, slice_ty), SLICE_DATA_FIELD, ptr_ty);
-        let ir_index = self.mk_index(ir_data_ptr, self.mk_local(idx_var_id, usize_ty), elem_ty);
+        let ir_element = self.mk_index(ir_data_ptr, self.mk_local(idx_var_id, usize_ty), elem_ty);
 
-        // let item = _s[_i]  (or tuple unpacking bindings)
-        let binding_stmts = self.make_for_loop_bindings(expr, ir_index, elem_ty);
-
-        // body
-        let ir_body = self.lower_expr(expr.rhs);
-
-        // _i = _i + 1
-        let ir_read_i = self.mk_local(idx_var_id, usize_ty);
-        let ir_add = self.mk_binary(BinOp::Add, ir_read_i, self.mk_int_lit(usize_ty, 1), usize_ty);
-        let ir_assign_i = self.mk_assign(self.mk_local(idx_var_id, usize_ty), ir_add);
-
-        // while body: { [bindings...]; body; _i = _i + 1; }
-        let while_body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(binding_stmts.len() + 2);
-        for j in 0usize..binding_stmts.len() {
-            while_body_stmts[j] = binding_stmts[j];
-        }
-        while_body_stmts[binding_stmts.len()] = ir_body;
-        while_body_stmts[binding_stmts.len() + 1] = ir_assign_i;
-        let ir_while_body = self.mk_block_void(while_body_stmts);
-
-        // while _i < _end { ... }
-        let while_expr = IrExpr::void_expr(self.ctx.void_ty);
-        while_expr.tag = IR_WHILE;
-        while_expr.cond = ir_cond;
-        while_expr.lhs = ir_while_body;
-        let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
-
-        // Full block: { let _s = ...; let _i = 0; let _end = _s.len; while ... }
-        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(4);
-        block_stmts[0] = ir_let_s;
-        block_stmts[1] = ir_let_i;
-        block_stmts[2] = ir_let_end;
-        block_stmts[3] = ir_while;
-        self.mk_block_void(block_stmts)
+        // Build the common loop structure
+        let preamble = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+        preamble[0] = ir_let_s;
+        preamble[1] = ir_let_i;
+        preamble[2] = ir_let_end;
+        self.build_for_indexed_loop(expr, preamble, ir_cond, ir_element, elem_ty, idx_var_id)
     }
 
-    // Lower a for-in loop over an array: for item in [T; N] { body }
-    // Desugar to: { let _a = arr; let _i = 0usize; while _i < N { let item = _a[_i]; body; _i = _i + 1; } }
     fn lower_for_array(self: &mut Mono, expr: &Expr, arr_ir: &IrExpr, arr_ty: &IrTy) -> &IrExpr {
         let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
         let bool_ty = self.ctx.intern_builtin_ty(BuiltinType::Bool);
         let elem_ty = arr_ty.inner;
-        let arr_len = arr_ty.array_size;
 
-        // let _a = arr
+        // let _a = arr; let _i = 0usize
         let arr_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(arr_var_id._value, arr_ty);
         self.local_defs.push(IrLocalDef { id: arr_var_id, ty: arr_ty, name: "_a" });
         let ir_let_a = self.mk_let(arr_var_id, arr_ty, arr_ir);
 
-        // let _i = 0usize
         let idx_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(idx_var_id._value, usize_ty);
         self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i" });
         let ir_let_i = self.mk_let(idx_var_id, usize_ty, self.mk_int_lit(usize_ty, 0));
 
         // _i < N
-        let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(idx_var_id, usize_ty), self.mk_int_lit(usize_ty, arr_len as u64), bool_ty);
+        let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(idx_var_id, usize_ty), self.mk_int_lit(usize_ty, arr_ty.array_size as u64), bool_ty);
 
         // _a[_i] - direct array indexing
-        let ir_index = self.mk_index(self.mk_local(arr_var_id, arr_ty), self.mk_local(idx_var_id, usize_ty), elem_ty);
+        let ir_element = self.mk_index(self.mk_local(arr_var_id, arr_ty), self.mk_local(idx_var_id, usize_ty), elem_ty);
 
-        // let item = _a[_i]  (or tuple unpacking bindings)
-        let binding_stmts = self.make_for_loop_bindings(expr, ir_index, elem_ty);
+        // Build the common loop structure
+        let preamble = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        preamble[0] = ir_let_a;
+        preamble[1] = ir_let_i;
+        self.build_for_indexed_loop(expr, preamble, ir_cond, ir_element, elem_ty, idx_var_id)
+    }
+
+    // Common loop body for for-in over slices and arrays.
+    // Takes: preamble stmts (let collection, let _i, [let _end]), condition, element access, elem type, idx var id
+    fn build_for_indexed_loop(self: &mut Mono, expr: &Expr, preamble: &[&IrExpr],
+            ir_cond: &IrExpr, ir_element: &IrExpr, elem_ty: &IrTy, idx_var_id: Id) -> &IrExpr {
+        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+
+        // Bindings: let item = element (or tuple unpacking)
+        let binding_stmts = self.make_for_loop_bindings(expr, ir_element, elem_ty);
 
         // body
         let ir_body = self.lower_expr(expr.rhs);
@@ -2530,18 +2510,19 @@ impl Mono {
         while_body_stmts[binding_stmts.len() + 1] = ir_assign_i;
         let ir_while_body = self.mk_block_void(while_body_stmts);
 
-        // while _i < N { ... }
+        // while condition { ... }
         let while_expr = IrExpr::void_expr(self.ctx.void_ty);
         while_expr.tag = IR_WHILE;
         while_expr.cond = ir_cond;
         while_expr.lhs = ir_while_body;
         let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
 
-        // Full block: { let _a = ...; let _i = 0; while ... }
-        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-        block_stmts[0] = ir_let_a;
-        block_stmts[1] = ir_let_i;
-        block_stmts[2] = ir_while;
+        // Full block: { preamble...; while ... }
+        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(preamble.len() + 1);
+        for i in 0usize..preamble.len() {
+            block_stmts[i] = preamble[i];
+        }
+        block_stmts[preamble.len()] = ir_while;
         self.mk_block_void(block_stmts)
     }
 
