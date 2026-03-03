@@ -105,70 +105,12 @@ mono.alu — it's the right approach but `Ty` and `IrTy` don't have equivalents.
 
 ---
 
-## 5. IR node construction helpers (MEDIUM PRIORITY)
+## 5. ~~IR node construction helpers~~ DONE
 
-mono.alu repeats the same 4-line patterns hundreds of times for constructing
-IR nodes. Common patterns that should be helpers:
-
-```alumina
-// Pattern 1: Integer literal (~15 occurrences)
-let lit = IrExpr::void_expr(ty);
-lit.tag = IR_INT_LIT;
-lit.int_val = value;
-self.ctx.arena.alloc(lit) as &IrExpr
-
-// Pattern 2: Local variable read (~40 occurrences)
-let local = IrExpr::void_expr(ty);
-local.tag = IR_LOCAL;
-local.id = var_id;
-self.ctx.arena.alloc(local) as &IrExpr
-
-// Pattern 3: Field access (~15 occurrences)
-let access = IrExpr::void_expr(field_ty);
-access.tag = IR_FIELD_ACCESS;
-access.lhs = obj;
-access.field_idx = idx;
-self.ctx.arena.alloc(access) as &IrExpr
-
-// Pattern 4: Let binding (~20 occurrences)
-let let_stmt = IrExpr::void_expr(self.ctx.void_ty);
-let_stmt.tag = IR_LET;
-let_stmt.id = var_id;
-let_stmt.ir_ty = ty;
-let_stmt.opt_expr = Option::some(init);
-self.ctx.arena.alloc(let_stmt) as &IrExpr
-
-// Pattern 5: Direct call target (~10 occurrences)
-IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() }
-
-// Pattern 6: Block (~15 occurrences)
-let block = IrExpr::void_expr(self.ctx.void_ty);
-block.tag = IR_BLOCK;
-block.items = stmts;
-self.ctx.arena.alloc(block) as &IrExpr
-
-// Pattern 7: Ref (take address) (~10 occurrences)
-let ref_expr = IrExpr::void_expr(self.ctx.make_ptr_ty(ty, false));
-ref_expr.tag = IR_REF;
-ref_expr.lhs = inner;
-self.ctx.arena.alloc(ref_expr) as &IrExpr
-```
-
-Suggested helpers on `Mono`:
-```alumina
-fn mk_int_lit(&mut self, ty: &IrTy, val: u64) -> &IrExpr
-fn mk_bool_lit(&mut self, val: bool) -> &IrExpr
-fn mk_local(&mut self, id: Id, ty: &IrTy) -> &IrExpr
-fn mk_field_access(&mut self, obj: &IrExpr, idx: u32, ty: &IrTy) -> &IrExpr
-fn mk_let(&mut self, id: Id, ty: &IrTy, init: &IrExpr) -> &IrExpr
-fn mk_block(&mut self, stmts: &[&IrExpr]) -> &IrExpr
-fn mk_ref(&mut self, inner: &IrExpr, is_const: bool) -> &IrExpr
-fn mk_assign(&mut self, lhs: &IrExpr, rhs: &IrExpr) -> &IrExpr
-fn mk_binary(&mut self, op: BinOp, lhs: &IrExpr, rhs: &IrExpr, ty: &IrTy) -> &IrExpr
-fn mk_direct_call_target(fn_ref: IrFnRef) -> IrCallTarget
-```
-
-This would cut mono.alu by ~500-800 lines.
+**Fixed:** Added 16 `mk_*` helper methods to `Mono` (mk_int_lit, mk_bool_lit,
+mk_local, mk_field, mk_let, mk_let_uninit, mk_block, mk_block_void, mk_ref,
+mk_deref, mk_assign, mk_binary, mk_cast, mk_call, mk_if, mk_index) and
+applied them across mono.alu. Net reduction: ~670 lines.
 
 ---
 
@@ -278,7 +220,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 ## Priority Order
 
 1. ~~**#10 (bug fix)** — Fix switch codegen for non-integer types~~ DONE
-2. **#5 (IR helpers)** — Biggest readability/LOC win, no risk
+2. ~~**#5 (IR helpers)** — Biggest readability/LOC win, no risk~~ DONE
 3. **#1 + #2 (enums + switch)** — Large refactor but huge type safety win
 4. **#4 (default constructors)** — Reduce zeroed boilerplate
 5. **#3 (for loops)** — Mechanical cleanup
