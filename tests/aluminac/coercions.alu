@@ -1,0 +1,62 @@
+// Test: implicit coercions
+// ALUMINAC_FLAGS: --sysroot sysroot-simple
+
+fn takes_const_ref(p: &i32) -> i32 {
+    *p
+}
+
+fn takes_const_ptr(p: &u8) -> u8 {
+    *p
+}
+
+fn takes_const_slice(s: &[u8]) -> usize {
+    s.len()
+}
+
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+fn takes_const_pair(p: &Pair) -> i32 {
+    p.a + p.b
+}
+
+fn main() -> i32 {
+    // Test 1: &mut i32 -> &i32 coercion
+    let x: i32 = 42;
+    let mr: &mut i32 = &x;
+    let result1 = takes_const_ref(mr);
+    if result1 != 42 {
+        return 1;
+    }
+
+    // Test 2: &mut u8 -> &u8 coercion
+    let y: u8 = 99u8;
+    let mptr: &mut u8 = &y;
+    let result2 = takes_const_ptr(mptr);
+    if result2 != 99u8 {
+        return 2;
+    }
+
+    // Test 3: &mut Struct -> &Struct coercion
+    let p = Pair { a: 10, b: 20 };
+    let mp: &mut Pair = &p;
+    let result3 = takes_const_pair(mp);
+    if result3 != 30 {
+        return 3;
+    }
+
+    // Test 4: &mut [u8] -> &[u8] via string (string literals are &[u8])
+    // Use a function that produces &mut [u8] from an array
+    let arr: [u8; 4] = [65u8, 66u8, 67u8, 68u8];
+    let const_ref: &[u8; 4] = &arr;
+    // Coerce &[u8; 4] -> &[u8]
+    let slice: &[u8] = const_ref;
+    let result4 = takes_const_slice(slice);
+    if result4 != 4usize {
+        return 4;
+    }
+
+    0
+}

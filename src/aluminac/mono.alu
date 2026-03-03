@@ -3149,6 +3149,30 @@ impl Mono {
             tuple_result.items = items;
             return self.ctx.arena.alloc(tuple_result);
         }
+        // Coerce &mut T -> &T (mutable pointer to const pointer)
+        if target_ty.tag == IRTY_POINTER && val.ty.tag == IRTY_POINTER
+            && target_ty.is_const && !val.ty.is_const
+            && target_ty.inner == val.ty.inner {
+            let cast = IrExpr::void_expr(target_ty);
+            cast.tag = IR_CAST;
+            cast.lhs = val;
+            cast.ir_ty = target_ty;
+            return self.ctx.arena.alloc(cast);
+        }
+
+        // Coerce &mut [T] -> &[T] (mutable slice to const slice)
+        if self.is_slice_ty(target_ty) && self.is_slice_ty(val.ty) {
+            let target_elem = self.slice_elem_ty(target_ty);
+            let val_elem = self.slice_elem_ty(val.ty);
+            if target_elem == val_elem && target_ty != val.ty {
+                let cast = IrExpr::void_expr(target_ty);
+                cast.tag = IR_CAST;
+                cast.lhs = val;
+                cast.ir_ty = target_ty;
+                return self.ctx.arena.alloc(cast);
+            }
+        }
+
         // No coercion needed
         val
     }
