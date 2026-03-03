@@ -312,7 +312,7 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
@@ -325,6 +325,9 @@ test-libraries: alumina-boot $(LIBRARIES_TESTS)
 
 test-alumina-boot:
 	cargo test $(CARGO_FLAGS) --all-targets
+
+test-aluminac: $(BUILD_DIR)/aluminac
+	./tests/aluminac/run_tests.sh $(BUILD_DIR)/aluminac $(TEST_FILTER)
 
 test: test-alumina-boot test-std test-lang
 

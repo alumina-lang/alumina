@@ -69,6 +69,10 @@ impl NamedItemKind {
         NamedItemKind { tag: NIK_PROTOCOL, id: id, id2: Id { _value: 0 },
                         scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
     }
+    fn protocol_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NIK_PROTOCOL, id: id, id2: Id { _value: 0 },
+                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+    }
     fn type_alias(id: Id) -> NamedItemKind {
         NamedItemKind { tag: NIK_TYPE_ALIAS, id: id, id2: Id { _value: 0 },
                         scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
@@ -261,6 +265,8 @@ impl ScopeArena {
             self.resolve_in_module(item.kind.scope_idx, segments[1..])
         } else if item.kind.tag == NIK_ENUM && item.kind.scope_idx != 0u32 {
             self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NIK_PROTOCOL && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
         } else {
             Option::none()
         };
@@ -291,7 +297,7 @@ impl ScopeArena {
         if found.is_some() {
             let item = found.unwrap();
             let tag = item.kind.tag;
-            if tag == NIK_MODULE || tag == NIK_STRUCT || tag == NIK_ENUM || tag == NIK_USE_ALIAS {
+            if tag == NIK_MODULE || tag == NIK_STRUCT || tag == NIK_ENUM || tag == NIK_PROTOCOL || tag == NIK_USE_ALIAS {
                 return found;
             }
             // Found something but it's not a scope-bearing item; continue looking
@@ -303,7 +309,7 @@ impl ScopeArena {
             if imp_found.is_some() {
                 let imp_item = imp_found.unwrap();
                 let imp_tag = imp_item.kind.tag;
-                if imp_tag == NIK_MODULE || imp_tag == NIK_STRUCT || imp_tag == NIK_ENUM || imp_tag == NIK_USE_ALIAS {
+                if imp_tag == NIK_MODULE || imp_tag == NIK_STRUCT || imp_tag == NIK_ENUM || imp_tag == NIK_PROTOCOL || imp_tag == NIK_USE_ALIAS {
                     return imp_found;
                 }
             }
@@ -375,6 +381,8 @@ impl ScopeArena {
                 // Look up methods in struct's associated scope
                 self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
             } else if ritem.kind.tag == NIK_ENUM && ritem.kind.scope_idx != 0 {
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else if ritem.kind.tag == NIK_PROTOCOL && ritem.kind.scope_idx != 0 {
                 self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
             } else {
                 Option::none()

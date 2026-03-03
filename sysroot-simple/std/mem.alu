@@ -12,20 +12,11 @@ fn zeroed<T>() -> T {
 }
 
 fn size_of<T>() -> usize {
-    let arr: [T; 1];
-    &arr[1] as &void as usize - &arr[0] as &void as usize
+    std::intrinsics::size_of::<T>()
 }
 
 fn align_of<T>() -> usize {
-    // Alignment can be computed using a struct with a byte followed by T
-    // The offset of T gives the alignment
-    // For simplicity, use size_of as a conservative estimate
-    let s = size_of::<T>();
-    if s == 0usize { 1usize }
-    else if s <= 1usize { 1usize }
-    else if s <= 2usize { 2usize }
-    else if s <= 4usize { 4usize }
-    else { 8usize }
+    std::intrinsics::align_of::<T>()
 }
 
 // Slice construction from raw parts

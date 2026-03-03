@@ -136,6 +136,7 @@ const TY_GENERIC: i32 = 8i32;
 const TY_TYPEOF: i32 = 9i32;
 const TY_NEVER: i32 = 10i32;
 const TY_UNRESOLVED: i32 = 11i32;
+const TY_WHEN: i32 = 12i32;
 
 struct Ty {
     tag: i32,
@@ -210,6 +211,13 @@ impl Ty {
              inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
              elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
              typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    // TY_WHEN: condition in typeof_expr, consequence in inner, alternative in ret_ty
+    fn when_ty(condition: &Expr, consequence: &Ty, alternative: &Ty) -> Ty {
+        Ty { tag: TY_WHEN, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: consequence, is_const: false, array_size: 0,
+             elems: &[], ret_ty: alternative,
+             typeof_expr: condition }
     }
     fn unresolved() -> Ty {
         Ty { tag: TY_UNRESOLVED, builtin: BuiltinType::Void, id: Id { _value: 0 },
@@ -518,6 +526,7 @@ struct ProtocolDef {
     generic_params: &[GenericParam],
     methods: &[FnDef],
     mixins: &[&Ty],
+    scope_idx: u32,
 }
 
 struct ImplDef {

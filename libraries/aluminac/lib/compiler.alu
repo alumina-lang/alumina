@@ -34,6 +34,7 @@ struct CompilerOptions {
     optimize: bool,
     dump_ir: bool,
     verify_ir: bool,
+    test_mode: bool,
     sysroot: &[u8],
     cfg_flags: Vector<&[u8]>,
     extra_link_args: &[u8],
@@ -47,6 +48,7 @@ impl CompilerOptions {
             optimize: false,
             dump_ir: false,
             verify_ir: true,
+            test_mode: false,
             sysroot: "",
             cfg_flags: Vector::new(),
             extra_link_args: "",
@@ -397,6 +399,7 @@ impl Compiler {
             &self.id_gen,
             &self.diag,
             items_slice,
+            self.options.test_mode,
         );
 
         if self.diag.has_errors {
@@ -411,6 +414,7 @@ impl Compiler {
             &self.diag,
             &unit,
             "alumina_module",
+            self.options.test_mode,
         );
         if self.diag.has_errors {
             self.diag.emit_all();
@@ -676,6 +680,8 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             if i < args.len() {
                 options.cfg_flags.push(args[i]);
             }
+        } else if arg == "--test" {
+            options.test_mode = true;
         } else if arg == "--help" || arg == "-h" {
             print_usage();
             exit(0i32);

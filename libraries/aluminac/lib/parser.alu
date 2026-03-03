@@ -44,6 +44,7 @@ struct ParseContext {
     pending_type_aliases: Vector<PendingTypeAlias>,
     pending_statics: Vector<PendingStatic>,
     pending_impls: Vector<PendingImpl>,
+    pending_mixins: Vector<PendingMixin>,
     pending_macros: Vector<PendingMacro>,
 
     // Macro definitions: name -> MacroEntry
@@ -113,6 +114,13 @@ struct PendingStatic {
     is_const: bool,
 }
 
+struct PendingMixin {
+    node_start: u32,
+    node_end: u32,
+    impl_scope_idx: u32,     // the impl block's scope
+    type_scope_idx: u32,     // the scope for resolving the protocol type ref
+}
+
 struct PendingImpl {
     node_start: u32,
     node_end: u32,
@@ -153,6 +161,7 @@ impl ParseContext {
             pending_type_aliases: Vector::new(),
             pending_statics: Vector::new(),
             pending_impls: Vector::new(),
+            pending_mixins: Vector::new(),
             pending_macros: Vector::new(),
             macro_defs: HashMap::new(),
             macro_args: HashMap::new(),
@@ -211,6 +220,7 @@ impl ParseContext {
         self.pending_type_aliases.free();
         self.pending_statics.free();
         self.pending_impls.free();
+        self.pending_mixins.free();
         self.pending_macros.free();
         self.macro_defs.free();
         self.macro_args.free();
@@ -374,6 +384,14 @@ impl Pass1 {
                                 ));
                             }
                         }
+                    } else if name == "thread_local" {
+                        attrs.push(Attribute::thread_local());
+                    } else if name == "static_ctor" {
+                        attrs.push(Attribute::static_ctor());
+                    } else if name == "always_inline" {
+                        attrs.push(Attribute::always_inline());
+                    } else if name == "no_return" {
+                        attrs.push(Attribute::no_return());
                     } else if name == "lang" {
                         let args_node = child_by!(meta, FieldKind::Arguments);
                         if !args_node.is_null() {
@@ -566,7 +584,7 @@ impl Pass1 {
 
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
             name: name,
-            kind: NamedItemKind::protocol(id),
+            kind: NamedItemKind::protocol_with_scope(id, child_scope),
             span: self.ctx.make_span(node),
         });
 
@@ -957,7 +975,13 @@ impl Pass1 {
     }
 
     fn visit_mixin_p1(self: &mut Pass1, node: Node) {
-        // Mixins are handled during pass 2
+        // Store mixin info for later expansion during mono
+        self.ctx.pending_mixins.push(PendingMixin {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            impl_scope_idx: self.current_scope,
+            type_scope_idx: self.current_scope,
+        });
     }
 }
 
@@ -980,9 +1004,11 @@ impl Pass2 {
         // We store byte offsets and walk the tree to find matching nodes
 
         // Note: macros are collected separately via collect_macros()
-        self.process_functions(root);
         self.process_structs(root);
         self.process_enums(root);
+        self.process_protocols(root);
+        self.process_mixins(root);
+        self.process_functions(root);
         self.process_type_aliases(root);
         self.process_statics(root);
     }
@@ -1115,7 +1141,7 @@ impl Pass2 {
         };
 
         // Check variadic
-        let is_variadic = false; // TODO: check for ... in params
+        let is_variadic = !child_by!(node, FieldKind::EtCetera).is_null();
 
         // Parse body
         let body_node = child_by!(node, FieldKind::Body);
@@ -1479,6 +1505,20 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::WhenType => {
+                // when cond { TypeA } else { TypeB }
+                let cond_node = child_by!(node, FieldKind::Condition);
+                let then_node = child_by!(node, FieldKind::Consequence);
+                let else_node = child_by!(node, FieldKind::Alternative);
+                if !cond_node.is_null() && !then_node.is_null() && !else_node.is_null() {
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let cond_expr = expr_parser.parse_expr(cond_node.unwrap());
+                    let then_ty = self.parse_type(then_node.unwrap(), scope_idx);
+                    let else_ty = self.parse_type(else_node.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::when_ty(cond_expr, then_ty, else_ty));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             NodeKind::MacroIdentifier => {
                 // $T in macro body - look up in macro_args as a type
                 let text = self.ctx.node_text(node);
@@ -1735,6 +1775,138 @@ impl Pass2 {
             scope_idx: pending.scope_idx,
         };
         self.ctx.items.push(item);
+    }
+
+    fn process_protocols(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_protocols.len() {
+            let pending = &self.ctx.pending_protocols[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_protocol(node, pending);
+        }
+    }
+
+    fn build_protocol(self: &mut Pass2, node: Node, pending: &PendingProtocol) {
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Protocol methods are accessible via the protocol's scope.
+        // We collect them by walking the node body and parsing function signatures.
+        let methods: Vector<FnDef> = Vector::new();
+        defer methods.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Body, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::FunctionDefinition {
+                let fn_name_node = child_by!(child, FieldKind::Name);
+                if fn_name_node.is_null() { continue; }
+                let fn_name = self.ctx.intern_str(self.ctx.node_text(fn_name_node.unwrap()));
+                let fn_generic_params = self.parse_generic_params(child, pending.scope_idx);
+                let fn_params = self.parse_fn_params(child, pending.scope_idx);
+                let fn_ret = self.parse_return_type(child, pending.scope_idx);
+
+                // Look up the fn ID from the protocol's scope
+                let scope_item = self.ctx.scopes.resolve(pending.scope_idx, fn_name);
+                let fn_id = if scope_item.is_some() {
+                    scope_item.unwrap().kind.id
+                } else {
+                    self.ctx.next_id()
+                };
+
+                // Parse optional body (default method implementation)
+                let fn_body_node = child_by!(child, FieldKind::Body);
+                let fn_body: Option<&Expr> = if !fn_body_node.is_null() {
+                    let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+                    Option::some(expr_parser.parse_expr(fn_body_node.unwrap()))
+                } else {
+                    Option::none()
+                };
+
+                methods.push(FnDef {
+                    id: fn_id,
+                    name: fn_name,
+                    generic_params: fn_generic_params,
+                    params: fn_params,
+                    return_type: fn_ret,
+                    body: fn_body,
+                    attributes: &[],
+                    is_variadic: false,
+                    abi: Option::none(),
+                });
+            }
+        }
+
+        let methods_slice = self.ctx.arena.alloc_slice::<FnDef>(methods.len());
+        for j in 0usize..methods.len() {
+            methods_slice[j] = methods[j];
+        }
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ITEM_PROTOCOL;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.protocol_def = ProtocolDef {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            methods: methods_slice,
+            mixins: &[],
+            scope_idx: pending.scope_idx,
+        };
+        self.ctx.items.push(item);
+    }
+
+    fn process_mixins(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_mixins.len() {
+            let pending = &self.ctx.pending_mixins[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+
+            // Get the protocol type from the mixin node
+            let proto_node = child_by!(node, FieldKind::Protocol);
+            if proto_node.is_null() {
+                continue;
+            }
+
+            // Parse the protocol type reference
+            let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
+
+            // Extract the protocol ID from the type
+            // It could be TY_NAMED (simple) or TY_GENERIC (with type args)
+            let proto_id_val: usize = 0usize;
+            let has_proto_id = false;
+            if proto_ty.tag == TY_NAMED {
+                proto_id_val = proto_ty.id._value;
+                has_proto_id = true;
+            } else if proto_ty.tag == TY_GENERIC && proto_ty.inner.tag == TY_NAMED {
+                proto_id_val = proto_ty.inner.id._value;
+                has_proto_id = true;
+            }
+
+            if !has_proto_id {
+                continue;
+            }
+
+            // Find the ProtocolDef by its ID
+            let impl_scope_idx = pending.impl_scope_idx;
+            for j in 0usize..self.ctx.items.len() {
+                if self.ctx.items[j].tag == ITEM_PROTOCOL && self.ctx.items[j].protocol_def.id._value == proto_id_val {
+                    let proto_def = &self.ctx.items[j].protocol_def;
+                    for k in 0usize..proto_def.methods.len() {
+                        let method = &proto_def.methods[k];
+                        // Register this method in the impl scope
+                        // Only add if not already present (direct methods take priority)
+                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&method.name);
+                        if existing.is_none() {
+                            self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
+                                name: method.name,
+                                kind: NamedItemKind::function(method.id),
+                                span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                            });
+                        }
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     fn process_type_aliases(self: &mut Pass2, root: Node) {
@@ -2961,7 +3133,7 @@ impl ExprParser {
     }
 
     fn parse_try(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let inner = child_by!(node, FieldKind::Value);
+        let inner = child_by!(node, FieldKind::Inner);
         if inner.is_null() {
             return self.alloc_void(span);
         }
@@ -3106,20 +3278,34 @@ impl ExprParser {
     }
 
     fn parse_static_for(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let pattern = child_by!(node, FieldKind::Pattern);
+        // Grammar: for const name in value { body }
+        // Fields: name (identifier), value (expression), body (block)
+        let name_node = child_by!(node, FieldKind::Name);
         let iter_node = child_by!(node, FieldKind::Value);
         let body = child_by!(node, FieldKind::Body);
 
-        if pattern.is_null() || iter_node.is_null() || body.is_null() {
+        if name_node.is_null() || iter_node.is_null() || body.is_null() {
             return self.alloc_void(span);
         }
 
         let var_id = self.ctx.next_id();
+        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+        // Create a child scope for the loop so the loop variable is accessible in the body
+        let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
+        let loop_parser = ExprParser::new(self.ctx, loop_scope);
+
+        // Register the loop variable in the child scope
+        self.ctx.scopes.add_item(loop_scope, NamedItem {
+            name: var_name,
+            kind: NamedItemKind::local(var_id),
+            span: self.ctx.make_span(name_node.unwrap()),
+        });
 
         let e = self.make_expr(EXPR_STATIC_FOR, span);
         e.id = var_id;
-        e.lhs = self.parse_expr(iter_node.unwrap());
-        e.rhs = self.parse_expr(body.unwrap());
+        e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
+        e.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
         self.ctx.alloc_expr(e)
     }
 

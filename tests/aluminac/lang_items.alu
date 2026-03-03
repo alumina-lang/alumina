@@ -1,0 +1,19 @@
+// Lang item registry: #[lang("...")] attributes register special items.
+
+#[lang("slice")]
+struct Slice<T> {
+    data: &T,
+    len: usize,
+}
+
+#[lang("slice_new")]
+fn slice_new<T>(data: &T, len: usize) -> Slice<T> {
+    Slice::<T> { data: data, len: len }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let arr: [i32; 3] = [1i32, 2i32, 3i32];
+    let s = slice_new::<i32>(&arr[0], 3usize);
+    if s.len != 3usize { return 1i32; }
+    0i32
+}

@@ -79,6 +79,10 @@ struct MonoCtx {
 
     // Lang item IDs for compiler intrinsics
     slice_new_fn_id: usize,      // #[lang(slice_new)] - constructs slice from ptr+len
+    lang_items: HashMap<usize, usize>,   // hash(lang_name) -> item_id
+
+    // Protocol method Self substitution: maps method_fn_id -> protocol's Self generic param id
+    proto_method_self_id: HashMap<usize, usize>,
 
     // Debug counter
     unresolved_count: usize,
@@ -153,6 +157,8 @@ impl MonoCtx {
             f64_ty: f64_ty,
             pointer_size: 8, // assume 64-bit
             slice_new_fn_id: 0,
+            lang_items: HashMap::new(),
+            proto_method_self_id: HashMap::new(),
             unresolved_count: 0,
         };
 
@@ -166,23 +172,73 @@ impl MonoCtx {
         for i in 0usize..self.items.len() {
             if self.items[i].tag == ITEM_FUNCTION {
                 self.fn_defs.insert(self.items[i].fn_def.id._value, &self.items[i].fn_def);
-                // Detect lang items
+                // Register lang items
                 for attr in self.items[i].fn_def.attributes {
-                    if attr.tag == ATTR_LANG && attr.str_val == "slice_new" {
-                        self.slice_new_fn_id = self.items[i].fn_def.id._value;
+                    if attr.tag == ATTR_LANG {
+                        let hash = self.hash_lang_name(attr.str_val);
+                        self.lang_items.insert(hash, self.items[i].fn_def.id._value);
+                        if attr.str_val == "slice_new" {
+                            self.slice_new_fn_id = self.items[i].fn_def.id._value;
+                        }
                     }
                 }
             } else if self.items[i].tag == ITEM_STRUCT {
                 self.struct_defs.insert(self.items[i].struct_def.id._value, &self.items[i].struct_def);
+                for attr in self.items[i].struct_def.attributes {
+                    if attr.tag == ATTR_LANG {
+                        let hash = self.hash_lang_name(attr.str_val);
+                        self.lang_items.insert(hash, self.items[i].struct_def.id._value);
+                    }
+                }
             } else if self.items[i].tag == ITEM_ENUM {
                 self.enum_defs.insert(self.items[i].enum_def.id._value, &self.items[i].enum_def);
+                for attr in self.items[i].enum_def.attributes {
+                    if attr.tag == ATTR_LANG {
+                        let hash = self.hash_lang_name(attr.str_val);
+                        self.lang_items.insert(hash, self.items[i].enum_def.id._value);
+                    }
+                }
             } else if self.items[i].tag == ITEM_TYPE_ALIAS {
                 self.type_aliases.insert(self.items[i].type_alias.id._value, &self.items[i].type_alias);
             } else if self.items[i].tag == ITEM_PROTOCOL {
                 self.protocol_defs.insert(self.items[i].protocol_def.id._value, &self.items[i].protocol_def);
+                // Also register protocol methods in fn_defs so they can be called
+                let proto_def = &self.items[i].protocol_def;
+                let self_gp_id: usize = 0usize;
+                if proto_def.generic_params.len() > 0 {
+                    self_gp_id = proto_def.generic_params[0].id._value;
+                }
+                for j in 0usize..proto_def.methods.len() {
+                    let method = &proto_def.methods[j];
+                    self.fn_defs.insert(method.id._value, method);
+                    // Record the Self generic param id for this method
+                    if self_gp_id != 0usize || proto_def.generic_params.len() > 0 {
+                        self.proto_method_self_id.insert(method.id._value, self_gp_id);
+                    }
+                }
             } else if self.items[i].tag == ITEM_STATIC {
                 self.static_defs.insert(self.items[i].static_def.id._value, &self.items[i].static_def);
             }
+        }
+    }
+
+    fn hash_lang_name(self: &MonoCtx, name: &[u8]) -> usize {
+        let h: usize = 5381usize;
+        for i in 0usize..name.len() {
+            h = h * 33usize + name[i] as usize;
+        }
+        h
+    }
+
+    // Look up a lang item by name. Returns the item ID or 0 if not found.
+    // Note: 0 can be a valid ID, so use has_lang_item() to check existence.
+    fn get_lang_item(self: &MonoCtx, name: &[u8]) -> Option<usize> {
+        let hash = self.hash_lang_name(name);
+        let result = self.lang_items.get(&hash);
+        if result.is_some() {
+            Option::some(result.unwrap())
+        } else {
+            Option::none()
         }
     }
 
@@ -430,6 +486,19 @@ impl Mono {
             }
         } else if ty.tag == TY_NEVER {
             self.ctx.never_ty
+        } else if ty.tag == TY_TYPEOF {
+            // typeof(expr) - lower the expression and return its type
+            let result = self.lower_expr(ty.typeof_expr);
+            result.ty
+        } else if ty.tag == TY_WHEN {
+            // when cond { TypeA } else { TypeB }
+            let cond_ir = self.lower_expr(ty.typeof_expr);
+            let cond_val = self.try_const_eval_bool(cond_ir);
+            if cond_val.is_some() && cond_val.unwrap() {
+                self.resolve_type(ty.inner)
+            } else {
+                self.resolve_type(ty.ret_ty)
+            }
         } else if ty.tag == TY_UNRESOLVED {
             self.ctx.unresolved_count = self.ctx.unresolved_count + 1;
             self.ctx.void_ty
@@ -615,6 +684,31 @@ impl Mono {
     }
 
     fn mono_function(self: &mut Mono, def: &FnDef, type_args: &[&IrTy]) -> usize {
+        // Protocol method redirect: if this function has no body, it may be a protocol
+        // method declaration. Try to find the concrete implementation on the target type.
+        if def.body.is_none() && def.abi.is_none() {
+            // First try with explicit type_args
+            if type_args.len() > 0 {
+                let redirect = self.try_protocol_redirect(def, type_args);
+                if redirect.is_some() {
+                    return redirect.unwrap();
+                }
+            }
+            // Also try using type_map to find the Self type for protocol methods
+            let self_param_id_opt = self.ctx.proto_method_self_id.get(&def.id._value);
+            if self_param_id_opt.is_some() {
+                let self_ty_opt = self.type_map.get(&self_param_id_opt.unwrap());
+                if self_ty_opt.is_some() {
+                    let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                    ta[0] = self_ty_opt.unwrap();
+                    let redirect = self.try_protocol_redirect(def, ta);
+                    if redirect.is_some() {
+                        return redirect.unwrap();
+                    }
+                }
+            }
+        }
+
         // Skip intrinsic functions - they should be handled inline in lower_intrinsic
         if def.abi.is_some() && def.abi.unwrap() == "intrinsic" {
             // Return a dummy index - intrinsics should never actually be called
@@ -792,6 +886,10 @@ impl Mono {
                 result.tag = IR_ZEROED;
                 self.ctx.arena.alloc(result)
             }
+        } else if expr.tag == EXPR_TRY {
+            self.lower_try(expr)
+        } else if expr.tag == EXPR_STATIC_FOR {
+            self.lower_static_for(expr)
         } else {
             // Unhandled expression kind
             let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -1504,14 +1602,375 @@ impl Mono {
         self.ctx.arena.alloc(block)
     }
 
+    // ========== Const Evaluator ==========
+    // Attempts to evaluate an IR expression to a u64 value at compile time.
+    // Returns Option::some(value) if successful, Option::none() if the expression
+    // is not const-evaluable. Used for `when` condition evaluation.
+    fn try_const_eval_u64(self: &mut Mono, expr: &IrExpr) -> Option<u64> {
+        if expr.tag == IR_INT_LIT {
+            return Option::some(expr.int_val);
+        } else if expr.tag == IR_BOOL_LIT {
+            return Option::some(if expr.bool_val { 1u64 } else { 0u64 });
+        } else if expr.tag == IR_SIZE_OF {
+            // size_of<T>() - compute from type layout
+            let sz = self.compute_type_size(expr.ir_ty);
+            return Option::some(sz as u64);
+        } else if expr.tag == IR_ALIGN_OF {
+            let al = self.compute_type_align(expr.ir_ty);
+            return Option::some(al as u64);
+        } else if expr.tag == IR_CAST {
+            // Cast: try to evaluate the inner expression
+            return self.try_const_eval_u64(expr.lhs);
+        } else if expr.tag == IR_BINARY {
+            let lhs_opt = self.try_const_eval_u64(expr.lhs);
+            // Short-circuit for && and ||
+            if expr.bin_op as i32 == BinOp::And as i32 {
+                if lhs_opt.is_some() && lhs_opt.unwrap() == 0u64 {
+                    return Option::some(0u64); // false && anything = false
+                }
+            } else if expr.bin_op as i32 == BinOp::Or as i32 {
+                if lhs_opt.is_some() && lhs_opt.unwrap() != 0u64 {
+                    return Option::some(1u64); // true || anything = true
+                }
+            }
+            if lhs_opt.is_none() { return Option::none(); }
+            let rhs_opt = self.try_const_eval_u64(expr.rhs);
+            if rhs_opt.is_none() { return Option::none(); }
+            let l = lhs_opt.unwrap();
+            let r = rhs_opt.unwrap();
+            let result: u64 = switch expr.bin_op {
+                BinOp::Add => l + r,
+                BinOp::Sub => l - r,
+                BinOp::Mul => l * r,
+                BinOp::Div => if r != 0u64 { l / r } else { 0u64 },
+                BinOp::Rem => if r != 0u64 { l % r } else { 0u64 },
+                BinOp::BitAnd => l & r,
+                BinOp::BitOr => l | r,
+                BinOp::BitXor => l ^ r,
+                BinOp::Shl => l << (r as u32),
+                BinOp::Shr => l >> (r as u32),
+                BinOp::Eq => if l == r { 1u64 } else { 0u64 },
+                BinOp::Ne => if l != r { 1u64 } else { 0u64 },
+                BinOp::Lt => if l < r { 1u64 } else { 0u64 },
+                BinOp::Le => if l <= r { 1u64 } else { 0u64 },
+                BinOp::Gt => if l > r { 1u64 } else { 0u64 },
+                BinOp::Ge => if l >= r { 1u64 } else { 0u64 },
+                BinOp::And => if l != 0u64 && r != 0u64 { 1u64 } else { 0u64 },
+                BinOp::Or => if l != 0u64 || r != 0u64 { 1u64 } else { 0u64 },
+                _ => { return Option::none(); },
+            };
+            return Option::some(result);
+        } else if expr.tag == IR_UNARY {
+            let inner_opt = self.try_const_eval_u64(expr.lhs);
+            if inner_opt.is_none() { return Option::none(); }
+            let v = inner_opt.unwrap();
+            let result: u64 = switch expr.un_op {
+                UnOp::Not => if v == 0u64 { 1u64 } else { 0u64 },
+                UnOp::Neg => (0u64 - v),
+                UnOp::BitNot => ~v,
+                _ => { return Option::none(); },
+            };
+            return Option::some(result);
+        } else if expr.tag == IR_BLOCK {
+            // Block: evaluate last expression (ignoring side-effecting statements)
+            if expr.items.len() > 0 {
+                return self.try_const_eval_u64(expr.items[expr.items.len() - 1]);
+            }
+            return Option::some(0u64);
+        } else if expr.tag == IR_VOID {
+            return Option::some(0u64);
+        } else if expr.tag == IR_CALL {
+            // Try to const-evaluate a function call by looking at its monomorphized body
+            if expr.call_target.tag == CALL_DIRECT {
+                // Find the monomorphized function by mangled name (unique per monomorphization)
+                let target_name = expr.call_target.fn_ref.mangled_name;
+                for i in 0usize..self.ctx.ir_functions.len() {
+                    if self.ctx.ir_functions[i].mangled_name == target_name {
+                        if self.ctx.ir_functions[i].body.is_some() {
+                            return self.try_const_eval_u64(self.ctx.ir_functions[i].body.unwrap());
+                        }
+                        break;
+                    }
+                }
+            }
+            return Option::none();
+        } else if expr.tag == IR_RETURN {
+            // return expr - evaluate the inner expression
+            return self.try_const_eval_u64(expr.lhs);
+        }
+        // Not const-evaluable
+        Option::none()
+    }
+
+    fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
+        let result = self.try_const_eval_u64(expr);
+        if result.is_some() {
+            Option::some(result.unwrap() != 0u64)
+        } else {
+            Option::none()
+        }
+    }
+
+    // Try to redirect a bodyless protocol method call to the concrete type's impl.
+    // For example, when Equatable::not_equals<Point> calls Equatable::equals,
+    // we redirect to Point::equals.
+    fn try_protocol_redirect(self: &mut Mono, def: &FnDef, type_args: &[&IrTy]) -> Option<usize> {
+        // The type args should contain the concrete type (Self parameter of the protocol)
+        // Usually the first type arg is the Self type
+        if type_args.len() == 0 {
+            return Option::none();
+        }
+
+        let self_ty = type_args[0];
+        let scope_idx: u32 = 0u32;
+
+        // Find the scope for the concrete type
+        if self_ty.tag == IRTY_STRUCT {
+            scope_idx = self_ty.struct_ref.scope_idx;
+        } else if self_ty.tag == IRTY_ENUM {
+            scope_idx = self_ty.enum_ref.scope_idx;
+        }
+
+        if scope_idx == 0u32 {
+            return Option::none();
+        }
+
+        // Look up the method name in the concrete type's scope
+        let method_item = self.ctx.scopes.get(scope_idx).items.get(&def.name);
+        if method_item.is_none() {
+            return Option::none();
+        }
+
+        let item = method_item.unwrap();
+        if item.kind.tag != scope::NIK_FUNCTION && item.kind.tag != scope::NIK_METHOD {
+            return Option::none();
+        }
+
+        // Found a concrete method - use it instead
+        // NIK_METHOD has fn_id in id2, NIK_FUNCTION has it in id
+        let fn_id_val = if item.kind.tag == scope::NIK_METHOD {
+            item.kind.id2._value
+        } else {
+            item.kind.id._value
+        };
+        let concrete_def = self.ctx.fn_defs.get(&fn_id_val);
+        if concrete_def.is_none() {
+            return Option::none();
+        }
+
+        // Don't redirect to ourselves (same function)
+        if concrete_def.unwrap().id._value == def.id._value {
+            return Option::none();
+        }
+
+        // Monomorphize the concrete method
+        Option::some(self.mono_function(concrete_def.unwrap(), type_args))
+    }
+
+    // Check if a type conforms to a user-defined protocol.
+    // A type conforms if it has all the required methods from the protocol.
+    fn check_protocol_conformance(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef) -> bool {
+        // Get the scope for the type (where its methods live)
+        let scope_idx: u32 = 0u32;
+        if ty.tag == IRTY_STRUCT {
+            scope_idx = ty.struct_ref.scope_idx;
+        } else if ty.tag == IRTY_ENUM {
+            scope_idx = ty.enum_ref.scope_idx;
+        }
+        if scope_idx == 0u32 {
+            // No scope means no methods - can't conform unless protocol has no methods
+            return proto.methods.len() == 0;
+        }
+
+        // Check each protocol method exists in the type's scope
+        for i in 0usize..proto.methods.len() {
+            let method = &proto.methods[i];
+            let found = self.ctx.scopes.get(scope_idx).items.get(&method.name);
+            if found.is_none() {
+                return false;
+            }
+        }
+        true
+    }
+
+    // Compute the size of a type in bytes (for const evaluation of size_of)
+    fn compute_type_size(self: &mut Mono, ty: &IrTy) -> usize {
+        if ty.tag == IRTY_BUILTIN {
+            switch ty.builtin {
+                BuiltinType::Void => 0usize,
+                BuiltinType::Never => 0usize,
+                BuiltinType::Bool => 1usize,
+                BuiltinType::U8 => 1usize,
+                BuiltinType::I8 => 1usize,
+                BuiltinType::U16 => 2usize,
+                BuiltinType::I16 => 2usize,
+                BuiltinType::U32 => 4usize,
+                BuiltinType::I32 => 4usize,
+                BuiltinType::U64 => 8usize,
+                BuiltinType::I64 => 8usize,
+                BuiltinType::U128 => 16usize,
+                BuiltinType::I128 => 16usize,
+                BuiltinType::USize => self.ctx.pointer_size,
+                BuiltinType::ISize => self.ctx.pointer_size,
+                BuiltinType::F32 => 4usize,
+                BuiltinType::F64 => 8usize,
+                _ => 0usize,
+            }
+        } else if ty.tag == IRTY_POINTER {
+            self.ctx.pointer_size
+        } else if ty.tag == IRTY_FN_POINTER {
+            self.ctx.pointer_size
+        } else if ty.tag == IRTY_ARRAY {
+            let elem_size = self.compute_type_size(ty.inner);
+            elem_size * ty.array_size
+        } else if ty.tag == IRTY_TUPLE || ty.tag == IRTY_SLICE {
+            // Compute struct-like layout
+            let size: usize = 0;
+            let max_align: usize = 1;
+            for i in 0usize..ty.elems.len() {
+                let elem_size = self.compute_type_size(ty.elems[i]);
+                let elem_align = self.compute_type_align(ty.elems[i]);
+                if elem_align > max_align { max_align = elem_align; }
+                // Align current offset
+                let padding = (elem_align - (size % elem_align)) % elem_align;
+                size = size + padding + elem_size;
+            }
+            // Pad to alignment
+            let padding = (max_align - (size % max_align)) % max_align;
+            size + padding
+        } else if ty.tag == IRTY_STRUCT {
+            let size: usize = 0;
+            let max_align: usize = 1;
+            for i in 0usize..ty.struct_ref.fields.len() {
+                let elem_size = self.compute_type_size(ty.struct_ref.fields[i].ty);
+                let elem_align = self.compute_type_align(ty.struct_ref.fields[i].ty);
+                if elem_align > max_align { max_align = elem_align; }
+                let padding = (elem_align - (size % elem_align)) % elem_align;
+                size = size + padding + elem_size;
+            }
+            let padding = (max_align - (size % max_align)) % max_align;
+            size + padding
+        } else if ty.tag == IRTY_ENUM {
+            // Enums are i32-backed in alumina
+            4usize
+        } else {
+            0usize
+        }
+    }
+
+    // Compute the alignment of a type in bytes
+    fn compute_type_align(self: &mut Mono, ty: &IrTy) -> usize {
+        if ty.tag == IRTY_BUILTIN {
+            let sz = self.compute_type_size(ty);
+            if sz > 0usize { sz } else { 1usize }
+        } else if ty.tag == IRTY_POINTER || ty.tag == IRTY_FN_POINTER {
+            self.ctx.pointer_size
+        } else if ty.tag == IRTY_ARRAY {
+            self.compute_type_align(ty.inner)
+        } else if ty.tag == IRTY_TUPLE || ty.tag == IRTY_SLICE {
+            let max_align: usize = 1;
+            for i in 0usize..ty.elems.len() {
+                let a = self.compute_type_align(ty.elems[i]);
+                if a > max_align { max_align = a; }
+            }
+            max_align
+        } else if ty.tag == IRTY_STRUCT {
+            let max_align: usize = 1;
+            for i in 0usize..ty.struct_ref.fields.len() {
+                let a = self.compute_type_align(ty.struct_ref.fields[i].ty);
+                if a > max_align { max_align = a; }
+            }
+            max_align
+        } else if ty.tag == IRTY_ENUM {
+            4usize
+        } else {
+            1usize
+        }
+    }
+
+    // Convert an IR type to a human-readable name string
+    fn ir_type_name(self: &mut Mono, ty: &IrTy) -> &[u8] {
+        if ty.tag == IRTY_BUILTIN {
+            switch ty.builtin {
+                BuiltinType::Void => "()",
+                BuiltinType::Never => "!",
+                BuiltinType::Bool => "bool",
+                BuiltinType::U8 => "u8",
+                BuiltinType::U16 => "u16",
+                BuiltinType::U32 => "u32",
+                BuiltinType::U64 => "u64",
+                BuiltinType::U128 => "u128",
+                BuiltinType::I8 => "i8",
+                BuiltinType::I16 => "i16",
+                BuiltinType::I32 => "i32",
+                BuiltinType::I64 => "i64",
+                BuiltinType::I128 => "i128",
+                BuiltinType::USize => "usize",
+                BuiltinType::ISize => "isize",
+                BuiltinType::F32 => "f32",
+                BuiltinType::F64 => "f64",
+                _ => "<unknown>",
+            }
+        } else if ty.tag == IRTY_POINTER {
+            let inner_name = self.ir_type_name(ty.inner);
+            let is_const = ty.is_const;
+            let prefix: &[u8] = if is_const { "&" } else { "&mut " };
+            let total = prefix.len() + inner_name.len();
+            let buf = self.ctx.arena.alloc_slice::<u8>(total);
+            prefix.copy_to_nonoverlapping(&buf[0]);
+            inner_name.copy_to_nonoverlapping(&buf[prefix.len()]);
+            buf as &[u8]
+        } else if ty.tag == IRTY_SLICE {
+            let elem_ty = if ty.elems.len() > 0 && ty.elems[0].tag == IRTY_POINTER {
+                ty.elems[0].inner
+            } else { self.ctx.void_ty };
+            let inner_name = self.ir_type_name(elem_ty);
+            let prefix = "&[";
+            let suffix = "]";
+            let total = prefix.len() + inner_name.len() + suffix.len();
+            let buf = self.ctx.arena.alloc_slice::<u8>(total);
+            prefix.copy_to_nonoverlapping(&buf[0]);
+            inner_name.copy_to_nonoverlapping(&buf[prefix.len()]);
+            suffix.copy_to_nonoverlapping(&buf[prefix.len() + inner_name.len()]);
+            buf as &[u8]
+        } else if ty.tag == IRTY_ARRAY {
+            let inner_name = self.ir_type_name(ty.inner);
+            let size_str = format_usize(ty.array_size, self.ctx.arena);
+            // "[T; N]"
+            let total = 1usize + inner_name.len() + 2usize + size_str.len() + 1usize;
+            let buf = self.ctx.arena.alloc_slice::<u8>(total);
+            buf[0] = '[' as u8;
+            inner_name.copy_to_nonoverlapping(&buf[1]);
+            buf[1 + inner_name.len()] = ';' as u8;
+            buf[2 + inner_name.len()] = ' ' as u8;
+            size_str.copy_to_nonoverlapping(&buf[3 + inner_name.len()]);
+            buf[3 + inner_name.len() + size_str.len()] = ']' as u8;
+            buf as &[u8]
+        } else if ty.tag == IRTY_STRUCT {
+            ty.struct_ref.name
+        } else if ty.tag == IRTY_ENUM {
+            ty.enum_ref.name
+        } else if ty.tag == IRTY_TUPLE {
+            // Just return "(...)"; full tuple formatting is complex
+            "(...)"
+        } else if ty.tag == IRTY_FN_POINTER {
+            "fn(...)"
+        } else if ty.tag == IRTY_VOID {
+            "()"
+        } else {
+            "<unknown>"
+        }
+    }
+
     // Lower "when" (static if) expression: evaluate condition at compile time
     fn lower_when(self: &mut Mono, expr: &Expr) -> &IrExpr {
         // Lower the condition expression
         let ir_cond = self.lower_expr(expr.cond);
 
-        // Check if condition is a compile-time bool literal
-        let cond_val = if ir_cond.tag == IR_BOOL_LIT {
-            ir_cond.bool_val
+        // Try to const-evaluate the condition
+        let cond_result = self.try_const_eval_bool(ir_cond);
+        let cond_val = if cond_result.is_some() {
+            cond_result.unwrap()
         } else {
             // Cannot evaluate at compile time - default to false
             false
@@ -1527,6 +1986,304 @@ impl Mono {
                 self.ctx.arena.alloc(r)
             }
         }
+    }
+
+    // Lower try/? operator: desugar to check + early return
+    // For Result<T,E>: { let _r = expr; if _r._is_ok { _r._ok } else { return Result::err(_r._err) } }
+    // For Option<T>:   { let _r = expr; if _r._is_some != 0 { _r._inner } else { return Option::none() } }
+    fn lower_try(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let inner = self.lower_expr(expr.lhs);
+        let inner_ty = inner.ty;
+
+        // Store inner to a local so we only evaluate once
+        let tmp_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(tmp_id._value, inner_ty);
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: inner_ty, name: "" });
+
+        let ir_let = IrExpr::void_expr(self.ctx.void_ty);
+        ir_let.tag = IR_LET;
+        ir_let.id = tmp_id;
+        ir_let.ir_ty = inner_ty;
+        ir_let.opt_expr = Option::some(inner);
+        let ir_let_ref = self.ctx.arena.alloc(ir_let);
+
+        // Detect if this is a Result (has _is_ok field) or Option (has _is_some field)
+        if inner_ty.tag == IRTY_STRUCT {
+            let fields = inner_ty.struct_ref.fields;
+            // Check for Result pattern: _is_ok, _ok, _err
+            let is_result = false;
+            let is_option = false;
+            let ok_field_idx: u32 = 0;
+            let err_field_idx: u32 = 0;
+            let flag_field_idx: u32 = 0;
+            let ok_ty = self.ctx.void_ty;
+            let err_ty = self.ctx.void_ty;
+
+            for i in 0usize..fields.len() {
+                if fields[i].name == "_is_ok" {
+                    is_result = true;
+                    flag_field_idx = i as u32;
+                } else if fields[i].name == "_ok" {
+                    ok_field_idx = i as u32;
+                    ok_ty = fields[i].ty;
+                } else if fields[i].name == "_err" {
+                    err_field_idx = i as u32;
+                    err_ty = fields[i].ty;
+                } else if fields[i].name == "_is_some" {
+                    is_option = true;
+                    flag_field_idx = i as u32;
+                } else if fields[i].name == "_inner" {
+                    ok_field_idx = i as u32;
+                    ok_ty = fields[i].ty;
+                }
+            }
+
+            if is_result {
+                // Helper: make local ref to tmp
+                let tmp_loc1 = IrExpr::void_expr(inner_ty);
+                tmp_loc1.tag = IR_LOCAL;
+                tmp_loc1.id = tmp_id;
+                let tmp_loc2 = IrExpr::void_expr(inner_ty);
+                tmp_loc2.tag = IR_LOCAL;
+                tmp_loc2.id = tmp_id;
+                let tmp_loc3 = IrExpr::void_expr(inner_ty);
+                tmp_loc3.tag = IR_LOCAL;
+                tmp_loc3.id = tmp_id;
+
+                // condition: tmp._is_ok
+                let cond = IrExpr::void_expr(self.ctx.bool_ty);
+                cond.tag = IR_FIELD_ACCESS;
+                cond.lhs = self.ctx.arena.alloc(tmp_loc1);
+                cond.field_idx = flag_field_idx;
+                let ir_cond = self.ctx.arena.alloc(cond);
+
+                // then: tmp._ok
+                let then_val = IrExpr::void_expr(ok_ty);
+                then_val.tag = IR_FIELD_ACCESS;
+                then_val.lhs = self.ctx.arena.alloc(tmp_loc2);
+                then_val.field_idx = ok_field_idx;
+                let ir_then = self.ctx.arena.alloc(then_val);
+
+                // else: return Result::err(tmp._err)
+                let err_val = IrExpr::void_expr(err_ty);
+                err_val.tag = IR_FIELD_ACCESS;
+                err_val.lhs = self.ctx.arena.alloc(tmp_loc3);
+                err_val.field_idx = err_field_idx;
+                let ir_err_val = self.ctx.arena.alloc(err_val);
+
+                // Build the return Result struct
+                let ret_result = self.build_result_err(self.return_type, ir_err_val, err_ty);
+
+                let ir_return = IrExpr::void_expr(self.ctx.never_ty);
+                ir_return.tag = IR_RETURN;
+                ir_return.opt_expr = Option::some(ret_result);
+                let ir_return_ref: &IrExpr = self.ctx.arena.alloc(ir_return) as &IrExpr;
+
+                // Build if expression
+                let ir_if = IrExpr::void_expr(ok_ty);
+                ir_if.tag = IR_IF;
+                ir_if.cond = ir_cond;
+                ir_if.lhs = ir_then;
+                ir_if.opt_expr = Option::some(ir_return_ref);
+                let ir_if_ref = self.ctx.arena.alloc(ir_if);
+
+                // Block: { let _r = expr; if ... }
+                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                stmts[0] = ir_let_ref;
+                stmts[1] = ir_if_ref;
+                let block = IrExpr::void_expr(ok_ty);
+                block.tag = IR_BLOCK;
+                block.items = stmts;
+                return self.ctx.arena.alloc(block);
+            } else if is_option {
+                let tmp_loc1 = IrExpr::void_expr(inner_ty);
+                tmp_loc1.tag = IR_LOCAL;
+                tmp_loc1.id = tmp_id;
+                let tmp_loc2 = IrExpr::void_expr(inner_ty);
+                tmp_loc2.tag = IR_LOCAL;
+                tmp_loc2.id = tmp_id;
+
+                // condition: tmp._is_some (bool) or tmp._is_some != 0 (integer)
+                let flag_ty = fields[flag_field_idx as usize].ty;
+                let flag_acc = IrExpr::void_expr(flag_ty);
+                flag_acc.tag = IR_FIELD_ACCESS;
+                flag_acc.lhs = self.ctx.arena.alloc(tmp_loc1);
+                flag_acc.field_idx = flag_field_idx;
+                let ir_flag = self.ctx.arena.alloc(flag_acc);
+
+                let ir_cond: &IrExpr = if flag_ty == self.ctx.bool_ty {
+                    // Bool field: use directly as condition
+                    ir_flag
+                } else {
+                    // Integer field: compare != 0
+                    let zero_lit = IrExpr::void_expr(flag_ty);
+                    zero_lit.tag = IR_INT_LIT;
+                    zero_lit.int_val = 0u64;
+                    let ir_zero = self.ctx.arena.alloc(zero_lit);
+
+                    let cond = IrExpr::void_expr(self.ctx.bool_ty);
+                    cond.tag = IR_BINARY;
+                    cond.bin_op = BinOp::Ne;
+                    cond.lhs = ir_flag;
+                    cond.rhs = ir_zero;
+                    self.ctx.arena.alloc(cond)
+                };
+
+                // then: tmp._inner
+                let then_val = IrExpr::void_expr(ok_ty);
+                then_val.tag = IR_FIELD_ACCESS;
+                then_val.lhs = self.ctx.arena.alloc(tmp_loc2);
+                then_val.field_idx = ok_field_idx;
+                let ir_then = self.ctx.arena.alloc(then_val);
+
+                // else: return Option::none() (zeroed)
+                let ret_none = IrExpr::void_expr(self.return_type);
+                ret_none.tag = IR_ZEROED;
+                let ir_none: &IrExpr = self.ctx.arena.alloc(ret_none) as &IrExpr;
+
+                let ir_return = IrExpr::void_expr(self.ctx.never_ty);
+                ir_return.tag = IR_RETURN;
+                ir_return.opt_expr = Option::some(ir_none);
+                let ir_return_ref: &IrExpr = self.ctx.arena.alloc(ir_return) as &IrExpr;
+
+                // Build if expression
+                let ir_if = IrExpr::void_expr(ok_ty);
+                ir_if.tag = IR_IF;
+                ir_if.cond = ir_cond;
+                ir_if.lhs = ir_then;
+                ir_if.opt_expr = Option::some(ir_return_ref);
+                let ir_if_ref = self.ctx.arena.alloc(ir_if);
+
+                // Block: { let _r = expr; if ... }
+                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                stmts[0] = ir_let_ref;
+                stmts[1] = ir_if_ref;
+                let block = IrExpr::void_expr(ok_ty);
+                block.tag = IR_BLOCK;
+                block.items = stmts;
+                return self.ctx.arena.alloc(block);
+            }
+        }
+        // Fallback: just return inner (shouldn't happen)
+        inner
+    }
+
+    // Build a Result::err(err_val) struct literal
+    fn build_result_err(self: &mut Mono, result_ty: &IrTy, err_val: &IrExpr, err_ty: &IrTy) -> &IrExpr {
+        // Build a zeroed struct, then set _is_ok=false and _err=err_val
+        if result_ty.tag == IRTY_STRUCT {
+            let fields = result_ty.struct_ref.fields;
+            let field_vals = self.ctx.arena.alloc_slice::<&IrExpr>(fields.len());
+            for i in 0usize..fields.len() {
+                if fields[i].name == "_is_ok" {
+                    let f = IrExpr::void_expr(fields[i].ty);
+                    f.tag = IR_BOOL_LIT;
+                    f.bool_val = false;
+                    field_vals[i] = self.ctx.arena.alloc(f);
+                } else if fields[i].name == "_err" {
+                    field_vals[i] = err_val;
+                } else {
+                    let f = IrExpr::void_expr(fields[i].ty);
+                    f.tag = IR_ZEROED;
+                    field_vals[i] = self.ctx.arena.alloc(f);
+                }
+            }
+            let lit = IrExpr::void_expr(result_ty);
+            lit.tag = IR_STRUCT_LIT;
+            lit.items = field_vals;
+            self.ctx.arena.alloc(lit)
+        } else {
+            // Fallback: zeroed
+            let z = IrExpr::void_expr(result_ty);
+            z.tag = IR_ZEROED;
+            self.ctx.arena.alloc(z)
+        }
+    }
+
+    // Lower static_for: compile-time loop unrolling over tuple elements
+    // static for v in tuple { body }
+    fn lower_static_for(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let iter_ir = self.lower_expr(expr.lhs);
+        let iter_ty = iter_ir.ty;
+
+        // Get element count from tuple/array type
+        let count: usize = 0;
+        if iter_ty.tag == IRTY_TUPLE {
+            count = iter_ty.elems.len();
+        } else if iter_ty.tag == IRTY_ARRAY {
+            count = iter_ty.array_size;
+        }
+
+        if count == 0 {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            return self.ctx.arena.alloc(r);
+        }
+
+        // Store the iterator value in a temp local
+        let iter_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(iter_id._value, iter_ty);
+        self.local_defs.push(IrLocalDef { id: iter_id, ty: iter_ty, name: "" });
+
+        let ir_let_iter = IrExpr::void_expr(self.ctx.void_ty);
+        ir_let_iter.tag = IR_LET;
+        ir_let_iter.id = iter_id;
+        ir_let_iter.ir_ty = iter_ty;
+        ir_let_iter.opt_expr = Option::some(iter_ir);
+        let ir_let_ref = self.ctx.arena.alloc(ir_let_iter);
+
+        // Unroll: for each element, bind the loop variable and lower the body
+        // +1 for the let statement
+        let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(count + 1);
+        stmts[0] = ir_let_ref;
+
+        for i in 0usize..count {
+            let elem_ty = if iter_ty.tag == IRTY_TUPLE {
+                iter_ty.elems[i]
+            } else {
+                iter_ty.inner // array element type
+            };
+
+            // Access element: iter_local.i (tuple index)
+            let iter_local = IrExpr::void_expr(iter_ty);
+            iter_local.tag = IR_LOCAL;
+            iter_local.id = iter_id;
+            let ir_iter_local = self.ctx.arena.alloc(iter_local);
+
+            let elem_access = IrExpr::void_expr(elem_ty);
+            elem_access.tag = IR_FIELD_ACCESS;
+            elem_access.lhs = ir_iter_local;
+            elem_access.field_idx = i as u32;
+            let ir_elem: &IrExpr = self.ctx.arena.alloc(elem_access) as &IrExpr;
+
+            // Bind loop variable (expr.id) to this element
+            let var_id = expr.id;
+            self.local_types.insert(var_id._value, elem_ty);
+            self.local_defs.push(IrLocalDef { id: var_id, ty: elem_ty, name: "" });
+
+            let ir_let_var = IrExpr::void_expr(self.ctx.void_ty);
+            ir_let_var.tag = IR_LET;
+            ir_let_var.id = var_id;
+            ir_let_var.ir_ty = elem_ty;
+            ir_let_var.opt_expr = Option::some(ir_elem);
+            let ir_let_var_ref = self.ctx.arena.alloc(ir_let_var);
+
+            // Lower the body with this binding
+            let body_ir = self.lower_expr(expr.rhs);
+
+            // Create a block for this iteration: { let v = elem; body }
+            let iter_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+            iter_stmts[0] = ir_let_var_ref;
+            iter_stmts[1] = body_ir;
+            let iter_block = IrExpr::void_expr(self.ctx.void_ty);
+            iter_block.tag = IR_BLOCK;
+            iter_block.items = iter_stmts;
+            stmts[i + 1] = self.ctx.arena.alloc(iter_block);
+        }
+
+        let block = IrExpr::void_expr(self.ctx.void_ty);
+        block.tag = IR_BLOCK;
+        block.items = stmts;
+        self.ctx.arena.alloc(block)
     }
 
     // Lower a for-in loop over a slice: for item in slice { body }
@@ -1913,8 +2670,18 @@ impl Mono {
             let is_match = false;
 
             // Resolve the protocol name to check specific protocols
+            // Extract protocol ID from TY_NAMED or TY_GENERIC(TY_NAMED)
+            let proto_id_value: usize = 0usize;
+            let has_proto_id = false;
             if check_ty.tag == TY_NAMED {
-                let protocol = self.ctx.protocol_defs.get(&check_ty.id._value);
+                proto_id_value = check_ty.id._value;
+                has_proto_id = true;
+            } else if check_ty.tag == TY_GENERIC && check_ty.inner.tag == TY_NAMED {
+                proto_id_value = check_ty.inner.id._value;
+                has_proto_id = true;
+            }
+            if has_proto_id {
+                let protocol = self.ctx.protocol_defs.get(&proto_id_value);
                 if protocol.is_some() {
                     let proto = protocol.unwrap();
                     if proto.name == "ZeroSized" {
@@ -1925,8 +2692,10 @@ impl Mono {
                         is_match = val_ty.tag == IRTY_BUILTIN;
                     } else if proto.name == "Numeric" || proto.name == "Integer" || proto.name == "FloatingPoint" || proto.name == "Signed" || proto.name == "Unsigned" {
                         if val_ty.tag == IRTY_BUILTIN {
-                            if proto.name == "Numeric" || proto.name == "Integer" {
+                            if proto.name == "Numeric" {
                                 is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void;
+                            } else if proto.name == "Integer" {
+                                is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void && val_ty.builtin != BuiltinType::F32 && val_ty.builtin != BuiltinType::F64;
                             } else if proto.name == "FloatingPoint" {
                                 is_match = val_ty.builtin == BuiltinType::F32 || val_ty.builtin == BuiltinType::F64;
                             } else if proto.name == "Signed" {
@@ -1937,6 +2706,15 @@ impl Mono {
                         } else if proto.name == "Numeric" || proto.name == "FloatingPoint" {
                             is_match = false;
                         }
+                    } else if proto.name == "Struct" {
+                        is_match = val_ty.tag == IRTY_STRUCT;
+                    } else if proto.name == "Enum" {
+                        is_match = val_ty.tag == IRTY_ENUM;
+                    } else if proto.name == "Array" {
+                        is_match = val_ty.tag == IRTY_ARRAY;
+                    } else {
+                        // User-defined protocol: check if type has all required methods
+                        is_match = self.check_protocol_conformance(val_ty, proto);
                     }
                 } else {
                     // Not a protocol - concrete type comparison
@@ -2713,6 +3491,12 @@ impl Mono {
             }
         }
 
+        // For protocol methods (from mixins), set up Self type substitution
+        let self_id_opt = self.ctx.proto_method_self_id.get(&fn_id._value);
+        if self_id_opt.is_some() {
+            self.type_map.insert(self_id_opt.unwrap(), resolved_ty);
+        }
+
         // Monomorphize the method with type args (for generic impls + turbofish)
         let fn_idx = self.mono_function(def, combined_type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
@@ -2995,12 +3779,30 @@ impl Mono {
             result.int_val = (measured_ty as &void as usize) as u64;
             return self.ctx.arena.alloc(result);
         } else if name == "type_name" || name == "named_type_name" {
-            // type_name<T>() -> &[u8] - return empty string for now
             let u8_ty = self.ctx.intern_builtin_ty(BuiltinType::U8);
             let slice_ty = self.ctx.make_slice_ty(u8_ty, true);
+            let measured_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { self.ctx.void_ty };
+            let type_str: &[u8] = "";
+            if name == "named_type_name" {
+                // Return the short name for named types, void for anonymous
+                if measured_ty.tag == IRTY_STRUCT {
+                    type_str = measured_ty.struct_ref.name;
+                } else if measured_ty.tag == IRTY_ENUM {
+                    type_str = measured_ty.enum_ref.name;
+                }
+                // For non-named types, return void instead of empty string
+                if type_str.len() == 0 {
+                    let result = IrExpr::void_expr(self.ctx.void_ty);
+                    result.tag = IR_VOID;
+                    return self.ctx.arena.alloc(result);
+                }
+            } else {
+                // type_name: return the full type name
+                type_str = self.ir_type_name(measured_ty);
+            }
             let result = IrExpr::void_expr(slice_ty);
             result.tag = IR_STRING_LIT;
-            result.str_val = "";
+            result.str_val = type_str;
             return self.ctx.arena.alloc(result);
         } else if name == "length_of" {
             // length_of<T>() -> usize - array/tuple length
@@ -3219,6 +4021,17 @@ impl Mono {
                         }
                     } else {
                         // Non-generic function call: emit as CALL_DIRECT
+                        // For protocol methods, set up Self type from first argument
+                        let self_param_opt = self.ctx.proto_method_self_id.get(&def.id._value);
+                        if self_param_opt.is_some() && expr.args.len() > 0 {
+                            let first_arg_ir = self.lower_expr(expr.args[0]);
+                            let self_ty = if first_arg_ir.ty.tag == IRTY_POINTER {
+                                first_arg_ir.ty.inner
+                            } else {
+                                first_arg_ir.ty
+                            };
+                            self.type_map.insert(self_param_opt.unwrap(), self_ty);
+                        }
                         let fn_idx = self.mono_function(def, &[]);
                         let ir_fn = &self.ctx.ir_functions[fn_idx];
 
@@ -3409,10 +4222,12 @@ fn monomorphize(
     id_gen: &mut IdGen,
     diag: &mut DiagnosticContext,
     items: &[Item],
+    test_mode: bool,
 ) -> CompilationUnit {
     let ctx = MonoCtx::new(arena, scopes, id_gen, diag, items);
 
     // Find all root items (exported functions, main, statics)
+    // In test mode, also include #[test] functions
     for ii in 0usize..items.len() {
         let item = &items[ii];
         if item.tag == ITEM_FUNCTION {
@@ -3421,7 +4236,9 @@ fn monomorphize(
             for attr in fn_def.attributes {
                 if attr.tag == ATTR_EXPORT {
                     is_root = true;
-                } else if attr.tag == ATTR_MAIN {
+                } else if attr.tag == ATTR_MAIN && !test_mode {
+                    is_root = true;
+                } else if attr.tag == ATTR_TEST && test_mode {
                     is_root = true;
                 }
             }

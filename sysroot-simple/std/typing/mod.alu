@@ -1,6 +1,29 @@
-// Type matching for self-hosted compiler bootstrap
-// matches<T1, T2>() returns true if T1 == T2
+// Type reflection utilities
 
+type TypeId = usize;
+
+fn type_id<T>() -> TypeId {
+    std::intrinsics::type_id::<T>() as TypeId
+}
+
+fn type_name<T>() -> &[u8] {
+    std::intrinsics::type_name::<T>()
+}
+
+fn size_of<T>() -> usize {
+    std::intrinsics::size_of::<T>()
+}
+
+fn align_of<T>() -> usize {
+    std::intrinsics::align_of::<T>()
+}
+
+// Returns true if T1 and T2 are the same type.
+fn is_same<T1, T2>() -> bool {
+    type_id::<T1>() == type_id::<T2>()
+}
+
+// Returns true if a value of type T1 matches type T2.
 fn matches<T1, T2>() -> bool {
-    std::mem::zeroed::<T1>() is T2
+    is_same::<T1, T2>()
 }

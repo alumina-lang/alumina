@@ -1,0 +1,20 @@
+// When expressions: compile-time conditional expressions.
+
+extern "intrinsic" fn size_of<T>() -> usize;
+
+fn type_size_class<T>() -> i32 {
+    when size_of::<T>() <= 1usize {
+        1i32
+    } else when size_of::<T>() <= 4usize {
+        4i32
+    } else {
+        8i32
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    if type_size_class::<u8>() != 1i32 { return 1i32; }
+    if type_size_class::<i32>() != 4i32 { return 2i32; }
+    if type_size_class::<i64>() != 8i32 { return 3i32; }
+    0i32
+}
