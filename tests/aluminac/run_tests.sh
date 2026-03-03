@@ -42,8 +42,15 @@ for src in "$TESTDIR"/*.alu; do
 
     out="$TMPDIR/aluminac_test_$name"
 
+    # Extract extra flags from test file (// ALUMINAC_FLAGS: ...)
+    extra_flags=""
+    flags_line=$(grep -m1 '^// ALUMINAC_FLAGS:' "$src" || true)
+    if [ -n "$flags_line" ]; then
+        extra_flags="${flags_line#// ALUMINAC_FLAGS:}"
+    fi
+
     # Compile
-    if ! $ALUMINAC "$src" -o "$out" 2>/dev/null; then
+    if ! $ALUMINAC "$src" -o "$out" $extra_flags 2>/dev/null; then
         if [[ "$name" == *"compile_fail"* ]]; then
             echo "ok (expected compile failure)"
             PASS=$((PASS + 1))
@@ -52,7 +59,7 @@ for src in "$TESTDIR"/*.alu; do
             FAIL=$((FAIL + 1))
             FAILURES="$FAILURES\n  $name: compile error"
             # Show compiler output for diagnosis
-            $ALUMINAC "$src" -o "$out" 2>&1 | head -5 | sed 's/^/    /'
+            $ALUMINAC "$src" -o "$out" $extra_flags 2>&1 | head -5 | sed 's/^/    /'
         fi
         continue
     fi

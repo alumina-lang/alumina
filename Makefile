@@ -197,9 +197,6 @@ ALUMINAC_MAIN = src/aluminac/main.alu
 
 LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
 
-ALUMINAC_ALU_LIBRARIES = $(filter-out libraries/aluminac/lib/compiler.alu,$(ALU_LIBRARIES))
-ALUMINAC_FILES = $(shell find libraries/aluminac/ -type f -name '*.alu' | grep -v compiler.alu)
-
 $(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
 		$(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
@@ -235,6 +232,10 @@ $(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
 bootstrap: $(ALUMINAC_S3)
 	@echo "Comparing stage 2 and stage 3 outputs..."
 	@cmp --silent $(ALUMINAC_S2) $(ALUMINAC_S3) && echo "Bootstrap successful: stage 2 and stage 3 outputs are identical." || (echo "Bootstrap failed: stage 2 and stage 3 outputs differ." && exit 1)
+
+.PHONY: clean-bootstrap
+clean-bootstrap:
+	rm -f $(ALUMINAC_S1) $(ALUMINAC_S1).c $(ALUMINAC_S2) $(ALUMINAC_S3) $(BUILD_DIR)/aluminac
 
 ## --------------------------------Tools -------------------------------
 

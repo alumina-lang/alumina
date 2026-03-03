@@ -200,9 +200,19 @@ impl ParseContext {
     }
 
     fn has_cfg(self: &ParseContext, flag: &[u8]) -> bool {
-        for f in self.cfg_flags {
-            if (*f) == flag {
-                return true;
+        for i in 0usize..self.cfg_flags.len() {
+            let s = self.cfg_flags[i];
+            if s.len() == flag.len() {
+                let found = true;
+                for j in 0usize..s.len() {
+                    if s[j] != flag[j] {
+                        found = false;
+                        break;
+                    }
+                }
+                if found {
+                    return true;
+                }
             }
         }
         false
@@ -248,6 +258,7 @@ struct Pass1 {
     in_container: bool,   // inside struct/enum/protocol/impl
     current_enum_id: Option<Id>,
     impl_generic_param_ids: &[Id],
+    skip_item: bool,      // set by parse_attributes when #[cfg] evaluates to false
 }
 
 impl Pass1 {
@@ -258,6 +269,7 @@ impl Pass1 {
             in_container: false,
             current_enum_id: Option::none(),
             impl_generic_param_ids: &[],
+            skip_item: false,
         }
     }
 
@@ -361,10 +373,9 @@ impl Pass1 {
                     } else if name == "test" {
                         attrs.push(Attribute::test());
                     } else if name == "cfg" {
-                        let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_none() {
-                            let cfg_name = self.ctx.node_text(args_node.unwrap());
-                            attrs.push(Attribute::cfg(self.ctx.intern_str(cfg_name)));
+                        // Evaluate the cfg condition using the tree-sitter node structure
+                        if !self.eval_cfg_meta_item(meta) {
+                            self.skip_item = true;
                         }
                     } else if name == "align" {
                         let args_node = child_by!(meta, FieldKind::Arguments);
@@ -417,6 +428,110 @@ impl Pass1 {
         result
     }
 
+    // Evaluate a cfg condition from a meta_item node.
+    // For #[cfg(condition)], this is called on the inner meta_item (the one with name="cfg").
+    // Returns true if the condition is satisfied.
+    fn eval_cfg_meta_item(self: &mut Pass1, node: Node) -> bool {
+        let kind = NODE_KINDS[node.symbol() as usize];
+
+        // If it's a string literal (inside meta_arguments), this shouldn't happen
+        // at the top level, but guard against it.
+        if kind != NodeKind::MetaItem {
+            return false;
+        }
+
+        let name_node = child_by!(node, FieldKind::Name);
+        if name_node.is_none() {
+            return false;
+        }
+        let name = self.ctx.node_text(name_node.unwrap());
+
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        // Check for key = "value" form
+        let value_node = child_by!(node, FieldKind::Value);
+        if !value_node.is_none() {
+            // key = "value" form: check if cfg flag matches the value
+            let value_text = self.ctx.node_text(value_node.unwrap());
+            // Strip quotes from string literal
+            if value_text.len() >= 2 && value_text[0] == '"' as u8 {
+                value_text = value_text[1..value_text.len() - 1];
+            }
+            // Look for a cfg flag of the form "key=value"
+            // Build "key=value" string and check against has_cfg
+            let match_buf = self.ctx.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
+            name.copy_to_nonoverlapping(&match_buf[0]);
+            match_buf[name.len()] = '=' as u8;
+            value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
+            return self.ctx.has_cfg(match_buf as &[u8]);
+        }
+
+        // Compound forms: cfg(...), not(...), all(...), any(...)
+        if name == "cfg" {
+            if args_node.is_none() { return false; }
+            return self.eval_cfg_arguments_single(args_node.unwrap());
+        } else if name == "not" {
+            if args_node.is_none() { return false; }
+            return !self.eval_cfg_arguments_single(args_node.unwrap());
+        } else if name == "all" {
+            if args_node.is_none() { return true; } // empty all() = true
+            return self.eval_cfg_arguments_all(args_node.unwrap());
+        } else if name == "any" {
+            if args_node.is_none() { return false; } // empty any() = false
+            return self.eval_cfg_arguments_any(args_node.unwrap());
+        }
+
+        // Simple flag: check presence
+        if !args_node.is_none() {
+            // Unknown compound form, treat as false
+            return false;
+        }
+        self.ctx.has_cfg(name)
+    }
+
+    // Evaluate a meta_arguments node expecting exactly one argument (for cfg() and not())
+    fn eval_cfg_arguments_single(self: &mut Pass1, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                return self.eval_cfg_meta_item(child);
+            }
+        }
+        false
+    }
+
+    // Evaluate a meta_arguments node with AND semantics (for all())
+    fn eval_cfg_arguments_all(self: &mut Pass1, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                if !self.eval_cfg_meta_item(child) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    // Evaluate a meta_arguments node with OR semantics (for any())
+    fn eval_cfg_arguments_any(self: &mut Pass1, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                if self.eval_cfg_meta_item(child) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn visit_source_file_p1(self: &mut Pass1, node: Node) {
         self.visit_children_by_field(node, FieldKind::Body);
     }
@@ -425,8 +540,11 @@ impl Pass1 {
         // Check cfg attributes on top-level blocks
         let attr_node = child_by!(node, FieldKind::Attributes);
         if !attr_node.is_none() {
-            // For now, process all top-level blocks
-            // TODO: evaluate cfg conditions
+            let _ = self.parse_attribute_list(attr_node.unwrap());
+            if self.skip_item {
+                self.skip_item = false;
+                return;
+            }
         }
         self.visit_children_by_field(node, FieldKind::Items);
     }
@@ -451,6 +569,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
 
         let item_kind = if self.in_container {
@@ -493,6 +612,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
 
         // Check if it's a union
         let kind_node = child_by!(node, FieldKind::Kind);
@@ -532,6 +652,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
 
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 
@@ -580,6 +701,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Protocol, Option::some(self.current_scope));
 
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
@@ -613,6 +735,8 @@ impl Pass1 {
     }
 
     fn visit_impl_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
         let name = self.get_name(node);
 
         // Try to resolve the type to find its scope
@@ -659,6 +783,8 @@ impl Pass1 {
     }
 
     fn visit_type_def_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
@@ -687,6 +813,8 @@ impl Pass1 {
     }
 
     fn visit_use_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
         let arg = child_by!(node, FieldKind::Argument);
         if arg.is_none() {
             return;
@@ -831,6 +959,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
 
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
             name: name,
@@ -853,6 +982,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
 
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
             name: name,
@@ -872,6 +1002,8 @@ impl Pass1 {
     }
 
     fn visit_macro_def_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
         let name = self.get_name(node);
         let id = self.ctx.next_id();
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));

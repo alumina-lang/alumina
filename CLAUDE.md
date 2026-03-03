@@ -8,3 +8,5 @@ Hi! I would like you to work on bringing aluminac to parity with alumina-boot. I
 4. If a new feature allows you to bring anything from the real sysroot (sysroot/) to the bootstrap sysroot (sysroot-simple/), you may do so. Do it in small steps as needed.
 5. IMPORTANT: Make sure we do not lose bootstrap - `make bootstrap` to verify we can still go stage0 (alumina-boot) -> stage1 -> stage2 -> stage3 and that stage2 and stage3 are identical
 6. Update ALUMINAC_NOTES.md to reflect the new feature and commit your changes.
+
+After you are done, repeat at step 1.

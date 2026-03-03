@@ -103,7 +103,7 @@ Each is declared with `#[builtin]` attribute in `sysroot/std/macros.alu` and `sy
 - `#[cfg(key = "value")]` -- key-value matching (e.g., `target_os = "linux"`)
 - `#[cfg_attr(condition, attribute)]` -- conditional attribute application
 
-**aluminac**: Only simple flag presence checking (`parser.alu:363-367`). No `not()`, `all()`, `any()`, key-value matching, or `cfg_attr`.
+**aluminac**: Implemented. Supports `#[cfg(flag)]`, `#[cfg(not(...))]`, `#[cfg(all(...))]`, `#[cfg(any(...))]`, `#[cfg(key = "value")]`, and arbitrary nesting. Evaluated during Pass 1 — items whose cfg condition is false are skipped entirely (not registered in scopes). Works on functions, structs, enums, protocols, type aliases, consts, statics, use declarations, impl blocks, macro definitions, and top-level blocks. Key-value matching uses `--cfg key=value` command-line syntax. Missing: `#[cfg_attr(condition, attribute)]`.
 
 #### 2.4. For-Loop Iterator Desugaring
 
@@ -471,7 +471,7 @@ Feature usage across `common/`, `sysroot/`, `examples/`, `tools/`, `libraries/`,
 | Feature | Occurrences | Key Files |
 |---|---|---|
 | Const eval (enum vals, consts, when) | Ubiquitous | Every enum, every const, every when |
-| `#[cfg(not/all/any)]` | 2050+ across 50+ files | sysroot/*, every platform file |
+| `#[cfg(not/all/any)]` | 2050+ across 50+ files | sysroot/*, every platform file (IMPLEMENTED) |
 | `println!`/`format_args!` | 318+ across 63 files | Nearly every example and tool |
 | For-loop desugaring (.iter()) | Every for-in loop | All user code |
 | Try operator (macro desugar) | Every `?` use | Result/Option heavy code |
