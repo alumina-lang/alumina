@@ -491,7 +491,7 @@ Feature usage across `common/`, `sysroot/`, `examples/`, `tools/`, `libraries/`,
 | `#[builtin]` macros | 12 declarations | std::macros, std::mod, std::fmt |
 | `#[packed]` | 11 across 3 files | Tests, FFI |
 | `tuple_invoke` | 6 across 4 files | std::builtins, std::typing |
-| `super::` paths | 2050+ in sysroot | sysroot/libc (auto-gen), std::runtime |
+| `super::` paths | 0 in Alumina code | Not used in the Alumina language |
 | `stop_iteration` intrinsic | In iter.alu | Static for with iterators |
 | `attributed` intrinsic | 3 uses | Test framework discovery |
 | `vtable` / `enum_variants` / `fields` | ~8 uses total | std::typing, reflection |
