@@ -35,6 +35,7 @@ struct CompilerOptions {
     dump_ir: bool,
     verify_ir: bool,
     test_mode: bool,
+    debug_info: bool,
     sysroot: &[u8],
     cfg_flags: Vector<&[u8]>,
     extra_link_args: &[u8],
@@ -49,6 +50,7 @@ impl CompilerOptions {
             dump_ir: false,
             verify_ir: true,
             test_mode: false,
+            debug_info: false,
             sysroot: "",
             cfg_flags: Vector::new(),
             extra_link_args: "",
@@ -415,6 +417,7 @@ impl Compiler {
             &unit,
             "alumina_module",
             self.options.test_mode,
+            self.options.debug_info,
         );
         if self.diag.has_errors {
             self.diag.emit_all();
@@ -475,9 +478,10 @@ impl Compiler {
 
     fn link(self: &mut Compiler, obj_file: &[u8], output: &[u8]) -> bool {
         // Use cc to link
-        // Build command: cc -o <output> <obj_file> -lm [extra_link_args]
+        // Build command: cc [-g] -o <output> <obj_file> -lm [extra_link_args]
         let extra = self.options.extra_link_args;
-        let cmd_len = 6usize + output.len() + 1usize + obj_file.len() + 4usize + 1usize + extra.len();
+        let debug_extra = if self.options.debug_info { 3usize } else { 0usize }; // " -g"
+        let cmd_len = 6usize + output.len() + 1usize + obj_file.len() + 4usize + 1usize + extra.len() + debug_extra;
         let cmd = self.arena.alloc_slice::<u8>(cmd_len + 1usize);
         let pos: usize = 0;
 
@@ -497,6 +501,12 @@ impl Compiler {
         let suffix = " -lm";
         suffix.copy_to_nonoverlapping(&cmd[pos]);
         pos = pos + suffix.len();
+
+        if self.options.debug_info {
+            let dbg_flag = " -g";
+            dbg_flag.copy_to_nonoverlapping(&cmd[pos]);
+            pos = pos + dbg_flag.len();
+        }
 
         if extra.len() > 0usize {
             cmd[pos] = ' ' as u8;
@@ -661,6 +671,8 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             options.output_format = OutputFormat::Bitcode;
         } else if arg == "-O" || arg == "-O2" || arg == "-O3" {
             options.optimize = true;
+        } else if arg == "-g" {
+            options.debug_info = true;
         } else if arg == "--dump-ir" {
             options.dump_ir = true;
         } else if arg == "--no-verify" {
@@ -718,7 +730,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
 }
 
 fn print_usage() {
-    DiagnosticContext::_write_stderr("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help\n");
+    DiagnosticContext::_write_stderr("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help\n");
 }
 
 fn main(args: &[&[u8]]) -> i32 {

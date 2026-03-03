@@ -971,6 +971,7 @@ impl Mono {
             attributes: def.attributes,
             is_variadic: def.is_variadic,
             abi: def.abi,
+            span: def.span,
         };
         self.ctx.ir_functions.push(placeholder);
         self.ctx.fn_cache.insert(cache_key, idx);
@@ -999,8 +1000,19 @@ impl Mono {
         idx
     }
 
-    // Lower an AST expression to IR (dispatcher)
+    // Lower an AST expression to IR, stamping the source span onto the result
     fn lower_expr(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let result = self.lower_expr_inner(expr);
+        // Stamp the AST span onto the IR expression
+        if expr.span.start != 0u32 || expr.span.end != 0u32 {
+            let m = result as &void as &mut IrExpr;
+            m.span = expr.span;
+        }
+        result
+    }
+
+    // Lower an AST expression to IR (dispatcher)
+    fn lower_expr_inner(self: &mut Mono, expr: &Expr) -> &IrExpr {
         switch expr.tag {
             ExprTag::IntLit, ExprTag::FloatLit, ExprTag::BoolLit,
             ExprTag::StringLit, ExprTag::NullLit, ExprTag::CharLit =>
@@ -1078,12 +1090,16 @@ impl Mono {
     fn lower_expr_coerced(self: &mut Mono, expr: &Expr, expected_ty: &IrTy) -> &IrExpr {
         // For unsuffixed integer literals, use the expected type directly
         if expr.tag == ExprTag::IntLit && expr.type_suffix.is_none() && expected_ty.tag == IrTyTag::Builtin {
-            return self.mk_int_lit(expected_ty, expr.int_val);
+            let r = self.mk_int_lit(expected_ty, expr.int_val);
+            let m = r as &void as &mut IrExpr;
+            m.span = expr.span;
+            return r;
         }
         // For null literals, adopt the expected pointer type
         if expr.tag == ExprTag::NullLit && expected_ty.tag == IrTyTag::Pointer {
             let result = IrExpr::void_expr(expected_ty);
             result.tag = IrTag::NullLit;
+            result.span = expr.span;
             return self.ctx.arena.alloc(result);
         }
         // Set expected_type hint for type inference in function calls
@@ -1415,7 +1431,7 @@ impl Mono {
     fn lower_switch_as_if_else(self: &mut Mono, ir_value: &IrExpr, arms: &[SwitchArm]) -> &IrExpr {
         // Create a temp variable to evaluate the discriminant once
         let tmp_id = self.ctx.id_gen.next_id();
-        self.local_defs.push(IrLocalDef { id: tmp_id, ty: ir_value.ty, name: "_switch" });
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: ir_value.ty, name: "_switch", span: Span::empty() });
         let ir_let = self.mk_let(tmp_id, ir_value.ty, ir_value);
         let tmp_read = self.mk_local(tmp_id, ir_value.ty);
 
@@ -1652,6 +1668,7 @@ impl Mono {
                 id: loop_var_id,
                 ty: iter_ty,
                 name: "",
+                span: Span::empty(),
             });
 
             // Register end variable
@@ -1661,6 +1678,7 @@ impl Mono {
                 id: end_var_id,
                 ty: iter_ty,
                 name: "",
+                span: Span::empty(),
             });
 
             // let i = start; let _end = end
@@ -1804,6 +1822,7 @@ impl Mono {
                 id: iterable_var_id,
                 ty: iterable_ty,
                 name: "_iterable",
+                span: Span::empty(),
             });
 
             // &_iterable for method call
@@ -1833,6 +1852,7 @@ impl Mono {
             id: iter_var_id,
             ty: iter_ty,
             name: "_iter",
+            span: Span::empty(),
         });
 
         // let _iter = iterator_expr
@@ -1858,6 +1878,7 @@ impl Mono {
             id: opt_var_id,
             ty: opt_ty,
             name: "_opt",
+            span: Span::empty(),
         });
 
         // let _opt = _iter.next()
@@ -2163,7 +2184,7 @@ impl Mono {
         // Store inner to a local so we only evaluate once
         let tmp_id = self.ctx.id_gen.next_id();
         self.local_types.insert(tmp_id._value, inner_ty);
-        self.local_defs.push(IrLocalDef { id: tmp_id, ty: inner_ty, name: "" });
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: inner_ty, name: "", span: Span::empty() });
 
         let ir_let_ref = self.mk_let(tmp_id, inner_ty, inner);
 
@@ -2325,7 +2346,7 @@ impl Mono {
         // Store the iterator value in a temp local
         let iter_id = self.ctx.id_gen.next_id();
         self.local_types.insert(iter_id._value, iter_ty);
-        self.local_defs.push(IrLocalDef { id: iter_id, ty: iter_ty, name: "" });
+        self.local_defs.push(IrLocalDef { id: iter_id, ty: iter_ty, name: "", span: Span::empty() });
 
         let ir_let_ref = self.mk_let(iter_id, iter_ty, iter_ir);
 
@@ -2347,7 +2368,7 @@ impl Mono {
             // Bind loop variable (expr.id) to this element
             let var_id = expr.id;
             self.local_types.insert(var_id._value, elem_ty);
-            self.local_defs.push(IrLocalDef { id: var_id, ty: elem_ty, name: "" });
+            self.local_defs.push(IrLocalDef { id: var_id, ty: elem_ty, name: "", span: Span::empty() });
 
             let ir_let_var_ref = self.mk_let(var_id, elem_ty, ir_elem);
 
@@ -2373,7 +2394,7 @@ impl Mono {
         if expr.args.len() == 0 {
             // Simple case: for item in iterable
             self.local_types.insert(loop_var_id._value, elem_ty);
-            self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "" });
+            self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "", span: Span::empty() });
             let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(1);
             stmts[0] = self.mk_let(loop_var_id, elem_ty, elem_ir);
             return stmts;
@@ -2382,7 +2403,7 @@ impl Mono {
         // Tuple unpacking: for (a, b, ...) in iterable
         // let _tuple = elem_ir;
         self.local_types.insert(loop_var_id._value, elem_ty);
-        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "_tuple" });
+        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "_tuple", span: Span::empty() });
 
         let n = expr.args.len();
         let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(1 + n);
@@ -2403,7 +2424,7 @@ impl Mono {
             };
 
             self.local_types.insert(elem_id._value, field_ty);
-            self.local_defs.push(IrLocalDef { id: elem_id, ty: field_ty, name: "" });
+            self.local_defs.push(IrLocalDef { id: elem_id, ty: field_ty, name: "", span: Span::empty() });
 
             let ir_field = self.mk_field(self.mk_local(loop_var_id, elem_ty), i as u32, field_ty);
             stmts[1 + i] = self.mk_let(elem_id, field_ty, ir_field);
@@ -2429,18 +2450,18 @@ impl Mono {
         // let _s = slice
         let slice_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(slice_var_id._value, slice_ty);
-        self.local_defs.push(IrLocalDef { id: slice_var_id, ty: slice_ty, name: "_s" });
+        self.local_defs.push(IrLocalDef { id: slice_var_id, ty: slice_ty, name: "_s", span: Span::empty() });
         let ir_let_s = self.mk_let(slice_var_id, slice_ty, slice_ir);
 
         // let _i = 0usize; let _end = _s.len
         let idx_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(idx_var_id._value, usize_ty);
-        self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i" });
+        self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i", span: Span::empty() });
         let ir_let_i = self.mk_let(idx_var_id, usize_ty, self.mk_int_lit(usize_ty, 0));
 
         let end_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(end_var_id._value, usize_ty);
-        self.local_defs.push(IrLocalDef { id: end_var_id, ty: usize_ty, name: "_end" });
+        self.local_defs.push(IrLocalDef { id: end_var_id, ty: usize_ty, name: "_end", span: Span::empty() });
         let ir_len = self.mk_field(self.mk_local(slice_var_id, slice_ty), SLICE_LEN_FIELD, usize_ty);
         let ir_let_end = self.mk_let(end_var_id, usize_ty, ir_len);
 
@@ -2468,12 +2489,12 @@ impl Mono {
         // let _a = arr; let _i = 0usize
         let arr_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(arr_var_id._value, arr_ty);
-        self.local_defs.push(IrLocalDef { id: arr_var_id, ty: arr_ty, name: "_a" });
+        self.local_defs.push(IrLocalDef { id: arr_var_id, ty: arr_ty, name: "_a", span: Span::empty() });
         let ir_let_a = self.mk_let(arr_var_id, arr_ty, arr_ir);
 
         let idx_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(idx_var_id._value, usize_ty);
-        self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i" });
+        self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i", span: Span::empty() });
         let ir_let_i = self.mk_let(idx_var_id, usize_ty, self.mk_int_lit(usize_ty, 0));
 
         // _i < N
@@ -3590,6 +3611,7 @@ impl Mono {
             attributes: &[],
             is_variadic: false,
             abi: Option::none(),
+            span: expr.span,
         };
         self.ctx.ir_functions.push(placeholder);
 
@@ -4244,7 +4266,8 @@ impl Mono {
                 self.local_defs.push(IrLocalDef {
                     id: expr.id,
                     ty: inferred,
-                    name: "",
+                    name: expr.str_val,
+                    span: expr.span,
                 });
                 return self.mk_let(expr.id, inferred, ir_init);
             } else {
@@ -4255,7 +4278,8 @@ impl Mono {
             self.local_defs.push(IrLocalDef {
                 id: expr.id,
                 ty: var_ty,
-                name: "",
+                name: expr.str_val,
+                span: expr.span,
             });
 
             if expr.opt_expr.is_some() {

@@ -7,7 +7,7 @@ ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
 	CARGO_FLAGS += --profile release
 	CARGO_TARGET_DIR = target/release
-	CFLAGS += -O3 -g
+	CFLAGS += -O3
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
@@ -16,12 +16,14 @@ else ifdef FAST_DEBUG
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 else ifdef PROFILING
 	BUILD_DIR = $(BUILD_ROOT)/profiling
 	CARGO_FLAGS += --profile profiling
 	CARGO_TARGET_DIR = target/profiling
 	CFLAGS += -g3 -fPIE -rdynamic -O3
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 else ifdef COVERAGE
 	CC ?= clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
@@ -29,6 +31,7 @@ else ifdef COVERAGE
 	CARGO_TARGET_DIR = target/coverage
 	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 	export RUSTFLAGS += -Cinstrument-coverage
 	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
@@ -37,6 +40,7 @@ else
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 endif
 
 LDFLAGS ?= -lm
@@ -214,13 +218,13 @@ BOOTSTRAP_INPUTS = $(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(ALUMINAC_MAIN)
 
 $(ALUMINAC_S2): $(ALUMINAC_S1) $(BOOTSTRAP_DEPS)
-	$(ALUMINAC_S1) --no-verify --sysroot $(SYSROOT_SIMPLE) \
+	$(ALUMINAC_S1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_SIMPLE) \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_S2) \
 		$(BOOTSTRAP_INPUTS)
 
 $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
-	$(ALUMINAC_S2) --no-verify --sysroot $(SYSROOT_SIMPLE) \
+	$(ALUMINAC_S2) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_SIMPLE) \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_S3) \
 		$(BOOTSTRAP_INPUTS)
@@ -347,21 +351,10 @@ all: alumina-boot
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
-$(BUILD_DIR)/quick.c: $(ALU_DEPS) quick.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
-
-$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+$(BUILD_DIR)/quick: $(BUILD_DIR)/aluminac quick.alu
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_SIMPLE) -o $@ quick=./quick.alu
 
 quick: $(BUILD_DIR)/quick
-	ln -sf $^.c $@.c
-	ln -sf $^ $@
-
-$(BUILD_DIR)/quick_ss: $(BUILD_DIR)/aluminac quick.alu
-	$(BUILD_DIR)/aluminac --sysroot $(SYSROOT_SIMPLE) -o $@ quick=./quick.alu
-
-quick_ss: $(BUILD_DIR)/quick_ss
-	ln -sf $^.c $@.c
 	ln -sf $^ $@
 
 ## ------------------------------ Benchmarking -------------------------

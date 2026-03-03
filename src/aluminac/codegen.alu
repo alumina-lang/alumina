@@ -55,10 +55,17 @@ struct CodegenCtx {
 
     // Pointer size in bytes
     pointer_size: u32,
+
+    // Debug info
+    debug_enabled: bool,
+    di_builder: LLVMDIBuilderRef,
+    di_compile_unit: LLVMMetadataRef,
+    di_file_cache: HashMap<u32, LLVMMetadataRef>,
+    di_type_cache: HashMap<usize, LLVMMetadataRef>,
 }
 
 impl CodegenCtx {
-    fn new(arena: &mut Arena, diag: &mut DiagnosticContext, module_name: &[u8]) -> CodegenCtx {
+    fn new(arena: &mut Arena, diag: &mut DiagnosticContext, module_name: &[u8], debug_enabled: bool) -> CodegenCtx {
         // Initialize LLVM targets
         llvm::initialize_native_target();
 
@@ -121,6 +128,49 @@ impl CodegenCtx {
 
         let pointer_size = LLVMPointerSize(target_data);
 
+        // Debug info initialization
+        let di_builder: LLVMDIBuilderRef = std::mem::zeroed::<LLVMDIBuilderRef>();
+        let di_compile_unit: LLVMMetadataRef = std::mem::zeroed::<LLVMMetadataRef>();
+
+        if debug_enabled {
+            di_builder = LLVMCreateDIBuilder(module);
+
+            // Set module flags for DWARF
+            // Dwarf Version = 4, behavior = Error (1)
+            let dwarf_ver = LLVMConstInt(i32_type, 4u64, 0i32);
+            LLVMAddModuleFlag(module, 1u32, &"Dwarf Version\0"[0] as &libc::c_char, 13u32,
+                LLVMValueAsMetadata(dwarf_ver));
+            // Debug Info Version = 3
+            let di_ver = LLVMConstInt(i32_type, 3u64, 0i32);
+            LLVMAddModuleFlag(module, 1u32, &"Debug Info Version\0"[0] as &libc::c_char, 18u32,
+                LLVMValueAsMetadata(di_ver));
+
+            // Create compile unit with a default file
+            let default_file = LLVMDIBuilderCreateFile(
+                di_builder,
+                &"<unknown>\0"[0] as &libc::c_char, 9usize,
+                &".\0"[0] as &libc::c_char, 1usize,
+            );
+
+            let producer = "aluminac";
+            di_compile_unit = LLVMDIBuilderCreateCompileUnit(
+                di_builder,
+                1u32,  // LLVMDWARFSourceLanguageC
+                default_file,
+                &producer[0] as &libc::c_char, producer.len(),
+                0i32,       // is_optimized
+                &"\0"[0] as &libc::c_char, 0usize,  // flags
+                0u32,       // runtime_ver
+                &"\0"[0] as &libc::c_char, 0usize,  // split_name
+                LLVMDWARFEmissionKind::Full,
+                0u32,       // dwo_id
+                0i32,       // split_debug_inlining
+                0i32,       // debug_info_for_profiling
+                &"\0"[0] as &libc::c_char, 0usize,  // sys_root
+                &"\0"[0] as &libc::c_char, 0usize,  // sdk
+            );
+        }
+
         CodegenCtx {
             arena: arena,
             diag: diag,
@@ -150,6 +200,11 @@ impl CodegenCtx {
             memcmp_fn_type: std::mem::zeroed::<LLVMTypeRef>(),
             memcpy_fn_type: std::mem::zeroed::<LLVMTypeRef>(),
             pointer_size: pointer_size,
+            debug_enabled: debug_enabled,
+            di_builder: di_builder,
+            di_compile_unit: di_compile_unit,
+            di_file_cache: HashMap::new(),
+            di_type_cache: HashMap::new(),
         }
     }
 
@@ -428,6 +483,146 @@ impl CodegenCtx {
         s.copy_to_nonoverlapping(&buf[0]);
         buf[s.len()] = 0u8;
         buf
+    }
+
+    fn get_or_create_di_file(self: &mut CodegenCtx, file_id: u32) -> LLVMMetadataRef {
+        let cached = self.di_file_cache.get(&file_id);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        // Get the file path from diagnostics
+        let path = self.diag.files[file_id as usize].path;
+
+        // Split path into directory and filename
+        let last_slash: usize = 0;
+        let found_slash = false;
+        for i in 0usize..path.len() {
+            if path[i] == '/' as u8 {
+                last_slash = i;
+                found_slash = true;
+            }
+        }
+
+        let dir: &[u8];
+        let filename: &[u8];
+        if found_slash {
+            dir = path[0..last_slash];
+            filename = path[last_slash + 1..path.len()];
+        } else {
+            dir = ".";
+            filename = path;
+        }
+
+        let di_file = LLVMDIBuilderCreateFile(
+            self.di_builder,
+            &filename[0] as &libc::c_char, filename.len(),
+            &dir[0] as &libc::c_char, dir.len(),
+        );
+        self.di_file_cache.insert(file_id, di_file);
+        di_file
+    }
+
+    fn get_or_create_di_type(self: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+        let key = ty as &void as usize;
+        if key == 0 || key < 4096usize {
+            return std::mem::zeroed::<LLVMMetadataRef>();
+        }
+        let cached = self.di_type_cache.get(&key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        let result = self.create_di_type_inner(ty);
+        self.di_type_cache.insert(key, result);
+        result
+    }
+
+    fn create_di_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+        if ty.tag == IrTyTag::Void || ty.tag == IrTyTag::Never {
+            return std::mem::zeroed::<LLVMMetadataRef>();
+        }
+
+        if ty.tag == IrTyTag::Builtin {
+            let bt = ty.builtin;
+            let name: &[u8];
+            let encoding: u32;
+            let size_bits: u64;
+
+            switch bt {
+                BuiltinType::Bool => {
+                    name = "bool";
+                    encoding = 0x02u32; // DW_ATE_boolean
+                    size_bits = 8; // stored as i8
+                }
+                BuiltinType::I8 => { name = "i8"; encoding = 0x05u32; size_bits = 8; }
+                BuiltinType::I16 => { name = "i16"; encoding = 0x05u32; size_bits = 16; }
+                BuiltinType::I32 => { name = "i32"; encoding = 0x05u32; size_bits = 32; }
+                BuiltinType::I64 => { name = "i64"; encoding = 0x05u32; size_bits = 64; }
+                BuiltinType::I128 => { name = "i128"; encoding = 0x05u32; size_bits = 128; }
+                BuiltinType::ISize => { name = "isize"; encoding = 0x05u32; size_bits = 64; }
+                BuiltinType::U8 => { name = "u8"; encoding = 0x07u32; size_bits = 8; }
+                BuiltinType::U16 => { name = "u16"; encoding = 0x07u32; size_bits = 16; }
+                BuiltinType::U32 => { name = "u32"; encoding = 0x07u32; size_bits = 32; }
+                BuiltinType::U64 => { name = "u64"; encoding = 0x07u32; size_bits = 64; }
+                BuiltinType::U128 => { name = "u128"; encoding = 0x07u32; size_bits = 128; }
+                BuiltinType::USize => { name = "usize"; encoding = 0x07u32; size_bits = 64; }
+                BuiltinType::F32 => { name = "f32"; encoding = 0x04u32; size_bits = 32; }
+                BuiltinType::F64 => { name = "f64"; encoding = 0x04u32; size_bits = 64; }
+                _ => {
+                    return std::mem::zeroed::<LLVMMetadataRef>();
+                }
+            };
+
+            return LLVMDIBuilderCreateBasicType(
+                self.di_builder,
+                &name[0] as &libc::c_char, name.len(),
+                size_bits,
+                encoding,
+                0u32, // flags
+            );
+        }
+
+        if ty.tag == IrTyTag::Pointer {
+            let pointee_di = self.get_or_create_di_type(ty.inner);
+            return LLVMDIBuilderCreatePointerType(
+                self.di_builder,
+                pointee_di,
+                64u64, // size_in_bits (64-bit pointers)
+                0u32,  // align
+                0u32,  // addr_space
+                &"\0"[0] as &libc::c_char, 0usize,
+            );
+        }
+
+        // For complex types (slice, struct, tuple, array, enum, closure, fn pointer),
+        // represent as opaque byte blob using ABI size
+        let llvm_ty = self.llvm_type(ty);
+        let type_kind = LLVMGetTypeKind(llvm_ty);
+        if type_kind == LLVMTypeKind::Void {
+            return std::mem::zeroed::<LLVMMetadataRef>();
+        }
+
+        let abi_size = LLVMABISizeOfType(self.target_data, llvm_ty);
+        let size_bits = abi_size * 8;
+
+        let type_name: &[u8];
+        if ty.tag == IrTyTag::Slice { type_name = "slice"; }
+        else if ty.tag == IrTyTag::Struct { type_name = "struct"; }
+        else if ty.tag == IrTyTag::Tuple { type_name = "tuple"; }
+        else if ty.tag == IrTyTag::Array { type_name = "array"; }
+        else if ty.tag == IrTyTag::Enum { type_name = "enum"; }
+        else if ty.tag == IrTyTag::Closure { type_name = "closure"; }
+        else if ty.tag == IrTyTag::FnPointer { type_name = "fn"; }
+        else { type_name = "opaque"; }
+
+        LLVMDIBuilderCreateBasicType(
+            self.di_builder,
+            &type_name[0] as &libc::c_char, type_name.len(),
+            size_bits,
+            0x07u32, // DW_ATE_unsigned - treat as raw bytes
+            0u32,
+        )
     }
 
     fn name_hash(self: &CodegenCtx, name: &[u8]) -> u64 {
@@ -829,6 +1024,11 @@ impl CodegenCtx {
 
     /// Generate a C-compatible `main(argc, argv)` wrapper that calls the user's main function.
     fn emit_main_wrapper(self: &mut CodegenCtx, ir_fn: &IrFunction) {
+        // Clear stale debug location from previous function codegen
+        if self.debug_enabled {
+            LLVMSetCurrentDebugLocation2(self.builder, std::mem::zeroed::<LLVMMetadataRef>());
+        }
+
         // Get the user's main function
         let hash = self.name_hash(ir_fn.mangled_name);
         let user_main = self.fn_decls.get(&hash);
@@ -1098,6 +1298,11 @@ impl CodegenCtx {
         self.fn_decls.free();
         self.global_decls.free();
         self.string_cache.free();
+        self.di_file_cache.free();
+        self.di_type_cache.free();
+        if self.debug_enabled {
+            LLVMDisposeDIBuilder(self.di_builder);
+        }
         LLVMDisposeBuilder(self.builder);
         LLVMDisposeTargetData(self.target_data);
         LLVMDisposeTargetMachine(self.target_machine);
@@ -1130,6 +1335,9 @@ struct FnCodegen {
 
     // Temp counter for naming
     temp_counter: usize,
+
+    // Debug info subprogram for this function
+    di_subprogram: LLVMMetadataRef,
 }
 
 impl FnCodegen {
@@ -1144,6 +1352,7 @@ impl FnCodegen {
             continue_bb: Option::none(),
             defer_stack: std::collections::Vector::new(),
             temp_counter: 0,
+            di_subprogram: std::mem::zeroed::<LLVMMetadataRef>(),
         }
     }
 
@@ -1165,7 +1374,85 @@ impl FnCodegen {
         &"\0"[0] as &libc::c_char
     }
 
+    fn set_debug_loc(self: &mut FnCodegen, span: Span) {
+        if !self.ctx.debug_enabled {
+            return;
+        }
+        let sp_ptr = self.di_subprogram as &void as usize;
+        if sp_ptr == 0 {
+            return;
+        }
+        // Skip empty spans
+        if span.start == 0u32 && span.end == 0u32 {
+            return;
+        }
+        let file_id = span.file_id;
+        if file_id as usize >= self.ctx.diag.files.len() {
+            return;
+        }
+        let file_info = &self.ctx.diag.files[file_id as usize];
+        let (line, col) = file_info.line_col(span.start);
+        let loc = LLVMDIBuilderCreateDebugLocation(
+            self.ctx.context,
+            line,
+            col,
+            self.di_subprogram,
+            std::mem::zeroed::<LLVMMetadataRef>(),  // no inlined_at
+        );
+        LLVMSetCurrentDebugLocation2(self.ctx.builder, loc);
+    }
+
     fn emit(self: &mut FnCodegen) {
+        // Set up debug info subprogram
+        if self.ctx.debug_enabled && (self.ir_fn.span.start != 0u32 || self.ir_fn.span.end != 0u32) {
+            let file_id = self.ir_fn.span.file_id;
+            if file_id as usize < self.ctx.diag.files.len() {
+                let di_file = self.ctx.get_or_create_di_file(file_id);
+                let file_info = &self.ctx.diag.files[file_id as usize];
+                let (line, _col) = file_info.line_col(self.ir_fn.span.start);
+
+                // Create subroutine type (empty for line tables only)
+                let sub_type = LLVMDIBuilderCreateSubroutineType(
+                    self.ctx.di_builder,
+                    di_file,
+                    std::mem::zeroed::<&LLVMMetadataRef>(),
+                    0u32,
+                    0u32,
+                );
+
+                let name = self.ir_fn.name;
+                let linkage_name = self.ir_fn.mangled_name;
+                self.di_subprogram = LLVMDIBuilderCreateFunction(
+                    self.ctx.di_builder,
+                    di_file,  // scope = file
+                    &name[0] as &libc::c_char, name.len(),
+                    &linkage_name[0] as &libc::c_char, linkage_name.len(),
+                    di_file,
+                    line,
+                    sub_type,
+                    0i32,   // is_local_to_unit
+                    1i32,   // is_definition
+                    line,   // scope_line
+                    0u32,   // flags
+                    0i32,   // is_optimized
+                );
+                LLVMSetSubprogram(self.llvm_fn, self.di_subprogram);
+
+                // Set initial debug location for entry block allocas
+                let start_loc = LLVMDIBuilderCreateDebugLocation(
+                    self.ctx.context,
+                    line,
+                    0u32,
+                    self.di_subprogram,
+                    std::mem::zeroed::<LLVMMetadataRef>(),
+                );
+                LLVMSetCurrentDebugLocation2(self.ctx.builder, start_loc);
+            }
+        } else if self.ctx.debug_enabled {
+            // No span for this function - clear any stale debug location
+            LLVMSetCurrentDebugLocation2(self.ctx.builder, std::mem::zeroed::<LLVMMetadataRef>());
+        }
+
         // Create entry block
         self.entry_bb = LLVMAppendBasicBlockInContext(
             self.ctx.context, self.llvm_fn, &"\0"[0] as &libc::c_char
@@ -1209,6 +1496,117 @@ impl FnCodegen {
             LLVMBuildStore(self.ctx.builder, zero, alloca);
             self.locals.insert(local.id._value, alloca);
         }
+
+        // Emit dbg.declare for parameters and locals
+        let sp_ptr = self.di_subprogram as &void as usize;
+        if self.ctx.debug_enabled && sp_ptr != 0 {
+            let dummy_addr: u64 = 0;
+            let empty_expr = LLVMDIBuilderCreateExpression(
+                self.ctx.di_builder, &dummy_addr, 0usize
+            );
+
+            // Get function start location for the declares
+            let file_id = self.ir_fn.span.file_id;
+            let di_file = self.ctx.get_or_create_di_file(file_id);
+            let file_info = &self.ctx.diag.files[file_id as usize];
+            let (fn_line, _) = file_info.line_col(self.ir_fn.span.start);
+            let fn_loc = LLVMDIBuilderCreateDebugLocation(
+                self.ctx.context, fn_line, 0u32,
+                self.di_subprogram, std::mem::zeroed::<LLVMMetadataRef>(),
+            );
+
+            // Parameters
+            for i in 0usize..self.ir_fn.params.len() {
+                let param = &self.ir_fn.params[i];
+                if param.ty.is_void() || param.ty.is_never() { continue; }
+                let param_ty = self.ctx.llvm_type(param.ty);
+                if self.is_void_type(param_ty) { continue; }
+
+                let alloca = self.locals.get(&param.id._value);
+                if alloca.is_none() { continue; }
+
+                let di_ty = self.ctx.get_or_create_di_type(param.ty);
+                let di_ty_ptr = di_ty as &void as usize;
+                if di_ty_ptr == 0 { continue; }
+
+                let pname = param.name;
+                if pname.len() == 0 { continue; }
+
+                let di_var = LLVMDIBuilderCreateParameterVariable(
+                    self.ctx.di_builder,
+                    self.di_subprogram,
+                    &pname[0] as &libc::c_char, pname.len(),
+                    (i as u32) + 1u32,
+                    di_file,
+                    fn_line,
+                    di_ty,
+                    1i32, // always_preserve
+                    0u32, // flags
+                );
+                LLVMDIBuilderInsertDeclareAtEnd(
+                    self.ctx.di_builder,
+                    alloca.unwrap(),
+                    di_var,
+                    empty_expr,
+                    fn_loc,
+                    self.entry_bb,
+                );
+            }
+
+            // Locals
+            for i in 0usize..self.ir_fn.local_defs.len() {
+                let local = &self.ir_fn.local_defs[i];
+                if local.ty.is_void() || local.ty.is_never() { continue; }
+                let local_llvm_ty = self.ctx.llvm_type(local.ty);
+                if LLVMGetTypeKind(local_llvm_ty) == LLVMTypeKind::Void { continue; }
+
+                let lname = local.name;
+                if lname.len() == 0 { continue; }
+                // Skip compiler-generated temps (names starting with _)
+                if lname[0] == '_' as u8 { continue; }
+
+                let alloca = self.locals.get(&local.id._value);
+                if alloca.is_none() { continue; }
+
+                let di_ty = self.ctx.get_or_create_di_type(local.ty);
+                let di_ty_ptr = di_ty as &void as usize;
+                if di_ty_ptr == 0 { continue; }
+
+                // Use the local's span for line info, fall back to function start
+                let var_line = if local.span.start != 0u32 || local.span.end != 0u32 {
+                    let (l, _) = file_info.line_col(local.span.start);
+                    l
+                } else {
+                    fn_line
+                };
+
+                let var_loc = LLVMDIBuilderCreateDebugLocation(
+                    self.ctx.context, var_line, 0u32,
+                    self.di_subprogram, std::mem::zeroed::<LLVMMetadataRef>(),
+                );
+
+                let di_var = LLVMDIBuilderCreateAutoVariable(
+                    self.ctx.di_builder,
+                    self.di_subprogram,
+                    &lname[0] as &libc::c_char, lname.len(),
+                    di_file,
+                    var_line,
+                    di_ty,
+                    1i32, // always_preserve
+                    0u32, // flags
+                    0u32, // align
+                );
+                LLVMDIBuilderInsertDeclareAtEnd(
+                    self.ctx.di_builder,
+                    alloca.unwrap(),
+                    di_var,
+                    empty_expr,
+                    var_loc,
+                    self.entry_bb,
+                );
+            }
+        }
+
         // Branch from entry to body
         LLVMBuildBr(self.ctx.builder, body_bb);
 
@@ -1282,6 +1680,9 @@ impl FnCodegen {
         if expr_ptr == 0 || expr_ptr < 4096usize {
             return LLVMGetUndef(self.ctx.void_type);
         }
+        // Set debug location for this expression
+        self.set_debug_loc(expr.span);
+
         switch expr.tag {
         IrTag::IntLit => {
             let ty = self.ctx.llvm_type(expr.ty);
@@ -3102,8 +3503,9 @@ fn generate(
     unit: &CompilationUnit,
     module_name: &[u8],
     test_mode: bool,
+    debug_enabled: bool,
 ) -> CodegenCtx {
-    let ctx = CodegenCtx::new(arena, diag, module_name);
+    let ctx = CodegenCtx::new(arena, diag, module_name, debug_enabled);
 
 
     // Phase 1: Declare all struct types (forward declarations)
@@ -3144,6 +3546,11 @@ fn generate(
             fn_cg.emit();
             fn_cg.free();
         }
+    }
+
+    // Finalize debug info after all function bodies emitted
+    if debug_enabled {
+        LLVMDIBuilderFinalize(ctx.di_builder);
     }
 
     // Phase 5: Initialize globals with constant values

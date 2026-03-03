@@ -1353,6 +1353,7 @@ impl Pass2 {
             attributes: attributes,
             is_variadic: is_variadic,
             abi: abi,
+            span: Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 },
         };
 
         let item = std::mem::zeroed::<Item>();
@@ -1998,6 +1999,7 @@ impl Pass2 {
                     attributes: &[],
                     is_variadic: false,
                     abi: Option::none(),
+                    span: Span { file_id: self.ctx.file_id, start: child.start_byte() as u32, end: child.end_byte() as u32 },
                 });
             }
         }
@@ -3155,6 +3157,7 @@ impl ExprParser {
 
             let e = self.make_expr(ExprTag::Let, span);
             e.id = var_id;
+            e.str_val = var_name;
             e.opt_ty = ty;
             e.opt_expr = init;
             return self.ctx.alloc_expr(e);

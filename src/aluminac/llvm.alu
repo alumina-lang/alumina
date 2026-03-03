@@ -537,6 +537,158 @@ extern "C" fn LLVMBuildAtomicCmpXchg(b: LLVMBuilderRef, ptr: LLVMValueRef, cmp: 
 extern "C" fn LLVMSetOrdering(mem_access_inst: LLVMValueRef, ordering: LLVMAtomicOrdering);
 extern "C" fn LLVMSetVolatile(mem_access_inst: LLVMValueRef, is_volatile: LLVMBool);
 
+// --- Debug Info ---
+struct LLVMOpaqueDIBuilder {}
+struct LLVMOpaqueMetadata {}
+type LLVMDIBuilderRef = &mut LLVMOpaqueDIBuilder;
+type LLVMMetadataRef = &mut LLVMOpaqueMetadata;
+
+enum LLVMDWARFEmissionKind {
+    None = 0i32,
+    Full = 1i32,
+    LineTablesOnly = 2i32,
+}
+
+extern "C" fn LLVMCreateDIBuilder(m: LLVMModuleRef) -> LLVMDIBuilderRef;
+extern "C" fn LLVMDisposeDIBuilder(builder: LLVMDIBuilderRef);
+extern "C" fn LLVMDIBuilderFinalize(builder: LLVMDIBuilderRef);
+
+extern "C" fn LLVMDIBuilderCreateCompileUnit(
+    builder: LLVMDIBuilderRef,
+    lang: u32,               // LLVMDWARFSourceLanguage (DW_LANG_C = 0x0002)
+    file_ref: LLVMMetadataRef,
+    producer: &c_char,
+    producer_len: usize,
+    is_optimized: LLVMBool,
+    flags: &c_char,
+    flags_len: usize,
+    runtime_ver: u32,
+    split_name: &c_char,
+    split_name_len: usize,
+    kind: LLVMDWARFEmissionKind,
+    dwo_id: u32,
+    split_debug_inlining: LLVMBool,
+    debug_info_for_profiling: LLVMBool,
+    sys_root: &c_char,
+    sys_root_len: usize,
+    sdk: &c_char,
+    sdk_len: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateFile(
+    builder: LLVMDIBuilderRef,
+    filename: &c_char,
+    filename_len: usize,
+    directory: &c_char,
+    directory_len: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateFunction(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    linkage_name: &c_char,
+    linkage_name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    ty: LLVMMetadataRef,
+    is_local_to_unit: LLVMBool,
+    is_definition: LLVMBool,
+    scope_line: u32,
+    flags: u32,             // DIFlags
+    is_optimized: LLVMBool,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateSubroutineType(
+    builder: LLVMDIBuilderRef,
+    file: LLVMMetadataRef,
+    param_types: &LLVMMetadataRef,
+    num_param_types: u32,
+    flags: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateDebugLocation(
+    ctx: LLVMContextRef,
+    line: u32,
+    column: u32,
+    scope: LLVMMetadataRef,
+    inlined_at: LLVMMetadataRef,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMSetSubprogram(func: LLVMValueRef, sp: LLVMMetadataRef);
+extern "C" fn LLVMSetCurrentDebugLocation2(builder: LLVMBuilderRef, loc: LLVMMetadataRef);
+
+extern "C" fn LLVMDIBuilderCreateBasicType(
+    builder: LLVMDIBuilderRef,
+    name: &c_char,
+    name_len: usize,
+    size_in_bits: u64,
+    encoding: u32,
+    flags: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreatePointerType(
+    builder: LLVMDIBuilderRef,
+    pointee_ty: LLVMMetadataRef,
+    size_in_bits: u64,
+    align_in_bits: u32,
+    addr_space: u32,
+    name: &c_char,
+    name_len: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateAutoVariable(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    ty: LLVMMetadataRef,
+    always_preserve: LLVMBool,
+    flags: u32,
+    align_in_bits: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateParameterVariable(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    arg_no: u32,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    ty: LLVMMetadataRef,
+    always_preserve: LLVMBool,
+    flags: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderInsertDeclareAtEnd(
+    builder: LLVMDIBuilderRef,
+    storage: LLVMValueRef,
+    var_info: LLVMMetadataRef,
+    expr: LLVMMetadataRef,
+    debug_loc: LLVMMetadataRef,
+    block: LLVMBasicBlockRef,
+) -> LLVMValueRef;
+
+extern "C" fn LLVMDIBuilderCreateExpression(
+    builder: LLVMDIBuilderRef,
+    addr: &u64,
+    length: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMAddModuleFlag(
+    m: LLVMModuleRef,
+    behavior: u32,     // LLVMModuleFlagBehavior (Error = 1)
+    key: &c_char,
+    key_len: u32,
+    val: LLVMMetadataRef,
+);
+
+extern "C" fn LLVMValueAsMetadata(val: LLVMValueRef) -> LLVMMetadataRef;
+
 // === Helper functions ===
 
 fn initialize_native_target() {
