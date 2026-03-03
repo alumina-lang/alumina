@@ -3,6 +3,8 @@
 *Generated 2026-03-03. Based on reading both compiler codebases and auditing
 real-world usage across common/, sysroot/, examples/, tools/, libraries/, and tests/.*
 
+Note that some of the paths have been changed for aluminac, it is now in src/
+
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)

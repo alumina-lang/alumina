@@ -7,9 +7,9 @@
 use ast::*;
 use scope::*;
 use diagnostics::DiagnosticContext;
-use arena::Arena;
-use node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
-use common::{child_by, children_by, NodeVisitorExt, NullableNode};
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
 use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 
 use std::collections::{HashMap, Vector};
@@ -320,7 +320,7 @@ impl Pass1 {
 
     fn get_name(self: &mut Pass1, node: Node) -> &[u8] {
         let name_node = child_by!(node, FieldKind::Name);
-        if name_node.is_null() {
+        if name_node.is_none() {
             return "";
         }
         self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()))
@@ -328,7 +328,7 @@ impl Pass1 {
 
     fn parse_attributes(self: &mut Pass1, node: Node) -> &[Attribute] {
         let attr_node = child_by!(node, FieldKind::Attributes);
-        if attr_node.is_null() {
+        if attr_node.is_none() {
             return &[];
         }
         self.parse_attribute_list(attr_node.unwrap())
@@ -345,12 +345,12 @@ impl Pass1 {
             if kind == NodeKind::AttributeItem {
                 // attribute_item -> inner: meta_item -> name, arguments
                 let inner_node = child_by!(child, FieldKind::Inner);
-                if inner_node.is_null() {
+                if inner_node.is_none() {
                     continue;
                 }
                 let meta = inner_node.unwrap();
                 let name_node = child_by!(meta, FieldKind::Name);
-                if !name_node.is_null() {
+                if !name_node.is_none() {
                     let name = self.ctx.node_text(name_node.unwrap());
                     if name == "inline" {
                         attrs.push(Attribute::inline_attr());
@@ -362,20 +362,20 @@ impl Pass1 {
                         attrs.push(Attribute::test());
                     } else if name == "cfg" {
                         let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_null() {
+                        if !args_node.is_none() {
                             let cfg_name = self.ctx.node_text(args_node.unwrap());
                             attrs.push(Attribute::cfg(self.ctx.intern_str(cfg_name)));
                         }
                     } else if name == "align" {
                         let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_null() {
+                        if !args_node.is_none() {
                             let val_text = self.ctx.node_text(args_node.unwrap());
                             let val = parse_usize(val_text);
                             attrs.push(Attribute::align(val));
                         }
                     } else if name == "link_name" {
                         let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_null() {
+                        if !args_node.is_none() {
                             let link_name = self.ctx.node_text(args_node.unwrap());
                             // Strip quotes if present
                             if link_name.len() >= 2 && link_name[0] == '"' as u8 {
@@ -394,7 +394,7 @@ impl Pass1 {
                         attrs.push(Attribute::no_return());
                     } else if name == "lang" {
                         let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_null() {
+                        if !args_node.is_none() {
                             let lang_name = self.ctx.node_text(args_node.unwrap());
                             // Strip parentheses: "(slice_new)" -> "slice_new"
                             if lang_name.len() >= 2 && lang_name[0] == '(' as u8 && lang_name[lang_name.len() - 1] == ')' as u8 {
@@ -424,7 +424,7 @@ impl Pass1 {
     fn visit_top_level_block_p1(self: &mut Pass1, node: Node) {
         // Check cfg attributes on top-level blocks
         let attr_node = child_by!(node, FieldKind::Attributes);
-        if !attr_node.is_null() {
+        if !attr_node.is_none() {
             // For now, process all top-level blocks
             // TODO: evaluate cfg conditions
         }
@@ -481,7 +481,7 @@ impl Pass1 {
         self.current_scope = child_scope;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_null() {
+        if !type_args.is_none() {
             self.visit_node(type_args.unwrap());
         }
         self.visit_children_by_field(node, FieldKind::Parameters);
@@ -496,7 +496,7 @@ impl Pass1 {
 
         // Check if it's a union
         let kind_node = child_by!(node, FieldKind::Kind);
-        let is_union = !kind_node.is_null() && self.ctx.node_text(kind_node.unwrap()) == "union";
+        let is_union = !kind_node.is_none() && self.ctx.node_text(kind_node.unwrap()) == "union";
 
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 
@@ -520,7 +520,7 @@ impl Pass1 {
         self.current_scope = child_scope;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_null() {
+        if !type_args.is_none() {
             self.visit_node(type_args.unwrap());
         }
         self.visit_children_by_field(node, FieldKind::Body);
@@ -603,7 +603,7 @@ impl Pass1 {
         self.in_container = true;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_null() {
+        if !type_args.is_none() {
             self.visit_node(type_args.unwrap());
         }
         self.visit_children_by_field(node, FieldKind::Body);
@@ -643,7 +643,7 @@ impl Pass1 {
         self.in_container = true;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_null() {
+        if !type_args.is_none() {
             // Visit to register generic params in scope
             self.visit_node(type_args.unwrap());
             // Collect the IDs of the generic params we just registered
@@ -680,7 +680,7 @@ impl Pass1 {
         let prev = self.current_scope;
         self.current_scope = child_scope;
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_null() {
+        if !type_args.is_none() {
             self.visit_node(type_args.unwrap());
         }
         self.current_scope = prev;
@@ -688,7 +688,7 @@ impl Pass1 {
 
     fn visit_use_p1(self: &mut Pass1, node: Node) {
         let arg = child_by!(node, FieldKind::Argument);
-        if arg.is_null() {
+        if arg.is_none() {
             return;
         }
         self.process_use(arg.unwrap(), &[]);
@@ -725,7 +725,7 @@ impl Pass1 {
             NodeKind::UseWildcard => {
                 // use a::*; - star import
                 let path_node = child_by!(node, FieldKind::Path);
-                if !path_node.is_null() {
+                if !path_node.is_none() {
                     let segments = self.collect_path_segments(path_node.unwrap());
                     // Resolve the module path to get its scope
                     let resolved = self.ctx.scopes.resolve_path(self.current_scope, segments);
@@ -740,7 +740,7 @@ impl Pass1 {
             NodeKind::UseAsClause => {
                 let path_node = child_by!(node, FieldKind::Path);
                 let alias_node = child_by!(node, FieldKind::Alias);
-                if !path_node.is_null() && !alias_node.is_null() {
+                if !path_node.is_none() && !alias_node.is_none() {
                     let segments = self.collect_path_segments(path_node.unwrap());
                     let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
                     self.ctx.scopes.add_item(self.current_scope, NamedItem {
@@ -752,13 +752,13 @@ impl Pass1 {
             },
             NodeKind::ScopedUseList => {
                 let path_node = child_by!(node, FieldKind::Path);
-                let new_prefix = if !path_node.is_null() {
+                let new_prefix = if !path_node.is_none() {
                     self.collect_path_segments(path_node.unwrap())
                 } else {
                     prefix
                 };
                 let list_node = child_by!(node, FieldKind::List);
-                if !list_node.is_null() {
+                if !list_node.is_none() {
                     let cursor = list_node.unwrap().walk();
                     defer cursor.free();
                     for child in list_node.unwrap().children(&cursor) {
@@ -803,21 +803,21 @@ impl Pass1 {
             },
             NodeKind::ScopedIdentifier => {
                 let path = child_by!(node, FieldKind::Path);
-                if !path.is_null() {
+                if !path.is_none() {
                     self.collect_path_segments_inner(path.unwrap(), segments);
                 }
                 let name = child_by!(node, FieldKind::Name);
-                if !name.is_null() {
+                if !name.is_none() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
                 }
             },
             NodeKind::ScopedTypeIdentifier => {
                 let path = child_by!(node, FieldKind::Path);
-                if !path.is_null() {
+                if !path.is_none() {
                     self.collect_path_segments_inner(path.unwrap(), segments);
                 }
                 let name = child_by!(node, FieldKind::Name);
-                if !name.is_null() {
+                if !name.is_none() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
                 }
             },
@@ -903,7 +903,7 @@ impl Pass1 {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::GenericArgument {
                 let placeholder = child_by!(child, FieldKind::Placeholder);
-                if !placeholder.is_null() {
+                if !placeholder.is_none() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let id = self.ctx.next_id();
                     self.ctx.scopes.add_item(self.current_scope, NamedItem {
@@ -926,7 +926,7 @@ impl Pass1 {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::GenericArgument {
                 let placeholder = child_by!(child, FieldKind::Placeholder);
-                if !placeholder.is_null() {
+                if !placeholder.is_none() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let resolved = self.ctx.scopes.resolve(self.current_scope, name);
                     if resolved.is_some() && resolved.unwrap().kind.tag == scope::NIK_GENERIC_PARAM {
@@ -1027,12 +1027,12 @@ impl Pass2 {
             let param_names: Vector<&[u8]> = Vector::new();
             defer param_names.free();
 
-            if !params_node.is_null() {
+            if !params_node.is_none() {
                 let cursor = params_node.unwrap().walk();
                 defer cursor.free();
                 for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
                     let name_node = child_by!(param, FieldKind::Name);
-                    if !name_node.is_null() {
+                    if !name_node.is_none() {
                         let name_text = self.ctx.node_text(name_node.unwrap());
                         // Strip the $ prefix
                         let name = if name_text.len() > 0 && name_text[0] == 36u8 {
@@ -1047,7 +1047,7 @@ impl Pass2 {
 
             // Get body node position
             let body_node = child_by!(node, FieldKind::Body);
-            if !body_node.is_null() {
+            if !body_node.is_none() {
                 let body = body_node.unwrap();
                 let params_slice = self.ctx.arena.alloc_slice::<&[u8]>(param_names.len());
                 for j in 0usize..param_names.len() {
@@ -1121,10 +1121,10 @@ impl Pass2 {
 
         // Parse ABI
         let extern_node = child_by!(node, FieldKind::Extern);
-        let abi: Option<&[u8]> = if !extern_node.is_null() {
+        let abi: Option<&[u8]> = if !extern_node.is_none() {
             // Check for explicit ABI string (e.g., extern "C", extern "intrinsic")
             let abi_node = child_by!(node, FieldKind::Abi);
-            if !abi_node.is_null() {
+            if !abi_node.is_none() {
                 let abi_text = self.ctx.node_text(abi_node.unwrap());
                 // Strip quotes from string literal
                 if abi_text.len() >= 2 && abi_text[0] == '"' as u8 {
@@ -1141,11 +1141,11 @@ impl Pass2 {
         };
 
         // Check variadic
-        let is_variadic = !child_by!(node, FieldKind::EtCetera).is_null();
+        let is_variadic = !child_by!(node, FieldKind::EtCetera).is_none();
 
         // Parse body
         let body_node = child_by!(node, FieldKind::Body);
-        let body: Option<&Expr> = if !body_node.is_null() {
+        let body: Option<&Expr> = if !body_node.is_none() {
             let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
             Option::some(expr_parser.parse_expr(body_node.unwrap()))
         } else {
@@ -1185,7 +1185,7 @@ impl Pass2 {
 
     fn parse_generic_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[GenericParam] {
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if type_args.is_null() {
+        if type_args.is_none() {
             return &[];
         }
 
@@ -1198,7 +1198,7 @@ impl Pass2 {
             let kind = NODE_KINDS[arg.symbol() as usize];
             if kind == NodeKind::GenericArgument {
                 let placeholder = child_by!(arg, FieldKind::Placeholder);
-                if !placeholder.is_null() {
+                if !placeholder.is_none() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     // Reuse the ID from Pass1's scope registration
                     let resolved = self.ctx.scopes.resolve(scope_idx, name);
@@ -1213,7 +1213,7 @@ impl Pass2 {
 
                     // Parse default
                     let default_node = child_by!(arg, FieldKind::Default);
-                    let default_ty: Option<&Ty> = if !default_node.is_null() {
+                    let default_ty: Option<&Ty> = if !default_node.is_none() {
                         Option::some(self.parse_type(default_node.unwrap(), scope_idx))
                     } else {
                         Option::none()
@@ -1241,7 +1241,7 @@ impl Pass2 {
 
     fn parse_generic_bounds(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
         let bound_node = child_by!(node, FieldKind::Bound);
-        if bound_node.is_null() {
+        if bound_node.is_none() {
             return &[];
         }
 
@@ -1271,7 +1271,7 @@ impl Pass2 {
 
     fn parse_fn_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[FnParam] {
         let params_node = child_by!(node, FieldKind::Parameters);
-        if params_node.is_null() {
+        if params_node.is_none() {
             return &[];
         }
 
@@ -1283,7 +1283,7 @@ impl Pass2 {
         for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
             let name = self.ctx.intern_str(self.ctx.node_text(child_by!(param, FieldKind::Name).unwrap()));
             let type_node = child_by!(param, FieldKind::Type);
-            let ty = if !type_node.is_null() {
+            let ty = if !type_node.is_none() {
                 self.parse_type(type_node.unwrap(), scope_idx)
             } else {
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -1313,7 +1313,7 @@ impl Pass2 {
 
     fn parse_return_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
         let ret_node = child_by!(node, FieldKind::ReturnType);
-        if ret_node.is_null() {
+        if ret_node.is_none() {
             return self.ctx.alloc_ty(Ty::void_ty());
         }
         let unwrapped = ret_node.unwrap();
@@ -1370,8 +1370,8 @@ impl Pass2 {
             },
             NodeKind::PointerOf => {
                 let inner = child_by!(node, FieldKind::Inner);
-                let is_mut = !child_by!(node, FieldKind::Mut).is_null();
-                if !inner.is_null() {
+                let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+                if !inner.is_none() {
                     let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
                     return self.ctx.alloc_ty(Ty::pointer_ty(inner_ty, !is_mut));
                 }
@@ -1379,8 +1379,8 @@ impl Pass2 {
             },
             NodeKind::SliceOf => {
                 let inner = child_by!(node, FieldKind::Inner);
-                let is_mut = !child_by!(node, FieldKind::Mut).is_null();
-                if !inner.is_null() {
+                let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+                if !inner.is_none() {
                     let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
                     return self.ctx.alloc_ty(Ty::slice_ty(inner_ty, !is_mut));
                 }
@@ -1389,7 +1389,7 @@ impl Pass2 {
             NodeKind::ArrayOf => {
                 let inner = child_by!(node, FieldKind::Inner);
                 let size_node = child_by!(node, FieldKind::Size);
-                if !inner.is_null() && !size_node.is_null() {
+                if !inner.is_none() && !size_node.is_none() {
                     let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
                     let size_text = self.ctx.node_text(size_node.unwrap());
                     let size = parse_usize(size_text);
@@ -1420,7 +1420,7 @@ impl Pass2 {
 
                 let param_types: Vector<&Ty> = Vector::new();
                 defer param_types.free();
-                if !params_node.is_null() {
+                if !params_node.is_none() {
                     let cursor = params_node.unwrap().walk();
                     defer cursor.free();
                     for child in params_node.unwrap().children(&cursor) {
@@ -1429,7 +1429,7 @@ impl Pass2 {
                         }
                     }
                 }
-                let ret: &Ty = if !ret_node.is_null() {
+                let ret: &Ty = if !ret_node.is_none() {
                     self.parse_type(ret_node.unwrap(), scope_idx)
                 } else {
                     self.ctx.alloc_ty(Ty::void_ty()) as &Ty
@@ -1444,7 +1444,7 @@ impl Pass2 {
             NodeKind::GenericType => {
                 let base_node = child_by!(node, FieldKind::Type);
                 let args_node = child_by!(node, FieldKind::TypeArguments);
-                if !base_node.is_null() && !args_node.is_null() {
+                if !base_node.is_none() && !args_node.is_none() {
                     let base = self.parse_type(base_node.unwrap(), scope_idx);
                     let type_args = self.parse_type_args(args_node.unwrap(), scope_idx);
                     return self.ctx.alloc_ty(Ty::generic_ty(base, type_args));
@@ -1477,7 +1477,7 @@ impl Pass2 {
                 // Pair::<A, B> syntax - same as GenericType but with ::
                 let base_node = child_by!(node, FieldKind::Type);
                 let args_node = child_by!(node, FieldKind::TypeArguments);
-                if !base_node.is_null() && !args_node.is_null() {
+                if !base_node.is_none() && !args_node.is_none() {
                     let base = self.parse_type(base_node.unwrap(), scope_idx);
                     let type_args = self.parse_type_args(args_node.unwrap(), scope_idx);
                     return self.ctx.alloc_ty(Ty::generic_ty(base, type_args));
@@ -1487,7 +1487,7 @@ impl Pass2 {
             NodeKind::TypeOf => {
                 // typeof(expr)
                 let inner = child_by!(node, FieldKind::Inner);
-                if !inner.is_null() {
+                if !inner.is_none() {
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let expr = expr_parser.parse_expr(inner.unwrap());
                     let ty = Ty {
@@ -1510,7 +1510,7 @@ impl Pass2 {
                 let cond_node = child_by!(node, FieldKind::Condition);
                 let then_node = child_by!(node, FieldKind::Consequence);
                 let else_node = child_by!(node, FieldKind::Alternative);
-                if !cond_node.is_null() && !then_node.is_null() && !else_node.is_null() {
+                if !cond_node.is_none() && !then_node.is_none() && !else_node.is_none() {
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let cond_expr = expr_parser.parse_expr(cond_node.unwrap());
                     let then_ty = self.parse_type(then_node.unwrap(), scope_idx);
@@ -1610,42 +1610,42 @@ impl Pass2 {
             },
             NodeKind::ScopedTypeIdentifier => {
                 let path = child_by!(node, FieldKind::Path);
-                if !path.is_null() {
+                if !path.is_none() {
                     self.collect_type_path_inner(path.unwrap(), segments);
                 }
                 let name = child_by!(node, FieldKind::Name);
-                if !name.is_null() {
+                if !name.is_none() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
                 }
             },
             NodeKind::ScopedIdentifier => {
                 let path = child_by!(node, FieldKind::Path);
-                if !path.is_null() {
+                if !path.is_none() {
                     self.collect_type_path_inner(path.unwrap(), segments);
                 }
                 let name = child_by!(node, FieldKind::Name);
-                if !name.is_null() {
+                if !name.is_none() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
                 }
             },
             NodeKind::GenericTypeWithTurbofish => {
                 // Extract just the type name, ignoring type arguments
                 let inner_type = child_by!(node, FieldKind::Type);
-                if !inner_type.is_null() {
+                if !inner_type.is_none() {
                     self.collect_type_path_inner(inner_type.unwrap(), segments);
                 }
             },
             NodeKind::GenericType => {
                 // GenericType can be aliased from GenericTypeWithTurbofish
                 let inner_type = child_by!(node, FieldKind::Type);
-                if !inner_type.is_null() {
+                if !inner_type.is_none() {
                     self.collect_type_path_inner(inner_type.unwrap(), segments);
                 }
             },
             NodeKind::Turbofish => {
                 // Extract just the function name, ignoring type arguments
                 let inner_fn = child_by!(node, FieldKind::Function);
-                if !inner_fn.is_null() {
+                if !inner_fn.is_none() {
                     self.collect_type_path_inner(inner_fn.unwrap(), segments);
                 }
             },
@@ -1677,7 +1677,7 @@ impl Pass2 {
             if kind == NodeKind::StructField {
                 let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
                 let type_node = child_by!(child, FieldKind::Type);
-                let ty = if !type_node.is_null() {
+                let ty = if !type_node.is_none() {
                     self.parse_type(type_node.unwrap(), pending.scope_idx)
                 } else {
                     self.ctx.alloc_ty(Ty::unresolved())
@@ -1724,7 +1724,7 @@ impl Pass2 {
 
         // Check for underlying type
         let type_node = child_by!(node, FieldKind::Type);
-        let underlying: Option<&Ty> = if !type_node.is_null() {
+        let underlying: Option<&Ty> = if !type_node.is_none() {
             Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
         } else {
             Option::none()
@@ -1737,7 +1737,7 @@ impl Pass2 {
             if kind == NodeKind::EnumItem {
                 let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
                 let value_node = child_by!(child, FieldKind::Value);
-                let value: Option<&Expr> = if !value_node.is_null() {
+                let value: Option<&Expr> = if !value_node.is_none() {
                     let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
                     Option::some(expr_parser.parse_expr(value_node.unwrap()))
                 } else {
@@ -1799,7 +1799,7 @@ impl Pass2 {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::FunctionDefinition {
                 let fn_name_node = child_by!(child, FieldKind::Name);
-                if fn_name_node.is_null() { continue; }
+                if fn_name_node.is_none() { continue; }
                 let fn_name = self.ctx.intern_str(self.ctx.node_text(fn_name_node.unwrap()));
                 let fn_generic_params = self.parse_generic_params(child, pending.scope_idx);
                 let fn_params = self.parse_fn_params(child, pending.scope_idx);
@@ -1815,7 +1815,7 @@ impl Pass2 {
 
                 // Parse optional body (default method implementation)
                 let fn_body_node = child_by!(child, FieldKind::Body);
-                let fn_body: Option<&Expr> = if !fn_body_node.is_null() {
+                let fn_body: Option<&Expr> = if !fn_body_node.is_none() {
                     let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
                     Option::some(expr_parser.parse_expr(fn_body_node.unwrap()))
                 } else {
@@ -1862,7 +1862,7 @@ impl Pass2 {
 
             // Get the protocol type from the mixin node
             let proto_node = child_by!(node, FieldKind::Protocol);
-            if proto_node.is_null() {
+            if proto_node.is_none() {
                 continue;
             }
 
@@ -1921,7 +1921,7 @@ impl Pass2 {
         let generic_params = self.parse_generic_params(node, pending.scope_idx);
 
         let inner_node = child_by!(node, FieldKind::Inner);
-        let target = if !inner_node.is_null() {
+        let target = if !inner_node.is_none() {
             self.parse_type(inner_node.unwrap(), pending.scope_idx)
         } else {
             // Opaque type alias (no = ...) - treat as void
@@ -1953,14 +1953,14 @@ impl Pass2 {
 
     fn build_static(self: &mut Pass2, node: Node, pending: &PendingStatic) {
         let type_node = child_by!(node, FieldKind::Type);
-        let ty: Option<&Ty> = if !type_node.is_null() {
+        let ty: Option<&Ty> = if !type_node.is_none() {
             Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
         } else {
             Option::none()
         };
 
         let value_node = child_by!(node, FieldKind::Init);
-        let init: Option<&Expr> = if !value_node.is_null() {
+        let init: Option<&Expr> = if !value_node.is_none() {
             let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
             Option::some(expr_parser.parse_expr(value_node.unwrap()))
         } else {
@@ -2059,7 +2059,7 @@ impl ExprParser {
             NodeKind::RangeExpression => self.parse_range(node, span),
             NodeKind::ParenthesizedExpression => {
                 let inner = child_by!(node, FieldKind::Inner);
-                if !inner.is_null() {
+                if !inner.is_none() {
                     return self.parse_expr(inner.unwrap());
                 }
                 self.alloc_void(span)
@@ -2134,7 +2134,7 @@ impl ExprParser {
 
         // Also check for a result expression
         let result_node = child_by!(node, FieldKind::Result);
-        if !result_node.is_null() {
+        if !result_node.is_none() {
             stmts.push(block_parser.parse_expr(result_node.unwrap()));
         }
 
@@ -2323,7 +2323,7 @@ impl ExprParser {
         let right = child_by!(node, FieldKind::Right);
         let op_node = child_by!(node, FieldKind::Operator);
 
-        if left.is_null() || right.is_null() || op_node.is_null() {
+        if left.is_none() || right.is_none() || op_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2344,7 +2344,7 @@ impl ExprParser {
         let operand_node = child_by!(node, FieldKind::Value);
         let op_node = child_by!(node, FieldKind::Operator);
 
-        if operand_node.is_null() || op_node.is_null() {
+        if operand_node.is_none() || op_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2365,7 +2365,7 @@ impl ExprParser {
     fn parse_assignment(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let left = child_by!(node, FieldKind::Left);
         let right = child_by!(node, FieldKind::Right);
-        if left.is_null() || right.is_null() {
+        if left.is_none() || right.is_none() {
             return self.alloc_void(span);
         }
         let lhs = self.parse_expr(left.unwrap());
@@ -2382,7 +2382,7 @@ impl ExprParser {
         let left = child_by!(node, FieldKind::Left);
         let right = child_by!(node, FieldKind::Right);
         let op_node = child_by!(node, FieldKind::Operator);
-        if left.is_null() || right.is_null() || op_node.is_null() {
+        if left.is_none() || right.is_none() || op_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2403,7 +2403,7 @@ impl ExprParser {
         let func = child_by!(node, FieldKind::Function);
         let args_node = child_by!(node, FieldKind::Arguments);
 
-        if func.is_null() {
+        if func.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2426,14 +2426,14 @@ impl ExprParser {
         // Check for ScopedIdentifier with turbofish in path, e.g. Wrapper::<i32>::new(args)
         if func_kind == NodeKind::ScopedIdentifier {
             let path_child = child_by!(func_node, FieldKind::Path);
-            if !path_child.is_null() {
+            if !path_child.is_none() {
                 let path_kind = NODE_KINDS[path_child.unwrap().symbol() as usize];
                 if path_kind == NodeKind::GenericTypeWithTurbofish || path_kind == NodeKind::Turbofish || path_kind == NodeKind::GenericType {
                     // Extract type arguments from the turbofish in the path
                     let turbo_node = path_child.unwrap();
                     let type_args_node = child_by!(turbo_node, FieldKind::TypeArguments);
                     let pass2 = Pass2 { ctx: self.ctx };
-                    let type_args = if !type_args_node.is_null() {
+                    let type_args = if !type_args_node.is_none() {
                         pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
                     } else {
                         let empty: &[&Ty] = &[];
@@ -2443,7 +2443,7 @@ impl ExprParser {
                     // Resolve the scoped identifier (which finds the method)
                     let callee = self.parse_scoped_identifier(func_node, span);
 
-                    let call_args = if !args_node.is_null() {
+                    let call_args = if !args_node.is_none() {
                         self.parse_arg_list(args_node.unwrap())
                     } else {
                         let empty: &[&Expr] = &[];
@@ -2460,7 +2460,7 @@ impl ExprParser {
         }
 
         let callee = self.parse_expr(func_node);
-        let args = if !args_node.is_null() {
+        let args = if !args_node.is_none() {
             self.parse_arg_list(args_node.unwrap())
         } else {
             let empty: &[&Expr] = &[];
@@ -2477,10 +2477,10 @@ impl ExprParser {
         // Turbofish has field("function", ...) and field("type_arguments", ...)
         // GenericTypeWithTurbofish has field("type", ...) and field("type_arguments", ...)
         let path_node = child_by!(func_node, FieldKind::Function);
-        let path_node2 = if path_node.is_null() { child_by!(func_node, FieldKind::Type) } else { path_node };
+        let path_node2 = if path_node.is_none() { child_by!(func_node, FieldKind::Type) } else { path_node };
         let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
 
-        if path_node2.is_null() || type_args_node.is_null() {
+        if path_node2.is_none() || type_args_node.is_none() {
             return Expr::void_expr();
         }
 
@@ -2509,10 +2509,10 @@ impl ExprParser {
     fn parse_turbofish_call(self: &ExprParser, call_node: Node, func_node: Node, span: Span) -> Expr {
         // Parse the function path from the turbofish
         let path_node = child_by!(func_node, FieldKind::Function);
-        let path_node2 = if path_node.is_null() { child_by!(func_node, FieldKind::Type) } else { path_node };
+        let path_node2 = if path_node.is_none() { child_by!(func_node, FieldKind::Type) } else { path_node };
         let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
 
-        if path_node2.is_null() {
+        if path_node2.is_none() {
             return Expr::void_expr();
         }
 
@@ -2521,7 +2521,7 @@ impl ExprParser {
 
         // Parse type arguments
         let pass2 = Pass2 { ctx: self.ctx };
-        let type_args = if !type_args_node.is_null() {
+        let type_args = if !type_args_node.is_none() {
             pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
         } else {
             let empty: &[&Ty] = &[];
@@ -2530,7 +2530,7 @@ impl ExprParser {
 
         // Parse call arguments from the outer call node
         let args_node = child_by!(call_node, FieldKind::Arguments);
-        let args = if !args_node.is_null() {
+        let args = if !args_node.is_none() {
             self.parse_arg_list(args_node.unwrap())
         } else {
             let empty: &[&Expr] = &[];
@@ -2569,7 +2569,7 @@ impl ExprParser {
     fn parse_field(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let obj = child_by!(node, FieldKind::Value);
         let field = child_by!(node, FieldKind::Field);
-        if obj.is_null() || field.is_null() {
+        if obj.is_none() || field.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2599,7 +2599,7 @@ impl ExprParser {
     fn parse_tuple_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let obj = child_by!(node, FieldKind::Value);
         let index = child_by!(node, FieldKind::Index);
-        if obj.is_null() || index.is_null() {
+        if obj.is_none() || index.is_none() {
             return self.alloc_void(span);
         }
         let obj_expr = self.parse_expr(obj.unwrap());
@@ -2615,7 +2615,7 @@ impl ExprParser {
     fn parse_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let obj = child_by!(node, FieldKind::Value);
         let index = child_by!(node, FieldKind::Index);
-        if obj.is_null() || index.is_null() {
+        if obj.is_none() || index.is_none() {
             return self.alloc_void(span);
         }
         let obj_expr = self.parse_expr(obj.unwrap());
@@ -2629,8 +2629,8 @@ impl ExprParser {
 
     fn parse_ref(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Value);
-        let is_mut = !child_by!(node, FieldKind::Mut).is_null();
-        if inner.is_null() {
+        let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+        if inner.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2642,7 +2642,7 @@ impl ExprParser {
 
     fn parse_deref(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Value);
-        if inner.is_null() {
+        if inner.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2654,7 +2654,7 @@ impl ExprParser {
     fn parse_cast(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Value);
         let type_node = child_by!(node, FieldKind::Type);
-        if value.is_null() || type_node.is_null() {
+        if value.is_none() || type_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2670,7 +2670,7 @@ impl ExprParser {
     fn parse_type_check(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Value);
         let type_node = child_by!(node, FieldKind::Type);
-        if value.is_null() || type_node.is_null() {
+        if value.is_none() || type_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2688,16 +2688,16 @@ impl ExprParser {
         let then_node = child_by!(node, FieldKind::Consequence);
         let else_node = child_by!(node, FieldKind::Alternative);
 
-        if cond.is_null() || then_node.is_null() {
+        if cond.is_none() || then_node.is_none() {
             return self.alloc_void(span);
         }
 
         let cond_expr = self.parse_expr(cond.unwrap());
         let then_expr = self.parse_expr(then_node.unwrap());
-        let else_expr: Option<&Expr> = if !else_node.is_null() {
+        let else_expr: Option<&Expr> = if !else_node.is_none() {
             // Else clause wraps its content
             let inner = child_by!(else_node.unwrap(), FieldKind::Inner);
-            if !inner.is_null() {
+            if !inner.is_none() {
                 Option::some(self.parse_expr(inner.unwrap()))
             } else {
                 // Direct else body
@@ -2709,7 +2709,7 @@ impl ExprParser {
 
         // Check if this is "when" (static if) vs "if"
         let kind_node = child_by!(node, FieldKind::Kind);
-        let is_when = if !kind_node.is_null() {
+        let is_when = if !kind_node.is_none() {
             self.ctx.node_text(kind_node.unwrap()) == "when"
         } else {
             false
@@ -2725,7 +2725,7 @@ impl ExprParser {
 
     fn parse_switch(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Value);
-        if value.is_null() {
+        if value.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2734,7 +2734,7 @@ impl ExprParser {
         defer arms.free();
 
         let body = child_by!(node, FieldKind::Body);
-        if !body.is_null() {
+        if !body.is_none() {
             let cursor = body.unwrap().walk();
             defer cursor.free();
             for child in children_by!(body.unwrap(), FieldKind::Arm, &cursor) {
@@ -2746,7 +2746,7 @@ impl ExprParser {
                     let patterns: Vector<&Expr> = Vector::new();
                     defer patterns.free();
 
-                    if !pattern_node.is_null() {
+                    if !pattern_node.is_none() {
                         // Check for wildcard/default pattern "_"
                         let pat_text = self.ctx.node_text(pattern_node.unwrap());
                         let is_wildcard = pat_text.len() == 1 && pat_text[0] == '_';
@@ -2766,7 +2766,7 @@ impl ExprParser {
                         }
                     }
 
-                    let body_expr = if !body_node.is_null() {
+                    let body_expr = if !body_node.is_none() {
                         self.parse_expr(body_node.unwrap())
                     } else {
                         self.alloc_void(Span::empty())
@@ -2799,7 +2799,7 @@ impl ExprParser {
     fn parse_while(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let cond = child_by!(node, FieldKind::Condition);
         let body = child_by!(node, FieldKind::Body);
-        if cond.is_null() || body.is_null() {
+        if cond.is_none() || body.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2814,7 +2814,7 @@ impl ExprParser {
         let iter_node = child_by!(node, FieldKind::Value);
         let body = child_by!(node, FieldKind::Body);
 
-        if name_node.is_null() || iter_node.is_null() || body.is_null() {
+        if name_node.is_none() || iter_node.is_none() || body.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2841,7 +2841,7 @@ impl ExprParser {
 
     fn parse_loop(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let body = child_by!(node, FieldKind::Body);
-        if body.is_null() {
+        if body.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2853,7 +2853,7 @@ impl ExprParser {
     fn parse_break(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(EXPR_BREAK, span);
-        if !value.is_null() {
+        if !value.is_none() {
             e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
         self.ctx.alloc_expr(e)
@@ -2862,7 +2862,7 @@ impl ExprParser {
     fn parse_return(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(EXPR_RETURN, span);
-        if !value.is_null() {
+        if !value.is_none() {
             e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
         self.ctx.alloc_expr(e)
@@ -2873,19 +2873,19 @@ impl ExprParser {
         let type_node = child_by!(node, FieldKind::Type);
         let value_node = child_by!(node, FieldKind::Value);
 
-        if !name_node.is_null() {
+        if !name_node.is_none() {
             // Simple let: let x = expr;
             let var_id = self.ctx.next_id();
             let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
             let pass2 = Pass2 { ctx: self.ctx };
-            let ty: Option<&Ty> = if !type_node.is_null() {
+            let ty: Option<&Ty> = if !type_node.is_none() {
                 Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
             } else {
                 Option::none()
             };
 
-            let init: Option<&Expr> = if !value_node.is_null() {
+            let init: Option<&Expr> = if !value_node.is_none() {
                 Option::some(self.parse_expr(value_node.unwrap()))
             } else {
                 Option::none()
@@ -2917,7 +2917,7 @@ impl ExprParser {
             elements.push(child);
         }
 
-        if elements.len() == 0 || value_node.is_null() {
+        if elements.len() == 0 || value_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2974,7 +2974,7 @@ impl ExprParser {
         let type_node = child_by!(node, FieldKind::Name);
         let init_node = child_by!(node, FieldKind::Arguments);
 
-        if type_node.is_null() {
+        if type_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -2984,7 +2984,7 @@ impl ExprParser {
         let fields: Vector<FieldInit> = Vector::new();
         defer fields.free();
 
-        if !init_node.is_null() {
+        if !init_node.is_none() {
             let cursor = init_node.unwrap().walk();
             defer cursor.free();
             for child in init_node.unwrap().children(&cursor) {
@@ -2992,7 +2992,7 @@ impl ExprParser {
                 if kind == NodeKind::StructInitializerItem {
                     let name_node = child_by!(child, FieldKind::Field);
                     let value_node = child_by!(child, FieldKind::Value);
-                    if !name_node.is_null() && !value_node.is_null() {
+                    if !name_node.is_none() && !value_node.is_none() {
                         fields.push(FieldInit {
                             name: self.ctx.intern_str(self.ctx.node_text(name_node.unwrap())),
                             value: self.parse_expr(value_node.unwrap()),
@@ -3057,7 +3057,7 @@ impl ExprParser {
         let params_node = child_by!(node, FieldKind::Parameters);
         let body_node = child_by!(node, FieldKind::Body);
 
-        if body_node.is_null() {
+        if body_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -3073,7 +3073,7 @@ impl ExprParser {
         // Generate a self_param id for closure struct access (only used if there are captures)
         let self_param_id = self.ctx.next_id();
 
-        if !params_node.is_null() {
+        if !params_node.is_none() {
             let cursor = params_node.unwrap().walk();
             defer cursor.free();
             let pass2 = Pass2 { ctx: self.ctx };
@@ -3088,7 +3088,7 @@ impl ExprParser {
                         let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
                         let by_ref_node = child_by!(child, FieldKind::ByReference);
-                        let bound_type = if !by_ref_node.is_null() {
+                        let bound_type = if !by_ref_node.is_none() {
                             BOUND_BY_REFERENCE
                         } else {
                             BOUND_BY_VALUE
@@ -3144,10 +3144,10 @@ impl ExprParser {
                         if kind as i32 == NodeKind::Parameter as i32 {
                             let name_node = child_by!(child, FieldKind::Name);
                             let type_node = child_by!(child, FieldKind::Type);
-                            if !name_node.is_null() {
+                            if !name_node.is_none() {
                                 name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
                             }
-                            if !type_node.is_null() {
+                            if !type_node.is_none() {
                                 ty = Option::some(pass2.parse_type(type_node.unwrap(), lambda_scope));
                             }
                         } else {
@@ -3173,7 +3173,7 @@ impl ExprParser {
 
         let pass2 = Pass2 { ctx: self.ctx };
         let ret_node = child_by!(node, FieldKind::ReturnType);
-        let ret_ty: Option<&Ty> = if !ret_node.is_null() {
+        let ret_ty: Option<&Ty> = if !ret_node.is_none() {
             Option::some(pass2.parse_type(ret_node.unwrap(), lambda_scope))
         } else {
             Option::none()
@@ -3205,7 +3205,7 @@ impl ExprParser {
 
     fn parse_defer(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Inner);
-        if inner.is_null() {
+        if inner.is_none() {
             return self.alloc_void(span);
         }
 
@@ -3216,7 +3216,7 @@ impl ExprParser {
 
     fn parse_try(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Inner);
-        if inner.is_null() {
+        if inner.is_none() {
             return self.alloc_void(span);
         }
 
@@ -3231,17 +3231,17 @@ impl ExprParser {
         let inclusive_node = child_by!(node, FieldKind::Inclusive);
 
         let e = self.make_expr(EXPR_RANGE, span);
-        e.flag = if !inclusive_node.is_null() {
+        e.flag = if !inclusive_node.is_none() {
             let text = self.ctx.node_text(inclusive_node.unwrap());
             text.len() == 3  // "..=" is 3 bytes, ".." is 2 bytes
         } else {
             false
         };
 
-        if !lower.is_null() {
+        if !lower.is_none() {
             e.lhs = self.parse_expr(lower.unwrap());
         }
-        if !upper.is_null() {
+        if !upper.is_none() {
             e.rhs = self.parse_expr(upper.unwrap());
         }
         self.ctx.alloc_expr(e)
@@ -3251,12 +3251,12 @@ impl ExprParser {
         let name_node = child_by!(node, FieldKind::Macro);
         let args_node = child_by!(node, FieldKind::Arguments);
 
-        if name_node.is_null() {
+        if name_node.is_none() {
             return self.alloc_void(span);
         }
 
         let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
-        let args = if !args_node.is_null() {
+        let args = if !args_node.is_none() {
             self.parse_arg_list(args_node.unwrap())
         } else {
             let empty: &[&Expr] = &[];
@@ -3305,7 +3305,7 @@ impl ExprParser {
         let macro_node = child_by!(node, FieldKind::Macro);
         let args_node = child_by!(node, FieldKind::Arguments);
 
-        if value.is_null() || macro_node.is_null() {
+        if value.is_none() || macro_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -3316,7 +3316,7 @@ impl ExprParser {
         defer all_args.free();
         all_args.push(obj);
 
-        if !args_node.is_null() {
+        if !args_node.is_none() {
             let extra_args = self.parse_arg_list(args_node.unwrap());
             for i in 0usize..extra_args.len() {
                 all_args.push(extra_args[i]);
@@ -3366,7 +3366,7 @@ impl ExprParser {
         let iter_node = child_by!(node, FieldKind::Value);
         let body = child_by!(node, FieldKind::Body);
 
-        if name_node.is_null() || iter_node.is_null() || body.is_null() {
+        if name_node.is_none() || iter_node.is_none() || body.is_none() {
             return self.alloc_void(span);
         }
 
@@ -3393,7 +3393,7 @@ impl ExprParser {
 
     fn parse_et_cetera(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Value);
-        if inner.is_null() {
+        if inner.is_none() {
             return self.alloc_void(span);
         }
 

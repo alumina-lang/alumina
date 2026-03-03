@@ -6,10 +6,10 @@
 // 3. Monomorphize generic code
 // 4. Generate LLVM IR and emit object/executable
 
-use aluminac::lib::arena::Arena;
-use aluminac::lib::ast::*;
-use aluminac::lib::scope::*;
-use aluminac::lib::diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use aluminac::ast::*;
+use aluminac::scope::*;
+use aluminac::diagnostics::DiagnosticContext;
 use tree_sitter::{Parser, Tree, TSLanguage};
 use std::collections::Vector;
 use std::option::Option;
@@ -69,7 +69,7 @@ struct Compiler {
 struct SourceEntry {
     path: &[u8],
     contents: &[u8],
-    module_path: &[u8], // e.g. "aluminac::lib::ast" or "" for root
+    module_path: &[u8], // e.g. "aluminac::ast" or "" for root
 }
 
 impl Compiler {
@@ -313,7 +313,7 @@ impl Compiler {
         // then parse all function bodies (Pass 2). This ensures cross-module
         // references resolve correctly regardless of file processing order.
         let trees: Vector<Tree> = Vector::new();
-        let contexts: Vector<aluminac::lib::parser::ParseContext> = Vector::new();
+        let contexts: Vector<aluminac::parser::ParseContext> = Vector::new();
         defer trees.free();
         defer contexts.free();
 
@@ -339,7 +339,7 @@ impl Compiler {
             let raw_node = tree_sitter::ts_tree_root_node(tree.inner);
             let root = tree_sitter::Node { inner: raw_node };
 
-            let ctx = aluminac::lib::parser::parse_file_pass1(
+            let ctx = aluminac::parser::parse_file_pass1(
                 root,
                 entry.contents,
                 i as u32,
@@ -359,16 +359,16 @@ impl Compiler {
         for i in 0usize..trees.len() {
             let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
             let root = tree_sitter::Node { inner: raw };
-            aluminac::lib::parser::collect_macros(&contexts.as_slice_mut()[i], root);
+            aluminac::parser::collect_macros(&contexts.as_slice_mut()[i], root);
         }
         // Share macros across all contexts
-        aluminac::lib::parser::share_macros(contexts.as_slice_mut());
+        aluminac::parser::share_macros(contexts.as_slice_mut());
 
         // Phase 2: Parse all function bodies (all names are now registered)
         for i in 0usize..trees.len() {
             let raw = tree_sitter::ts_tree_root_node(trees[i].inner);
             let root = tree_sitter::Node { inner: raw };
-            let items = aluminac::lib::parser::parse_file_pass2(&contexts.as_slice_mut()[i], root);
+            let items = aluminac::parser::parse_file_pass2(&contexts.as_slice_mut()[i], root);
 
             for j in 0usize..items.len() {
                 self.all_items.push(items[j]);
@@ -393,7 +393,7 @@ impl Compiler {
             items_slice[i] = self.all_items[i];
         }
         // Monomorphize
-        let unit = aluminac::lib::mono::monomorphize(
+        let unit = aluminac::mono::monomorphize(
             &self.arena,
             &self.scopes,
             &self.id_gen,
@@ -409,7 +409,7 @@ impl Compiler {
 
 
         // Code generation
-        let ctx = aluminac::lib::codegen::generate(
+        let ctx = aluminac::codegen::generate(
             &self.arena,
             &self.diag,
             &unit,
@@ -518,7 +518,7 @@ impl Compiler {
         result == 0i32
     }
 
-    /// Given a module path like "aluminac::lib::ast", resolve or create
+    /// Given a module path like "aluminac::ast", resolve or create
     /// the nested module scope hierarchy, returning the innermost scope.
     fn resolve_or_create_module_scope(self: &mut Compiler, root_scope: u32, module_path: &[u8]) -> u32 {
         let current = root_scope;

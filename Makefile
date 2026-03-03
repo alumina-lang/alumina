@@ -172,7 +172,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(TREE_SITTER_SOURCES) $(CODEGEN_SOURCES)
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
-libraries/aluminac/lib/node_kinds.alu: $(CODEGEN)
+libraries/aluminac-common/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) --output $@
 
 $(LIBRARIES_TESTS).c: $(ALU_TEST_DEPS) $(ALU_LIBRARIES)
@@ -187,37 +187,49 @@ $(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c $(MINICORO)
 ALUMINAC_S1 = $(BUILD_DIR)/aluminac_s1
 ALUMINAC_S2 = $(BUILD_DIR)/aluminac_s2
 ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
-ALUMINAC_SOURCES = $(shell find libraries/aluminac/ -type f -name '*.alu')
+
+SYSROOT_SIMPLE = sysroot-simple/
+
+SYSROOT_SIMPLE_FILES = $(shell find $(SYSROOT_SIMPLE) -type f -name '*.alu')
+ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
+ALUMINAC_MODULES_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu' | grep -v main.alu)
+ALUMINAC_MAIN = src/aluminac/main.alu
 
 LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
 
 ALUMINAC_ALU_LIBRARIES = $(filter-out libraries/aluminac/lib/compiler.alu,$(ALU_LIBRARIES))
 ALUMINAC_FILES = $(shell find libraries/aluminac/ -type f -name '*.alu' | grep -v compiler.alu)
 
-ALUMINAC_MODULES = \
-	::tree_sitter=libraries/tree_sitter/mod.alu \
-	$(call alumina_modules,$(ALUMINAC_FILES),libraries/,aluminac/) \
-	libraries/aluminac/lib/compiler.alu
-
-$(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) libraries/aluminac/lib/node_kinds.alu
+$(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
-		$(call alumina_modules,$(ALUMINAC_ALU_LIBRARIES),libraries/,/) \
-		main=libraries/aluminac/lib/compiler.alu
+		$(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
+		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
+		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/) \
+		main=$(ALUMINAC_MAIN)
 
 $(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$(llvm-config-14 --ldflags --libs --system-libs)
 
-$(ALUMINAC_S2): $(ALUMINAC_S1)
-	$(ALUMINAC_S1) --no-verify --sysroot sysroot-simple \
+BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN) $(SYSROOT_SIMPLE_FILES)
+BOOTSTRAP_INPUTS = $(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
+		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
+		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/) \
+		$(ALUMINAC_MAIN)
+
+$(ALUMINAC_S2): $(ALUMINAC_S1) $(BOOTSTRAP_DEPS)
+	$(ALUMINAC_S1) --no-verify --sysroot $(SYSROOT_SIMPLE) \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_S2) \
-		$(ALUMINAC_MODULES)
+		$(BOOTSTRAP_INPUTS)
 
-$(ALUMINAC_S3): $(ALUMINAC_S2)
-	$(ALUMINAC_S2) --no-verify --sysroot sysroot-simple \
+$(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
+	$(ALUMINAC_S2) --no-verify --sysroot $(SYSROOT_SIMPLE) \
 		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
 		-o $(ALUMINAC_S3) \
-		$(ALUMINAC_MODULES)
+		$(BOOTSTRAP_INPUTS)
+
+$(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
+	cp $^ $@
 
 .PHONY: bootstrap
 bootstrap: $(ALUMINAC_S3)
@@ -229,7 +241,7 @@ bootstrap: $(ALUMINAC_S3)
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc
 ALUMINA_DOC_SOURCES = $(shell find tools/alumina-doc/ -type f -name '*.alu')
 
-$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac/lib/node_kinds.alu
+$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac-common/node_kinds.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINA_DOC_SOURCES),tools/,/)
@@ -433,4 +445,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust test-libraries test-docs test-diag test examples
+dist-check: lint-rust test-libraries test-docs test-diag test examples bootstrap test-aluminac
