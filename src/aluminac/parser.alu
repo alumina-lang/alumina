@@ -26,6 +26,7 @@ struct MacroEntry {
     body_node: Node,
     source: &[u8],
     is_builtin: bool,
+    variadic_param_idx: i32,  // -1 if no variadic param, otherwise index into params
 }
 
 struct ParseContext {
@@ -53,6 +54,11 @@ struct ParseContext {
 
     // Current macro expansion arguments (for $param substitution)
     macro_args: HashMap<&[u8], &Expr>,
+
+    // Variadic (et cetera) macro expansion state
+    macro_variadic_name: &[u8],       // name of the variadic param (empty if none)
+    macro_variadic_args: &[&Expr],    // the variadic arguments
+    macro_et_cetera_idx: i32,         // -1 if not in et cetera expansion, otherwise current index
 
     // Items ready for compilation
     items: Vector<Item>,
@@ -167,6 +173,9 @@ impl ParseContext {
             pending_macros: Vector::new(),
             macro_defs: HashMap::new(),
             macro_args: HashMap::new(),
+            macro_variadic_name: "",
+            macro_variadic_args: &[],
+            macro_et_cetera_idx: -1i32,
             items: Vector::new(),
         }
     }
@@ -1172,9 +1181,11 @@ impl Pass2 {
             let param_names: Vector<&[u8]> = Vector::new();
             defer param_names.free();
 
+            let variadic_idx: i32 = -1i32;
             if !params_node.is_none() {
                 let cursor = params_node.unwrap().walk();
                 defer cursor.free();
+                let param_idx: i32 = 0i32;
                 for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
                     let name_node = child_by!(param, FieldKind::Name);
                     if !name_node.is_none() {
@@ -1186,6 +1197,12 @@ impl Pass2 {
                             self.ctx.intern_str(name_text)
                         };
                         param_names.push(name);
+                        // Check if this param is variadic (has EtCetera child)
+                        let etc = child_by!(param, FieldKind::EtCetera);
+                        if !etc.is_none() {
+                            variadic_idx = param_idx;
+                        }
+                        param_idx = param_idx + 1i32;
                     }
                 }
             }
@@ -1204,6 +1221,7 @@ impl Pass2 {
                     body_node: body,
                     source: self.ctx.source,
                     is_builtin: pending.is_builtin,
+                    variadic_param_idx: variadic_idx,
                 };
                 self.ctx.macro_defs.insert(pending.name, entry);
             }
@@ -2244,6 +2262,15 @@ impl ExprParser {
                 if arg.is_some() {
                     return arg.unwrap();
                 }
+                // Check if this is the variadic param being expanded
+                if self.ctx.macro_variadic_name.len() > 0usize && name == self.ctx.macro_variadic_name {
+                    if self.ctx.macro_et_cetera_idx >= 0i32 {
+                        let idx = self.ctx.macro_et_cetera_idx as usize;
+                        if idx < self.ctx.macro_variadic_args.len() {
+                            return self.ctx.macro_variadic_args[idx];
+                        }
+                    }
+                }
                 self.alloc_void(span)
             },
             NodeKind::StaticForExpression => self.parse_static_for(node, span),
@@ -2711,7 +2738,18 @@ impl ExprParser {
         for child in node.children(&cursor) {
             if child.is_named() {
                 let kind = NODE_KINDS[child.symbol() as usize];
-                if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
+                if kind == NodeKind::EtCeteraExpression {
+                    // Expand et cetera: re-parse inner expression for each variadic arg
+                    let inner = child_by!(child, FieldKind::Inner);
+                    if !inner.is_none() && self.ctx.macro_variadic_args.len() > 0usize {
+                        let inner_node = inner.unwrap();
+                        for vi in 0usize..self.ctx.macro_variadic_args.len() {
+                            self.ctx.macro_et_cetera_idx = vi as i32;
+                            args.push(self.parse_expr(inner_node));
+                        }
+                        self.ctx.macro_et_cetera_idx = -1i32;
+                    }
+                } else if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
                     args.push(self.parse_expr(child));
                 }
             }
@@ -3459,14 +3497,49 @@ impl ExprParser {
                 return self.expand_builtin_macro(name, args, span);
             }
 
-            // Save previous macro_args
+            // Save previous macro state
             let prev_args = self.ctx.macro_args;
+            let prev_variadic_name = self.ctx.macro_variadic_name;
+            let prev_variadic_args = self.ctx.macro_variadic_args;
+            let prev_et_cetera_idx = self.ctx.macro_et_cetera_idx;
             self.ctx.macro_args = HashMap::new();
+            self.ctx.macro_variadic_name = "";
+            self.ctx.macro_variadic_args = &[];
+            self.ctx.macro_et_cetera_idx = -1i32;
 
             // Set up argument substitution
-            for i in 0usize..entry.params.len() {
-                if i < args.len() {
-                    self.ctx.macro_args.insert(entry.params[i], args[i]);
+            if entry.variadic_param_idx >= 0i32 {
+                let vi = entry.variadic_param_idx as usize;
+                // Non-variadic params before the variadic one
+                for i in 0usize..vi {
+                    if i < args.len() {
+                        self.ctx.macro_args.insert(entry.params[i], args[i]);
+                    }
+                }
+                // Variadic args
+                let etc_count = if args.len() + 1 >= entry.params.len() {
+                    args.len() + 1 - entry.params.len()
+                } else {
+                    0usize
+                };
+                let etc_args = self.ctx.arena.alloc_slice::<&Expr>(etc_count);
+                for i in 0usize..etc_count {
+                    etc_args[i] = args[vi + i];
+                }
+                self.ctx.macro_variadic_name = entry.params[vi];
+                self.ctx.macro_variadic_args = etc_args;
+                // Non-variadic params after the variadic one
+                for i in vi + 1..entry.params.len() {
+                    let arg_idx = i + etc_count - 1;
+                    if arg_idx < args.len() {
+                        self.ctx.macro_args.insert(entry.params[i], args[arg_idx]);
+                    }
+                }
+            } else {
+                for i in 0usize..entry.params.len() {
+                    if i < args.len() {
+                        self.ctx.macro_args.insert(entry.params[i], args[i]);
+                    }
                 }
             }
 
@@ -3476,9 +3549,12 @@ impl ExprParser {
             let result = self.parse_expr(entry.body_node);
             self.ctx.source = prev_source;
 
-            // Restore previous macro_args
+            // Restore previous macro state
             self.ctx.macro_args.free();
             self.ctx.macro_args = prev_args;
+            self.ctx.macro_variadic_name = prev_variadic_name;
+            self.ctx.macro_variadic_args = prev_variadic_args;
+            self.ctx.macro_et_cetera_idx = prev_et_cetera_idx;
 
             return result;
         }
@@ -3860,11 +3936,43 @@ impl ExprParser {
                 let entry = macro_entry.unwrap();
 
                 let prev_args = self.ctx.macro_args;
+                let prev_vn = self.ctx.macro_variadic_name;
+                let prev_va = self.ctx.macro_variadic_args;
+                let prev_ei = self.ctx.macro_et_cetera_idx;
                 self.ctx.macro_args = HashMap::new();
+                self.ctx.macro_variadic_name = "";
+                self.ctx.macro_variadic_args = &[];
+                self.ctx.macro_et_cetera_idx = -1i32;
 
-                for j in 0usize..entry.params.len() {
-                    if j < total_args {
-                        self.ctx.macro_args.insert(entry.params[j], all_args[j]);
+                if entry.variadic_param_idx >= 0i32 {
+                    let vi = entry.variadic_param_idx as usize;
+                    for j in 0usize..vi {
+                        if j < total_args {
+                            self.ctx.macro_args.insert(entry.params[j], all_args[j]);
+                        }
+                    }
+                    let etc_count = if total_args + 1 >= entry.params.len() {
+                        total_args + 1 - entry.params.len()
+                    } else {
+                        0usize
+                    };
+                    let etc_args = self.ctx.arena.alloc_slice::<&Expr>(etc_count);
+                    for j in 0usize..etc_count {
+                        etc_args[j] = all_args[vi + j];
+                    }
+                    self.ctx.macro_variadic_name = entry.params[vi];
+                    self.ctx.macro_variadic_args = etc_args;
+                    for j in vi + 1..entry.params.len() {
+                        let ai = j + etc_count - 1;
+                        if ai < total_args {
+                            self.ctx.macro_args.insert(entry.params[j], all_args[ai]);
+                        }
+                    }
+                } else {
+                    for j in 0usize..entry.params.len() {
+                        if j < total_args {
+                            self.ctx.macro_args.insert(entry.params[j], all_args[j]);
+                        }
                     }
                 }
 
@@ -3875,6 +3983,9 @@ impl ExprParser {
 
                 self.ctx.macro_args.free();
                 self.ctx.macro_args = prev_args;
+                self.ctx.macro_variadic_name = prev_vn;
+                self.ctx.macro_variadic_args = prev_va;
+                self.ctx.macro_et_cetera_idx = prev_ei;
 
                 return result;
             }
@@ -3977,7 +4088,7 @@ impl ExprParser {
     }
 
     fn parse_et_cetera(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let inner = child_by!(node, FieldKind::Value);
+        let inner = child_by!(node, FieldKind::Inner);
         if inner.is_none() {
             return self.alloc_void(span);
         }

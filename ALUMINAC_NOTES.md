@@ -100,9 +100,9 @@ Each is declared with `#[builtin]` attribute in `sysroot/std/macros.alu` and `sy
 8. `include_bytes!($file)` -- reads file at compile time
 9. `format_args!($wrapper, $fmt, $args...)` -- format string parsing with piece interleaving (basic support)
 
-Also implemented: `bind!` (partial macro application), `reduce!` (fold macro over arguments), and `count!` (count arguments). These are the building blocks for the `format_args!` chain used by `println!`, `write!`, etc.
+Also implemented: `bind!` (partial macro application), `reduce!` (fold macro over arguments), `count!` (count arguments), and **et cetera expansion** (`$arg$...`) for variadic macros. Variadic macro parameters (`$arg...`) capture remaining arguments, and `$arg$...` in argument lists expands the inner expression once per variadic arg. This enables the full `format_args!` → `reduce!` → fold chain used by `println!`, `write!`, etc.
 
-**Still missing**: Proper et cetera (`$arg$...`) expansion in macro bodies for variadic macros, which is needed for the full `println!`/`write!` chain to work with the real sysroot. Tests: `tests/aluminac/builtin_macros.alu`, `tests/aluminac/bind_reduce.alu`.
+Tests: `tests/aluminac/builtin_macros.alu`, `tests/aluminac/bind_reduce.alu`, `tests/aluminac/format_args.alu`.
 
 #### 2.3. Complex `#[cfg()]` Evaluation
 
