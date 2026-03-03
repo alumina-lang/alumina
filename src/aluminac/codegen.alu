@@ -971,10 +971,12 @@ impl CodegenCtx {
             call_args[i] = LLVMConstNull(user_param_types[i]);
         }
 
+        let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
+        let call_name: &libc::c_char = if is_void_ret { &"\0"[0] as &libc::c_char } else { &"ret\0"[0] as &libc::c_char };
         let result = if ir_fn.params.len() > 0 {
-            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, &call_args[0], ir_fn.params.len() as u32, &"ret\0"[0] as &libc::c_char)
+            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, &call_args[0], ir_fn.params.len() as u32, call_name)
         } else {
-            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"ret\0"[0] as &libc::c_char)
+            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, call_name)
         };
 
         // Return the user main's return value (or 0 if void)
