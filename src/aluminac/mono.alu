@@ -3274,6 +3274,26 @@ impl Mono {
             return self.lower_ptr_subslice(base, range_expr);
         }
 
+        // Handle array subslicing: arr[a..b] -> take ref to array, cast to elem ptr, then subslice
+        if base.ty.tag == IRTY_ARRAY {
+            // Take reference to base array to get a pointer
+            let arr_ptr_ty = self.ctx.make_ptr_ty(base.ty, false);
+            let arr_ref = IrExpr::void_expr(arr_ptr_ty);
+            arr_ref.tag = IR_REF;
+            arr_ref.lhs = base;
+            let arr_ref = self.ctx.arena.alloc(arr_ref) as &IrExpr;
+            // Cast &[T; N] to &T (pointer to first element)
+            let elem_ty = base.ty.inner;
+            let elem_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+            let cast = IrExpr::void_expr(elem_ptr_ty);
+            cast.tag = IR_CAST;
+            cast.lhs = arr_ref;
+            cast.ir_ty = elem_ptr_ty;
+            let elem_ptr = self.ctx.arena.alloc(cast) as &IrExpr;
+            // Now use pointer subslicing
+            return self.lower_ptr_subslice(elem_ptr, range_expr);
+        }
+
         if !self.is_slice_ty(base.ty) {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             return self.ctx.arena.alloc(r);
