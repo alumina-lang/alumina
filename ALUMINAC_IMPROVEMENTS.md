@@ -139,6 +139,23 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 
 ---
 
+## 12. ~~Unnecessary `as i32` casts for enum comparisons~~ DONE
+
+**Fixed:** Removed ~60 occurrences of `x as i32 == Y::Variant as i32`
+across all aluminac source files. Enums now support `==` directly via
+the Equatable protocol. Also converted const_eval.alu binary op
+dispatchers (int_bin_op, float_bin_op, bool_bin_op) to switch.
+
+---
+
+## 13. ~~Void main wrapper codegen bug~~ DONE
+
+**Fixed:** When user's main returns void, `emit_main_wrapper` was
+naming the void call result `"ret"`, which LLVM rejects. Now uses
+an empty name for void returns.
+
+---
+
 ## Priority Order
 
 1. ~~**#10 (bug fix)** — Fix switch codegen for non-integer types~~ DONE
@@ -150,3 +167,5 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 7. ~~**#7 (arena helper)** — Small utility addition~~ DONE
 8. ~~**#9 (for-loop dedup)** — Moderate refactor~~ DONE
 9. **#8, #11** — Minor quality-of-life
+10. ~~**#12 (enum casts)** — Remove `as i32` casts~~ DONE
+11. ~~**#13 (void main)** — Bug fix~~ DONE
