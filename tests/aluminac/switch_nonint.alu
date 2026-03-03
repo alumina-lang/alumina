@@ -1,0 +1,81 @@
+// Test switch on non-integer types (desugared to if-else chains with == comparisons).
+
+// ---- Struct switch using equals method ----
+
+struct Color {
+    r: i32,
+    g: i32,
+    b: i32,
+}
+
+impl Color {
+    fn equals(self: &Color, other: &Color) -> bool {
+        self.r == other.r && self.g == other.g && self.b == other.b
+    }
+}
+
+fn color_name(c: &Color) -> i32 {
+    let red = Color { r: 255i32, g: 0i32, b: 0i32 };
+    let green = Color { r: 0i32, g: 255i32, b: 0i32 };
+    let blue = Color { r: 0i32, g: 0i32, b: 255i32 };
+    switch *c {
+        red => 1i32,
+        green => 2i32,
+        blue => 3i32,
+        _ => 0i32,
+    }
+}
+
+// ---- String switch using operator_eq lang item ----
+
+fn classify(s: &[u8]) -> i32 {
+    switch s {
+        "hello" => 1i32,
+        "world" => 2i32,
+        "foo", "bar" => 3i32,
+        _ => 0i32,
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test struct switch
+    let red = Color { r: 255i32, g: 0i32, b: 0i32 };
+    let green = Color { r: 0i32, g: 255i32, b: 0i32 };
+    let blue = Color { r: 0i32, g: 0i32, b: 255i32 };
+    let other = Color { r: 1i32, g: 2i32, b: 3i32 };
+
+    if color_name(&red) != 1i32 { return 1i32; }
+    if color_name(&green) != 2i32 { return 2i32; }
+    if color_name(&blue) != 3i32 { return 3i32; }
+    if color_name(&other) != 0i32 { return 4i32; }
+
+    // Test struct switch with multiple patterns per arm
+    let x = Color { r: 255i32, g: 0i32, b: 0i32 };
+    let r = Color { r: 255i32, g: 0i32, b: 0i32 };
+    let g = Color { r: 0i32, g: 255i32, b: 0i32 };
+    let b = Color { r: 0i32, g: 0i32, b: 255i32 };
+    let result = switch x {
+        r, g => 10i32,
+        b => 20i32,
+        _ => 30i32,
+    };
+    if result != 10i32 { return 5i32; }
+
+    // Test string switch
+    if classify("hello") != 1i32 { return 6i32; }
+    if classify("world") != 2i32 { return 7i32; }
+    if classify("foo") != 3i32 { return 8i32; }
+    if classify("bar") != 3i32 { return 9i32; }
+    if classify("other") != 0i32 { return 10i32; }
+
+    // Test string switch as expression
+    let greeting = "hello";
+    let val = switch greeting {
+        "hello" => 100i32,
+        "goodbye" => 200i32,
+        _ => 0i32,
+    };
+    if val != 100i32 { return 11i32; }
+
+    0i32
+}

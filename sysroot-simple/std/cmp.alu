@@ -7,3 +7,15 @@ fn min(a: usize, b: usize) -> usize {
 fn max(a: usize, b: usize) -> usize {
     if a > b { a } else { b }
 }
+
+/// Protocol for types that support equality comparison.
+protocol Equatable<Self> {
+    fn equals(lhs: &Self, rhs: &Self) -> bool;
+}
+
+/// Lang item for == operator overloading.
+/// The compiler calls this for == on types that aren't primitive.
+#[lang(operator_eq)]
+fn operator_eq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
+    lhs.equals(rhs)
+}

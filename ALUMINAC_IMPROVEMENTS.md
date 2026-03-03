@@ -49,9 +49,8 @@ enums (see #1), these become natural `switch` statements.
 - **`parser.alu:4452-4486`** — Binary/assign operator parsing (19+10 string comparisons)
 - **`parser.alu:3665-3808`** — Builtin macro dispatch (12 string comparisons)
 
-Note: String `switch` works in alumina-boot (desugars to `==` chains) but
-**aluminac has a codegen bug** — it emits LLVM `switch` instruction which only
-works on integers. Needs fix before string switches can be used. See #10.
+Note: String `switch` now works in aluminac (#10 fixed). These if-else chains
+can be converted to `switch` statements for better readability.
 
 ---
 
@@ -253,15 +252,14 @@ a single method that takes a "get element at index" callback or similar.
 
 ---
 
-## 10. BUG: aluminac switch on non-integer types
+## 10. ~~BUG: aluminac switch on non-integer types~~ DONE
 
-aluminac's codegen emits LLVM `switch` instruction for all switch statements,
-but LLVM switch only works on integer types. For struct/slice types (like
-strings), it should fall back to if-else chains with `==` comparisons, which
-is what alumina-boot does.
+**Fixed:** Non-integer switch now desugars to if-else chains with `==`
+comparisons at the IR level (in `mono.alu:lower_switch_as_if_else`).
+Integer/enum switches still use LLVM `switch` instruction.
 
-This blocks using `switch` on strings, which would clean up many if-else
-chains in the parser (attribute dispatch, operator parsing, builtin macros).
+Also added `Equatable` protocol, `operator_eq` lang item, and slice
+`equals` to sysroot-simple to enable string switch support.
 
 ---
 
@@ -279,7 +277,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 
 ## Priority Order
 
-1. **#10 (bug fix)** — Fix switch codegen for non-integer types
+1. ~~**#10 (bug fix)** — Fix switch codegen for non-integer types~~ DONE
 2. **#5 (IR helpers)** — Biggest readability/LOC win, no risk
 3. **#1 + #2 (enums + switch)** — Large refactor but huge type safety win
 4. **#4 (default constructors)** — Reduce zeroed boilerplate

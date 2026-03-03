@@ -79,6 +79,17 @@ impl slice {
         self._len == 0usize
     }
 
+    /// Element-wise equality comparison for slices of primitive types.
+    fn equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
+        if lhs._len != rhs._len { return false; }
+        let i = 0usize;
+        while i < lhs._len {
+            if lhs._ptr[i] != rhs._ptr[i] { return false; }
+            i = i + 1;
+        }
+        true
+    }
+
     /// Write byte slice as string. Used by format_args! for string literal pieces.
     fn fmt<Ptr, F: std::fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) -> std::fmt::Result {
         f.write_str(*self)

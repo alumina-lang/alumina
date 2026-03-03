@@ -225,7 +225,7 @@ $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
 		-o $(ALUMINAC_S3) \
 		$(BOOTSTRAP_INPUTS)
 
-$(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
+$(BUILD_DIR)/aluminac: $(ALUMINAC_S1)
 	cp $^ $@
 
 .PHONY: bootstrap

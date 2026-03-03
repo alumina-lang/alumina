@@ -1343,6 +1343,141 @@ impl Mono {
         Option::some(self.ctx.arena.alloc(result) as &IrExpr)
     }
 
+    // Desugar a switch on a non-integer type into an if-else chain with == comparisons.
+    // This is used for types like strings, structs, etc. that can't use LLVM's switch instruction.
+    // Produces: { let __tmp = value; if __tmp == pat1 || __tmp == pat2 { body1 } else if ... else { default } }
+    fn lower_switch_as_if_else(self: &mut Mono, ir_value: &IrExpr, arms: &[SwitchArm]) -> &IrExpr {
+        // Create a temp variable to evaluate the discriminant once
+        let tmp_id = self.ctx.id_gen.next_id();
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: ir_value.ty, name: "_switch" });
+        let ir_let = IrExpr::void_expr(self.ctx.void_ty);
+        ir_let.tag = IR_LET;
+        ir_let.id = tmp_id;
+        ir_let.ir_ty = ir_value.ty;
+        ir_let.opt_expr = Option::some(ir_value);
+        let ir_let = self.ctx.arena.alloc(ir_let) as &IrExpr;
+
+        // Helper to read the temp variable
+        let tmp_read = IrExpr::void_expr(ir_value.ty);
+        tmp_read.tag = IR_LOCAL;
+        tmp_read.id = tmp_id;
+        let tmp_read = self.ctx.arena.alloc(tmp_read) as &IrExpr;
+
+        // Separate default arm from non-default arms
+        let default_body: Option<&IrExpr> = Option::none();
+        for i in 0usize..arms.len() {
+            if arms[i].pattern.len() == 0 {
+                default_body = Option::some(self.lower_expr(arms[i].body));
+            }
+        }
+
+        // Build the if-else chain from last non-default arm to first
+        // Start with the default (or void if no default)
+        let else_expr: Option<&IrExpr> = if default_body.is_some() {
+            default_body
+        } else {
+            Option::none()
+        };
+
+        // Collect non-default arms in order, then fold right-to-left
+        let non_default_count: usize = 0;
+        for i in 0usize..arms.len() {
+            if arms[i].pattern.len() > 0 {
+                non_default_count = non_default_count + 1;
+            }
+        }
+
+        // Process arms in reverse order to build nested if-else
+        let arm_idx: usize = non_default_count;
+        while arm_idx > 0 {
+            arm_idx = arm_idx - 1;
+
+            // Find the arm_idx'th non-default arm
+            let actual_i: usize = 0;
+            let count: usize = 0;
+            for i in 0usize..arms.len() {
+                if arms[i].pattern.len() > 0 {
+                    if count == arm_idx {
+                        actual_i = i;
+                    }
+                    count = count + 1;
+                }
+            }
+
+            let arm = &arms[actual_i];
+            let arm_body = self.lower_expr(arm.body);
+
+            // Build condition: tmp == pat[0] || tmp == pat[1] || ...
+            let cond: &IrExpr = std::mem::zeroed::<&IrExpr>();
+            for j in 0usize..arm.pattern.len() {
+                let pat_val = self.lower_expr(arm.pattern[j]);
+
+                // Build the == comparison, using operator overload for non-primitive types
+                let eq_expr: &IrExpr = std::mem::zeroed::<&IrExpr>();
+                if ir_value.ty.tag == IRTY_STRUCT || ir_value.ty.tag == IRTY_SLICE {
+                    let overload = self.try_operator_overload(BinOp::Eq, tmp_read, pat_val);
+                    if overload.is_some() {
+                        eq_expr = overload.unwrap();
+                    } else {
+                        // Fallback to direct comparison (may not work for all types)
+                        let cmp = IrExpr::void_expr(self.ctx.bool_ty);
+                        cmp.tag = IR_BINARY;
+                        cmp.bin_op = BinOp::Eq;
+                        cmp.lhs = tmp_read;
+                        cmp.rhs = pat_val;
+                        eq_expr = self.ctx.arena.alloc(cmp) as &IrExpr;
+                    }
+                } else {
+                    let cmp = IrExpr::void_expr(self.ctx.bool_ty);
+                    cmp.tag = IR_BINARY;
+                    cmp.bin_op = BinOp::Eq;
+                    cmp.lhs = tmp_read;
+                    cmp.rhs = pat_val;
+                    eq_expr = self.ctx.arena.alloc(cmp) as &IrExpr;
+                }
+
+                if j == 0 {
+                    cond = eq_expr;
+                } else {
+                    // Chain with ||
+                    let or_expr = IrExpr::void_expr(self.ctx.bool_ty);
+                    or_expr.tag = IR_BINARY;
+                    or_expr.bin_op = BinOp::Or;
+                    or_expr.lhs = cond;
+                    or_expr.rhs = eq_expr;
+                    cond = self.ctx.arena.alloc(or_expr) as &IrExpr;
+                }
+            }
+
+            // Build if-else node
+            let result_ty = arm_body.ty;
+            let if_expr = IrExpr::void_expr(result_ty);
+            if_expr.tag = IR_IF;
+            if_expr.cond = cond;
+            if_expr.lhs = arm_body;
+            if_expr.opt_expr = else_expr;
+            else_expr = Option::some(self.ctx.arena.alloc(if_expr) as &IrExpr);
+        }
+
+        // Wrap in block: { let __tmp = value; <if-else chain> }
+        let chain = if else_expr.is_some() {
+            else_expr.unwrap()
+        } else {
+            // Empty switch - just return void
+            let v = IrExpr::void_expr(self.ctx.void_ty);
+            v.tag = IR_VOID;
+            self.ctx.arena.alloc(v) as &IrExpr
+        };
+
+        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        block_stmts[0] = ir_let;
+        block_stmts[1] = chain;
+        let block = IrExpr::void_expr(chain.ty);
+        block.tag = IR_BLOCK;
+        block.items = block_stmts;
+        self.ctx.arena.alloc(block)
+    }
+
     // Lower binary/unary/assignment ops: EXPR_BINARY, EXPR_UNARY, EXPR_ASSIGN, EXPR_COMPOUND_ASSIGN
     fn lower_binop(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == EXPR_BINARY {
@@ -1611,31 +1746,42 @@ impl Mono {
             self.ctx.arena.alloc(block)
         } else if expr.tag == EXPR_SWITCH {
             let ir_value = self.lower_expr(expr.lhs);
-            let ir_arms = self.ctx.arena.alloc_slice::<IrSwitchArm>(expr.switch_arms.len());
-            for i in 0usize..expr.switch_arms.len() {
-                let values = self.ctx.arena.alloc_slice::<u64>(expr.switch_arms[i].pattern.len());
-                for j in 0usize..expr.switch_arms[i].pattern.len() {
-                    let pat_expr = self.lower_expr(expr.switch_arms[i].pattern[j]);
-                    if pat_expr.tag == IR_INT_LIT {
-                        values[j] = pat_expr.int_val;
-                    } else if pat_expr.tag == IR_CAST && pat_expr.lhs.tag == IR_INT_LIT {
-                        values[j] = pat_expr.lhs.int_val;
-                    } else {
-                        values[j] = 0;
+
+            // Check if the discriminant type supports LLVM switch (integer types only)
+            let is_int_switch = (ir_value.ty.tag == IRTY_BUILTIN && (ir_value.ty.builtin.is_integer() || ir_value.ty.builtin as i32 == BuiltinType::Bool as i32))
+                || ir_value.ty.tag == IRTY_ENUM;
+
+            if is_int_switch {
+                // Integer/enum types: use LLVM switch instruction
+                let ir_arms = self.ctx.arena.alloc_slice::<IrSwitchArm>(expr.switch_arms.len());
+                for i in 0usize..expr.switch_arms.len() {
+                    let values = self.ctx.arena.alloc_slice::<u64>(expr.switch_arms[i].pattern.len());
+                    for j in 0usize..expr.switch_arms[i].pattern.len() {
+                        let pat_expr = self.lower_expr(expr.switch_arms[i].pattern[j]);
+                        if pat_expr.tag == IR_INT_LIT {
+                            values[j] = pat_expr.int_val;
+                        } else if pat_expr.tag == IR_CAST && pat_expr.lhs.tag == IR_INT_LIT {
+                            values[j] = pat_expr.lhs.int_val;
+                        } else {
+                            values[j] = 0;
+                        }
                     }
+                    ir_arms[i] = IrSwitchArm {
+                        values: values,
+                        body: self.lower_expr(expr.switch_arms[i].body),
+                        is_default: expr.switch_arms[i].pattern.len() == 0,
+                    };
                 }
-                ir_arms[i] = IrSwitchArm {
-                    values: values,
-                    body: self.lower_expr(expr.switch_arms[i].body),
-                    is_default: expr.switch_arms[i].pattern.len() == 0,
-                };
+                let result_ty = if expr.switch_arms.len() > 0 { ir_arms[0].body.ty } else { self.ctx.void_ty };
+                let result = IrExpr::void_expr(result_ty);
+                result.tag = IR_SWITCH;
+                result.lhs = ir_value;
+                result.switch_arms = ir_arms;
+                self.ctx.arena.alloc(result)
+            } else {
+                // Non-integer types: desugar to if-else chain with == comparisons
+                self.lower_switch_as_if_else(ir_value, expr.switch_arms)
             }
-            let result_ty = if expr.switch_arms.len() > 0 { ir_arms[0].body.ty } else { self.ctx.void_ty };
-            let result = IrExpr::void_expr(result_ty);
-            result.tag = IR_SWITCH;
-            result.lhs = ir_value;
-            result.switch_arms = ir_arms;
-            self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_BREAK {
             let ir_val: Option<&IrExpr> = if expr.opt_expr.is_some() {
                 Option::some(self.lower_expr(expr.opt_expr.unwrap()))
