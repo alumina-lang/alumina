@@ -128,11 +128,7 @@ No lang items, no `IntoIterator` protocol. Pure syntactic desugaring to `.iter()
 
 Note: the desugaring also attempts to find a free function named `iter` in scope for UFCS (`expressions.rs:1117-1125`), but the primary mechanism is method call.
 
-**aluminac** (`mono.alu:1429-1603`): Similar approach at the IR level:
-- Has a fast-path for slices (desugars to index-based iteration, `mono.alu:1435-1437`)
-- For non-slice iterators: resolves `.next()` and `.is_none()` via `resolve_method_call_on_type`, then accesses `_inner` field
-- Does NOT call `.iter()` on the iterable -- expects the expression to already be an iterator
-- **Problem**: The parser (`parser.alu:2805-2833`) passes the iterable expression as-is to `EXPR_FOR`. There is no `.iter()` call inserted anywhere. So `for x in vec { ... }` won't work -- only iterators themselves work as the `in` expression.
+**aluminac**: Implemented. For struct types, calls `.iter()` on the iterable to get an iterator, then uses `.next()` + `is_none()` + `_inner` field access. Has fast-paths for slices and arrays (index-based iteration). Does not support tuple unpacking in for-loop variables or UFCS `iter` free function lookup.
 
 #### 2.5. Try Operator (`?`)
 

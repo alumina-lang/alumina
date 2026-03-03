@@ -1429,20 +1429,68 @@ impl Mono {
     //            let item = _opt.unwrap();
     //            body } }
     fn lower_for_iterator(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let iter_ir = self.lower_expr(expr.lhs);
-        let iter_ty = iter_ir.ty;
+        let iterable_ir = self.lower_expr(expr.lhs);
+        let iterable_ty = iterable_ir.ty;
 
-        // Check if this is a slice iteration: for item in slice { body }
-        // Desugar to: { let _s = slice; let _i = 0; let _end = _s.len; while _i < _end { let item = _s[_i]; body; _i = _i + 1; } }
-        if self.is_slice_ty(iter_ty) {
-            return self.lower_for_slice(expr, iter_ir, iter_ty);
-        }
-
-        // Check if this is a struct with .iter() method (e.g. Vector.iter_mut())
-        // If iter_ty is VOID, the method call to get the iterator failed, try .iter() on the original
-        if iter_ty.is_void() {
+        if iterable_ty.is_void() {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             return self.ctx.arena.alloc(r);
+        }
+
+        // Check if this is a slice iteration: for item in slice { body }
+        if self.is_slice_ty(iterable_ty) {
+            return self.lower_for_slice(expr, iterable_ir, iterable_ty);
+        }
+
+        // Check if this is an array iteration: for item in [T; N] { body }
+        if iterable_ty.tag == IRTY_ARRAY {
+            return self.lower_for_array(expr, iterable_ir, iterable_ty);
+        }
+
+        // Try calling .iter() on the iterable to get an iterator.
+        // Only attempt if the type is a struct (has methods to look up).
+        let iter_ir = iterable_ir;
+        let iter_ty = iterable_ty;
+        let iter_let_stmt: Option<&IrExpr> = Option::none();
+
+        if iterable_ty.tag == IRTY_STRUCT {
+            // Store iterable in a local so we can take a reference for .iter() call
+            let iterable_var_id = self.ctx.id_gen.next_id();
+            self.local_types.insert(iterable_var_id._value, iterable_ty);
+            self.local_defs.push(IrLocalDef {
+                id: iterable_var_id,
+                ty: iterable_ty,
+                name: "_iterable",
+            });
+
+            // &_iterable for method call
+            let iterable_ref = IrExpr::void_expr(self.ctx.make_ptr_ty(iterable_ty, false));
+            iterable_ref.tag = IR_REF;
+            let iterable_local = IrExpr::void_expr(iterable_ty);
+            iterable_local.tag = IR_LOCAL;
+            iterable_local.id = iterable_var_id;
+            iterable_ref.lhs = self.ctx.arena.alloc(iterable_local) as &IrExpr;
+            let ir_iterable_ref = self.ctx.arena.alloc(iterable_ref) as &IrExpr;
+
+            let iter_call = self.resolve_method_call_on_type(iterable_ty, "iter", ir_iterable_ref, &[]);
+            if iter_call.is_some() {
+                // let _iterable = iterable_expr;
+                let let_iterable = IrExpr::void_expr(self.ctx.void_ty);
+                let_iterable.tag = IR_LET;
+                let_iterable.id = iterable_var_id;
+                let_iterable.ir_ty = iterable_ty;
+                let_iterable.opt_expr = Option::some(iterable_ir);
+                iter_let_stmt = Option::some(self.ctx.arena.alloc(let_iterable) as &IrExpr);
+
+                let iter_result = iter_call.unwrap();
+                iter_ir = iter_result;
+                iter_ty = iter_result.ty;
+
+                // The result of .iter() might be a slice
+                if self.is_slice_ty(iter_ty) {
+                    return self.lower_for_slice(expr, iter_ir, iter_ty);
+                }
+            }
         }
 
         // Create local for the iterator (mutable so .next() works)
@@ -1594,13 +1642,21 @@ impl Mono {
         loop_expr.lhs = ir_loop_body;
         let ir_loop = self.ctx.arena.alloc(loop_expr) as &IrExpr;
 
-        // Full block: { let _iter = ...; loop { ... } }
-        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-        block_stmts[0] = ir_let_iter;
-        block_stmts[1] = ir_loop;
+        // Full block: { [let _iterable = ...;] let _iter = ...; loop { ... } }
         let block = IrExpr::void_expr(self.ctx.void_ty);
         block.tag = IR_BLOCK;
-        block.items = block_stmts;
+        if iter_let_stmt.is_some() {
+            let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+            block_stmts[0] = iter_let_stmt.unwrap();
+            block_stmts[1] = ir_let_iter;
+            block_stmts[2] = ir_loop;
+            block.items = block_stmts;
+        } else {
+            let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+            block_stmts[0] = ir_let_iter;
+            block_stmts[1] = ir_loop;
+            block.items = block_stmts;
+        }
         self.ctx.arena.alloc(block)
     }
 
@@ -2445,6 +2501,138 @@ impl Mono {
         block_stmts[1] = ir_let_i;
         block_stmts[2] = ir_let_end;
         block_stmts[3] = ir_while;
+        let block = IrExpr::void_expr(self.ctx.void_ty);
+        block.tag = IR_BLOCK;
+        block.items = block_stmts;
+        self.ctx.arena.alloc(block)
+    }
+
+    // Lower a for-in loop over an array: for item in [T; N] { body }
+    // Desugar to: { let _a = arr; let _i = 0usize; while _i < N { let item = _a[_i]; body; _i = _i + 1; } }
+    fn lower_for_array(self: &mut Mono, expr: &Expr, arr_ir: &IrExpr, arr_ty: &IrTy) -> &IrExpr {
+        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+        let bool_ty = self.ctx.intern_builtin_ty(BuiltinType::Bool);
+        let elem_ty = arr_ty.inner;
+        let arr_len = arr_ty.array_size;
+
+        // let _a = arr
+        let arr_var_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(arr_var_id._value, arr_ty);
+        self.local_defs.push(IrLocalDef { id: arr_var_id, ty: arr_ty, name: "_a" });
+        let let_a = IrExpr::void_expr(self.ctx.void_ty);
+        let_a.tag = IR_LET;
+        let_a.id = arr_var_id;
+        let_a.ir_ty = arr_ty;
+        let_a.opt_expr = Option::some(arr_ir);
+        let ir_let_a = self.ctx.arena.alloc(let_a) as &IrExpr;
+
+        // let _i = 0usize
+        let idx_var_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(idx_var_id._value, usize_ty);
+        self.local_defs.push(IrLocalDef { id: idx_var_id, ty: usize_ty, name: "_i" });
+        let zero = IrExpr::void_expr(usize_ty);
+        zero.tag = IR_INT_LIT;
+        zero.int_val = 0;
+        let ir_zero = self.ctx.arena.alloc(zero) as &IrExpr;
+        let let_i = IrExpr::void_expr(self.ctx.void_ty);
+        let_i.tag = IR_LET;
+        let_i.id = idx_var_id;
+        let_i.ir_ty = usize_ty;
+        let_i.opt_expr = Option::some(ir_zero);
+        let ir_let_i = self.ctx.arena.alloc(let_i) as &IrExpr;
+
+        // _i < N
+        let read_i = IrExpr::void_expr(usize_ty);
+        read_i.tag = IR_LOCAL;
+        read_i.id = idx_var_id;
+        let ir_read_i = self.ctx.arena.alloc(read_i) as &IrExpr;
+        let n_lit = IrExpr::void_expr(usize_ty);
+        n_lit.tag = IR_INT_LIT;
+        n_lit.int_val = arr_len as u64;
+        let ir_n = self.ctx.arena.alloc(n_lit) as &IrExpr;
+        let cond = IrExpr::void_expr(bool_ty);
+        cond.tag = IR_BINARY;
+        cond.bin_op = BinOp::Lt;
+        cond.lhs = ir_read_i;
+        cond.rhs = ir_n;
+        let ir_cond = self.ctx.arena.alloc(cond) as &IrExpr;
+
+        // _a[_i] - direct array indexing
+        let arr_local = IrExpr::void_expr(arr_ty);
+        arr_local.tag = IR_LOCAL;
+        arr_local.id = arr_var_id;
+        let ir_arr_local = self.ctx.arena.alloc(arr_local) as &IrExpr;
+        let read_i2 = IrExpr::void_expr(usize_ty);
+        read_i2.tag = IR_LOCAL;
+        read_i2.id = idx_var_id;
+        let ir_read_i2 = self.ctx.arena.alloc(read_i2) as &IrExpr;
+        let index_expr = IrExpr::void_expr(elem_ty);
+        index_expr.tag = IR_INDEX;
+        index_expr.lhs = ir_arr_local;
+        index_expr.rhs = ir_read_i2;
+        let ir_index = self.ctx.arena.alloc(index_expr) as &IrExpr;
+
+        // let item = _a[_i]
+        let loop_var_id = expr.id;
+        self.local_types.insert(loop_var_id._value, elem_ty);
+        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "" });
+        let let_item = IrExpr::void_expr(self.ctx.void_ty);
+        let_item.tag = IR_LET;
+        let_item.id = loop_var_id;
+        let_item.ir_ty = elem_ty;
+        let_item.opt_expr = Option::some(ir_index);
+        let ir_let_item = self.ctx.arena.alloc(let_item) as &IrExpr;
+
+        // body
+        let ir_body = self.lower_expr(expr.rhs);
+
+        // _i = _i + 1
+        let read_i3 = IrExpr::void_expr(usize_ty);
+        read_i3.tag = IR_LOCAL;
+        read_i3.id = idx_var_id;
+        let ir_read_i3 = self.ctx.arena.alloc(read_i3) as &IrExpr;
+        let one = IrExpr::void_expr(usize_ty);
+        one.tag = IR_INT_LIT;
+        one.int_val = 1;
+        let ir_one = self.ctx.arena.alloc(one) as &IrExpr;
+        let add = IrExpr::void_expr(usize_ty);
+        add.tag = IR_BINARY;
+        add.bin_op = BinOp::Add;
+        add.lhs = ir_read_i3;
+        add.rhs = ir_one;
+        let ir_add = self.ctx.arena.alloc(add) as &IrExpr;
+        let read_i4 = IrExpr::void_expr(usize_ty);
+        read_i4.tag = IR_LOCAL;
+        read_i4.id = idx_var_id;
+        let ir_read_i4 = self.ctx.arena.alloc(read_i4) as &IrExpr;
+        let assign_i = IrExpr::void_expr(self.ctx.void_ty);
+        assign_i.tag = IR_ASSIGN;
+        assign_i.lhs = ir_read_i4;
+        assign_i.rhs = ir_add;
+        let ir_assign_i = self.ctx.arena.alloc(assign_i) as &IrExpr;
+
+        // while body: { let item = _a[_i]; body; _i = _i + 1; }
+        let while_body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+        while_body_stmts[0] = ir_let_item;
+        while_body_stmts[1] = ir_body;
+        while_body_stmts[2] = ir_assign_i;
+        let while_body = IrExpr::void_expr(self.ctx.void_ty);
+        while_body.tag = IR_BLOCK;
+        while_body.items = while_body_stmts;
+        let ir_while_body = self.ctx.arena.alloc(while_body) as &IrExpr;
+
+        // while _i < N { ... }
+        let while_expr = IrExpr::void_expr(self.ctx.void_ty);
+        while_expr.tag = IR_WHILE;
+        while_expr.cond = ir_cond;
+        while_expr.lhs = ir_while_body;
+        let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
+
+        // Full block: { let _a = ...; let _i = 0; while ... }
+        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+        block_stmts[0] = ir_let_a;
+        block_stmts[1] = ir_let_i;
+        block_stmts[2] = ir_while;
         let block = IrExpr::void_expr(self.ctx.void_ty);
         block.tag = IR_BLOCK;
         block.items = block_stmts;
