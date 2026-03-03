@@ -92,6 +92,15 @@ impl Arena {
         std::mem::slice::from_raw(ptr, len)
     }
 
+    /// Allocate a slice and copy elements from a source slice.
+    fn alloc_slice_copy<T>(self: &mut Arena, src: &[T]) -> &mut [T] {
+        let dst = self.alloc_slice::<T>(src.len());
+        for i in 0usize..src.len() {
+            dst[i] = src[i];
+        }
+        dst
+    }
+
     fn move(self: &mut Arena) -> Arena {
         let moved = *self;
         self.root = null;

@@ -446,11 +446,7 @@ impl Pass1 {
         if attrs.len() == 0 {
             return &[];
         }
-        let result = self.ctx.arena.alloc_slice::<Attribute>(attrs.len());
-        for i in 0usize..attrs.len() {
-            result[i] = attrs[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<Attribute>(attrs.as_slice())
     }
 
     // Evaluate a cfg condition from a meta_item node.
@@ -938,11 +934,7 @@ impl Pass1 {
         let segments: Vector<&[u8]> = Vector::new();
         defer segments.free();
         self.collect_path_segments_inner(node, &segments);
-        let result = self.ctx.arena.alloc_slice::<&[u8]>(segments.len());
-        for i in 0usize..segments.len() {
-            result[i] = segments[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(segments.as_slice())
     }
 
     fn collect_path_segments_inner(self: &mut Pass1, node: Node, segments: &mut Vector<&[u8]>) {
@@ -1105,11 +1097,7 @@ impl Pass1 {
         if ids.len() == 0 {
             return &[];
         }
-        let result = self.ctx.arena.alloc_slice::<Id>(ids.len());
-        for i in 0usize..ids.len() {
-            result[i] = ids[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<Id>(ids.as_slice())
     }
 
     fn visit_parameter_p1(self: &mut Pass1, node: Node) {
@@ -1223,10 +1211,7 @@ impl Pass2 {
             let body_node = child_by!(node, FieldKind::Body);
             if !body_node.is_none() {
                 let body = body_node.unwrap();
-                let params_slice = self.ctx.arena.alloc_slice::<&[u8]>(param_names.len());
-                for j in 0usize..param_names.len() {
-                    params_slice[j] = param_names[j];
-                }
+                let params_slice = self.ctx.arena.alloc_slice_copy::<&[u8]>(param_names.as_slice());
 
                 // Pre-parse the macro body in definition-site scope
                 let body_expr: &Expr = if !pending.is_builtin {
@@ -1432,11 +1417,7 @@ impl Pass2 {
         if params.len() == 0 {
             return &[];
         }
-        let result = self.ctx.arena.alloc_slice::<GenericParam>(params.len());
-        for i in 0usize..params.len() {
-            result[i] = params[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<GenericParam>(params.as_slice())
     }
 
     fn parse_generic_bounds(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
@@ -1462,11 +1443,7 @@ impl Pass2 {
             bounds.push(self.parse_type(bound_node.unwrap(), scope_idx));
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Ty>(bounds.len());
-        for i in 0usize..bounds.len() {
-            result[i] = bounds[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<&Ty>(bounds.as_slice())
     }
 
     fn parse_fn_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[FnParam] {
@@ -1504,11 +1481,7 @@ impl Pass2 {
             });
         }
 
-        let result = self.ctx.arena.alloc_slice::<FnParam>(params.len());
-        for i in 0usize..params.len() {
-            result[i] = params[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<FnParam>(params.as_slice())
     }
 
     fn parse_return_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
@@ -1617,11 +1590,7 @@ impl Pass2 {
                 for child in children_by!(node, FieldKind::Element, &cursor) {
                     elems.push(self.parse_type(child, scope_idx));
                 }
-                let result = self.ctx.arena.alloc_slice::<&Ty>(elems.len());
-                for i in 0usize..elems.len() {
-                    result[i] = elems[i];
-                }
-                self.ctx.alloc_ty(Ty::tuple_ty(result))
+                self.ctx.alloc_ty(Ty::tuple_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(elems.as_slice())))
             },
             NodeKind::NeverType => {
                 self.ctx.alloc_ty(Ty::never_ty())
@@ -1647,11 +1616,7 @@ impl Pass2 {
                     self.ctx.alloc_ty(Ty::void_ty()) as &Ty
                 };
 
-                let params = self.ctx.arena.alloc_slice::<&Ty>(param_types.len());
-                for i in 0usize..param_types.len() {
-                    params[i] = param_types[i];
-                }
-                self.ctx.alloc_ty(Ty::fn_pointer_ty(params, ret))
+                self.ctx.alloc_ty(Ty::fn_pointer_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(param_types.as_slice()), ret))
             },
             NodeKind::GenericType => {
                 let base_node = child_by!(node, FieldKind::Type);
@@ -1825,22 +1790,14 @@ impl Pass2 {
             }
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Ty>(args.len());
-        for i in 0usize..args.len() {
-            result[i] = args[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<&Ty>(args.as_slice())
     }
 
     fn collect_type_path_segments(self: &mut Pass2, node: Node) -> &[&[u8]] {
         let segments: Vector<&[u8]> = Vector::new();
         defer segments.free();
         self.collect_type_path_inner(node, &segments);
-        let result = self.ctx.arena.alloc_slice::<&[u8]>(segments.len());
-        for i in 0usize..segments.len() {
-            result[i] = segments[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(segments.as_slice())
     }
 
     fn collect_type_path_inner(self: &mut Pass2, node: Node, segments: &mut Vector<&[u8]>) {
@@ -1934,10 +1891,7 @@ impl Pass2 {
             }
         }
 
-        let fields_slice = self.ctx.arena.alloc_slice::<StructField>(fields.len());
-        for i in 0usize..fields.len() {
-            fields_slice[i] = fields[i];
-        }
+        let fields_slice = self.ctx.arena.alloc_slice_copy::<StructField>(fields.as_slice());
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ITEM_STRUCT;
@@ -2002,10 +1956,7 @@ impl Pass2 {
             }
         }
 
-        let variants_slice = self.ctx.arena.alloc_slice::<EnumVariant>(variants.len());
-        for i in 0usize..variants.len() {
-            variants_slice[i] = variants[i];
-        }
+        let variants_slice = self.ctx.arena.alloc_slice_copy::<EnumVariant>(variants.as_slice());
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ITEM_ENUM;
@@ -2080,10 +2031,7 @@ impl Pass2 {
             }
         }
 
-        let methods_slice = self.ctx.arena.alloc_slice::<FnDef>(methods.len());
-        for j in 0usize..methods.len() {
-            methods_slice[j] = methods[j];
-        }
+        let methods_slice = self.ctx.arena.alloc_slice_copy::<FnDef>(methods.as_slice());
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ITEM_PROTOCOL;
@@ -2413,10 +2361,7 @@ impl ExprParser {
             stmts.push(block_parser.parse_expr(result_node.unwrap()));
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Expr>(stmts.len());
-        for i in 0usize..stmts.len() {
-            result[i] = stmts[i];
-        }
+        let result = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
 
         let e = self.make_expr(EXPR_BLOCK, span);
         e.args = result;
@@ -2862,11 +2807,7 @@ impl ExprParser {
             }
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Expr>(args.len());
-        for i in 0usize..args.len() {
-            result[i] = args[i];
-        }
-        result
+        self.ctx.arena.alloc_slice_copy::<&Expr>(args.as_slice())
     }
 
     fn parse_field(self: &ExprParser, node: Node, span: Span) -> &Expr {
@@ -3088,27 +3029,17 @@ impl ExprParser {
                         self.alloc_void(Span::empty())
                     };
 
-                    let pat_slice = self.ctx.arena.alloc_slice::<&Expr>(patterns.len());
-                    for i in 0usize..patterns.len() {
-                        pat_slice[i] = patterns[i];
-                    }
-
                     arms.push(SwitchArm {
-                        pattern: pat_slice,
+                        pattern: self.ctx.arena.alloc_slice_copy::<&Expr>(patterns.as_slice()),
                         body: body_expr,
                     });
                 }
             }
         }
 
-        let arms_slice = self.ctx.arena.alloc_slice::<SwitchArm>(arms.len());
-        for i in 0usize..arms.len() {
-            arms_slice[i] = arms[i];
-        }
-
         let e = self.make_expr(EXPR_SWITCH, span);
         e.lhs = value_expr;
-        e.switch_arms = arms_slice;
+        e.switch_arms = self.ctx.arena.alloc_slice_copy::<SwitchArm>(arms.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -3181,11 +3112,7 @@ impl ExprParser {
             // Use a hidden temporary for the whole tuple value
             let var_id = self.ctx.next_id();
             e.id = var_id;
-            let result = self.ctx.arena.alloc_slice::<&Expr>(elem_exprs.len());
-            for i in 0usize..elem_exprs.len() {
-                result[i] = elem_exprs[i];
-            }
-            e.args = result;
+            e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elem_exprs.as_slice());
         }
 
         e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
@@ -3356,14 +3283,9 @@ impl ExprParser {
             }
         }
 
-        let fields_slice = self.ctx.arena.alloc_slice::<FieldInit>(fields.len());
-        for i in 0usize..fields.len() {
-            fields_slice[i] = fields[i];
-        }
-
         let e = self.make_expr(EXPR_STRUCT_LIT, span);
         e.ty = ty;
-        e.field_inits = fields_slice;
+        e.field_inits = self.ctx.arena.alloc_slice_copy::<FieldInit>(fields.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -3377,13 +3299,8 @@ impl ExprParser {
             elems.push(self.parse_expr(child));
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Expr>(elems.len());
-        for i in 0usize..elems.len() {
-            result[i] = elems[i];
-        }
-
         let e = self.make_expr(EXPR_TUPLE_LIT, span);
-        e.args = result;
+        e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -3397,13 +3314,8 @@ impl ExprParser {
             elems.push(self.parse_expr(child));
         }
 
-        let result = self.ctx.arena.alloc_slice::<&Expr>(elems.len());
-        for i in 0usize..elems.len() {
-            result[i] = elems[i];
-        }
-
         let e = self.make_expr(EXPR_ARRAY_LIT, span);
-        e.args = result;
+        e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -3537,19 +3449,9 @@ impl ExprParser {
         let lambda_parser = ExprParser::new(self.ctx, lambda_scope);
         let body = lambda_parser.parse_expr(body_node.unwrap());
 
-        let params_slice = self.ctx.arena.alloc_slice::<LambdaParam>(params.len());
-        for i in 0usize..params.len() {
-            params_slice[i] = params[i];
-        }
-
-        let bindings_slice = self.ctx.arena.alloc_slice::<ClosureBinding>(bindings.len());
-        for i in 0usize..bindings.len() {
-            bindings_slice[i] = bindings[i];
-        }
-
         let e = self.make_expr(EXPR_LAMBDA, span);
-        e.lambda_params = params_slice;
-        e.closure_bindings = bindings_slice;
+        e.lambda_params = self.ctx.arena.alloc_slice_copy::<LambdaParam>(params.as_slice());
+        e.closure_bindings = self.ctx.arena.alloc_slice_copy::<ClosureBinding>(bindings.as_slice());
         e.opt_ty = ret_ty;
         e.lhs = body;
         // Store the self_param_id for use in mono
@@ -3924,12 +3826,8 @@ impl ExprParser {
                     // Start of format placeholder
                     // Flush current string part
                     if string_part.len() > 0usize {
-                        let s = self.ctx.arena.alloc_slice::<u8>(string_part.len());
-                        for j in 0usize..string_part.len() {
-                            s[j] = string_part[j];
-                        }
                         let e = self.make_expr(EXPR_STRING_LIT, span);
-                        e.str_val = s;
+                        e.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
                         pieces.push(self.ctx.alloc_expr(e));
                         string_part.clear();
                     }
@@ -3980,12 +3878,8 @@ impl ExprParser {
 
         // Flush remaining string part
         if string_part.len() > 0usize {
-            let s = self.ctx.arena.alloc_slice::<u8>(string_part.len());
-            for j in 0usize..string_part.len() {
-                s[j] = string_part[j];
-            }
             let e = self.make_expr(EXPR_STRING_LIT, span);
-            e.str_val = s;
+            e.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
             pieces.push(self.ctx.alloc_expr(e));
         }
 
@@ -4050,10 +3944,7 @@ impl ExprParser {
             }
         }
 
-        let args_slice = self.ctx.arena.alloc_slice::<&Expr>(all_args.len());
-        for i in 0usize..all_args.len() {
-            args_slice[i] = all_args[i];
-        }
+        let args_slice = self.ctx.arena.alloc_slice_copy::<&Expr>(all_args.as_slice());
 
         // Try to expand the macro
         let macro_entry = self.ctx.macro_defs.get(&name);
@@ -4358,11 +4249,7 @@ impl ExprParser {
             }
         }
 
-        let slice = self.ctx.arena.alloc_slice::<&Expr>(result.len());
-        for i in 0usize..result.len() {
-            slice[i] = result[i];
-        }
-        slice
+        self.ctx.arena.alloc_slice_copy::<&Expr>(result.as_slice())
     }
 }
 
@@ -4570,12 +4457,7 @@ fn parse_file(
     let pass2 = Pass2::new(&ctx);
     pass2.run(root);
 
-    // Copy items to arena
-    let items = arena.alloc_slice::<Item>(ctx.items.len());
-    for i in 0usize..ctx.items.len() {
-        items[i] = ctx.items[i];
-    }
-    items
+    arena.alloc_slice_copy::<Item>(ctx.items.as_slice())
 }
 
 // Two-phase parsing: run all Pass1s across all files first to register all names
@@ -4638,12 +4520,7 @@ fn parse_file_pass2(
     let pass2 = Pass2::new(ctx);
     pass2.run(root);
 
-    // Copy items to arena
-    let items = ctx.arena.alloc_slice::<Item>(ctx.items.len());
-    for i in 0usize..ctx.items.len() {
-        items[i] = ctx.items[i];
-    }
-    items
+    ctx.arena.alloc_slice_copy::<Item>(ctx.items.as_slice())
 }
 
 fn format_num_small(n: usize) -> &[u8] {

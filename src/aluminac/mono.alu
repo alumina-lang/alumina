@@ -982,10 +982,7 @@ impl Mono {
         };
 
         // Collect local defs
-        let local_defs_slice = self.ctx.arena.alloc_slice::<IrLocalDef>(self.local_defs.len());
-        for i in 0usize..self.local_defs.len() {
-            local_defs_slice[i] = self.local_defs[i];
-        }
+        let local_defs_slice = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice());
 
         // Update the placeholder with the actual body and local defs
         self.ctx.ir_functions[idx].body = body;
@@ -3615,10 +3612,7 @@ impl Mono {
         let body = self.lower_expr(expr.lhs);
 
         // Collect local defs
-        let local_defs_slice = self.ctx.arena.alloc_slice::<IrLocalDef>(self.local_defs.len());
-        for i in 0usize..self.local_defs.len() {
-            local_defs_slice[i] = self.local_defs[i];
-        }
+        let local_defs_slice = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice());
 
         self.ctx.ir_functions[idx].body = Option::some(body);
         self.ctx.ir_functions[idx].local_defs = local_defs_slice;
@@ -3632,10 +3626,7 @@ impl Mono {
 
         if has_captures {
             // Build a struct literal with the captured values
-            let items = self.ctx.arena.alloc_slice::<&IrExpr>(expr.closure_bindings.len());
-            for i in 0usize..expr.closure_bindings.len() {
-                items[i] = bound_values[i];
-            }
+            let items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(bound_values);
             let result = IrExpr::void_expr(closure_ty);
             result.tag = IR_STRUCT_LIT;
             result.ir_ty = closure_ty;
@@ -4467,31 +4458,16 @@ fn monomorphize(
     }
 
     // Build compilation unit
-    let fns = arena.alloc_slice::<IrFunction>(ctx.ir_functions.len());
-    for i in 0usize..ctx.ir_functions.len() {
-        fns[i] = ctx.ir_functions[i];
-    }
-    let globals = arena.alloc_slice::<IrGlobal>(ctx.ir_globals.len());
-    for i in 0usize..ctx.ir_globals.len() {
-        globals[i] = ctx.ir_globals[i];
-    }
-    let structs = arena.alloc_slice::<IrStructRef>(ctx.ir_structs.len());
-    for i in 0usize..ctx.ir_structs.len() {
-        structs[i] = ctx.ir_structs[i];
-    }
-    let enums = arena.alloc_slice::<IrEnumRef>(ctx.ir_enums.len());
-    for i in 0usize..ctx.ir_enums.len() {
-        enums[i] = ctx.ir_enums[i];
-    }
+    let cu = CompilationUnit {
+        functions: arena.alloc_slice_copy::<IrFunction>(ctx.ir_functions.as_slice()),
+        globals: arena.alloc_slice_copy::<IrGlobal>(ctx.ir_globals.as_slice()),
+        structs: arena.alloc_slice_copy::<IrStructRef>(ctx.ir_structs.as_slice()),
+        enums: arena.alloc_slice_copy::<IrEnumRef>(ctx.ir_enums.as_slice()),
+    };
 
     ctx.free();
 
-    CompilationUnit {
-        functions: fns,
-        globals: globals,
-        structs: structs,
-        enums: enums,
-    }
+    cu
 }
 
 // ============================================================

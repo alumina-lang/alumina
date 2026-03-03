@@ -114,17 +114,12 @@ up by name at runtime, so named constants aren't needed.
 
 ---
 
-## 7. Repeated Vector-to-arena-slice copy pattern
+## 7. ~~Repeated Vector-to-arena-slice copy pattern~~ DONE
 
-This 3-line pattern appears ~15 times:
-```alumina
-let result = self.ctx.arena.alloc_slice::<&Expr>(vec.len());
-for i in 0usize..vec.len() {
-    result[i] = vec[i];
-}
-```
-
-Should add `Arena::alloc_slice_from<T>(src: &[T]) -> &mut [T]` or similar helper.
+**Fixed:** Added `Arena::alloc_slice_copy<T>(src: &[T]) -> &mut [T]` helper
+and applied it to ~30 pure-copy occurrences across parser.alu, mono.alu.
+Remaining alloc+loop patterns do transformations during copy (resolve_type,
+lower_expr, expand_macro_expr) and cannot use the helper.
 
 ---
 
@@ -185,6 +180,6 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 4. **#4 (default constructors)** — Reduce zeroed boilerplate
 5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
 6. ~~**#6 (magic numbers)** — Quick wins~~ DONE
-7. **#7 (arena helper)** — Small utility addition
+7. ~~**#7 (arena helper)** — Small utility addition~~ DONE
 8. **#9 (for-loop dedup)** — Moderate refactor
 9. **#8, #11** — Minor quality-of-life
