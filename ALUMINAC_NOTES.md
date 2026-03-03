@@ -89,7 +89,18 @@ alumina-boot has separate ZST elision (613 lines) and DCE (215 lines) IR passes 
 
 Each is declared with `#[builtin]` attribute in `sysroot/std/macros.alu` and `sysroot/std/mod.alu`.
 
-**aluminac**: User-defined macros work (`parser.alu:3168-3278`), but NO builtin macro infrastructure. The `#[builtin]` attribute is not recognized.
+**aluminac**: User-defined macros work. Builtin macro infrastructure implemented: the `#[builtin]` attribute is recognized on macro definitions, and the parser dispatches to specialized compile-time handlers. Currently implemented builtins:
+1. `cfg!($flag)` -- checks cfg flag, returns bool literal
+2. `line!()` -- current source line number
+3. `column!()` -- current source column
+4. `file!()` -- current source file path
+5. `stringify!($expr)` -- converts expression source text to string
+6. `env!($var)` -- reads environment variable at compile time
+7. `concat!($a, $b)` -- concatenates constant strings
+8. `include_bytes!($file)` -- reads file at compile time
+9. `format_args!($wrapper, $fmt, $args...)` -- format string parsing with piece interleaving (basic support)
+
+**Still missing**: `bind!`, `reduce!` (needed for full `println!`/`write!` chain), proper et cetera (`...`) expansion in builtins. Test: `tests/aluminac/builtin_macros.alu`.
 
 #### 2.3. Complex `#[cfg()]` Evaluation
 

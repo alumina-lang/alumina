@@ -1,0 +1,40 @@
+// Test builtin macros: cfg!, line!, column!, file!, stringify!, env!, concat!
+
+#[builtin] macro cfg($flag) {}
+#[builtin] macro line() {}
+#[builtin] macro column() {}
+#[builtin] macro file() {}
+#[builtin] macro stringify($expr) {}
+#[builtin] macro env($var) {}
+#[builtin] macro concat($a, $b) {}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test line!() returns a nonzero value
+    let l: i32 = line!();
+    if l == 0i32 { return 1i32; }
+
+    // Test file!() returns a nonempty string
+    let f = file!();
+    if f.len() == 0usize { return 2i32; }
+
+    // Test stringify!() returns the expression text
+    let s = stringify!(1 + 2);
+    if s.len() == 0usize { return 3i32; }
+
+    // Test concat!() concatenates strings
+    let c = concat!("hello", " world");
+    if c.len() != 11usize { return 4i32; }
+    if c[0] != 'h' as u8 { return 5i32; }
+    if c[5] != ' ' as u8 { return 6i32; }
+    if c[6] != 'w' as u8 { return 7i32; }
+
+    // Test env!() with a known variable (PATH should exist)
+    let path = env!("PATH");
+    // PATH might be empty in some test environments, so just check it doesn't crash
+
+    // Test cfg!() - we don't have any cfg flags set, so should return false
+    let cfg_val = cfg!("nonexistent_flag");
+    if cfg_val { return 8i32; }
+
+    0i32
+}
