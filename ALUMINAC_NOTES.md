@@ -66,7 +66,7 @@ alumina-boot has separate ZST elision (613 lines) and DCE (215 lines) IR passes 
 - Can evaluate simple direct function calls by recursing into body
 - **Missing**: pointer values, struct/tuple/array values, string values, assignments, loops, goto/labels, const_alloc/const_free, proper enum variant evaluation
 
-**Enum variant evaluation is broken** (`mono.alu:629-684`): Only handles the case where the value expression is an integer literal (`val_expr.tag == EXPR_INT_LIT`). Any other expression (e.g., `BAR + 1`, a reference to another variant, a const) silently falls back to auto-increment. No duplicate value detection, no overflow detection.
+**Enum variant evaluation** (`mono.alu:629-695`): ~~FIXED~~ Now uses two-pass approach matching alumina-boot: (1) evaluate all explicit variant values via `lower_expr` + `try_const_eval_u64`, supporting binary ops, casts, etc.; (2) auto-increment non-valued variants from 0, skipping taken values. Duplicate detection via HashSet. Test: `tests/aluminac/enum_const_eval.alu`.
 
 **Usage**: 45 explicit `const_eval`/`const_bake` calls in sysroot, plus every enum definition, every `when` expression, every `static for`, and every `const` item.
 

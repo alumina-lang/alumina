@@ -8,7 +8,7 @@ use ast::*;
 use scope::*;
 use diagnostics::DiagnosticContext;
 use aluminac_common::arena::Arena;
-use std::collections::{HashMap, Vector};
+use std::collections::{HashMap, HashSet, Vector};
 use std::option::Option;
 
 // Key for memoizing monomorphized items
@@ -641,26 +641,50 @@ impl Mono {
             self.ctx.intern_builtin_ty(BuiltinType::I32)
         };
 
-        // Resolve variant values
+        // Two-pass approach matching alumina-boot:
+        // 1) Process variants with explicit values first
+        // 2) Auto-increment non-valued variants from 0, skipping taken values
         let variants = self.ctx.arena.alloc_slice::<IrEnumVariant>(def.variants.len());
-        let next_val: u64 = 0;
+        let taken_values: HashSet<u64> = HashSet::new();
+
+        // Pass 1: evaluate all explicit values
         for i in 0usize..def.variants.len() {
-            let val = if def.variants[i].value.is_some() {
-                // Evaluate const expression (supports integer literals)
+            if def.variants[i].value.is_some() {
                 let val_expr = def.variants[i].value.unwrap();
-                if val_expr.tag == EXPR_INT_LIT {
-                    val_expr.int_val
+                let ir_expr = self.lower_expr(val_expr);
+                let const_val = self.try_const_eval_u64(ir_expr);
+                if const_val.is_some() {
+                    let v = const_val.unwrap();
+                    taken_values.insert(v);
+                    variants[i] = IrEnumVariant {
+                        name: def.variants[i].name,
+                        value: v,
+                    };
                 } else {
-                    next_val
+                    // Fallback: treat as 0 if const eval fails
+                    variants[i] = IrEnumVariant {
+                        name: def.variants[i].name,
+                        value: 0u64,
+                    };
                 }
-            } else {
-                next_val
-            };
-            variants[i] = IrEnumVariant {
-                name: def.variants[i].name,
-                value: val,
-            };
-            next_val = val + 1;
+            }
+        }
+
+        // Pass 2: assign auto-increment values to non-valued variants
+        let counter: u64 = 0;
+        for i in 0usize..def.variants.len() {
+            if !def.variants[i].value.is_some() {
+                // Find next value not already taken
+                while taken_values.contains(&counter) {
+                    counter = counter + 1;
+                }
+                taken_values.insert(counter);
+                variants[i] = IrEnumVariant {
+                    name: def.variants[i].name,
+                    value: counter,
+                };
+                counter = counter + 1;
+            }
         }
 
         let mangled = self.ctx.mangle_name(def.name);
