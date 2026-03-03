@@ -18,17 +18,21 @@ All struct tag fields changed from `i32` to the appropriate enum type.
 
 ---
 
-## 2. ~~if-else chains that should be `switch`~~ PARTIALLY DONE
+## 2. ~~if-else chains that should be `switch`~~ DONE
 
 **Fixed:** Converted key dispatchers to `switch` statements:
 - `mono.alu:resolve_type` — 12-branch type resolution (TyTag switch)
 - `mono.alu:lower_expr` — 20+ branch expression dispatch (ExprTag switch)
 - `parser.alu` — Attribute name dispatch (13-arm string switch)
 - `parser.alu` — `parse_binop` and `parse_assign_op` (19+10 arm string switches)
-
-**Remaining:** codegen.alu `gen_expr` (~40 branches, ~550 lines) and
-`gen_lvalue`, const_eval.alu dispatchers, parser.alu builtin macro dispatch.
-These are large but mechanical conversions.
+- `codegen.alu:gen_expr` — 40-branch expression codegen (IrTag switch, ~550 lines)
+- `codegen.alu:gen_lvalue` — 7-branch lvalue codegen (IrTag switch)
+- `codegen.alu:gen_const_init` — 8-branch constant initializer (IrTag switch)
+- `const_eval.alu:eval_inner` — 30+ branch const evaluator dispatch (IrTag switch)
+- `const_eval.alu:irty_to_builtin` — 4-branch type mapping (IrTyTag switch)
+- `layout.alu:compute_type_size` — 7-branch type size computation (IrTyTag switch)
+- `layout.alu:compute_type_align` — 7-branch type alignment computation (IrTyTag switch)
+- `parser.alu:expand_builtin_macro` — 13-branch builtin macro dispatch (string switch)
 
 ---
 
@@ -139,7 +143,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 
 1. ~~**#10 (bug fix)** — Fix switch codegen for non-integer types~~ DONE
 2. ~~**#5 (IR helpers)** — Biggest readability/LOC win, no risk~~ DONE
-3. ~~**#1 + #2 (enums + switch)** — Large refactor but huge type safety win~~ DONE (#2 partially)
+3. ~~**#1 + #2 (enums + switch)** — Large refactor but huge type safety win~~ DONE
 4. ~~**#4 (default constructors)** — Reduce zeroed boilerplate~~ DONE
 5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
 6. ~~**#6 (magic numbers)** — Quick wins~~ DONE

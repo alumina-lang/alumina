@@ -232,35 +232,31 @@ impl ConstEvaluator {
             return ConstResult::fail(ConstEvalError::too_many_iters());
         }
 
-        if expr.tag == IrTag::IntLit {
-            // Determine the BuiltinType from the IrTy
+        switch expr.tag {
+        IrTag::IntLit => {
             let bt = self.irty_to_builtin(expr.ty);
-            return ConstResult::success(ConstValue::make_int(expr.int_val, bt));
-        } else if expr.tag == IrTag::FloatLit {
+            ConstResult::success(ConstValue::make_int(expr.int_val, bt))
+        }
+        IrTag::FloatLit => {
             let bt = self.irty_to_builtin(expr.ty);
-            return ConstResult::success(ConstValue::make_float(expr.float_val, bt));
-        } else if expr.tag == IrTag::BoolLit {
-            return ConstResult::success(ConstValue::make_bool(expr.bool_val));
-        } else if expr.tag == IrTag::StringLit {
-            return ConstResult::success(ConstValue::make_bytes(expr.str_val, 0));
-        } else if expr.tag == IrTag::Void {
-            return ConstResult::success(ConstValue::make_void());
-        } else if expr.tag == IrTag::NullLit {
-            return ConstResult::success(ConstValue::make_int(0u64, BuiltinType::USize));
-        } else if expr.tag == IrTag::SizeOf {
+            ConstResult::success(ConstValue::make_float(expr.float_val, bt))
+        }
+        IrTag::BoolLit => ConstResult::success(ConstValue::make_bool(expr.bool_val)),
+        IrTag::StringLit => ConstResult::success(ConstValue::make_bytes(expr.str_val, 0)),
+        IrTag::Void => ConstResult::success(ConstValue::make_void()),
+        IrTag::NullLit => ConstResult::success(ConstValue::make_int(0u64, BuiltinType::USize)),
+        IrTag::SizeOf => {
             let sz = compute_type_size(expr.ir_ty, self.pointer_size);
-            return ConstResult::success(ConstValue::make_int(sz as u64, BuiltinType::USize));
-        } else if expr.tag == IrTag::AlignOf {
+            ConstResult::success(ConstValue::make_int(sz as u64, BuiltinType::USize))
+        }
+        IrTag::AlignOf => {
             let al = compute_type_align(expr.ir_ty, self.pointer_size);
-            return ConstResult::success(ConstValue::make_int(al as u64, BuiltinType::USize));
-        } else if expr.tag == IrTag::Cast {
-            return self.eval_cast(expr);
-        } else if expr.tag == IrTag::Binary {
-            return self.eval_binary(expr);
-        } else if expr.tag == IrTag::Unary {
-            return self.eval_unary(expr);
-        } else if expr.tag == IrTag::Local {
-            // Return an lvalue reference to the variable
+            ConstResult::success(ConstValue::make_int(al as u64, BuiltinType::USize))
+        }
+        IrTag::Cast => self.eval_cast(expr),
+        IrTag::Binary => self.eval_binary(expr),
+        IrTag::Unary => self.eval_unary(expr),
+        IrTag::Local, IrTag::Param => {
             let lv = self.arena.alloc(ConstLValue {
                 tag: CLVTag::Variable,
                 id: Id { _value: self.var_id(expr.id) },
@@ -268,26 +264,13 @@ impl ConstEvaluator {
                 field_idx: 0,
                 index: 0,
             });
-            return ConstResult::success(ConstValue::make_lvalue(lv));
-        } else if expr.tag == IrTag::Param {
-            // Params are stored as variables (by their id)
-            let lv = self.arena.alloc(ConstLValue {
-                tag: CLVTag::Variable,
-                id: Id { _value: self.var_id(expr.id) },
-                inner: std::mem::zeroed::<&ConstLValue>(),
-                field_idx: 0,
-                index: 0,
-            });
-            return ConstResult::success(ConstValue::make_lvalue(lv));
-        } else if expr.tag == IrTag::Block {
-            return self.eval_block(expr);
-        } else if expr.tag == IrTag::If {
-            return self.eval_if(expr);
-        } else if expr.tag == IrTag::Let {
-            return self.eval_let(expr);
-        } else if expr.tag == IrTag::Assign {
-            return self.eval_assign(expr);
-        } else if expr.tag == IrTag::Return {
+            ConstResult::success(ConstValue::make_lvalue(lv))
+        }
+        IrTag::Block => self.eval_block(expr),
+        IrTag::If => self.eval_if(expr),
+        IrTag::Let => self.eval_let(expr),
+        IrTag::Assign => self.eval_assign(expr),
+        IrTag::Return => {
             if expr.opt_expr.is_some() {
                 let val = self.eval(expr.opt_expr.unwrap());
                 if !val.ok { return val; }
@@ -296,67 +279,43 @@ impl ConstEvaluator {
                 self.return_slot = ConstValue::make_void();
             }
             self.has_return = true;
-            return ConstResult::fail(ConstEvalError::return_err());
-        } else if expr.tag == IrTag::Call {
-            return self.eval_call(expr);
-        } else if expr.tag == IrTag::FieldAccess {
-            return self.eval_field_access(expr);
-        } else if expr.tag == IrTag::Index {
-            return self.eval_index(expr);
-        } else if expr.tag == IrTag::TupleLit {
-            return self.eval_tuple_lit(expr);
-        } else if expr.tag == IrTag::ArrayLit {
-            return self.eval_array_lit(expr);
-        } else if expr.tag == IrTag::StructLit {
-            return self.eval_struct_lit(expr);
-        } else if expr.tag == IrTag::Ref {
-            return self.eval_ref(expr);
-        } else if expr.tag == IrTag::Deref {
-            return self.eval_deref(expr);
-        } else if expr.tag == IrTag::Unreachable {
-            return ConstResult::fail(ConstEvalError::unreachable_err());
-        } else if expr.tag == IrTag::Undef {
-            return ConstResult::success(ConstValue::make_uninitialized());
-        } else if expr.tag == IrTag::Zeroed {
-            return ConstResult::success(self.make_zeroed(expr.ty));
-        } else if expr.tag == IrTag::FnRef {
-            return ConstResult::success(ConstValue::make_fn_ptr(expr.fn_ref));
-        } else if expr.tag == IrTag::While {
-            return self.eval_while(expr);
-        } else if expr.tag == IrTag::Loop {
-            return self.eval_loop(expr);
-        } else if expr.tag == IrTag::Break {
-            return ConstResult::fail(ConstEvalError::break_err());
-        } else if expr.tag == IrTag::Continue {
-            return ConstResult::fail(ConstEvalError::continue_err());
-        } else if expr.tag == IrTag::Switch {
-            return self.eval_switch(expr);
-        } else if expr.tag == IrTag::Transmute {
-            return self.eval_transmute(expr);
-        } else if expr.tag == IrTag::CodegenFunc {
-            // Check for const-eval intrinsics encoded as codegen_func
-            return self.eval_codegen_func(expr);
-        } else if expr.tag == IrTag::Trap {
-            return ConstResult::fail(ConstEvalError::unreachable_err());
+            ConstResult::fail(ConstEvalError::return_err())
         }
-
-        ConstResult::fail(ConstEvalError::unsupported())
+        IrTag::Call => self.eval_call(expr),
+        IrTag::FieldAccess => self.eval_field_access(expr),
+        IrTag::Index => self.eval_index(expr),
+        IrTag::TupleLit => self.eval_tuple_lit(expr),
+        IrTag::ArrayLit => self.eval_array_lit(expr),
+        IrTag::StructLit => self.eval_struct_lit(expr),
+        IrTag::Ref => self.eval_ref(expr),
+        IrTag::Deref => self.eval_deref(expr),
+        IrTag::Unreachable, IrTag::Trap => ConstResult::fail(ConstEvalError::unreachable_err()),
+        IrTag::Undef => ConstResult::success(ConstValue::make_uninitialized()),
+        IrTag::Zeroed => ConstResult::success(self.make_zeroed(expr.ty)),
+        IrTag::FnRef => ConstResult::success(ConstValue::make_fn_ptr(expr.fn_ref)),
+        IrTag::While => self.eval_while(expr),
+        IrTag::Loop => self.eval_loop(expr),
+        IrTag::Break => ConstResult::fail(ConstEvalError::break_err()),
+        IrTag::Continue => ConstResult::fail(ConstEvalError::continue_err()),
+        IrTag::Switch => self.eval_switch(expr),
+        IrTag::Transmute => self.eval_transmute(expr),
+        IrTag::CodegenFunc => self.eval_codegen_func(expr),
+        _ => ConstResult::fail(ConstEvalError::unsupported()),
+        }
     }
 
     fn irty_to_builtin(self: &ConstEvaluator, ty: &IrTy) -> BuiltinType {
-        if ty.tag == IrTyTag::Builtin {
-            ty.builtin
-        } else if ty.tag == IrTyTag::Enum {
-            // Use the enum's underlying type
+        switch ty.tag {
+        IrTyTag::Builtin => ty.builtin,
+        IrTyTag::Enum => {
             if ty.enum_ref.underlying.tag == IrTyTag::Builtin {
                 ty.enum_ref.underlying.builtin
             } else {
                 BuiltinType::I32 // default
             }
-        } else if ty.tag == IrTyTag::Pointer || ty.tag == IrTyTag::FnPointer {
-            BuiltinType::USize
-        } else {
-            BuiltinType::Void
+        }
+        IrTyTag::Pointer, IrTyTag::FnPointer => BuiltinType::USize,
+        _ => BuiltinType::Void,
         }
     }
 
