@@ -1,0 +1,102 @@
+// Test for-loop tuple unpacking: for (a, b) in iterable { ... }
+// Returns 1337 on success to distinguish from a no-op binary.
+// EXPECTED_EXIT: 42
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: tuple unpacking with array of 2-tuples
+    let pairs: [(i32, i32); 3] = [(1i32, 10i32), (2i32, 20i32), (3i32, 30i32)];
+    let sum = 0i32;
+    for (a, b) in pairs {
+        sum = sum + a + b;
+    }
+    // 1+10 + 2+20 + 3+30 = 66
+    if sum != 66i32 { return 1i32; }
+
+    // Test 2: triple unpacking with array of 3-tuples
+    let triples: [(i32, i32, i32); 2] = [(1i32, 2i32, 3i32), (4i32, 5i32, 6i32)];
+    let sum2 = 0i32;
+    for (a, b, c) in triples {
+        sum2 = sum2 + a + b + c;
+    }
+    // 1+2+3 + 4+5+6 = 21
+    if sum2 != 21i32 { return 2i32; }
+
+    // Test 3: tuple unpacking body uses variables correctly (multiplication)
+    let data: [(i32, i32); 3] = [(2i32, 3i32), (4i32, 5i32), (6i32, 7i32)];
+    let product_sum = 0i32;
+    for (x, y) in data {
+        product_sum = product_sum + x * y;
+    }
+    // 2*3 + 4*5 + 6*7 = 6 + 20 + 42 = 68
+    if product_sum != 68i32 { return 3i32; }
+
+    // Test 4: single element tuple (degenerate case)
+    let singles: [(i32,); 3] = [(10i32,), (20i32,), (30i32,)];
+    let sum3 = 0i32;
+    for (x) in singles {
+        sum3 = sum3 + x;
+    }
+    if sum3 != 60i32 { return 4i32; }
+
+    // Test 5: tuple unpacking with iterator-based for loop
+    let r = EnumRange { limit: 4i32 };
+    let idx_sum = 0i32;
+    let val_sum = 0i32;
+    for (i, v) in r {
+        idx_sum = idx_sum + i;
+        val_sum = val_sum + v;
+    }
+    // idx: 0+1+2+3 = 6, val: 0+10+20+30 = 60
+    if idx_sum != 6i32 { return 5i32; }
+    if val_sum != 60i32 { return 6i32; }
+
+    42i32
+}
+
+// Inline Option to avoid sysroot dependency
+struct Option<T> {
+    _is_some: bool,
+    _inner: T,
+}
+
+impl Option<T> {
+    fn some(val: T) -> Option<T> {
+        Option::<T> { _is_some: true, _inner: val }
+    }
+    fn none() -> Option<T> {
+        let o: Option<T>;
+        o._is_some = false;
+        o
+    }
+    fn is_none(self: &Option<T>) -> bool {
+        !self._is_some
+    }
+}
+
+// Iterator that yields (index, value) pairs
+struct EnumIter {
+    current: i32,
+    limit: i32,
+}
+
+impl EnumIter {
+    fn next(self: &mut EnumIter) -> Option<(i32, i32)> {
+        if self.current < self.limit {
+            let idx = self.current;
+            self.current = self.current + 1;
+            Option::some((idx, idx * 10i32))
+        } else {
+            Option::none()
+        }
+    }
+}
+
+struct EnumRange {
+    limit: i32,
+}
+
+impl EnumRange {
+    fn iter(self: &EnumRange) -> EnumIter {
+        EnumIter { current: 0i32, limit: self.limit }
+    }
+}

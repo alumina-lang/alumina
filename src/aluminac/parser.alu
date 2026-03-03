@@ -3127,26 +3127,64 @@ impl ExprParser {
         let iter_node = child_by!(node, FieldKind::Value);
         let body = child_by!(node, FieldKind::Body);
 
-        if name_node.is_none() || iter_node.is_none() || body.is_none() {
+        if iter_node.is_none() || body.is_none() {
             return self.alloc_void(span);
         }
-
-        let var_id = self.ctx.next_id();
-        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
         // Create a child scope for the loop so the loop variable doesn't pollute the parent scope
         let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
         let loop_parser = ExprParser::new(self.ctx, loop_scope);
 
-        // Register the loop variable in the loop's child scope
-        self.ctx.scopes.add_item(loop_scope, NamedItem {
-            name: var_name,
-            kind: NamedItemKind::local(var_id),
-            span: self.ctx.make_span(name_node.unwrap()),
-        });
-
         let e = self.make_expr(EXPR_FOR, span);
-        e.id = var_id;
+
+        if name_node.is_some() {
+            // Simple case: for item in iterable { body }
+            let var_id = self.ctx.next_id();
+            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+            self.ctx.scopes.add_item(loop_scope, NamedItem {
+                name: var_name,
+                kind: NamedItemKind::local(var_id),
+                span: self.ctx.make_span(name_node.unwrap()),
+            });
+
+            e.id = var_id;
+            e.args = &[];
+        } else {
+            // Tuple unpacking: for (a, b, ...) in iterable { body }
+            // Collect element names from tree-sitter Element children
+            let cursor = node.walk();
+            defer cursor.free();
+
+            let elem_exprs: Vector<&Expr> = Vector::new();
+            defer elem_exprs.free();
+            for elem_node in children_by!(node, FieldKind::Element, &cursor) {
+                let elem_id = self.ctx.next_id();
+                let elem_name = self.ctx.intern_str(self.ctx.node_text(elem_node));
+
+                self.ctx.scopes.add_item(loop_scope, NamedItem {
+                    name: elem_name,
+                    kind: NamedItemKind::local(elem_id),
+                    span: self.ctx.make_span(elem_node),
+                });
+
+                // Store element ID and name in an EXPR_LOCAL node
+                let elem_expr = self.make_expr(EXPR_LOCAL, self.ctx.make_span(elem_node));
+                elem_expr.id = elem_id;
+                elem_expr.str_val = elem_name;
+                elem_exprs.push(self.ctx.alloc_expr(elem_expr));
+            }
+
+            // Use a hidden temporary for the whole tuple value
+            let var_id = self.ctx.next_id();
+            e.id = var_id;
+            let result = self.ctx.arena.alloc_slice::<&Expr>(elem_exprs.len());
+            for i in 0usize..elem_exprs.len() {
+                result[i] = elem_exprs[i];
+            }
+            e.args = result;
+        }
+
         e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
         e.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
         self.ctx.alloc_expr(e)

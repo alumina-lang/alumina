@@ -1855,30 +1855,22 @@ impl Mono {
         unwrap_expr.field_idx = 1u32; // _inner field
         let ir_unwrap = self.ctx.arena.alloc(unwrap_expr) as &IrExpr;
 
-        // let item = _opt.unwrap()
-        let loop_var_id = expr.id;
-        self.local_types.insert(loop_var_id._value, elem_ty);
-        self.local_defs.push(IrLocalDef {
-            id: loop_var_id,
-            ty: elem_ty,
-            name: "",
-        });
-        let let_item = IrExpr::void_expr(self.ctx.void_ty);
-        let_item.tag = IR_LET;
-        let_item.id = loop_var_id;
-        let_item.ir_ty = elem_ty;
-        let_item.opt_expr = Option::some(ir_unwrap);
-        let ir_let_item = self.ctx.arena.alloc(let_item) as &IrExpr;
+        // let item = _opt.unwrap()  (or tuple unpacking bindings)
+        let binding_stmts = self.make_for_loop_bindings(expr, ir_unwrap, elem_ty);
 
         // Lower the body
         let ir_body = self.lower_expr(expr.rhs);
 
-        // Loop body: { let _opt = _iter.next(); if is_none break; let item = unwrap; body }
-        let body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(4);
+        // Loop body: { let _opt = _iter.next(); if is_none break; [bindings...]; body }
+        let body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2 + binding_stmts.len() + 1);
         body_stmts[0] = ir_let_opt;
         body_stmts[1] = ir_if_break;
-        body_stmts[2] = ir_let_item;
-        body_stmts[3] = ir_body;
+        let j = 0usize;
+        while j < binding_stmts.len() {
+            body_stmts[2 + j] = binding_stmts[j];
+            j = j + 1;
+        }
+        body_stmts[2 + binding_stmts.len()] = ir_body;
         let loop_body = IrExpr::void_expr(self.ctx.void_ty);
         loop_body.tag = IR_BLOCK;
         loop_body.items = body_stmts;
@@ -2418,6 +2410,82 @@ impl Mono {
         self.ctx.arena.alloc(block)
     }
 
+    // Generate tuple unpacking let-bindings for `for (a, b, ...) in iterable` loops.
+    // Returns a slice of IR statements: [let _tuple = elem_ir, let a = _tuple.(0), let b = _tuple.(1), ...]
+    // For non-tuple loops (expr.args is empty), returns [let item = elem_ir].
+    fn make_for_loop_bindings(self: &mut Mono, expr: &Expr, elem_ir: &IrExpr, elem_ty: &IrTy) -> &[&IrExpr] {
+        let loop_var_id = expr.id;
+
+        if expr.args.len() == 0 {
+            // Simple case: for item in iterable
+            self.local_types.insert(loop_var_id._value, elem_ty);
+            self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "" });
+            let let_item = IrExpr::void_expr(self.ctx.void_ty);
+            let_item.tag = IR_LET;
+            let_item.id = loop_var_id;
+            let_item.ir_ty = elem_ty;
+            let_item.opt_expr = Option::some(elem_ir);
+            let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(1);
+            stmts[0] = self.ctx.arena.alloc(let_item) as &IrExpr;
+            return stmts;
+        }
+
+        // Tuple unpacking: for (a, b, ...) in iterable
+        // let _tuple = elem_ir;
+        self.local_types.insert(loop_var_id._value, elem_ty);
+        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "_tuple" });
+        let let_tuple = IrExpr::void_expr(self.ctx.void_ty);
+        let_tuple.tag = IR_LET;
+        let_tuple.id = loop_var_id;
+        let_tuple.ir_ty = elem_ty;
+        let_tuple.opt_expr = Option::some(elem_ir);
+        let ir_let_tuple = self.ctx.arena.alloc(let_tuple) as &IrExpr;
+
+        let n = expr.args.len();
+        let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(1 + n);
+        stmts[0] = ir_let_tuple;
+
+        // For each tuple element: let a = _tuple.(idx)
+        let i = 0usize;
+        while i < n {
+            let elem_arg = expr.args[i];
+            let elem_id = elem_arg.id;
+
+            // Get the tuple element type
+            let field_ty = if elem_ty.tag == IRTY_TUPLE && i < elem_ty.elems.len() {
+                elem_ty.elems[i]
+            } else if elem_ty.tag == IRTY_STRUCT && i < elem_ty.struct_ref.fields.len() {
+                elem_ty.struct_ref.fields[i].ty
+            } else {
+                self.ctx.void_ty
+            };
+
+            self.local_types.insert(elem_id._value, field_ty);
+            self.local_defs.push(IrLocalDef { id: elem_id, ty: field_ty, name: "" });
+
+            // _tuple.(idx)
+            let tuple_local = IrExpr::void_expr(elem_ty);
+            tuple_local.tag = IR_LOCAL;
+            tuple_local.id = loop_var_id;
+            let field_access = IrExpr::void_expr(field_ty);
+            field_access.tag = IR_FIELD_ACCESS;
+            field_access.lhs = self.ctx.arena.alloc(tuple_local) as &IrExpr;
+            field_access.field_idx = i as u32;
+            let ir_field = self.ctx.arena.alloc(field_access) as &IrExpr;
+
+            let let_elem = IrExpr::void_expr(self.ctx.void_ty);
+            let_elem.tag = IR_LET;
+            let_elem.id = elem_id;
+            let_elem.ir_ty = field_ty;
+            let_elem.opt_expr = Option::some(ir_field);
+            stmts[1 + i] = self.ctx.arena.alloc(let_elem) as &IrExpr;
+
+            i = i + 1;
+        }
+
+        stmts
+    }
+
     // Lower a for-in loop over a slice: for item in slice { body }
     // Desugar to: { let _s = slice; let _i = 0usize; let _end = _s.len; while _i < _end { let item = _s[_i]; body; _i = _i + 1; } }
     fn lower_for_slice(self: &mut Mono, expr: &Expr, slice_ir: &IrExpr, slice_ty: &IrTy) -> &IrExpr {
@@ -2513,16 +2581,8 @@ impl Mono {
         index_expr.rhs = ir_read_i2;
         let ir_index = self.ctx.arena.alloc(index_expr) as &IrExpr;
 
-        // let item = _s[_i]
-        let loop_var_id = expr.id;
-        self.local_types.insert(loop_var_id._value, elem_ty);
-        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "" });
-        let let_item = IrExpr::void_expr(self.ctx.void_ty);
-        let_item.tag = IR_LET;
-        let_item.id = loop_var_id;
-        let_item.ir_ty = elem_ty;
-        let_item.opt_expr = Option::some(ir_index);
-        let ir_let_item = self.ctx.arena.alloc(let_item) as &IrExpr;
+        // let item = _s[_i]  (or tuple unpacking bindings)
+        let binding_stmts = self.make_for_loop_bindings(expr, ir_index, elem_ty);
 
         // body
         let ir_body = self.lower_expr(expr.rhs);
@@ -2552,11 +2612,15 @@ impl Mono {
         assign_i.rhs = ir_add;
         let ir_assign_i = self.ctx.arena.alloc(assign_i) as &IrExpr;
 
-        // while body: { let item = _s[_i]; body; _i = _i + 1; }
-        let while_body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-        while_body_stmts[0] = ir_let_item;
-        while_body_stmts[1] = ir_body;
-        while_body_stmts[2] = ir_assign_i;
+        // while body: { [bindings...]; body; _i = _i + 1; }
+        let while_body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(binding_stmts.len() + 2);
+        let j = 0usize;
+        while j < binding_stmts.len() {
+            while_body_stmts[j] = binding_stmts[j];
+            j = j + 1;
+        }
+        while_body_stmts[binding_stmts.len()] = ir_body;
+        while_body_stmts[binding_stmts.len() + 1] = ir_assign_i;
         let while_body = IrExpr::void_expr(self.ctx.void_ty);
         while_body.tag = IR_BLOCK;
         while_body.items = while_body_stmts;
@@ -2646,16 +2710,8 @@ impl Mono {
         index_expr.rhs = ir_read_i2;
         let ir_index = self.ctx.arena.alloc(index_expr) as &IrExpr;
 
-        // let item = _a[_i]
-        let loop_var_id = expr.id;
-        self.local_types.insert(loop_var_id._value, elem_ty);
-        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "" });
-        let let_item = IrExpr::void_expr(self.ctx.void_ty);
-        let_item.tag = IR_LET;
-        let_item.id = loop_var_id;
-        let_item.ir_ty = elem_ty;
-        let_item.opt_expr = Option::some(ir_index);
-        let ir_let_item = self.ctx.arena.alloc(let_item) as &IrExpr;
+        // let item = _a[_i]  (or tuple unpacking bindings)
+        let binding_stmts = self.make_for_loop_bindings(expr, ir_index, elem_ty);
 
         // body
         let ir_body = self.lower_expr(expr.rhs);
@@ -2685,11 +2741,15 @@ impl Mono {
         assign_i.rhs = ir_add;
         let ir_assign_i = self.ctx.arena.alloc(assign_i) as &IrExpr;
 
-        // while body: { let item = _a[_i]; body; _i = _i + 1; }
-        let while_body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-        while_body_stmts[0] = ir_let_item;
-        while_body_stmts[1] = ir_body;
-        while_body_stmts[2] = ir_assign_i;
+        // while body: { [bindings...]; body; _i = _i + 1; }
+        let while_body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(binding_stmts.len() + 2);
+        let j = 0usize;
+        while j < binding_stmts.len() {
+            while_body_stmts[j] = binding_stmts[j];
+            j = j + 1;
+        }
+        while_body_stmts[binding_stmts.len()] = ir_body;
+        while_body_stmts[binding_stmts.len() + 1] = ir_assign_i;
         let while_body = IrExpr::void_expr(self.ctx.void_ty);
         while_body.tag = IR_BLOCK;
         while_body.items = while_body_stmts;

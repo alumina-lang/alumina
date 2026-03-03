@@ -149,7 +149,7 @@ No lang items, no `IntoIterator` protocol. Pure syntactic desugaring to `.iter()
 
 Note: the desugaring also attempts to find a free function named `iter` in scope for UFCS (`expressions.rs:1117-1125`), but the primary mechanism is method call.
 
-**aluminac**: Implemented. For struct types, calls `.iter()` on the iterable to get an iterator, then uses `.next()` + `is_none()` + `_inner` field access. Has fast-paths for slices and arrays (index-based iteration). Does not support tuple unpacking in for-loop variables or UFCS `iter` free function lookup.
+**aluminac**: Implemented. For struct types, calls `.iter()` on the iterable to get an iterator, then uses `.next()` + `is_none()` + `_inner` field access. Has fast-paths for slices and arrays (index-based iteration). Supports tuple unpacking in for-loop variables (`for (a, b) in pairs { ... }`): parser detects `Element` children (tuple form) vs `Name` child (single variable), and mono generates `let _tuple = elem; let a = _tuple.(0); let b = _tuple.(1);` bindings. Works with all three for-loop paths (array, slice, iterator). Does not support UFCS `iter` free function lookup.
 
 #### 2.5. Try Operator (`?`)
 
