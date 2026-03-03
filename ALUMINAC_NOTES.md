@@ -157,9 +157,7 @@ This is user-extensible -- any `try` macro in scope works for custom types.
 - Protocol conformance: closures satisfy `Callable` protocols
 - `ClosureBinding` tracks: id, name, value expression, binding type (by-ref/by-value)
 
-**aluminac** (`mono.alu:3543-3627`): Lambdas only. Creates anonymous top-level functions with NO capture mechanism. Lambda body cannot access variables from enclosing scope. Returns a bare function pointer, not a closure struct.
-
-Note: The `@binding` syntax for explicit captures has 0 occurrences in the codebase. Closures use implicit capture.
+**aluminac**: Closures with captures implemented. Supports both by-value (`=var`) and by-reference (`&var`) captures. Closure struct created with captured values as fields; closure function receives implicit `&self` pointer as first parameter. Mixed captures (by-value + by-reference + regular params) work. Non-capturing lambdas still compile to bare function pointers. Protocol conformance for closures (e.g. `Callable`) is not yet implemented.
 
 #### 2.7. Operator Overloading and Implicit Coercions
 

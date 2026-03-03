@@ -872,6 +872,8 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_LAMBDA {
             self.lower_lambda(expr)
+        } else if expr.tag == EXPR_BOUND_VALUE {
+            self.lower_bound_value(expr)
         } else if expr.tag == EXPR_VOID {
             let result = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(result)
@@ -3541,12 +3543,57 @@ impl Mono {
 
     // Lower call expressions: EXPR_CALL, EXPR_STRUCT_LIT
     fn lower_lambda(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let has_captures = expr.closure_bindings.len() > 0;
+
         // Create an anonymous function for the lambda
         let lambda_id = self.ctx.id_gen.next_id();
-        let mangled = self.ctx.mangle_name("lambda");
+        let mangled = self.ctx.mangle_name(if has_captures { "closure" } else { "lambda" });
 
-        // Resolve parameter types
-        let params = self.ctx.arena.alloc_slice::<IrParam>(expr.lambda_params.len());
+        // First, lower the captured values (before switching to lambda's local scope)
+        let bound_values = self.ctx.arena.alloc_slice::<&IrExpr>(expr.closure_bindings.len());
+        for i in 0usize..expr.closure_bindings.len() {
+            let binding = &expr.closure_bindings[i];
+            let val = self.lower_expr(binding.value);
+            if binding.bound_type == BOUND_BY_VALUE {
+                bound_values[i] = val;
+            } else {
+                // By reference: take a reference to the original variable
+                let ref_ty = self.ctx.make_ptr_ty(val.ty, false);
+                let ref_expr = IrExpr::void_expr(ref_ty);
+                ref_expr.tag = IR_REF;
+                ref_expr.lhs = val;
+                bound_values[i] = self.ctx.arena.alloc(ref_expr);
+            }
+        }
+
+        // Build closure struct fields from captured values
+        let closure_fields = self.ctx.arena.alloc_slice::<IrField>(expr.closure_bindings.len());
+        let is_closure_zst = true;
+        for i in 0usize..expr.closure_bindings.len() {
+            closure_fields[i] = IrField {
+                name: expr.closure_bindings[i].name,
+                ty: bound_values[i].ty,
+            };
+            if !bound_values[i].ty.is_zero_sized() {
+                is_closure_zst = false;
+            }
+        }
+
+        // Create the closure struct type
+        let closure_struct_ref = IrStructRef {
+            id: lambda_id,
+            name: mangled,
+            fields: closure_fields,
+            is_union: false,
+            is_zero_sized: is_closure_zst,
+            scope_idx: 0,
+            type_args: &[],
+        };
+        let closure_fn_ref = IrFnRef { id: lambda_id, mangled_name: mangled };
+
+        // Resolve parameter types - for closures, add self param at index 0
+        let total_params = if has_captures { expr.lambda_params.len() + 1usize } else { expr.lambda_params.len() };
+        let params = self.ctx.arena.alloc_slice::<IrParam>(total_params);
         let param_types = self.ctx.arena.alloc_slice::<&IrTy>(expr.lambda_params.len());
 
         // Save current mono state
@@ -3556,6 +3603,21 @@ impl Mono {
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
 
+        let closure_ty: &IrTy = self.ctx.void_ty;
+        if has_captures {
+            // Create closure type and self parameter
+            closure_ty = self.ctx.arena.alloc(IrTy::mk_closure(closure_struct_ref, closure_fn_ref));
+            let self_ptr_ty = self.ctx.make_ptr_ty(closure_ty, false);
+            let self_param_id = expr.id; // stored by parser
+            params[0] = IrParam {
+                id: self_param_id,
+                ty: self_ptr_ty,
+                name: "__self",
+            };
+            self.local_types.insert(self_param_id._value, self_ptr_ty);
+        }
+
+        let param_offset = if has_captures { 1usize } else { 0usize };
         for i in 0usize..expr.lambda_params.len() {
             let lp = &expr.lambda_params[i];
             let param_ty = if lp.ty.is_some() {
@@ -3563,7 +3625,7 @@ impl Mono {
             } else {
                 self.ctx.void_ty
             };
-            params[i] = IrParam {
+            params[i + param_offset] = IrParam {
                 id: lp.id,
                 ty: param_ty,
                 name: lp.name,
@@ -3584,7 +3646,7 @@ impl Mono {
         let idx = self.ctx.ir_functions.len();
         let placeholder = IrFunction {
             id: lambda_id,
-            name: "lambda",
+            name: if has_captures { "closure" } else { "lambda" },
             mangled_name: mangled,
             params: params,
             return_type: ret_ty,
@@ -3615,15 +3677,110 @@ impl Mono {
         self.local_defs = saved_local_defs;
         self.return_type = saved_return_type;
 
-        // Build function pointer type and return reference
-        let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ret_ty);
-        let result = IrExpr::void_expr(fn_ty);
-        result.tag = IR_FN_REF;
-        result.fn_ref = IrFnRef {
-            id: lambda_id,
-            mangled_name: mangled,
+        if has_captures {
+            // Build a struct literal with the captured values
+            let items = self.ctx.arena.alloc_slice::<&IrExpr>(expr.closure_bindings.len());
+            for i in 0usize..expr.closure_bindings.len() {
+                items[i] = bound_values[i];
+            }
+            let result = IrExpr::void_expr(closure_ty);
+            result.tag = IR_STRUCT_LIT;
+            result.ir_ty = closure_ty;
+            result.items = items;
+            self.ctx.arena.alloc(result)
+        } else {
+            // No captures: return function pointer as before
+            let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ret_ty);
+            let result = IrExpr::void_expr(fn_ty);
+            result.tag = IR_FN_REF;
+            result.fn_ref = IrFnRef {
+                id: lambda_id,
+                mangled_name: mangled,
+            };
+            self.ctx.arena.alloc(result)
+        }
+    }
+
+    fn lower_bound_value(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // Access a captured variable in a closure body.
+        // expr.id = binding id (used for name matching)
+        // expr.id2 = self_param id (the closure struct pointer)
+        // expr.str_val = binding name
+        // expr.flag = is by_reference
+        let self_param_id = expr.id2;
+
+        // Get the self param type (should be &ClosureStruct)
+        let self_ty_opt = self.local_types.get(&self_param_id._value);
+        if !self_ty_opt.is_some() {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            return self.ctx.arena.alloc(r);
+        }
+        let self_ptr_ty = self_ty_opt.unwrap();
+
+        // Dereference: self_ptr_ty is &ClosureStruct, get the struct type
+        let closure_ty = if self_ptr_ty.tag == IRTY_POINTER {
+            self_ptr_ty.inner
+        } else {
+            self_ptr_ty
         };
-        self.ctx.arena.alloc(result)
+
+        if closure_ty.tag != IRTY_CLOSURE {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            return self.ctx.arena.alloc(r);
+        }
+
+        // Find the field by name
+        let fields = closure_ty.struct_ref.fields;
+        let field_idx = 0u32;
+        let field_ty = self.ctx.void_ty;
+        let found = false;
+        for i in 0usize..fields.len() {
+            if fields[i].name == expr.str_val {
+                field_idx = i as u32;
+                field_ty = fields[i].ty;
+                found = true;
+            }
+        }
+
+        if !found {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            return self.ctx.arena.alloc(r);
+        }
+
+        // Build: (*self_param).field[field_idx]
+        let self_local = IrExpr::void_expr(self_ptr_ty);
+        self_local.tag = IR_LOCAL;
+        self_local.id = self_param_id;
+        let self_local = self.ctx.arena.alloc(self_local);
+
+        // Deref the pointer
+        let deref_expr = IrExpr::void_expr(closure_ty);
+        deref_expr.tag = IR_DEREF;
+        deref_expr.lhs = self_local;
+        let deref_expr = self.ctx.arena.alloc(deref_expr);
+
+        // Field access
+        let field_expr = IrExpr::void_expr(field_ty);
+        field_expr.tag = IR_FIELD_ACCESS;
+        field_expr.lhs = deref_expr;
+        field_expr.field_idx = field_idx;
+        let field_expr = self.ctx.arena.alloc(field_expr);
+
+        if expr.flag {
+            // By reference: the field is a pointer, dereference it
+            let inner_ty = if field_ty.tag == IRTY_POINTER {
+                field_ty.inner
+            } else {
+                field_ty
+            };
+            let deref_field = IrExpr::void_expr(inner_ty);
+            deref_field.tag = IR_DEREF;
+            deref_field.lhs = field_expr;
+            self.ctx.arena.alloc(deref_field)
+        } else {
+            // By value: return the field directly
+            field_expr
+        }
     }
 
     fn lower_intrinsic(self: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
@@ -4063,16 +4220,49 @@ impl Mono {
                 ir_args[i] = self.lower_expr(expr.args[i]);
             }
 
-            // Determine return type from callee - only emit indirect call if callee is a function pointer
+            // Determine return type from callee
             if ir_callee.ty.tag == IRTY_FN_POINTER {
+                // Indirect call through function pointer
                 let ret_ty = ir_callee.ty.ret_ty;
                 let result = IrExpr::void_expr(ret_ty);
                 result.tag = IR_CALL;
                 result.call_target = IrCallTarget { tag: CALL_INDIRECT, fn_ref: IrFnRef::empty(), callee: ir_callee };
                 result.items = ir_args;
                 self.ctx.arena.alloc(result)
+            } else if ir_callee.ty.tag == IRTY_CLOSURE {
+                // Closure call: take &callee, get fn from closure type, prepend self arg
+                let closure_ty = ir_callee.ty;
+                let fn_ref = closure_ty.closure_fn;
+
+                // Look up the function to get its return type
+                let ret_ty = self.ctx.void_ty;
+                for i in 0usize..self.ctx.ir_functions.len() {
+                    if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                        ret_ty = self.ctx.ir_functions[i].return_type;
+                    }
+                }
+
+                // Take a reference to the closure struct
+                let ref_ty = self.ctx.make_ptr_ty(closure_ty, false);
+                let ref_expr = IrExpr::void_expr(ref_ty);
+                ref_expr.tag = IR_REF;
+                ref_expr.lhs = ir_callee;
+                let ref_expr = self.ctx.arena.alloc(ref_expr);
+
+                // Build args: [&closure, arg0, arg1, ...]
+                let all_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len() + 1usize);
+                all_args[0] = ref_expr;
+                for i in 0usize..expr.args.len() {
+                    all_args[i + 1usize] = ir_args[i];
+                }
+
+                let result = IrExpr::void_expr(ret_ty);
+                result.tag = IR_CALL;
+                result.call_target = IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+                result.items = all_args;
+                self.ctx.arena.alloc(result)
             } else {
-                // Not a function pointer - method resolution failed, emit void
+                // Not a function pointer or closure - method resolution failed, emit void
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
             }

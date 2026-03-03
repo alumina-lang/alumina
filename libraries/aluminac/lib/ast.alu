@@ -335,6 +335,7 @@ const EXPR_ZEROED: i32 = 42i32;
 const EXPR_MACRO_INVOCATION: i32 = 45i32;
 const EXPR_STATIC_FOR: i32 = 43i32;
 const EXPR_ET_CETERA: i32 = 44i32;
+const EXPR_BOUND_VALUE: i32 = 46i32;  // Access a captured variable in a closure body
 
 // Expression struct - flat with multiple fields reused per tag
 struct Expr {
@@ -379,6 +380,8 @@ struct Expr {
     index_val: usize,
     // Lambda params
     lambda_params: &[LambdaParam],
+    // Closure bindings (captures)
+    closure_bindings: &[ClosureBinding],
 }
 
 impl Expr {
@@ -393,9 +396,20 @@ impl Expr {
             cond: std::mem::zeroed::<&Expr>(),
             args: &[], field_inits: &[], switch_arms: &[], type_args: &[],
             flag: false, opt_expr: Option::none(), opt_ty: Option::none(),
-            index_val: 0, lambda_params: &[],
+            index_val: 0, lambda_params: &[], closure_bindings: &[],
         }
     }
+}
+
+// Bound type for closure captures
+const BOUND_BY_VALUE: i32 = 0i32;
+const BOUND_BY_REFERENCE: i32 = 1i32;
+
+struct ClosureBinding {
+    id: Id,          // New id for the binding inside the closure
+    name: &[u8],     // Variable name
+    value: &Expr,    // Original expression being captured (usually EXPR_LOCAL or EXPR_PARAM)
+    bound_type: i32, // BOUND_BY_VALUE or BOUND_BY_REFERENCE
 }
 
 struct LambdaParam {
@@ -602,6 +616,7 @@ const IRTY_ENUM: i32 = 6i32;
 const IRTY_VOID: i32 = 7i32;
 const IRTY_NEVER: i32 = 8i32;
 const IRTY_SLICE: i32 = 9i32;  // fat pointer: (data_ptr, len) - tracks element type
+const IRTY_CLOSURE: i32 = 10i32;  // closure: struct of captures + associated function
 
 struct IrTy {
     tag: i32,
@@ -611,8 +626,9 @@ struct IrTy {
     array_size: usize,          // array
     elems: &[&IrTy],           // tuple, fn pointer params
     ret_ty: &IrTy,             // fn pointer return
-    struct_ref: IrStructRef,    // struct
+    struct_ref: IrStructRef,    // struct, also used for closure data layout
     enum_ref: IrEnumRef,        // enum
+    closure_fn: IrFnRef,        // closure: the associated function
 }
 
 impl IrTy {
@@ -620,61 +636,67 @@ impl IrTy {
         IrTy { tag: IRTY_BUILTIN, builtin: bt,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
         IrTy { tag: IRTY_POINTER, builtin: BuiltinType::Void,
                inner: pointee, is_const: is_const, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_array(elem: &IrTy, size: usize) -> IrTy {
         IrTy { tag: IRTY_ARRAY, builtin: BuiltinType::Void,
                inner: elem, is_const: false, array_size: size,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_tuple(elems: &[&IrTy]) -> IrTy {
         IrTy { tag: IRTY_TUPLE, builtin: BuiltinType::Void,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: elems, ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
         IrTy { tag: IRTY_FN_POINTER, builtin: BuiltinType::Void,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: params, ret_ty: ret,
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_struct(s: IrStructRef) -> IrTy {
         IrTy { tag: IRTY_STRUCT, builtin: BuiltinType::Void,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: s, enum_ref: IrEnumRef::empty() }
+               struct_ref: s, enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+    }
+    fn mk_closure(s: IrStructRef, fn_ref: IrFnRef) -> IrTy {
+        IrTy { tag: IRTY_CLOSURE, builtin: BuiltinType::Void,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: s, enum_ref: IrEnumRef::empty(), closure_fn: fn_ref }
     }
     fn mk_enum(e: IrEnumRef) -> IrTy {
         IrTy { tag: IRTY_ENUM, builtin: BuiltinType::Void,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: e }
+               struct_ref: IrStructRef::empty(), enum_ref: e, closure_fn: IrFnRef::empty() }
     }
     fn mk_void() -> IrTy {
         IrTy { tag: IRTY_VOID, builtin: BuiltinType::Void,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_never() -> IrTy {
         IrTy { tag: IRTY_NEVER, builtin: BuiltinType::Never,
                inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
     fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
         IrTy { tag: IRTY_SLICE, builtin: BuiltinType::Void,
                inner: elem, is_const: is_const, array_size: 0,
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
     }
 
     fn is_void(self: &IrTy) -> bool {
@@ -696,6 +718,9 @@ impl IrTy {
             return self.array_size == 0 || self.inner.is_zero_sized();
         }
         if self.tag == IRTY_STRUCT {
+            return self.struct_ref.is_zero_sized;
+        }
+        if self.tag == IRTY_CLOSURE {
             return self.struct_ref.is_zero_sized;
         }
         false

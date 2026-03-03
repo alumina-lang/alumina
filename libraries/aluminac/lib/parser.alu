@@ -2246,6 +2246,13 @@ impl ExprParser {
                 let e = self.make_expr(EXPR_STATIC_REF, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_BOUND_VALUE {
+                let e = self.make_expr(EXPR_BOUND_VALUE, span);
+                e.id = item.kind.id;       // binding id
+                e.id2 = item.kind.id2;     // self_param id
+                e.str_val = item.name;     // binding name (for field lookup)
+                e.flag = item.kind.scope_idx == BOUND_BY_REFERENCE as u32;
+                return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NIK_ENUM_VARIANT {
                 let enum_id = item.kind.id;
                 let variant_id = item.kind.id2;
@@ -3054,8 +3061,17 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
+        // Create a child scope for the lambda (captures and params live here)
+        let lambda_scope = self.ctx.scopes.create_scope(scope::ScopeKind::Block, Option::some(self.scope_idx));
+
         let params: Vector<LambdaParam> = Vector::new();
         defer params.free();
+
+        let bindings: Vector<ClosureBinding> = Vector::new();
+        defer bindings.free();
+
+        // Generate a self_param id for closure struct access (only used if there are captures)
+        let self_param_id = self.ctx.next_id();
 
         if !params_node.is_null() {
             let cursor = params_node.unwrap().walk();
@@ -3066,35 +3082,91 @@ impl ExprParser {
                     let kind = NODE_KINDS[child.symbol() as usize];
                     let id = self.ctx.next_id();
 
-                    // Handle Parameter nodes (name: type) vs simple identifiers
-                    let name: &[u8] = "";
-                    let ty: Option<&Ty> = Option::none();
-
-                    if kind as i32 == NodeKind::Parameter as i32 {
+                    if kind as i32 == NodeKind::BoundIdentifier as i32 {
+                        // Closure capture: =name (by value) or &name (by reference)
                         let name_node = child_by!(child, FieldKind::Name);
-                        let type_node = child_by!(child, FieldKind::Type);
-                        if !name_node.is_null() {
-                            name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
-                        }
-                        if !type_node.is_null() {
-                            ty = Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx));
-                        }
+                        let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+                        let by_ref_node = child_by!(child, FieldKind::ByReference);
+                        let bound_type = if !by_ref_node.is_null() {
+                            BOUND_BY_REFERENCE
+                        } else {
+                            BOUND_BY_VALUE
+                        };
+
+                        // Resolve the original variable in the parent scope (self.scope_idx)
+                        let value_expr: &Expr = {
+                            let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+                            if resolved.is_some() {
+                                let item = resolved.unwrap();
+                                if item.kind.tag == scope::NIK_LOCAL {
+                                    let ve = self.make_expr(EXPR_LOCAL, span);
+                                    ve.id = item.kind.id;
+                                    self.ctx.alloc_expr(ve)
+                                } else if item.kind.tag == scope::NIK_PARAM {
+                                    let ve = self.make_expr(EXPR_PARAM, span);
+                                    ve.id = item.kind.id;
+                                    self.ctx.alloc_expr(ve)
+                                } else if item.kind.tag == scope::NIK_BOUND_VALUE {
+                                    // Nested closure: capture from enclosing closure
+                                    let ve = self.make_expr(EXPR_BOUND_VALUE, span);
+                                    ve.id = item.kind.id;
+                                    ve.id2 = item.kind.id2;
+                                    ve.str_val = item.name;
+                                    ve.flag = item.kind.scope_idx == BOUND_BY_REFERENCE as u32;
+                                    self.ctx.alloc_expr(ve)
+                                } else {
+                                    self.alloc_void(span) // Can only close over locals
+                                }
+                            } else {
+                                self.alloc_void(span)
+                            }
+                        };
+
+                        // Register the bound value in the lambda scope
+                        self.ctx.scopes.add_item(lambda_scope, NamedItem {
+                            name: name,
+                            kind: NamedItemKind::bound_value(id, self_param_id, bound_type),
+                            span: self.ctx.make_span(child),
+                        });
+
+                        bindings.push(ClosureBinding {
+                            id: id,
+                            name: name,
+                            value: value_expr,
+                            bound_type: bound_type,
+                        });
                     } else {
-                        name = self.ctx.intern_str(self.ctx.node_text(child));
+                        // Regular parameter
+                        let name: &[u8] = "";
+                        let ty: Option<&Ty> = Option::none();
+
+                        if kind as i32 == NodeKind::Parameter as i32 {
+                            let name_node = child_by!(child, FieldKind::Name);
+                            let type_node = child_by!(child, FieldKind::Type);
+                            if !name_node.is_null() {
+                                name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+                            }
+                            if !type_node.is_null() {
+                                ty = Option::some(pass2.parse_type(type_node.unwrap(), lambda_scope));
+                            }
+                        } else {
+                            name = self.ctx.intern_str(self.ctx.node_text(child));
+                        }
+
+                        // Register lambda param in the lambda scope
+                        self.ctx.scopes.add_item(lambda_scope, NamedItem {
+                            name: name,
+                            kind: NamedItemKind::local(id),
+                            span: self.ctx.make_span(child),
+                        });
+
+                        params.push(LambdaParam {
+                            id: id,
+                            name: name,
+                            ty: ty,
+                        });
                     }
-
-                    // Register lambda param in scope
-                    self.ctx.scopes.add_item(self.scope_idx, NamedItem {
-                        name: name,
-                        kind: NamedItemKind::local(id),
-                        span: self.ctx.make_span(child),
-                    });
-
-                    params.push(LambdaParam {
-                        id: id,
-                        name: name,
-                        ty: ty,
-                    });
                 }
             }
         }
@@ -3102,22 +3174,32 @@ impl ExprParser {
         let pass2 = Pass2 { ctx: self.ctx };
         let ret_node = child_by!(node, FieldKind::ReturnType);
         let ret_ty: Option<&Ty> = if !ret_node.is_null() {
-            Option::some(pass2.parse_type(ret_node.unwrap(), self.scope_idx))
+            Option::some(pass2.parse_type(ret_node.unwrap(), lambda_scope))
         } else {
             Option::none()
         };
 
-        let body = self.parse_expr(body_node.unwrap());
+        // Parse body in the lambda scope
+        let lambda_parser = ExprParser::new(self.ctx, lambda_scope);
+        let body = lambda_parser.parse_expr(body_node.unwrap());
 
         let params_slice = self.ctx.arena.alloc_slice::<LambdaParam>(params.len());
         for i in 0usize..params.len() {
             params_slice[i] = params[i];
         }
 
+        let bindings_slice = self.ctx.arena.alloc_slice::<ClosureBinding>(bindings.len());
+        for i in 0usize..bindings.len() {
+            bindings_slice[i] = bindings[i];
+        }
+
         let e = self.make_expr(EXPR_LAMBDA, span);
         e.lambda_params = params_slice;
+        e.closure_bindings = bindings_slice;
         e.opt_ty = ret_ty;
         e.lhs = body;
+        // Store the self_param_id for use in mono
+        e.id = self_param_id;
         self.ctx.alloc_expr(e)
     }
 
