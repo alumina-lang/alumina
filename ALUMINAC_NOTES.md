@@ -159,7 +159,9 @@ This is user-extensible -- any `try` macro in scope works for custom types.
 
 #### 2.7. Operator Overloading and Implicit Coercions
 
-See [Section 3](#3-implicit-coercions-and-lang-item-machinery) for full details. This is a broad category that alumina-boot handles through sysroot lang items.
+**Operator overloading**: Implemented for the 6 comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`). When a comparison is applied to struct types, aluminac looks up the corresponding method (`equals`, `not_equals`, `less_than`, `less_than_or_equal`, `greater_than`, `greater_than_or_equal`) directly on the type's scope, creates references to both operands, and calls it. Also supports the lang item path (`operator_eq` etc.) with protocol redirect fallback. The approach differs from alumina-boot (which goes through lang items + inlining) but produces the same observable behavior.
+
+See [Section 3](#3-implicit-coercions-and-lang-item-machinery) for implicit coercions (mostly still missing).
 
 ### Tier 2: Important (needed for full sysroot compilation)
 
@@ -292,7 +294,7 @@ Mechanism: `lower_binary` first tries built-in type checking. If that fails with
 2. Takes references to both operands (`&lhs`, `&rhs`)
 3. Calls the lang item `Operator(op)` with the value type and the two references
 
-**aluminac**: No operator overloading fallback.
+**aluminac**: Implemented. For struct types, directly looks up the method (`equals`, `less_than`, etc.) on the type's scope. Also supports lang item path with protocol redirect. Does not require `Equatable`/`Comparable` protocol conformance — just the presence of the method.
 
 ### 3.3. Indexing via Lang Items
 
@@ -476,7 +478,7 @@ Feature usage across `common/`, `sysroot/`, `examples/`, `tools/`, `libraries/`,
 | For-loop desugaring (.iter()) | Every for-in loop | All user code |
 | Try operator (macro desugar) | Every `?` use | Result/Option heavy code |
 | Closures with captures | Throughout stdlib | Any closure that captures |
-| Operator overloading (==, <, etc.) | Everywhere | Any user-defined type comparison |
+| Operator overloading (==, <, etc.) | Everywhere | Any user-defined type comparison (IMPLEMENTED) |
 | Slice coercions (`&[T;N]` -> `&[T]`) | Everywhere | Any array-to-slice conversion |
 
 ### Tier 2: Needed for full sysroot

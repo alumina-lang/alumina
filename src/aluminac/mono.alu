@@ -1110,11 +1110,164 @@ impl Mono {
         }
     }
 
+    // Map binary operator to its lang item name for operator overloading
+    fn binop_lang_name(op: BinOp) -> &[u8] {
+        switch op {
+            BinOp::Eq => "operator_eq",
+            BinOp::Ne => "operator_neq",
+            BinOp::Lt => "operator_lt",
+            BinOp::Le => "operator_lte",
+            BinOp::Gt => "operator_gt",
+            BinOp::Ge => "operator_gte",
+            _ => "",
+        }
+    }
+
+    // Map binary comparison operator to the method name to look up on the type.
+    // These match the sysroot's Equatable/Comparable protocol methods.
+    fn binop_method_name(op: BinOp) -> &[u8] {
+        switch op {
+            BinOp::Eq => "equals",
+            BinOp::Ne => "not_equals",
+            BinOp::Lt => "less_than",
+            BinOp::Le => "less_than_or_equal",
+            BinOp::Gt => "greater_than",
+            BinOp::Ge => "greater_than_or_equal",
+            _ => "",
+        }
+    }
+
+    // Try to call an operator overload for a binary comparison on struct types.
+    // Looks up the appropriate method (equals, less_than, etc.) directly on the type's scope,
+    // creates references to both operands, and emits a call.
+    fn try_operator_overload(self: &mut Mono, op: BinOp, ir_lhs: &IrExpr, ir_rhs: &IrExpr) -> Option<&IrExpr> {
+        // First try lang item approach (for operator_eq, etc.)
+        let lang_name = Mono::binop_lang_name(op);
+        if lang_name.len() > 0 {
+            let lang_id = self.ctx.get_lang_item(lang_name);
+            if lang_id.is_some() {
+                let fn_def_opt = self.ctx.fn_defs.get(&lang_id.unwrap());
+                if fn_def_opt.is_some() {
+                    let def = fn_def_opt.unwrap();
+                    // Monomorphize with concrete type — protocol redirect will find the method
+                    let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                    type_args[0] = ir_lhs.ty;
+                    let fn_idx = self.mono_function(def, type_args);
+                    let ir_fn = &self.ctx.ir_functions[fn_idx];
+
+                    // Create references to both operands
+                    let lhs_ptr_ty = self.ctx.make_ptr_ty(ir_lhs.ty, true);
+                    let lhs_ref = IrExpr::void_expr(lhs_ptr_ty);
+                    lhs_ref.tag = IR_REF;
+                    lhs_ref.lhs = ir_lhs;
+                    let lhs_ref = self.ctx.arena.alloc(lhs_ref);
+
+                    let rhs_ptr_ty = self.ctx.make_ptr_ty(ir_rhs.ty, true);
+                    let rhs_ref = IrExpr::void_expr(rhs_ptr_ty);
+                    rhs_ref.tag = IR_REF;
+                    rhs_ref.lhs = ir_rhs;
+                    let rhs_ref = self.ctx.arena.alloc(rhs_ref);
+
+                    let args = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                    args[0] = lhs_ref;
+                    args[1] = rhs_ref;
+
+                    let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+                    let result = IrExpr::void_expr(self.ctx.bool_ty);
+                    result.tag = IR_CALL;
+                    result.call_target = IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+                    result.items = args;
+                    return Option::some(self.ctx.arena.alloc(result) as &IrExpr);
+                }
+            }
+        }
+
+        // Fallback: directly look up the method on the type's scope
+        let method_name = Mono::binop_method_name(op);
+        if method_name.len() == 0 {
+            return Option::none();
+        }
+
+        let scope_idx: u32 = 0u32;
+        if ir_lhs.ty.tag == IRTY_STRUCT {
+            scope_idx = ir_lhs.ty.struct_ref.scope_idx;
+        } else if ir_lhs.ty.tag == IRTY_ENUM {
+            scope_idx = ir_lhs.ty.enum_ref.scope_idx;
+        }
+        if scope_idx == 0u32 {
+            return Option::none();
+        }
+
+        let method_item = self.ctx.scopes.get(scope_idx).items.get(&method_name);
+        if method_item.is_none() {
+            return Option::none();
+        }
+
+        let item = method_item.unwrap();
+        let fn_id_val = if item.kind.tag == scope::NIK_METHOD {
+            item.kind.id2._value
+        } else if item.kind.tag == scope::NIK_FUNCTION {
+            item.kind.id._value
+        } else {
+            return Option::none();
+        };
+
+        let concrete_def = self.ctx.fn_defs.get(&fn_id_val);
+        if concrete_def.is_none() {
+            return Option::none();
+        }
+
+        // Monomorphize the concrete method
+        let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
+        type_args[0] = ir_lhs.ty;
+        let fn_idx = self.mono_function(concrete_def.unwrap(), type_args);
+        let ir_fn = &self.ctx.ir_functions[fn_idx];
+
+        // Create references to both operands
+        let lhs_ptr_ty = self.ctx.make_ptr_ty(ir_lhs.ty, true);
+        let lhs_ref = IrExpr::void_expr(lhs_ptr_ty);
+        lhs_ref.tag = IR_REF;
+        lhs_ref.lhs = ir_lhs;
+        let lhs_ref = self.ctx.arena.alloc(lhs_ref);
+
+        let rhs_ptr_ty = self.ctx.make_ptr_ty(ir_rhs.ty, true);
+        let rhs_ref = IrExpr::void_expr(rhs_ptr_ty);
+        rhs_ref.tag = IR_REF;
+        rhs_ref.lhs = ir_rhs;
+        let rhs_ref = self.ctx.arena.alloc(rhs_ref);
+
+        let args = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        args[0] = lhs_ref;
+        args[1] = rhs_ref;
+
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        let result = IrExpr::void_expr(self.ctx.bool_ty);
+        result.tag = IR_CALL;
+        result.call_target = IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+        result.items = args;
+        Option::some(self.ctx.arena.alloc(result) as &IrExpr)
+    }
+
     // Lower binary/unary/assignment ops: EXPR_BINARY, EXPR_UNARY, EXPR_ASSIGN, EXPR_COMPOUND_ASSIGN
     fn lower_binop(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == EXPR_BINARY {
             let ir_lhs = self.lower_expr(expr.lhs);
             let ir_rhs = self.lower_expr_coerced(expr.rhs, ir_lhs.ty);
+
+            // For comparison operators on struct types, try operator overloading
+            let is_comparison = expr.bin_op as i32 == BinOp::Eq as i32
+                || expr.bin_op as i32 == BinOp::Ne as i32
+                || expr.bin_op as i32 == BinOp::Lt as i32
+                || expr.bin_op as i32 == BinOp::Le as i32
+                || expr.bin_op as i32 == BinOp::Gt as i32
+                || expr.bin_op as i32 == BinOp::Ge as i32;
+            if is_comparison && ir_lhs.ty.tag == IRTY_STRUCT {
+                let overload = self.try_operator_overload(expr.bin_op, ir_lhs, ir_rhs);
+                if overload.is_some() {
+                    return overload.unwrap();
+                }
+            }
+
             let result_ty = switch expr.bin_op {
                 BinOp::Eq => self.ctx.bool_ty,
                 BinOp::Ne => self.ctx.bool_ty,
