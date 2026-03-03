@@ -1,4 +1,4 @@
-// Simplified IO for self-hosted compiler bootstrap
+// IO for self-hosted compiler bootstrap
 
 extern "C" fn write(fd: i32, buf: &void, count: usize) -> isize;
 
@@ -14,12 +14,43 @@ fn _write_stderr_ln(s: &[u8]) {
     write(2i32, &nl[0] as &void, 1usize);
 }
 
-// eprintln! macro - supports string literal only
-// For format strings, use separate calls
-macro eprintln($s) {
-    std::io::_write_stderr_ln($s)
+/// Formatter that writes directly to a file descriptor
+struct FdFormatter {
+    fd: i32,
 }
 
-macro eprint($s) {
-    std::io::_write_stderr($s)
+impl FdFormatter {
+    fn new(fd: i32) -> FdFormatter {
+        FdFormatter { fd: fd }
+    }
+
+    /// @ fmt::Formatter::write_str
+    fn write_str(self: &mut FdFormatter, buf: &[u8]) -> std::fmt::Result {
+        if buf.len() > 0usize {
+            write(self.fd, &buf[0] as &void, buf.len());
+        }
+        Result::ok(())
+    }
+
+    /// @ fmt::Formatter::write_byte
+    fn write_byte(self: &mut FdFormatter, byte: u8) -> std::fmt::Result {
+        write(self.fd, &byte as &void, 1usize);
+        Result::ok(())
+    }
+}
+
+/// eprint! - print formatted string to stderr
+macro eprint($fmt_str, $arg...) {
+    {
+        let _f = std::io::FdFormatter::new(2i32);
+        let _ = write!(&_f, $fmt_str, $arg$...);
+    }
+}
+
+/// eprintln! - print formatted string + newline to stderr
+macro eprintln($fmt_str, $arg...) {
+    {
+        let _f = std::io::FdFormatter::new(2i32);
+        let _ = writeln!(&_f, $fmt_str, $arg$...);
+    }
 }
