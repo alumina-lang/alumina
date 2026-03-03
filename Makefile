@@ -184,47 +184,45 @@ $(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c $(MINICORO)
 
 ## ----------------------- Self-hosted compiler (aluminac) ---------------
 
-ALUMINAC = $(BUILD_DIR)/aluminac
+ALUMINAC_S1 = $(BUILD_DIR)/aluminac_s1
+ALUMINAC_S2 = $(BUILD_DIR)/aluminac_s2
+ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
 ALUMINAC_SOURCES = $(shell find libraries/aluminac/ -type f -name '*.alu')
 
-ALUMINAC_ALU_LIBRARIES = $(filter-out libraries/aluminac/lib/compiler.alu,$(ALU_LIBRARIES))
+LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
 
-$(ALUMINAC).c: $(ALU_DEPS) $(ALU_LIBRARIES) libraries/aluminac/lib/node_kinds.alu
+ALUMINAC_ALU_LIBRARIES = $(filter-out libraries/aluminac/lib/compiler.alu,$(ALU_LIBRARIES))
+ALUMINAC_FILES = $(shell find libraries/aluminac/ -type f -name '*.alu' | grep -v compiler.alu)
+
+ALUMINAC_MODULES = \
+	::tree_sitter=libraries/tree_sitter/mod.alu \
+	$(call alumina_modules,$(ALUMINAC_FILES),libraries/,aluminac/) \
+	libraries/aluminac/lib/compiler.alu
+
+$(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) libraries/aluminac/lib/node_kinds.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
 		$(call alumina_modules,$(ALUMINAC_ALU_LIBRARIES),libraries/,/) \
 		main=libraries/aluminac/lib/compiler.alu
 
-$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(MINICORO)
+$(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$(llvm-config-14 --ldflags --libs --system-libs)
 
-.PHONY: aluminac
-aluminac: $(ALUMINAC)
+$(ALUMINAC_S2): $(ALUMINAC_S1)
+	$(ALUMINAC_S1) --no-verify --sysroot sysroot-simple \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		-o $(ALUMINAC_S2) \
+		$(ALUMINAC_MODULES)
 
-ALUMINAC_BOOTSTRAP = $(BUILD_DIR)/aluminac-bootstrap
-LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
-
-ALUMINAC_MODULES = \
-	::tree_sitter=libraries/tree_sitter/mod.alu \
-	::aluminac=libraries/aluminac/mod.alu \
-	::aluminac::lib=libraries/aluminac/lib/mod.alu \
-	::aluminac::lib::arena=libraries/aluminac/lib/arena.alu \
-	::aluminac::lib::ast=libraries/aluminac/lib/ast.alu \
-	::aluminac::lib::codegen=libraries/aluminac/lib/codegen.alu \
-	::aluminac::lib::common=libraries/aluminac/lib/common.alu \
-	::aluminac::lib::diagnostics=libraries/aluminac/lib/diagnostics.alu \
-	::aluminac::lib::llvm=libraries/aluminac/lib/llvm.alu \
-	::aluminac::lib::mono=libraries/aluminac/lib/mono.alu \
-	::aluminac::lib::node_kinds=libraries/aluminac/lib/node_kinds.alu \
-	::aluminac::lib::parser=libraries/aluminac/lib/parser.alu \
-	::aluminac::lib::scope=libraries/aluminac/lib/scope.alu \
-	libraries/aluminac/lib/compiler.alu
+$(ALUMINAC_S3): $(ALUMINAC_S2)
+	$(ALUMINAC_S2) --no-verify --sysroot sysroot-simple \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		-o $(ALUMINAC_S3) \
+		$(ALUMINAC_MODULES)
 
 .PHONY: bootstrap
-bootstrap: $(ALUMINAC)
-	$(ALUMINAC) --no-verify --sysroot sysroot-simple \
-		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
-		-o $(ALUMINAC_BOOTSTRAP) \
-		$(ALUMINAC_MODULES)
+bootstrap: $(ALUMINAC_S3)
+	@echo "Comparing stage 2 and stage 3 outputs..."
+	@cmp --silent $(ALUMINAC_S2) $(ALUMINAC_S3) && echo "Bootstrap successful: stage 2 and stage 3 outputs are identical." || (echo "Bootstrap failed: stage 2 and stage 3 outputs differ." && exit 1)
 
 ## --------------------------------Tools -------------------------------
 
