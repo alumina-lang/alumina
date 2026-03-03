@@ -54,29 +54,15 @@ can be converted to `switch` statements for better readability.
 
 ---
 
-## 3. Manual while-loops instead of `for i in 0..n` (~24 occurrences)
+## 3. ~~Manual while-loops instead of `for i in 0..n`~~ DONE
 
-Many places use manual index loops when `for` ranges are available:
+**Fixed:** Converted 10 eligible while-loops to `for i in 0usize..n` syntax
+across mono.alu (9 loops) and diagnostics.alu (1 loop). Also converted the
+`equals` loop in sysroot-simple/std/mem.alu.
 
-```alumina
-// Current (scattered across mono.alu, codegen.alu, diagnostics.alu):
-let i = 0usize;
-while i < n {
-    // body
-    i = i + 1;
-}
-
-// Should be:
-for i in 0usize..n {
-    // body
-}
-```
-
-**Key locations in mono.alu:** lines 1052, 1868, 2449, 2617, 2747, 3820, 3829, 4030, 4075
-**diagnostics.alu:** lines 130, 140
-
-Some are genuine (loop variable modified inside body, or counting down), but
-most are straightforward forward iterations.
+Remaining while-loops are NOT convertible: parser character-scanning loops
+(non-uniform increments), arg parsing (consumes extra args), binary search,
+reverse iteration, and i32-typed loops.
 
 ---
 
@@ -223,7 +209,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 2. ~~**#5 (IR helpers)** — Biggest readability/LOC win, no risk~~ DONE
 3. **#1 + #2 (enums + switch)** — Large refactor but huge type safety win
 4. **#4 (default constructors)** — Reduce zeroed boilerplate
-5. **#3 (for loops)** — Mechanical cleanup
+5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
 6. **#6 (magic numbers)** — Quick wins
 7. **#7 (arena helper)** — Small utility addition
 8. **#9 (for-loop dedup)** — Moderate refactor
