@@ -54,15 +54,28 @@ fn slice_free<T>(data: &mut [T]) {
     }
 }
 
-// Slice namespace for std::mem::slice::from_raw calls
-struct slice<T> {
-    _ptr: T,
+// Slice type: &[T] is syntactic sugar for slice<&T>, &mut [T] for slice<&mut T>
+#[lang(slice)]
+struct slice<Ptr> {
+    _ptr: Ptr,
     _len: usize,
 }
 
-impl slice<T> {
+impl slice {
     #[lang(slice_new)]
-    fn from_raw(ptr: T, len: usize) -> slice<T> {
-        slice::<T> { _ptr: ptr, _len: len }
+    fn from_raw<Ptr>(ptr: Ptr, len: usize) -> slice<Ptr> {
+        slice::<Ptr> { _ptr: ptr, _len: len }
+    }
+
+    fn len<Ptr>(self: slice<Ptr>) -> usize {
+        self._len
+    }
+
+    fn as_ptr<Ptr>(self: slice<Ptr>) -> Ptr {
+        self._ptr
+    }
+
+    fn is_empty<Ptr>(self: slice<Ptr>) -> bool {
+        self._len == 0usize
     }
 }

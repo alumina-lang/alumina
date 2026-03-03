@@ -3830,8 +3830,7 @@ impl Mono {
                 result.field_idx = 0u32;
                 return Option::some(self.ctx.arena.alloc(result) as &IrExpr);
             }
-            // Other slice methods could go here
-            return Option::none();
+            // Fall through to lang item lookup for other slice methods
         }
 
         // Get the struct or enum type (auto-deref)
@@ -3846,6 +3845,25 @@ impl Mono {
             method_type_args = resolved_ty.struct_ref.type_args;
         } else if resolved_ty.tag == IRTY_ENUM {
             scope_idx = resolved_ty.enum_ref.scope_idx;
+        } else if self.is_slice_ty(resolved_ty) {
+            // Look up #[lang(slice)] struct for methods on slice types
+            // slice<Ptr> where Ptr is the pointer-to-element type
+            let lang_id = self.ctx.get_lang_item("slice");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                    // Set up type arg: Ptr = &elem_type (or &mut elem_type)
+                    let elem_ty = self.slice_elem_ty(resolved_ty);
+                    let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+                    let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                    type_args[0] = ptr_ty;
+                    method_type_args = type_args;
+                }
+            }
+            if scope_idx == 0 {
+                return Option::none();
+            }
         } else if resolved_ty.tag == IRTY_BUILTIN {
             // Look up #[lang(builtin_X)] struct to find methods on builtin types
             let lang_name = Mono::builtin_lang_name(resolved_ty.builtin);
@@ -3998,31 +4016,9 @@ impl Mono {
         let total_args = 1usize + expr.args.len();
         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(total_args);
 
-        // First arg is self - check if the method takes self by value or by reference
+        // Autoref/autoderef: match receiver indirection level to method's self parameter
         let self_param_ty = if ir_fn.params.len() > 0 { ir_fn.params[0].ty } else { ir_obj.ty };
-        if self_param_ty.tag == IRTY_POINTER {
-            // Method takes &self or &mut self - pass a reference
-            if ir_obj.ty.tag == IRTY_POINTER {
-                ir_args[0] = ir_obj;
-            } else {
-                let ref_ty = self.ctx.arena.alloc(IrTy::mk_pointer(ir_obj.ty, false));
-                let ref_expr = IrExpr::void_expr(ref_ty);
-                ref_expr.tag = IR_REF;
-                ref_expr.lhs = ir_obj;
-                ir_args[0] = self.ctx.arena.alloc(ref_expr);
-            }
-        } else {
-            // Method takes self by value - pass the value directly
-            if ir_obj.ty.tag == IRTY_POINTER {
-                // Deref if we have a pointer but need a value
-                let deref_expr = IrExpr::void_expr(ir_obj.ty.inner);
-                deref_expr.tag = IR_DEREF;
-                deref_expr.lhs = ir_obj;
-                ir_args[0] = self.ctx.arena.alloc(deref_expr);
-            } else {
-                ir_args[0] = ir_obj;
-            }
-        }
+        ir_args[0] = self.autoref(ir_obj, self_param_ty);
 
         // Rest of the args
         for i in 0usize..expr.args.len() {
@@ -4908,9 +4904,71 @@ impl Mono {
         } else if ty.tag == IRTY_POINTER {
             // Auto-deref
             self.resolve_field(ty.inner, field_name)
+        } else if self.is_slice_ty(ty) {
+            // Slice fields: _ptr (field 0), _len (field 1)
+            if field_name == "_ptr" {
+                let ptr_ty = if ty.tag == IRTY_SLICE {
+                    self.ctx.make_ptr_ty(ty.inner, false)
+                } else {
+                    // IRTY_TUPLE representation
+                    ty.elems[0]
+                };
+                (0u32, ptr_ty, true)
+            } else if field_name == "_len" {
+                (1u32, self.ctx.intern_builtin_ty(BuiltinType::USize), true)
+            } else {
+                (0u32, self.ctx.void_ty, false)
+            }
         } else {
             (0u32, self.ctx.void_ty, false)
         }
+    }
+
+    /// Autoref/autoderef: add or remove pointer indirections to match a target type.
+    /// Counts pointer depth of both actual and target, then adds refs or derefs as needed.
+    fn autoref(self: &mut Mono, expr: &IrExpr, target_ty: &IrTy) -> &IrExpr {
+        // Count pointer depth of actual expression type
+        let a: i32 = 0;
+        let a_ty = expr.ty;
+        while a_ty.tag == IRTY_POINTER {
+            a = a + 1;
+            a_ty = a_ty.inner;
+        }
+        // Count pointer depth of target type
+        let b: i32 = 0;
+        let b_ty = target_ty;
+        while b_ty.tag == IRTY_POINTER {
+            b = b + 1;
+            b_ty = b_ty.inner;
+        }
+        let diff = a - b;
+        if diff == 0 {
+            return expr;
+        }
+        let result = expr;
+        if diff < 0 {
+            // Need to add refs
+            let i = 0;
+            while i < (0 - diff) {
+                let ref_ty = self.ctx.arena.alloc(IrTy::mk_pointer(result.ty, false));
+                let ref_expr = IrExpr::void_expr(ref_ty);
+                ref_expr.tag = IR_REF;
+                ref_expr.lhs = result;
+                result = self.ctx.arena.alloc(ref_expr) as &IrExpr;
+                i = i + 1;
+            }
+        } else {
+            // Need to deref
+            let i = 0;
+            while i < diff {
+                let deref_expr = IrExpr::void_expr(result.ty.inner);
+                deref_expr.tag = IR_DEREF;
+                deref_expr.lhs = result;
+                result = self.ctx.arena.alloc(deref_expr) as &IrExpr;
+                i = i + 1;
+            }
+        }
+        result
     }
 
     fn free(self: &mut Mono) {
