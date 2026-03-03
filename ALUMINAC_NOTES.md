@@ -293,7 +293,13 @@ alumina-boot leans heavily on sysroot lang items for implicit coercions. This is
 | `&T` -> `&dyn Protocol` | Creates dyn object with vtable | `DynNew` |
 | Named function -> fn pointer | Direct cast | (no lang item) |
 
-**aluminac** (`mono.alu:2741-2773`): Only handles `&[T; N]` -> `&[T]` coercion by manually constructing the fat pointer. All other coercions are missing.
+**aluminac**: Handles `&[T; N]` -> `&[T]`, `&mut T` -> `&T`, and `&mut [T]` -> `&[T]` coercions. Dyn coercions are still missing.
+
+### 3.1.1. `#[lang(builtin_X)]` Method Dispatch
+
+**alumina-boot**: Methods on builtin types (i32, u8, etc.) are provided via `#[lang(builtin_X)]` structs. When resolving `x.method()` where `x` is a builtin type, the compiler looks up the corresponding lang item struct's scope to find the method. The struct itself resolves to the builtin type (not a real struct).
+
+**aluminac**: Implemented. `resolve_named_type` intercepts `#[lang(builtin_X)]` struct definitions and returns the corresponding builtin type. `try_lower_method_call` looks up the lang item struct's scope for method resolution on builtin types. Supports both by-value (`self: i32`) and by-reference (`self: &i32`) methods.
 
 ### 3.2. Operator Overloading (`ir/mono/mod.rs:~3838`)
 
