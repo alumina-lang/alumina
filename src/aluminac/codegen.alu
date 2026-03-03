@@ -914,10 +914,10 @@ impl CodegenCtx {
             // Store {ptr, len} into inner_arr[i]
             let slot = LLVMBuildGEP2(self.builder, inner_slice_ty, inner_arr, &idx, 1u32,
                 &"slot\0"[0] as &libc::c_char);
-            let ptr_field = LLVMBuildStructGEP2(self.builder, inner_slice_ty, slot, 0u32,
+            let ptr_field = LLVMBuildStructGEP2(self.builder, inner_slice_ty, slot, SLICE_DATA_FIELD,
                 &"sf0\0"[0] as &libc::c_char);
             LLVMBuildStore(self.builder, argv_i, ptr_field);
-            let len_field = LLVMBuildStructGEP2(self.builder, inner_slice_ty, slot, 1u32,
+            let len_field = LLVMBuildStructGEP2(self.builder, inner_slice_ty, slot, SLICE_LEN_FIELD,
                 &"sf1\0"[0] as &libc::c_char);
             LLVMBuildStore(self.builder, len, len_field);
 
@@ -1467,11 +1467,11 @@ impl FnCodegen {
                 );
                 LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
             } else if lhs_ty.tag == IRTY_SLICE {
-                // Slice indexing: extract data pointer (field 0), then GEP
+                // Slice indexing: extract data pointer, then GEP
                 let slice_llvm = self.ctx.llvm_type(lhs_ty);
                 let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
                 LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
-                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, 0u32, self.temp_cname());
+                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
                 let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
                 let typed_ptr = LLVMBuildBitCast(
                     self.ctx.builder, data_ptr,
@@ -1908,7 +1908,7 @@ impl FnCodegen {
                 let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
                 let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
                 LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
-                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, 0u32, self.temp_cname());
+                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
                 let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
                 let typed_ptr = LLVMBuildBitCast(
                     self.ctx.builder, data_ptr,
@@ -2086,14 +2086,14 @@ impl FnCodegen {
         LLVMBuildStore(self.ctx.builder, rhs_val, rhs_alloca);
 
         // Extract ptr and len from both
-        let lhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, 0u32, self.temp_cname());
+        let lhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, SLICE_DATA_FIELD, self.temp_cname());
         let lhs_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, lhs_ptr_ptr, self.temp_cname());
-        let lhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, 1u32, self.temp_cname());
+        let lhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, SLICE_LEN_FIELD, self.temp_cname());
         let lhs_len = LLVMBuildLoad2(self.ctx.builder, self.ctx.isize_type, lhs_len_ptr, self.temp_cname());
 
-        let rhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, 0u32, self.temp_cname());
+        let rhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, SLICE_DATA_FIELD, self.temp_cname());
         let rhs_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, rhs_ptr_ptr, self.temp_cname());
-        let rhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, 1u32, self.temp_cname());
+        let rhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, SLICE_LEN_FIELD, self.temp_cname());
         let rhs_len = LLVMBuildLoad2(self.ctx.builder, self.ctx.isize_type, rhs_len_ptr, self.temp_cname());
 
         // Compare lengths

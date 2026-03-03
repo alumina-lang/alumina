@@ -2441,7 +2441,7 @@ impl Mono {
         let end_var_id = self.ctx.id_gen.next_id();
         self.local_types.insert(end_var_id._value, usize_ty);
         self.local_defs.push(IrLocalDef { id: end_var_id, ty: usize_ty, name: "_end" });
-        let ir_len = self.mk_field(self.mk_local(slice_var_id, slice_ty), 1u32, usize_ty);
+        let ir_len = self.mk_field(self.mk_local(slice_var_id, slice_ty), SLICE_LEN_FIELD, usize_ty);
         let ir_let_end = self.mk_let(end_var_id, usize_ty, ir_len);
 
         // _i < _end
@@ -2449,7 +2449,7 @@ impl Mono {
 
         // _s[_i] - slice indexing: get data pointer (field 0), then index
         let ptr_ty = self.ctx.make_ptr_ty(elem_ty, slice_ty.is_const);
-        let ir_data_ptr = self.mk_field(self.mk_local(slice_var_id, slice_ty), 0u32, ptr_ty);
+        let ir_data_ptr = self.mk_field(self.mk_local(slice_var_id, slice_ty), SLICE_DATA_FIELD, ptr_ty);
         let ir_index = self.mk_index(ir_data_ptr, self.mk_local(idx_var_id, usize_ty), elem_ty);
 
         // let item = _s[_i]  (or tuple unpacking bindings)
@@ -2680,7 +2680,7 @@ impl Mono {
                     // IRTY_TUPLE {&T, usize}: element 0 is the pointer
                     ir_base.ty.elems[0]
                 };
-                let data_ptr_ref = self.mk_field(ir_base, 0u32, data_ptr_ty);
+                let data_ptr_ref = self.mk_field(ir_base, SLICE_DATA_FIELD, data_ptr_ty);
                 // Index into the data pointer
                 return self.mk_index(data_ptr_ref, ir_index, elem_ty);
             }
@@ -2700,7 +2700,7 @@ impl Mono {
                         } else {
                             sr.fields[fi].ty.elems[0]
                         };
-                        let sf_data_ptr_ref = self.mk_field(slice_ref, 0u32, sf_data_ptr_ty);
+                        let sf_data_ptr_ref = self.mk_field(slice_ref, SLICE_DATA_FIELD, sf_data_ptr_ty);
                         return self.mk_index(sf_data_ptr_ref, ir_index, sf_elem_ty);
                     }
                 }
@@ -2940,8 +2940,8 @@ impl Mono {
         } else {
             base.ty.elems[0]
         };
-        let ir_data_ptr = self.mk_field(base, 0u32, data_ptr_ty);
-        let ir_base_len = self.mk_field(base, 1u32, usize_ty);
+        let ir_data_ptr = self.mk_field(base, SLICE_DATA_FIELD, data_ptr_ty);
+        let ir_base_len = self.mk_field(base, SLICE_LEN_FIELD, usize_ty);
 
         // Start offset (default 0)
         let ir_start_raw = if range_expr.lhs as usize != 0 {
@@ -3167,7 +3167,7 @@ impl Mono {
                 } else {
                     ir_obj
                 };
-                return Option::some(self.mk_field(slice_val, 1u32, usize_ty));
+                return Option::some(self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty));
             } else if method_name == "copy_to_nonoverlapping" || method_name == "copy_to" {
                 // slice.copy_to_nonoverlapping(&dest) -> memcpy
                 // First arg to method is the destination pointer
@@ -3188,9 +3188,8 @@ impl Mono {
                     } else {
                         slice_ty.elems[0]
                     };
-                    let src_ptr = self.mk_field(slice_val, 0u32, data_ptr_ty);
-                    // Extract len (field 1)
-                    let len_val = self.mk_field(slice_val, 1u32, usize_ty);
+                    let src_ptr = self.mk_field(slice_val, SLICE_DATA_FIELD, data_ptr_ty);
+                    let len_val = self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty);
                     // Build IR_MEMCPY
                     let void_ty = self.ctx.void_ty;
                     let result = IrExpr::void_expr(void_ty);
@@ -3209,7 +3208,7 @@ impl Mono {
                     ir_obj
                 };
                 // len == 0
-                let len_val = self.mk_field(slice_val, 1u32, usize_ty);
+                let len_val = self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty);
                 return Option::some(self.mk_binary(BinOp::Eq, len_val, self.mk_int_lit(usize_ty, 0u64), self.ctx.bool_ty));
             }
             if method_name == "realloc" && expr.args.len() >= 1 {
@@ -3226,8 +3225,8 @@ impl Mono {
                     ir_obj
                 };
 
-                // Extract current ptr (field 0) and cast to &mut void for realloc
-                let old_ptr = self.mk_field(slice_val, 0u32, ptr_ty);
+                // Extract current ptr and cast to &mut void for realloc
+                let old_ptr = self.mk_field(slice_val, SLICE_DATA_FIELD, ptr_ty);
                 let cast_ptr_val = self.mk_cast(old_ptr, void_ptr_ty);
 
                 // Compute new_len arg
@@ -3272,8 +3271,8 @@ impl Mono {
                     ir_obj
                 };
 
-                // Extract ptr (field 0) and cast to &mut void
-                let ptr_val = self.mk_field(slice_val, 0u32, ptr_ty);
+                // Extract ptr and cast to &mut void
+                let ptr_val = self.mk_field(slice_val, SLICE_DATA_FIELD, ptr_ty);
                 let cast_ptr_val = self.mk_cast(ptr_val, void_ptr_ty);
 
                 // Call libc::free(ptr)
@@ -3294,7 +3293,7 @@ impl Mono {
                 } else {
                     ir_obj
                 };
-                return Option::some(self.mk_field(slice_val, 0u32, ptr_ty));
+                return Option::some(self.mk_field(slice_val, SLICE_DATA_FIELD, ptr_ty));
             }
             // Fall through to lang item lookup for other slice methods
         }

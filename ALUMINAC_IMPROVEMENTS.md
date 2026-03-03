@@ -100,43 +100,17 @@ applied them across mono.alu. Net reduction: ~670 lines.
 
 ---
 
-## 6. Magic numbers
+## 6. ~~Magic numbers~~ MOSTLY DONE
 
-### Slice field indices
-Used in ~10 places across mono.alu and codegen.alu:
-```alumina
-data_ptr.field_idx = 0u32;  // slice data pointer
-len_access.field_idx = 1u32;  // slice length
-```
-Should be:
-```alumina
-const SLICE_DATA_FIELD: u32 = 0u32;
-const SLICE_LEN_FIELD: u32 = 1u32;
-```
+**Fixed:**
+- Added `SLICE_DATA_FIELD` / `SLICE_LEN_FIELD` constants in ast.alu, replaced
+  ~17 occurrences across mono.alu and codegen.alu.
+- Added `NO_VARIADIC` constant in parser.alu, replaced 6 sentinel assignments
+  and 3 comparisons.
+- Replaced `36u8` with `'$' as u8` (3 occurrences in parser.alu).
 
-### Option field indices
-Used in iterator for-loop lowering:
-```alumina
-field0.field_idx = 0u32; // _is_some
-unwrap_expr.field_idx = 1u32; // _inner
-```
-Should be:
-```alumina
-const OPTION_IS_SOME_FIELD: u32 = 0u32;
-const OPTION_INNER_FIELD: u32 = 1u32;
-```
-
-### Sentinel values
-```alumina
-variadic_param_idx: i32,  // -1 if no variadic param
-```
-Should use a named constant: `const NO_VARIADIC: i32 = -1i32;`
-
-### Raw byte literals
-```alumina
-name_text[0] == 36u8  // should be '$' as u8
-```
-Three occurrences in parser.alu (lines 1203, 1734, 2333).
+**Remaining:** Option field indices (`_is_some`/`_inner`) are already looked
+up by name at runtime, so named constants aren't needed.
 
 ---
 
@@ -210,7 +184,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 3. **#1 + #2 (enums + switch)** — Large refactor but huge type safety win
 4. **#4 (default constructors)** — Reduce zeroed boilerplate
 5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
-6. **#6 (magic numbers)** — Quick wins
+6. ~~**#6 (magic numbers)** — Quick wins~~ DONE
 7. **#7 (arena helper)** — Small utility addition
 8. **#9 (for-loop dedup)** — Moderate refactor
 9. **#8, #11** — Minor quality-of-life

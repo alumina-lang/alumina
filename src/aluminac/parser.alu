@@ -21,12 +21,15 @@ struct ParseError {
     span: Span,
 }
 
+// Sentinel value for "no variadic parameter" / "not in et cetera expansion"
+const NO_VARIADIC: i32 = -1i32;
+
 struct MacroEntry {
     params: &[&[u8]],
     body: &Expr,              // Pre-parsed AST body (parsed in definition-site scope)
     source: &[u8],            // Source text for error reporting
     is_builtin: bool,
-    variadic_param_idx: i32,  // -1 if no variadic param, otherwise index into params
+    variadic_param_idx: i32,  // NO_VARIADIC if no variadic param, otherwise index into params
     scope_idx: u32,           // Definition-site scope for nested macro resolution
 }
 
@@ -181,10 +184,10 @@ impl ParseContext {
             macro_args: HashMap::new(),
             macro_variadic_name: "",
             macro_variadic_args: &[],
-            macro_et_cetera_idx: -1i32,
+            macro_et_cetera_idx: NO_VARIADIC,
             in_macro_body: false,
             macro_param_names: &[],
-            macro_variadic_param_idx: -1i32,
+            macro_variadic_param_idx: NO_VARIADIC,
             items: Vector::new(),
         }
     }
@@ -1190,7 +1193,7 @@ impl Pass2 {
             let param_names: Vector<&[u8]> = Vector::new();
             defer param_names.free();
 
-            let variadic_idx: i32 = -1i32;
+            let variadic_idx: i32 = NO_VARIADIC;
             if !params_node.is_none() {
                 let cursor = params_node.unwrap().walk();
                 defer cursor.free();
@@ -1200,7 +1203,7 @@ impl Pass2 {
                     if !name_node.is_none() {
                         let name_text = self.ctx.node_text(name_node.unwrap());
                         // Strip the $ prefix
-                        let name = if name_text.len() > 0 && name_text[0] == 36u8 {
+                        let name = if name_text.len() > 0 && name_text[0] == '$' as u8 {
                             self.ctx.intern_str(name_text[1..])
                         } else {
                             self.ctx.intern_str(name_text)
@@ -1731,7 +1734,7 @@ impl Pass2 {
             NodeKind::MacroIdentifier => {
                 // $T in macro body - look up in macro_args as a type
                 let text = self.ctx.node_text(node);
-                let name = if text.len() > 0 && text[0] == 36u8 {
+                let name = if text.len() > 0 && text[0] == '$' as u8 {
                     self.ctx.intern_str(text[1..])
                 } else {
                     self.ctx.intern_str(text)
@@ -2330,7 +2333,7 @@ impl ExprParser {
             NodeKind::MacroIdentifier => {
                 // $param reference
                 let text = self.ctx.node_text(node);
-                let name = if text.len() > 0 && text[0] == 36u8 {
+                let name = if text.len() > 0 && text[0] == '$' as u8 {
                     self.ctx.intern_str(text[1..])
                 } else {
                     self.ctx.intern_str(text)
@@ -2363,7 +2366,7 @@ impl ExprParser {
                 }
                 // Check if this is the variadic param being expanded
                 if self.ctx.macro_variadic_name.len() > 0usize && name == self.ctx.macro_variadic_name {
-                    if self.ctx.macro_et_cetera_idx >= 0i32 {
+                    if self.ctx.macro_et_cetera_idx != NO_VARIADIC {
                         let idx = self.ctx.macro_et_cetera_idx as usize;
                         if idx < self.ctx.macro_variadic_args.len() {
                             return self.ctx.macro_variadic_args[idx];
@@ -2850,7 +2853,7 @@ impl ExprParser {
                                 self.ctx.macro_et_cetera_idx = vi as i32;
                                 args.push(self.parse_expr(inner_node));
                             }
-                            self.ctx.macro_et_cetera_idx = -1i32;
+                            self.ctx.macro_et_cetera_idx = NO_VARIADIC;
                         }
                     }
                 } else if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
@@ -4122,7 +4125,7 @@ impl ExprParser {
         let param_args = self.ctx.arena.alloc_slice::<&Expr>(param_count);
         let variadic_args: &[&Expr] = &[];
 
-        if entry.variadic_param_idx >= 0i32 {
+        if entry.variadic_param_idx != NO_VARIADIC {
             let vi = entry.variadic_param_idx as usize;
             // Non-variadic params before variadic
             for i in 0usize..vi {
@@ -4174,7 +4177,7 @@ impl ExprParser {
             param_args,
             variadic_args,
             entry.variadic_param_idx,
-            -1i32,  // not in et cetera
+            NO_VARIADIC,  // not in et cetera
             &id_map,
         );
         result
@@ -4195,7 +4198,7 @@ impl ExprParser {
         // Substitute macro parameter
         if expr.tag == EXPR_MACRO_PARAM {
             let idx = expr.int_val as i32;
-            if expr.flag && et_cetera_idx >= 0i32 {
+            if expr.flag && et_cetera_idx != NO_VARIADIC {
                 // Variadic param in et cetera context
                 let vi = et_cetera_idx as usize;
                 if vi < variadic_args.len() {
