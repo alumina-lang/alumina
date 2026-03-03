@@ -3352,8 +3352,36 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
+        let inner_expr = self.parse_expr(inner.unwrap());
+
+        // Desugar expr? to try!(expr) macro invocation, matching alumina-boot.
+        // Look up the "try" macro in scope.
+        let name = self.ctx.intern_str("try");
+        let macro_entry = self.ctx.macro_defs.get(&name);
+        if macro_entry.is_some() {
+            let entry = macro_entry.unwrap();
+
+            let prev_args = self.ctx.macro_args;
+            self.ctx.macro_args = HashMap::new();
+
+            if entry.params.len() > 0usize {
+                self.ctx.macro_args.insert(entry.params[0], inner_expr);
+            }
+
+            let prev_source = self.ctx.source;
+            self.ctx.source = entry.source;
+            let result = self.parse_expr(entry.body_node);
+            self.ctx.source = prev_source;
+
+            self.ctx.macro_args.free();
+            self.ctx.macro_args = prev_args;
+
+            return result;
+        }
+
+        // Fallback: no try macro in scope, use hardcoded IR lowering
         let e = self.make_expr(EXPR_TRY, span);
-        e.lhs = self.parse_expr(inner.unwrap());
+        e.lhs = inner_expr;
         self.ctx.alloc_expr(e)
     }
 

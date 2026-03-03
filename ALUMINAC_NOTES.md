@@ -140,10 +140,7 @@ Note: the desugaring also attempts to find a free function named `iter` in scope
 
 This is user-extensible -- any `try` macro in scope works for custom types.
 
-**aluminac** (`mono.alu:1994-2170`): Hardcoded `lower_try()` that inspects the struct layout of the expression type. Checks for Result-like (struct with `_tag` field) or Option-like patterns. This is **completely wrong** -- it doesn't go through the `try` macro at all, so:
-- User-defined `try` macros for custom types won't work
-- The behavior is coupled to internal struct layout rather than the macro definition
-- It bypasses whatever error conversion the user's `try` macro does
+**aluminac** (`parser.alu:3349`): Now desugars `expr?` to `try!(expr)` macro invocation at parse time, matching alumina-boot's approach. The parser looks up the `try` macro in scope and expands it inline. If no `try` macro is in scope, falls back to a hardcoded `lower_try()` in mono that inspects struct layout (for backward compatibility with standalone tests). The `try` macros are defined in `sysroot-simple/std/result.alu` and `sysroot-simple/std/option.alu`, with the Result version imported via prelude (matching the full sysroot). Test: `tests/aluminac/try_operator.alu`.
 
 #### 2.6. Closures with Captures
 
