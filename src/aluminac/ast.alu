@@ -124,31 +124,33 @@ fn parse_builtin_type(name: &[u8]) -> Option<BuiltinType> {
 // Discriminated union using tag + struct
 
 // Ty tags
-const TY_PLACEHOLDER: i32 = 0i32;
-const TY_NAMED: i32 = 1i32;
-const TY_BUILTIN: i32 = 2i32;
-const TY_POINTER: i32 = 3i32;
-const TY_SLICE: i32 = 4i32;
-const TY_ARRAY: i32 = 5i32;
-const TY_TUPLE: i32 = 6i32;
-const TY_FN_POINTER: i32 = 7i32;
-const TY_GENERIC: i32 = 8i32;
-const TY_TYPEOF: i32 = 9i32;
-const TY_NEVER: i32 = 10i32;
-const TY_UNRESOLVED: i32 = 11i32;
-const TY_WHEN: i32 = 12i32;
+enum TyTag {
+    Placeholder = 0i32,
+    Named = 1i32,
+    Builtin = 2i32,
+    Pointer = 3i32,
+    Slice = 4i32,
+    Array = 5i32,
+    Tuple = 6i32,
+    FnPointer = 7i32,
+    Generic = 8i32,
+    Typeof = 9i32,
+    Never = 10i32,
+    Unresolved = 11i32,
+    When = 12i32,
+}
 
 struct Ty {
-    tag: i32,
+    tag: TyTag,
     // Data fields reused depending on tag:
-    builtin: BuiltinType,      // TY_BUILTIN
-    id: Id,                     // TY_PLACEHOLDER, TY_NAMED
-    inner: &Ty,                 // TY_POINTER, TY_SLICE, TY_ARRAY, TY_GENERIC base
-    is_const: bool,             // TY_POINTER, TY_SLICE
-    array_size: usize,          // TY_ARRAY
-    elems: &[&Ty],              // TY_TUPLE, TY_FN_POINTER params, TY_GENERIC args
-    ret_ty: &Ty,                // TY_FN_POINTER return type
-    typeof_expr: &Expr,         // TY_TYPEOF
+    builtin: BuiltinType,      // TyTag::Builtin
+    id: Id,                     // TyTag::Placeholder, TyTag::Named
+    inner: &Ty,                 // TyTag::Pointer, TyTag::Slice, TyTag::Array, TyTag::Generic base
+    is_const: bool,             // TyTag::Pointer, TyTag::Slice
+    array_size: usize,          // TyTag::Array
+    elems: &[&Ty],              // TyTag::Tuple, TyTag::FnPointer params, TyTag::Generic args
+    ret_ty: &Ty,                // TyTag::FnPointer return type
+    typeof_expr: &Expr,         // TyTag::Typeof
 }
 
 impl Ty {
@@ -160,41 +162,41 @@ impl Ty {
     }
 
     fn placeholder(id: Id) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_PLACEHOLDER; ty.id = id; ty
+        let ty = Ty::default(); ty.tag = TyTag::Placeholder; ty.id = id; ty
     }
     fn named(id: Id) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_NAMED; ty.id = id; ty
+        let ty = Ty::default(); ty.tag = TyTag::Named; ty.id = id; ty
     }
     fn builtin_ty(bt: BuiltinType) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_BUILTIN; ty.builtin = bt; ty
+        let ty = Ty::default(); ty.tag = TyTag::Builtin; ty.builtin = bt; ty
     }
     fn pointer_ty(pointee: &Ty, is_const: bool) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_POINTER; ty.inner = pointee; ty.is_const = is_const; ty
+        let ty = Ty::default(); ty.tag = TyTag::Pointer; ty.inner = pointee; ty.is_const = is_const; ty
     }
     fn slice_ty(elem: &Ty, is_const: bool) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_SLICE; ty.inner = elem; ty.is_const = is_const; ty
+        let ty = Ty::default(); ty.tag = TyTag::Slice; ty.inner = elem; ty.is_const = is_const; ty
     }
     fn array_ty(elem: &Ty, size: usize) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_ARRAY; ty.inner = elem; ty.array_size = size; ty
+        let ty = Ty::default(); ty.tag = TyTag::Array; ty.inner = elem; ty.array_size = size; ty
     }
     fn tuple_ty(elems: &[&Ty]) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_TUPLE; ty.elems = elems; ty
+        let ty = Ty::default(); ty.tag = TyTag::Tuple; ty.elems = elems; ty
     }
     fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_FN_POINTER; ty.elems = params; ty.ret_ty = ret; ty
+        let ty = Ty::default(); ty.tag = TyTag::FnPointer; ty.elems = params; ty.ret_ty = ret; ty
     }
     fn generic_ty(base: &Ty, args: &[&Ty]) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_GENERIC; ty.inner = base; ty.elems = args; ty
+        let ty = Ty::default(); ty.tag = TyTag::Generic; ty.inner = base; ty.elems = args; ty
     }
     fn never_ty() -> Ty {
-        let ty = Ty::default(); ty.tag = TY_NEVER; ty.builtin = BuiltinType::Never; ty
+        let ty = Ty::default(); ty.tag = TyTag::Never; ty.builtin = BuiltinType::Never; ty
     }
-    // TY_WHEN: condition in typeof_expr, consequence in inner, alternative in ret_ty
+    // TyTag::When: condition in typeof_expr, consequence in inner, alternative in ret_ty
     fn when_ty(condition: &Expr, consequence: &Ty, alternative: &Ty) -> Ty {
-        let ty = Ty::default(); ty.tag = TY_WHEN; ty.inner = consequence; ty.ret_ty = alternative; ty.typeof_expr = condition; ty
+        let ty = Ty::default(); ty.tag = TyTag::When; ty.inner = consequence; ty.ret_ty = alternative; ty.typeof_expr = condition; ty
     }
     fn unresolved() -> Ty {
-        let ty = Ty::default(); ty.tag = TY_UNRESOLVED; ty
+        let ty = Ty::default(); ty.tag = TyTag::Unresolved; ty
     }
     fn void_ty() -> Ty {
         Ty::builtin_ty(BuiltinType::Void)
@@ -260,58 +262,60 @@ struct SwitchArm {
 }
 
 // Expression tags
-const EXPR_INT_LIT: i32 = 0i32;
-const EXPR_FLOAT_LIT: i32 = 1i32;
-const EXPR_BOOL_LIT: i32 = 2i32;
-const EXPR_STRING_LIT: i32 = 3i32;
-const EXPR_CHAR_LIT: i32 = 4i32;
-const EXPR_NULL_LIT: i32 = 5i32;
-const EXPR_LOCAL: i32 = 6i32;
-const EXPR_PARAM: i32 = 7i32;
-const EXPR_STATIC_REF: i32 = 8i32;
-const EXPR_FN_REF: i32 = 9i32;
-const EXPR_ENUM_REF: i32 = 10i32;
-const EXPR_BLOCK: i32 = 11i32;
-const EXPR_BINARY: i32 = 12i32;
-const EXPR_UNARY: i32 = 13i32;
-const EXPR_ASSIGN: i32 = 14i32;
-const EXPR_CALL: i32 = 15i32;
-const EXPR_METHOD_CALL: i32 = 16i32;
-const EXPR_FIELD_ACCESS: i32 = 17i32;
-const EXPR_TUPLE_INDEX: i32 = 18i32;
-const EXPR_INDEX: i32 = 19i32;
-const EXPR_REF: i32 = 20i32;
-const EXPR_DEREF: i32 = 21i32;
-const EXPR_CAST: i32 = 22i32;
-const EXPR_TYPE_CHECK: i32 = 23i32;
-const EXPR_IF: i32 = 24i32;
-const EXPR_WHEN: i32 = 25i32;
-const EXPR_SWITCH: i32 = 26i32;
-const EXPR_WHILE: i32 = 27i32;
-const EXPR_FOR: i32 = 28i32;
-const EXPR_LOOP: i32 = 29i32;
-const EXPR_BREAK: i32 = 30i32;
-const EXPR_CONTINUE: i32 = 31i32;
-const EXPR_RETURN: i32 = 32i32;
-const EXPR_LET: i32 = 33i32;
-const EXPR_STRUCT_LIT: i32 = 34i32;
-const EXPR_TUPLE_LIT: i32 = 35i32;
-const EXPR_ARRAY_LIT: i32 = 36i32;
-const EXPR_LAMBDA: i32 = 37i32;
-const EXPR_DEFER: i32 = 38i32;
-const EXPR_TRY: i32 = 39i32;
-const EXPR_RANGE: i32 = 40i32;
-const EXPR_VOID: i32 = 41i32;
-const EXPR_ZEROED: i32 = 42i32;
-const EXPR_MACRO_INVOCATION: i32 = 45i32;
-const EXPR_STATIC_FOR: i32 = 43i32;
-const EXPR_ET_CETERA: i32 = 44i32;
-const EXPR_BOUND_VALUE: i32 = 46i32;  // Access a captured variable in a closure body
-const EXPR_MACRO_PARAM: i32 = 47i32;  // $param reference in pre-parsed macro body (int_val=index, flag=is_variadic)
+enum ExprTag {
+    IntLit = 0i32,
+    FloatLit = 1i32,
+    BoolLit = 2i32,
+    StringLit = 3i32,
+    CharLit = 4i32,
+    NullLit = 5i32,
+    Local = 6i32,
+    Param = 7i32,
+    StaticRef = 8i32,
+    FnRef = 9i32,
+    EnumRef = 10i32,
+    Block = 11i32,
+    Binary = 12i32,
+    Unary = 13i32,
+    Assign = 14i32,
+    Call = 15i32,
+    MethodCall = 16i32,
+    FieldAccess = 17i32,
+    TupleIndex = 18i32,
+    Index = 19i32,
+    Ref = 20i32,
+    Deref = 21i32,
+    Cast = 22i32,
+    TypeCheck = 23i32,
+    If = 24i32,
+    When = 25i32,
+    Switch = 26i32,
+    While = 27i32,
+    For = 28i32,
+    Loop = 29i32,
+    Break = 30i32,
+    Continue = 31i32,
+    Return = 32i32,
+    Let = 33i32,
+    StructLit = 34i32,
+    TupleLit = 35i32,
+    ArrayLit = 36i32,
+    Lambda = 37i32,
+    Defer = 38i32,
+    Try = 39i32,
+    Range = 40i32,
+    Void = 41i32,
+    Zeroed = 42i32,
+    StaticFor = 43i32,
+    EtCetera = 44i32,
+    MacroInvocation = 45i32,
+    BoundValue = 46i32,     // Access a captured variable in a closure body
+    MacroParam = 47i32,     // $param reference in pre-parsed macro body (int_val=index, flag=is_variadic)
+}
 
 // Expression struct - flat with multiple fields reused per tag
 struct Expr {
-    tag: i32,
+    tag: ExprTag,
     span: Span,
     // Numeric data
     int_val: u64,
@@ -359,7 +363,7 @@ struct Expr {
 impl Expr {
     fn void_expr() -> Expr {
         Expr {
-            tag: EXPR_VOID, span: Span::empty(),
+            tag: ExprTag::Void, span: Span::empty(),
             int_val: 0, float_val: 0.0, bool_val: false, str_val: "",
             id: Id { _value: 0 }, id2: Id { _value: 0 },
             bin_op: BinOp::Add, un_op: UnOp::Neg, assign_op: AssignOp::Assign,
@@ -374,14 +378,16 @@ impl Expr {
 }
 
 // Bound type for closure captures
-const BOUND_BY_VALUE: i32 = 0i32;
-const BOUND_BY_REFERENCE: i32 = 1i32;
+enum BoundType {
+    ByValue = 0i32,
+    ByReference = 1i32,
+}
 
 struct ClosureBinding {
     id: Id,          // New id for the binding inside the closure
     name: &[u8],     // Variable name
-    value: &Expr,    // Original expression being captured (usually EXPR_LOCAL or EXPR_PARAM)
-    bound_type: i32, // BOUND_BY_VALUE or BOUND_BY_REFERENCE
+    value: &Expr,    // Original expression being captured (usually ExprTag::Local or ExprTag::Param)
+    bound_type: BoundType,
 }
 
 struct LambdaParam {
@@ -418,44 +424,46 @@ struct GenericParam {
 }
 
 // Attribute tags
-const ATTR_EXPORT: i32 = 0i32;
-const ATTR_INLINE: i32 = 1i32;
-const ATTR_ALWAYS_INLINE: i32 = 2i32;
-const ATTR_COLD: i32 = 3i32;
-const ATTR_ALIGN: i32 = 4i32;
-const ATTR_EXTERN: i32 = 5i32;
-const ATTR_CFG: i32 = 6i32;
-const ATTR_NO_RETURN: i32 = 7i32;
-const ATTR_THREAD_LOCAL: i32 = 8i32;
-const ATTR_TEST: i32 = 9i32;
-const ATTR_MAIN: i32 = 10i32;
-const ATTR_STATIC_CTOR: i32 = 11i32;
-const ATTR_LANG: i32 = 12i32;
-const ATTR_INLINE_IR: i32 = 13i32;
-const ATTR_BUILTIN: i32 = 14i32;
+enum AttrTag {
+    Export = 0i32,
+    Inline = 1i32,
+    AlwaysInline = 2i32,
+    Cold = 3i32,
+    Align = 4i32,
+    Extern = 5i32,
+    Cfg = 6i32,
+    NoReturn = 7i32,
+    ThreadLocal = 8i32,
+    Test = 9i32,
+    Main = 10i32,
+    StaticCtor = 11i32,
+    Lang = 12i32,
+    InlineIr = 13i32,
+    Builtin = 14i32,
+}
 
 struct Attribute {
-    tag: i32,
-    str_val: &[u8],     // for ATTR_EXTERN, ATTR_CFG, ATTR_LANG
-    int_val: usize,     // for ATTR_ALIGN
+    tag: AttrTag,
+    str_val: &[u8],     // for AttrTag::Extern, AttrTag::Cfg, AttrTag::Lang
+    int_val: usize,     // for AttrTag::Align
 }
 
 impl Attribute {
-    fn export() -> Attribute { Attribute { tag: ATTR_EXPORT, str_val: "", int_val: 0 } }
-    fn inline_attr() -> Attribute { Attribute { tag: ATTR_INLINE, str_val: "", int_val: 0 } }
-    fn always_inline() -> Attribute { Attribute { tag: ATTR_ALWAYS_INLINE, str_val: "", int_val: 0 } }
-    fn cold() -> Attribute { Attribute { tag: ATTR_COLD, str_val: "", int_val: 0 } }
-    fn align(n: usize) -> Attribute { Attribute { tag: ATTR_ALIGN, str_val: "", int_val: n } }
-    fn extern_attr(abi: &[u8]) -> Attribute { Attribute { tag: ATTR_EXTERN, str_val: abi, int_val: 0 } }
-    fn cfg(val: &[u8]) -> Attribute { Attribute { tag: ATTR_CFG, str_val: val, int_val: 0 } }
-    fn no_return() -> Attribute { Attribute { tag: ATTR_NO_RETURN, str_val: "", int_val: 0 } }
-    fn thread_local() -> Attribute { Attribute { tag: ATTR_THREAD_LOCAL, str_val: "", int_val: 0 } }
-    fn test() -> Attribute { Attribute { tag: ATTR_TEST, str_val: "", int_val: 0 } }
-    fn main_attr() -> Attribute { Attribute { tag: ATTR_MAIN, str_val: "", int_val: 0 } }
-    fn static_ctor() -> Attribute { Attribute { tag: ATTR_STATIC_CTOR, str_val: "", int_val: 0 } }
-    fn lang(name: &[u8]) -> Attribute { Attribute { tag: ATTR_LANG, str_val: name, int_val: 0 } }
-    fn inline_ir() -> Attribute { Attribute { tag: ATTR_INLINE_IR, str_val: "", int_val: 0 } }
-    fn builtin() -> Attribute { Attribute { tag: ATTR_BUILTIN, str_val: "", int_val: 0 } }
+    fn export() -> Attribute { Attribute { tag: AttrTag::Export, str_val: "", int_val: 0 } }
+    fn inline_attr() -> Attribute { Attribute { tag: AttrTag::Inline, str_val: "", int_val: 0 } }
+    fn always_inline() -> Attribute { Attribute { tag: AttrTag::AlwaysInline, str_val: "", int_val: 0 } }
+    fn cold() -> Attribute { Attribute { tag: AttrTag::Cold, str_val: "", int_val: 0 } }
+    fn align(n: usize) -> Attribute { Attribute { tag: AttrTag::Align, str_val: "", int_val: n } }
+    fn extern_attr(abi: &[u8]) -> Attribute { Attribute { tag: AttrTag::Extern, str_val: abi, int_val: 0 } }
+    fn cfg(val: &[u8]) -> Attribute { Attribute { tag: AttrTag::Cfg, str_val: val, int_val: 0 } }
+    fn no_return() -> Attribute { Attribute { tag: AttrTag::NoReturn, str_val: "", int_val: 0 } }
+    fn thread_local() -> Attribute { Attribute { tag: AttrTag::ThreadLocal, str_val: "", int_val: 0 } }
+    fn test() -> Attribute { Attribute { tag: AttrTag::Test, str_val: "", int_val: 0 } }
+    fn main_attr() -> Attribute { Attribute { tag: AttrTag::Main, str_val: "", int_val: 0 } }
+    fn static_ctor() -> Attribute { Attribute { tag: AttrTag::StaticCtor, str_val: "", int_val: 0 } }
+    fn lang(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Lang, str_val: name, int_val: 0 } }
+    fn inline_ir() -> Attribute { Attribute { tag: AttrTag::InlineIr, str_val: "", int_val: 0 } }
+    fn builtin() -> Attribute { Attribute { tag: AttrTag::Builtin, str_val: "", int_val: 0 } }
 }
 
 struct FnDef {
@@ -551,19 +559,21 @@ struct ModuleDef {
 }
 
 // Item tags
-const ITEM_FUNCTION: i32 = 0i32;
-const ITEM_STRUCT: i32 = 1i32;
-const ITEM_ENUM: i32 = 2i32;
-const ITEM_TYPE_ALIAS: i32 = 3i32;
-const ITEM_PROTOCOL: i32 = 4i32;
-const ITEM_IMPL: i32 = 5i32;
-const ITEM_STATIC: i32 = 6i32;
-const ITEM_MACRO: i32 = 7i32;
-const ITEM_USE: i32 = 8i32;
-const ITEM_MODULE: i32 = 9i32;
+enum ItemTag {
+    Function = 0i32,
+    Struct = 1i32,
+    Enum = 2i32,
+    TypeAlias = 3i32,
+    Protocol = 4i32,
+    Impl = 5i32,
+    Static = 6i32,
+    Macro = 7i32,
+    Use = 8i32,
+    Module = 9i32,
+}
 
 struct Item {
-    tag: i32,
+    tag: ItemTag,
     span: Span,
     fn_def: FnDef,
     struct_def: StructDef,
@@ -580,24 +590,26 @@ struct Item {
 // === IR (Monomorphized) types ===
 
 // IrTy tags
-const IRTY_BUILTIN: i32 = 0i32;
-const IRTY_POINTER: i32 = 1i32;
-const IRTY_ARRAY: i32 = 2i32;
-const IRTY_TUPLE: i32 = 3i32;
-const IRTY_FN_POINTER: i32 = 4i32;
-const IRTY_STRUCT: i32 = 5i32;
-const IRTY_ENUM: i32 = 6i32;
-const IRTY_VOID: i32 = 7i32;
-const IRTY_NEVER: i32 = 8i32;
-const IRTY_SLICE: i32 = 9i32;  // fat pointer: (data_ptr, len) - tracks element type
-const IRTY_CLOSURE: i32 = 10i32;  // closure: struct of captures + associated function
+enum IrTyTag {
+    Builtin = 0i32,
+    Pointer = 1i32,
+    Array = 2i32,
+    Tuple = 3i32,
+    FnPointer = 4i32,
+    Struct = 5i32,
+    Enum = 6i32,
+    Void = 7i32,
+    Never = 8i32,
+    Slice = 9i32,       // fat pointer: (data_ptr, len) - tracks element type
+    Closure = 10i32,    // closure: struct of captures + associated function
+}
 
 // Slice struct field indices (fat pointer layout: {data_ptr, len})
 const SLICE_DATA_FIELD: u32 = 0u32;
 const SLICE_LEN_FIELD: u32 = 1u32;
 
 struct IrTy {
-    tag: i32,
+    tag: IrTyTag,
     builtin: BuiltinType,
     inner: &IrTy,              // pointer pointee, array elem
     is_const: bool,             // pointer
@@ -621,61 +633,61 @@ impl IrTy {
     }
 
     fn mk_builtin(bt: BuiltinType) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_BUILTIN; ty.builtin = bt; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Builtin; ty.builtin = bt; ty
     }
     fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_POINTER; ty.inner = pointee; ty.is_const = is_const; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Pointer; ty.inner = pointee; ty.is_const = is_const; ty
     }
     fn mk_array(elem: &IrTy, size: usize) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_ARRAY; ty.inner = elem; ty.array_size = size; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Array; ty.inner = elem; ty.array_size = size; ty
     }
     fn mk_tuple(elems: &[&IrTy]) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_TUPLE; ty.elems = elems; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Tuple; ty.elems = elems; ty
     }
     fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_FN_POINTER; ty.elems = params; ty.ret_ty = ret; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::FnPointer; ty.elems = params; ty.ret_ty = ret; ty
     }
     fn mk_struct(s: IrStructRef) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_STRUCT; ty.struct_ref = s; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Struct; ty.struct_ref = s; ty
     }
     fn mk_closure(s: IrStructRef, fn_ref: IrFnRef) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_CLOSURE; ty.struct_ref = s; ty.closure_fn = fn_ref; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Closure; ty.struct_ref = s; ty.closure_fn = fn_ref; ty
     }
     fn mk_enum(e: IrEnumRef) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_ENUM; ty.enum_ref = e; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Enum; ty.enum_ref = e; ty
     }
     fn mk_void() -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_VOID; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Void; ty
     }
     fn mk_never() -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_NEVER; ty.builtin = BuiltinType::Never; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Never; ty.builtin = BuiltinType::Never; ty
     }
     fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IRTY_SLICE; ty.inner = elem; ty.is_const = is_const; ty
+        let ty = IrTy::default(); ty.tag = IrTyTag::Slice; ty.inner = elem; ty.is_const = is_const; ty
     }
 
     fn is_void(self: &IrTy) -> bool {
-        self.tag == IRTY_VOID || (self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Void as i32)
+        self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin as i32 == BuiltinType::Void as i32)
     }
     fn is_never(self: &IrTy) -> bool {
-        self.tag == IRTY_NEVER || (self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Never as i32)
+        self.tag == IrTyTag::Never || (self.tag == IrTyTag::Builtin && self.builtin as i32 == BuiltinType::Never as i32)
     }
     fn is_zero_sized(self: &IrTy) -> bool {
-        if self.tag == IRTY_VOID { return true; }
-        if self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Void as i32 { return true; }
-        if self.tag == IRTY_TUPLE {
+        if self.tag == IrTyTag::Void { return true; }
+        if self.tag == IrTyTag::Builtin && self.builtin as i32 == BuiltinType::Void as i32 { return true; }
+        if self.tag == IrTyTag::Tuple {
             for i in 0usize..self.elems.len() {
                 if !self.elems[i].is_zero_sized() { return false; }
             }
             return true;
         }
-        if self.tag == IRTY_ARRAY {
+        if self.tag == IrTyTag::Array {
             return self.array_size == 0 || self.inner.is_zero_sized();
         }
-        if self.tag == IRTY_STRUCT {
+        if self.tag == IrTyTag::Struct {
             return self.struct_ref.is_zero_sized;
         }
-        if self.tag == IRTY_CLOSURE {
+        if self.tag == IrTyTag::Closure {
             return self.struct_ref.is_zero_sized;
         }
         false
@@ -727,56 +739,60 @@ struct IrEnumVariant {
 // === IR Expressions ===
 
 // IrExpr tags
-const IR_INT_LIT: i32 = 0i32;
-const IR_FLOAT_LIT: i32 = 1i32;
-const IR_BOOL_LIT: i32 = 2i32;
-const IR_STRING_LIT: i32 = 3i32;
-const IR_NULL_LIT: i32 = 4i32;
-const IR_LOCAL: i32 = 5i32;
-const IR_PARAM: i32 = 6i32;
-const IR_FN_REF: i32 = 7i32;
-const IR_GLOBAL_REF: i32 = 8i32;
-const IR_BLOCK: i32 = 9i32;
-const IR_BINARY: i32 = 10i32;
-const IR_UNARY: i32 = 11i32;
-const IR_ASSIGN: i32 = 12i32;
-const IR_CALL: i32 = 13i32;
-const IR_FIELD_ACCESS: i32 = 14i32;
-const IR_INDEX: i32 = 15i32;
-const IR_REF: i32 = 16i32;
-const IR_DEREF: i32 = 17i32;
-const IR_CAST: i32 = 18i32;
-const IR_IF: i32 = 19i32;
-const IR_SWITCH: i32 = 20i32;
-const IR_WHILE: i32 = 21i32;
-const IR_LOOP: i32 = 22i32;
-const IR_BREAK: i32 = 23i32;
-const IR_CONTINUE: i32 = 24i32;
-const IR_RETURN: i32 = 25i32;
-const IR_LET: i32 = 26i32;
-const IR_STRUCT_LIT: i32 = 27i32;
-const IR_TUPLE_LIT: i32 = 28i32;
-const IR_ARRAY_LIT: i32 = 29i32;
-const IR_DEFER: i32 = 30i32;
-const IR_VOID: i32 = 31i32;
-const IR_ZEROED: i32 = 32i32;
-const IR_MEMCPY: i32 = 33i32;
-const IR_UNREACHABLE: i32 = 34i32;
-const IR_UNDEF: i32 = 35i32;
-const IR_SIZE_OF: i32 = 36i32;    // size_of intrinsic; ty field holds the type to measure
-const IR_ALIGN_OF: i32 = 37i32;   // align_of intrinsic; ty field holds the type to measure
-const IR_CODEGEN_FUNC: i32 = 38i32;  // codegen_func intrinsic; str_val holds function name, items holds args
-const IR_TRANSMUTE: i32 = 39i32;  // transmute intrinsic; lhs holds the value, ty holds target type
-const IR_TRAP: i32 = 40i32;
+enum IrTag {
+    IntLit = 0i32,
+    FloatLit = 1i32,
+    BoolLit = 2i32,
+    StringLit = 3i32,
+    NullLit = 4i32,
+    Local = 5i32,
+    Param = 6i32,
+    FnRef = 7i32,
+    GlobalRef = 8i32,
+    Block = 9i32,
+    Binary = 10i32,
+    Unary = 11i32,
+    Assign = 12i32,
+    Call = 13i32,
+    FieldAccess = 14i32,
+    Index = 15i32,
+    Ref = 16i32,
+    Deref = 17i32,
+    Cast = 18i32,
+    If = 19i32,
+    Switch = 20i32,
+    While = 21i32,
+    Loop = 22i32,
+    Break = 23i32,
+    Continue = 24i32,
+    Return = 25i32,
+    Let = 26i32,
+    StructLit = 27i32,
+    TupleLit = 28i32,
+    ArrayLit = 29i32,
+    Defer = 30i32,
+    Void = 31i32,
+    Zeroed = 32i32,
+    Memcpy = 33i32,
+    Unreachable = 34i32,
+    Undef = 35i32,
+    SizeOf = 36i32,       // size_of intrinsic; ty field holds the type to measure
+    AlignOf = 37i32,      // align_of intrinsic; ty field holds the type to measure
+    CodegenFunc = 38i32,  // codegen_func intrinsic; str_val holds function name, items holds args
+    Transmute = 39i32,    // transmute intrinsic; lhs holds the value, ty holds target type
+    Trap = 40i32,
+}
 
 // Call target tags
-const CALL_DIRECT: i32 = 0i32;
-const CALL_INDIRECT: i32 = 1i32;
+enum CallKind {
+    Direct = 0i32,
+    Indirect = 1i32,
+}
 
 struct IrCallTarget {
-    tag: i32,
-    fn_ref: IrFnRef,       // for CALL_DIRECT
-    callee: &IrExpr,        // for CALL_INDIRECT
+    tag: CallKind,
+    fn_ref: IrFnRef,       // for CallKind::Direct
+    callee: &IrExpr,        // for CallKind::Indirect
 }
 
 struct IrSwitchArm {
@@ -786,7 +802,7 @@ struct IrSwitchArm {
 }
 
 struct IrExpr {
-    tag: i32,
+    tag: IrTag,
     ty: &IrTy,
     // Numeric data
     int_val: u64,
@@ -824,13 +840,13 @@ struct IrExpr {
 impl IrExpr {
     fn void_expr(void_ty: &IrTy) -> IrExpr {
         IrExpr {
-            tag: IR_VOID, ty: void_ty,
+            tag: IrTag::Void, ty: void_ty,
             int_val: 0, float_val: 0.0, bool_val: false, str_val: "",
             id: Id { _value: 0 },
             bin_op: BinOp::Add, un_op: UnOp::Neg,
             lhs: std::mem::zeroed::<&IrExpr>(), rhs: std::mem::zeroed::<&IrExpr>(),
             cond: std::mem::zeroed::<&IrExpr>(),
-            items: &[], call_target: IrCallTarget { tag: 0, fn_ref: IrFnRef::empty(), callee: std::mem::zeroed::<&IrExpr>() },
+            items: &[], call_target: IrCallTarget { tag: CallKind::Direct, fn_ref: IrFnRef::empty(), callee: std::mem::zeroed::<&IrExpr>() },
             field_idx: 0, ir_ty: void_ty, opt_expr: Option::none(),
             switch_arms: &[], param_idx: 0,
             fn_ref: IrFnRef::empty(), global_ref: IrGlobalRef::empty(),
@@ -899,33 +915,37 @@ struct IrGlobal {
 // === Const evaluation value types ===
 
 // ConstValue tags
-const CVAL_VOID: i32 = 0i32;
-const CVAL_BOOL: i32 = 1i32;
-const CVAL_INT: i32 = 2i32;       // integer value (u64 storage, BuiltinType for width)
-const CVAL_FLOAT: i32 = 3i32;     // float value (f64 storage, BuiltinType for width)
-const CVAL_BYTES: i32 = 4i32;     // string/byte slice data
-const CVAL_TUPLE: i32 = 5i32;
-const CVAL_ARRAY: i32 = 6i32;
-const CVAL_STRUCT: i32 = 7i32;
-const CVAL_FN_PTR: i32 = 8i32;
-const CVAL_POINTER: i32 = 9i32;
-const CVAL_LVALUE: i32 = 10i32;
-const CVAL_UNINITIALIZED: i32 = 11i32;
+enum CValTag {
+    Void = 0i32,
+    Bool = 1i32,
+    Int = 2i32,         // integer value (u64 storage, BuiltinType for width)
+    Float = 3i32,       // float value (f64 storage, BuiltinType for width)
+    Bytes = 4i32,       // string/byte slice data
+    Tuple = 5i32,
+    Array = 6i32,
+    Struct = 7i32,
+    FnPtr = 8i32,
+    Pointer = 9i32,
+    Lvalue = 10i32,
+    Uninitialized = 11i32,
+}
 
 // ConstLValue tags
-const CLV_VARIABLE: i32 = 0i32;
-const CLV_ALLOC: i32 = 1i32;
-const CLV_FIELD: i32 = 2i32;
-const CLV_INDEX: i32 = 3i32;
-const CLV_TUPLE_INDEX: i32 = 4i32;
-const CLV_CONST_ITEM: i32 = 5i32;
+enum CLVTag {
+    Variable = 0i32,
+    Alloc = 1i32,
+    Field = 2i32,
+    Index = 3i32,
+    TupleIndex = 4i32,
+    ConstItem = 5i32,
+}
 
 struct ConstLValue {
-    tag: i32,
-    id: Id,                  // for CLV_VARIABLE, CLV_ALLOC, CLV_CONST_ITEM
-    inner: &ConstLValue,     // for CLV_FIELD, CLV_INDEX, CLV_TUPLE_INDEX
-    field_idx: u32,          // for CLV_FIELD
-    index: usize,            // for CLV_INDEX, CLV_TUPLE_INDEX
+    tag: CLVTag,
+    id: Id,                  // for CLVTag::Variable, CLVTag::Alloc, CLVTag::ConstItem
+    inner: &ConstLValue,     // for CLVTag::Field, CLVTag::Index, CLVTag::TupleIndex
+    field_idx: u32,          // for CLVTag::Field
+    index: usize,            // for CLVTag::Index, CLVTag::TupleIndex
 }
 
 struct ConstField {
@@ -934,23 +954,23 @@ struct ConstField {
 }
 
 struct ConstValue {
-    tag: i32,
-    builtin_type: BuiltinType,  // precise type for CVAL_INT, CVAL_FLOAT
-    int_val: u64,               // CVAL_INT (two's complement for signed), CVAL_BOOL (0/1)
-    float_val: f64,             // CVAL_FLOAT
-    bytes: &[u8],               // CVAL_BYTES
-    bytes_offset: usize,        // CVAL_BYTES offset
-    elems: &[ConstValue],       // CVAL_TUPLE, CVAL_ARRAY
-    fields: &[ConstField],      // CVAL_STRUCT
-    fn_ref: IrFnRef,            // CVAL_FN_PTR
-    lvalue: &ConstLValue,       // CVAL_POINTER, CVAL_LVALUE
-    pointee_ty: &IrTy,          // CVAL_POINTER
+    tag: CValTag,
+    builtin_type: BuiltinType,  // precise type for CValTag::Int, CValTag::Float
+    int_val: u64,               // CValTag::Int (two's complement for signed), CValTag::Bool (0/1)
+    float_val: f64,             // CValTag::Float
+    bytes: &[u8],               // CValTag::Bytes
+    bytes_offset: usize,        // CValTag::Bytes offset
+    elems: &[ConstValue],       // CValTag::Tuple, CValTag::Array
+    fields: &[ConstField],      // CValTag::Struct
+    fn_ref: IrFnRef,            // CValTag::FnPtr
+    lvalue: &ConstLValue,       // CValTag::Pointer, CValTag::Lvalue
+    pointee_ty: &IrTy,          // CValTag::Pointer
 }
 
 impl ConstValue {
     fn make_void() -> ConstValue {
         ConstValue {
-            tag: CVAL_VOID, builtin_type: BuiltinType::Void,
+            tag: CValTag::Void, builtin_type: BuiltinType::Void,
             int_val: 0, float_val: 0.0, bytes: "", bytes_offset: 0,
             elems: &[], fields: &[],
             fn_ref: IrFnRef::empty(),
@@ -961,7 +981,7 @@ impl ConstValue {
 
     fn make_bool(v: bool) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_BOOL;
+        r.tag = CValTag::Bool;
         r.builtin_type = BuiltinType::Bool;
         r.int_val = if v { 1u64 } else { 0u64 };
         r
@@ -969,7 +989,7 @@ impl ConstValue {
 
     fn make_int(v: u64, bt: BuiltinType) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_INT;
+        r.tag = CValTag::Int;
         r.builtin_type = bt;
         r.int_val = v;
         r
@@ -977,7 +997,7 @@ impl ConstValue {
 
     fn make_float(v: f64, bt: BuiltinType) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_FLOAT;
+        r.tag = CValTag::Float;
         r.builtin_type = bt;
         r.float_val = v;
         r
@@ -985,7 +1005,7 @@ impl ConstValue {
 
     fn make_bytes(data: &[u8], offset: usize) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_BYTES;
+        r.tag = CValTag::Bytes;
         r.bytes = data;
         r.bytes_offset = offset;
         r
@@ -993,35 +1013,35 @@ impl ConstValue {
 
     fn make_tuple(elems: &[ConstValue]) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_TUPLE;
+        r.tag = CValTag::Tuple;
         r.elems = elems;
         r
     }
 
     fn make_array(elems: &[ConstValue]) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_ARRAY;
+        r.tag = CValTag::Array;
         r.elems = elems;
         r
     }
 
     fn make_struct(fields: &[ConstField]) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_STRUCT;
+        r.tag = CValTag::Struct;
         r.fields = fields;
         r
     }
 
     fn make_fn_ptr(fr: IrFnRef) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_FN_PTR;
+        r.tag = CValTag::FnPtr;
         r.fn_ref = fr;
         r
     }
 
     fn make_pointer(lv: &ConstLValue, ty: &IrTy) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_POINTER;
+        r.tag = CValTag::Pointer;
         r.lvalue = lv;
         r.pointee_ty = ty;
         r
@@ -1029,26 +1049,26 @@ impl ConstValue {
 
     fn make_lvalue(lv: &ConstLValue) -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_LVALUE;
+        r.tag = CValTag::Lvalue;
         r.lvalue = lv;
         r
     }
 
     fn make_uninitialized() -> ConstValue {
         let r = ConstValue::make_void();
-        r.tag = CVAL_UNINITIALIZED;
+        r.tag = CValTag::Uninitialized;
         r
     }
 
     fn is_truthy(self: &ConstValue) -> bool {
-        if self.tag == CVAL_BOOL { return self.int_val != 0u64; }
-        if self.tag == CVAL_INT { return self.int_val != 0u64; }
+        if self.tag == CValTag::Bool { return self.int_val != 0u64; }
+        if self.tag == CValTag::Int { return self.int_val != 0u64; }
         false
     }
 
     /// Extract a u64 value (for enum variants, array sizes, etc.)
     fn as_u64(self: &ConstValue) -> Option<u64> {
-        if self.tag == CVAL_INT || self.tag == CVAL_BOOL {
+        if self.tag == CValTag::Int || self.tag == CValTag::Bool {
             Option::some(self.int_val)
         } else {
             Option::none()
@@ -1057,9 +1077,9 @@ impl ConstValue {
 
     /// Extract a bool value
     fn as_bool(self: &ConstValue) -> Option<bool> {
-        if self.tag == CVAL_BOOL {
+        if self.tag == CValTag::Bool {
             Option::some(self.int_val != 0u64)
-        } else if self.tag == CVAL_INT {
+        } else if self.tag == CValTag::Int {
             Option::some(self.int_val != 0u64)
         } else {
             Option::none()
@@ -1068,7 +1088,7 @@ impl ConstValue {
 
     /// Extract a usize value
     fn as_usize(self: &ConstValue) -> Option<usize> {
-        if self.tag == CVAL_INT || self.tag == CVAL_BOOL {
+        if self.tag == CValTag::Int || self.tag == CValTag::Bool {
             Option::some(self.int_val as usize)
         } else {
             Option::none()

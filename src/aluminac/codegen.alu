@@ -171,9 +171,9 @@ impl CodegenCtx {
     }
 
     fn llvm_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
-        if ty.tag == IRTY_BUILTIN {
+        if ty.tag == IrTyTag::Builtin {
             self.builtin_to_llvm(ty.builtin)
-        } else if ty.tag == IRTY_POINTER {
+        } else if ty.tag == IrTyTag::Pointer {
             let inner_ptr = ty.inner as &void as usize;
             if inner_ptr == 0 || inner_ptr < 4096usize {
                 return self.ptr_type;
@@ -185,7 +185,7 @@ impl CodegenCtx {
             } else {
                 LLVMPointerType(inner_ty, 0)
             }
-        } else if ty.tag == IRTY_ARRAY {
+        } else if ty.tag == IrTyTag::Array {
             // For zero-length arrays, use [0 x i8] to avoid issues with recursive element types
             if ty.array_size == 0 {
                 return LLVMArrayType(self.i8_type, 0);
@@ -194,7 +194,7 @@ impl CodegenCtx {
             // Can't have void element in arrays
             let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.i8_type } else { elem_ty };
             LLVMArrayType(safe_elem, ty.array_size as u32)
-        } else if ty.tag == IRTY_TUPLE {
+        } else if ty.tag == IrTyTag::Tuple {
             if ty.elems.len() == 0 {
                 return self.void_type;
             }
@@ -214,7 +214,7 @@ impl CodegenCtx {
                 ty.elems.len() as u32,
                 0i32 // not packed
             )
-        } else if ty.tag == IRTY_SLICE {
+        } else if ty.tag == IrTyTag::Slice {
             // Slice fat pointer: { data_ptr, usize }
             let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
             let inner_llvm = self.llvm_type(ty.inner);
@@ -227,16 +227,16 @@ impl CodegenCtx {
                 2u32,
                 0i32
             )
-        } else if ty.tag == IRTY_FN_POINTER {
+        } else if ty.tag == IrTyTag::FnPointer {
             // Function pointers are just i8* in LLVM
             self.ptr_type
-        } else if ty.tag == IRTY_STRUCT || ty.tag == IRTY_CLOSURE {
+        } else if ty.tag == IrTyTag::Struct || ty.tag == IrTyTag::Closure {
             self.llvm_struct_type(&ty.struct_ref)
-        } else if ty.tag == IRTY_ENUM {
+        } else if ty.tag == IrTyTag::Enum {
             self.llvm_type(ty.enum_ref.underlying)
-        } else if ty.tag == IRTY_VOID {
+        } else if ty.tag == IrTyTag::Void {
             self.void_type
-        } else if ty.tag == IRTY_NEVER {
+        } else if ty.tag == IrTyTag::Never {
             self.void_type
         } else {
             self.void_type
@@ -506,9 +506,9 @@ impl CodegenCtx {
             let is_main = false;
             for i in 0usize..ir_fn.attributes.len() {
                 let linkage_attr = &ir_fn.attributes[i];
-                if linkage_attr.tag == ATTR_EXPORT {
+                if linkage_attr.tag == AttrTag::Export {
                     is_export = true;
-                } else if linkage_attr.tag == ATTR_MAIN {
+                } else if linkage_attr.tag == AttrTag::Main {
                     is_main = true;
                 }
             }
@@ -527,13 +527,13 @@ impl CodegenCtx {
         // Set attributes
         for i in 0usize..ir_fn.attributes.len() {
             let attr = &ir_fn.attributes[i];
-            if attr.tag == ATTR_NO_RETURN {
+            if attr.tag == AttrTag::NoReturn {
                 self.add_fn_attribute(llvm_fn, "noreturn");
-            } else if attr.tag == ATTR_INLINE {
+            } else if attr.tag == AttrTag::Inline {
                 self.add_fn_attribute(llvm_fn, "inlinehint");
-            } else if attr.tag == ATTR_ALWAYS_INLINE {
+            } else if attr.tag == AttrTag::AlwaysInline {
                 self.add_fn_attribute(llvm_fn, "alwaysinline");
-            } else if attr.tag == ATTR_COLD {
+            } else if attr.tag == AttrTag::Cold {
                 self.add_fn_attribute(llvm_fn, "cold");
             }
         }
@@ -584,9 +584,9 @@ impl CodegenCtx {
         // Thread local and export attributes
         for i in 0usize..ir_global.attributes.len() {
             let attr = &ir_global.attributes[i];
-            if attr.tag == ATTR_THREAD_LOCAL {
+            if attr.tag == AttrTag::ThreadLocal {
                 LLVMSetThreadLocal(global, 1i32);
-            } else if attr.tag == ATTR_EXPORT {
+            } else if attr.tag == AttrTag::Export {
                 LLVMSetLinkage(global, LLVMLinkage::External);
             }
         }
@@ -596,40 +596,40 @@ impl CodegenCtx {
     }
 
     fn gen_const_init(self: &mut CodegenCtx, expr: &IrExpr) -> LLVMValueRef {
-        if expr.tag == IR_INT_LIT {
+        if expr.tag == IrTag::IntLit {
             let ty = self.llvm_type(expr.ty);
             LLVMConstInt(ty, expr.int_val, 1i32)
-        } else if expr.tag == IR_FLOAT_LIT {
+        } else if expr.tag == IrTag::FloatLit {
             let ty = self.llvm_type(expr.ty);
             LLVMConstReal(ty, expr.float_val)
-        } else if expr.tag == IR_BOOL_LIT {
+        } else if expr.tag == IrTag::BoolLit {
             LLVMConstInt(self.i1_type, if expr.bool_val { 1u64 } else { 0u64 }, 0i32)
-        } else if expr.tag == IR_NULL_LIT {
+        } else if expr.tag == IrTag::NullLit {
             let ty = self.llvm_type(expr.ty);
             LLVMConstNull(ty)
-        } else if expr.tag == IR_ZEROED {
+        } else if expr.tag == IrTag::Zeroed {
             let ty = self.llvm_type(expr.ty);
             LLVMConstNull(ty)
-        } else if expr.tag == IR_UNDEF {
+        } else if expr.tag == IrTag::Undef {
             let ty = self.llvm_type(expr.ty);
             LLVMGetUndef(ty)
-        } else if expr.tag == IR_SIZE_OF {
+        } else if expr.tag == IrTag::SizeOf {
             let measured_ty = self.llvm_type(expr.ir_ty);
             if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
                 LLVMConstInt(LLVMInt64TypeInContext(self.context), 0u64, 0i32)
             } else {
                 LLVMSizeOf(measured_ty)
             }
-        } else if expr.tag == IR_ALIGN_OF {
+        } else if expr.tag == IrTag::AlignOf {
             let measured_ty = self.llvm_type(expr.ir_ty);
             if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
                 LLVMConstInt(LLVMInt64TypeInContext(self.context), 1u64, 0i32)
             } else {
                 LLVMAlignOf(measured_ty)
             }
-        } else if expr.tag == IR_STRING_LIT {
+        } else if expr.tag == IrTag::StringLit {
             self.get_or_create_string(expr.str_val)
-        } else if expr.tag == IR_CAST {
+        } else if expr.tag == IrTag::Cast {
             let inner = self.gen_const_init(expr.lhs);
             if (inner as usize) == 0 { return std::mem::zeroed::<LLVMValueRef>(); }
             let target_ty = self.llvm_type(expr.ty);
@@ -654,7 +654,7 @@ impl CodegenCtx {
             } else {
                 LLVMConstBitCast(inner, target_ty)
             }
-        } else if expr.tag == IR_BINARY {
+        } else if expr.tag == IrTag::Binary {
             let lhs = self.gen_const_init(expr.lhs);
             let rhs = self.gen_const_init(expr.rhs);
             if (lhs as usize) == 0 || (rhs as usize) == 0 {
@@ -667,7 +667,7 @@ impl CodegenCtx {
             else if expr.bin_op == BinOp::BitOr { LLVMConstOr(lhs, rhs) }
             else if expr.bin_op == BinOp::BitXor { LLVMConstXor(lhs, rhs) }
             else { std::mem::zeroed::<LLVMValueRef>() }
-        } else if expr.tag == IR_STRUCT_LIT {
+        } else if expr.tag == IrTag::StructLit {
             let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items.len());
             for i in 0usize..expr.items.len() {
                 fields[i] = self.gen_const_init(expr.items[i]);
@@ -963,7 +963,7 @@ impl CodegenCtx {
         };
 
         // Return the user main's return value (or 0 if void)
-        if ir_fn.return_type.tag == IRTY_BUILTIN && ir_fn.return_type.builtin == BuiltinType::I32 {
+        if ir_fn.return_type.tag == IrTyTag::Builtin && ir_fn.return_type.builtin == BuiltinType::I32 {
             LLVMBuildRet(self.builder, result);
         } else {
             LLVMBuildRet(self.builder, LLVMConstInt(i32_ty, 0u64, 0i32));
@@ -1002,7 +1002,7 @@ impl CodegenCtx {
         for i in 0usize..unit.functions.len() {
             let is_test = false;
             for attr in unit.functions[i].attributes {
-                if attr.tag == ATTR_TEST {
+                if attr.tag == AttrTag::Test {
                     is_test = true;
                 }
             }
@@ -1265,15 +1265,15 @@ impl FnCodegen {
         if expr_ptr == 0 || expr_ptr < 4096usize {
             return LLVMGetUndef(self.ctx.void_type);
         }
-        if expr.tag == IR_INT_LIT {
+        if expr.tag == IrTag::IntLit {
             let ty = self.ctx.llvm_type(expr.ty);
             LLVMConstInt(ty, expr.int_val, 1i32)
-        } else if expr.tag == IR_FLOAT_LIT {
+        } else if expr.tag == IrTag::FloatLit {
             let ty = self.ctx.llvm_type(expr.ty);
             LLVMConstReal(ty, expr.float_val)
-        } else if expr.tag == IR_BOOL_LIT {
+        } else if expr.tag == IrTag::BoolLit {
             LLVMConstInt(self.ctx.i1_type, if expr.bool_val { 1u64 } else { 0u64 }, 0i32)
-        } else if expr.tag == IR_STRING_LIT {
+        } else if expr.tag == IrTag::StringLit {
             // Strings are &[u8] = (data pointer, length)
             let ptr = self.ctx.get_or_create_string(expr.str_val);
             let len = LLVMConstInt(self.ctx.i64_type, expr.str_val.len() as u64, 0i32);
@@ -1283,7 +1283,7 @@ impl FnCodegen {
             fields[0] = ptr;
             fields[1] = len;
             LLVMConstStructInContext(self.ctx.context, &fields[0], 2, 0i32)
-        } else if expr.tag == IR_NULL_LIT {
+        } else if expr.tag == IrTag::NullLit {
             let null_ty = self.ctx.llvm_type(expr.ty);
             // If the type resolved to a pointer, use it; otherwise fall back to generic ptr
             if LLVMGetTypeKind(null_ty) == LLVMTypeKind::Pointer {
@@ -1291,13 +1291,13 @@ impl FnCodegen {
             } else {
                 LLVMConstPointerNull(self.ctx.ptr_type)
             }
-        } else if expr.tag == IR_ZEROED {
+        } else if expr.tag == IrTag::Zeroed {
             let llvm_ty = self.ctx.llvm_type(expr.ty);
             if self.is_void_type(llvm_ty) {
                 return LLVMGetUndef(self.ctx.void_type);
             }
             LLVMConstNull(llvm_ty)
-        } else if expr.tag == IR_LOCAL {
+        } else if expr.tag == IrTag::Local {
             let alloca = self.locals.get(&expr.id._value);
             if alloca.is_some() {
                 let ptr = alloca.unwrap();
@@ -1309,7 +1309,7 @@ impl FnCodegen {
             } else {
                 LLVMGetUndef(self.ctx.llvm_type(expr.ty))
             }
-        } else if expr.tag == IR_PARAM {
+        } else if expr.tag == IrTag::Param {
             let alloca = self.locals.get(&(expr.param_idx as usize));
             if alloca.is_some() {
                 let ptr = alloca.unwrap();
@@ -1321,7 +1321,7 @@ impl FnCodegen {
             } else {
                 LLVMGetParam(self.llvm_fn, expr.param_idx)
             }
-        } else if expr.tag == IR_FN_REF {
+        } else if expr.tag == IrTag::FnRef {
             let hash = self.ctx.name_hash(expr.fn_ref.mangled_name);
             let existing = self.ctx.fn_decls.get(&hash);
             if existing.is_some() {
@@ -1330,7 +1330,7 @@ impl FnCodegen {
             } else {
                 LLVMGetUndef(self.ctx.ptr_type)
             }
-        } else if expr.tag == IR_GLOBAL_REF {
+        } else if expr.tag == IrTag::GlobalRef {
             let hash = self.ctx.name_hash(expr.global_ref.mangled_name);
             let existing = self.ctx.global_decls.get(&hash);
             if existing.is_some() {
@@ -1343,7 +1343,7 @@ impl FnCodegen {
             } else {
                 LLVMGetUndef(self.ctx.llvm_type(expr.ty))
             }
-        } else if expr.tag == IR_BLOCK {
+        } else if expr.tag == IrTag::Block {
             let result = LLVMGetUndef(self.ctx.void_type);
             for i in 0usize..expr.items.len() {
                 // Check if current block is terminated
@@ -1355,11 +1355,11 @@ impl FnCodegen {
                 result = self.gen_expr(expr.items[i]);
             }
             result
-        } else if expr.tag == IR_BINARY {
+        } else if expr.tag == IrTag::Binary {
             self.gen_binary(expr.bin_op, expr.lhs, expr.rhs, expr.ty)
-        } else if expr.tag == IR_UNARY {
+        } else if expr.tag == IrTag::Unary {
             self.gen_unary(expr.un_op, expr.lhs, expr.ty)
-        } else if expr.tag == IR_ASSIGN {
+        } else if expr.tag == IrTag::Assign {
             let rhs_ty = self.ctx.llvm_type(FnCodegen::expr_ty(expr.rhs));
             if self.is_void_type(rhs_ty) {
                 return LLVMGetUndef(self.ctx.void_type);
@@ -1371,15 +1371,15 @@ impl FnCodegen {
                 self.safe_store(rhs_val, lhs_ptr);
             }
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_CALL {
+        } else if expr.tag == IrTag::Call {
             self.gen_call(&expr.call_target, expr.items, expr.ty)
-        } else if expr.tag == IR_FIELD_ACCESS {
+        } else if expr.tag == IrTag::FieldAccess {
             let lhs_ir_ty = FnCodegen::expr_ty(expr.lhs);
             let obj_ty = self.ctx.llvm_type(lhs_ir_ty);
             let obj_kind = LLVMGetTypeKind(obj_ty);
 
             // If LHS is a pointer type, auto-deref to get the struct
-            if obj_kind == LLVMTypeKind::Pointer || lhs_ir_ty.tag == IRTY_POINTER {
+            if obj_kind == LLVMTypeKind::Pointer || lhs_ir_ty.tag == IrTyTag::Pointer {
                 // Get the pointee struct type
                 let pointee_ir_ty = FnCodegen::irty_inner(lhs_ir_ty);
                 let pointee_ty = self.ctx.llvm_type(pointee_ir_ty);
@@ -1426,7 +1426,7 @@ impl FnCodegen {
             }
             let load_val = LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
             load_val
-        } else if expr.tag == IR_INDEX {
+        } else if expr.tag == IrTag::Index {
             let base_val = self.gen_expr(expr.lhs);
             let index_val = self.gen_expr(expr.rhs);
             let elem_ty = self.ctx.llvm_type(expr.ty);
@@ -1441,7 +1441,7 @@ impl FnCodegen {
 
             // Check if base is a pointer or array
             let lhs_ty = FnCodegen::expr_ty(expr.lhs);
-            if lhs_ty.tag == IRTY_ARRAY {
+            if lhs_ty.tag == IrTyTag::Array {
                 let base_ptr = self.gen_lvalue(expr.lhs);
                 let arr_ty = self.ctx.llvm_type(lhs_ty);
                 let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
@@ -1452,7 +1452,7 @@ impl FnCodegen {
                     &indices[0], 2, self.temp_cname()
                 );
                 LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
-            } else if lhs_ty.tag == IRTY_POINTER {
+            } else if lhs_ty.tag == IrTyTag::Pointer {
                 // Bitcast i8* to elem_ty* for correct GEP
                 let typed_ptr = LLVMBuildBitCast(
                     self.ctx.builder, base_val,
@@ -1466,7 +1466,7 @@ impl FnCodegen {
                     &indices[0], 1, self.temp_cname()
                 );
                 LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
-            } else if lhs_ty.tag == IRTY_SLICE {
+            } else if lhs_ty.tag == IrTyTag::Slice {
                 // Slice indexing: extract data pointer, then GEP
                 let slice_llvm = self.ctx.llvm_type(lhs_ty);
                 let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
@@ -1488,26 +1488,26 @@ impl FnCodegen {
             } else {
                 LLVMGetUndef(elem_ty)
             }
-        } else if expr.tag == IR_REF {
+        } else if expr.tag == IrTag::Ref {
             let ptr = self.gen_lvalue(expr.lhs);
             let target_ty = self.ctx.llvm_type(expr.ty);
             self.coerce_value(ptr, target_ty)
-        } else if expr.tag == IR_DEREF {
+        } else if expr.tag == IrTag::Deref {
             let ptr_val = self.gen_expr(expr.lhs);
             let result_ty = self.ctx.llvm_type(expr.ty);
             if self.is_void_type(result_ty) {
                 return LLVMGetUndef(self.ctx.void_type);
             }
             LLVMBuildLoad2(self.ctx.builder, result_ty, ptr_val, self.temp_cname())
-        } else if expr.tag == IR_CAST {
+        } else if expr.tag == IrTag::Cast {
             self.gen_cast(expr.lhs, expr.ir_ty, expr.ty)
-        } else if expr.tag == IR_IF {
+        } else if expr.tag == IrTag::If {
             self.gen_if(expr)
-        } else if expr.tag == IR_WHILE {
+        } else if expr.tag == IrTag::While {
             self.gen_while(expr.cond, expr.lhs, expr.opt_expr)
-        } else if expr.tag == IR_LOOP {
+        } else if expr.tag == IrTag::Loop {
             self.gen_loop(expr.lhs)
-        } else if expr.tag == IR_BREAK {
+        } else if expr.tag == IrTag::Break {
             if self.break_bb.is_some() {
                 if expr.opt_expr.is_some() {
                     self.gen_expr(expr.opt_expr.unwrap());
@@ -1515,12 +1515,12 @@ impl FnCodegen {
                 LLVMBuildBr(self.ctx.builder, self.break_bb.unwrap());
             }
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_CONTINUE {
+        } else if expr.tag == IrTag::Continue {
             if self.continue_bb.is_some() {
                 LLVMBuildBr(self.ctx.builder, self.continue_bb.unwrap());
             }
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_RETURN {
+        } else if expr.tag == IrTag::Return {
             // Generate deferred expressions before returning
             self.gen_defers();
             let fn_ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(self.llvm_fn));
@@ -1537,7 +1537,7 @@ impl FnCodegen {
                 LLVMBuildRetVoid(self.ctx.builder);
             }
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_LET {
+        } else if expr.tag == IrTag::Let {
             // Alloca should already be created; just store init value
             // Use expr.ir_ty (the variable type stored on the LET node) instead of
             // init_expr.ty, because field accesses on locals from unwrap() are broken
@@ -1553,7 +1553,7 @@ impl FnCodegen {
                 }
             }
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_STRUCT_LIT {
+        } else if expr.tag == IrTag::StructLit {
             let llvm_ty = self.ctx.llvm_type(expr.ir_ty);
             if self.is_void_type(llvm_ty) {
                 return LLVMGetUndef(self.ctx.void_type);
@@ -1575,7 +1575,7 @@ impl FnCodegen {
             }
 
             LLVMBuildLoad2(self.ctx.builder, llvm_ty, alloca, self.temp_cname())
-        } else if expr.tag == IR_TUPLE_LIT {
+        } else if expr.tag == IrTag::TupleLit {
             if expr.items.len() == 0 {
                 return LLVMGetUndef(self.ctx.void_type);
             }
@@ -1596,7 +1596,7 @@ impl FnCodegen {
             }
 
             LLVMBuildLoad2(self.ctx.builder, llvm_ty, alloca, self.temp_cname())
-        } else if expr.tag == IR_ARRAY_LIT {
+        } else if expr.tag == IrTag::ArrayLit {
             let llvm_ty = self.ctx.llvm_type(expr.ty);
             if self.is_void_type(llvm_ty) {
                 return LLVMGetUndef(self.ctx.void_type);
@@ -1625,14 +1625,14 @@ impl FnCodegen {
             }
 
             LLVMBuildLoad2(self.ctx.builder, llvm_ty, alloca, self.temp_cname())
-        } else if expr.tag == IR_SWITCH {
+        } else if expr.tag == IrTag::Switch {
             self.gen_switch(expr.lhs, expr.switch_arms, expr.ty)
-        } else if expr.tag == IR_DEFER {
+        } else if expr.tag == IrTag::Defer {
             // Push the deferred expression onto the stack for later execution
             self.defer_stack.push(expr.lhs);
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_MEMCPY {
-            // IR_MEMCPY: lhs=dest, rhs=src, cond=len (in elements), ir_ty=elem type
+        } else if expr.tag == IrTag::Memcpy {
+            // IrTag::Memcpy: lhs=dest, rhs=src, cond=len (in elements), ir_ty=elem type
             let dest_val = self.gen_expr(expr.lhs);
             let src_val = self.gen_expr(expr.rhs);
             let len_val = self.gen_expr(expr.cond);
@@ -1653,12 +1653,12 @@ impl FnCodegen {
                 LLVMBuildCall2(self.ctx.builder, memcpy_fn_ty, memcpy_fn, &args[0], 3u32, self.temp_cname());
             }
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_VOID {
+        } else if expr.tag == IrTag::Void {
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_UNREACHABLE {
+        } else if expr.tag == IrTag::Unreachable {
             LLVMBuildUnreachable(self.ctx.builder);
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_TRAP {
+        } else if expr.tag == IrTag::Trap {
             // Call llvm.trap intrinsic
             let trap_fn_lookup = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
             let trap_fn = if (trap_fn_lookup as usize) == 0 {
@@ -1673,24 +1673,24 @@ impl FnCodegen {
             LLVMBuildCall2(self.ctx.builder, trap_call_ty, trap_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
             LLVMBuildUnreachable(self.ctx.builder);
             LLVMGetUndef(self.ctx.void_type)
-        } else if expr.tag == IR_UNDEF {
+        } else if expr.tag == IrTag::Undef {
             let llvm_ty = self.ctx.llvm_type(expr.ty);
             LLVMGetUndef(llvm_ty)
-        } else if expr.tag == IR_SIZE_OF {
+        } else if expr.tag == IrTag::SizeOf {
             let measured_ty = self.ctx.llvm_type(expr.ir_ty);
             if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
                 LLVMConstInt(self.ctx.i64_type, 0u64, 0i32)
             } else {
                 LLVMSizeOf(measured_ty)
             }
-        } else if expr.tag == IR_ALIGN_OF {
+        } else if expr.tag == IrTag::AlignOf {
             let measured_ty = self.ctx.llvm_type(expr.ir_ty);
             if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
                 LLVMConstInt(self.ctx.i64_type, 1u64, 0i32)
             } else {
                 LLVMAlignOf(measured_ty)
             }
-        } else if expr.tag == IR_CODEGEN_FUNC {
+        } else if expr.tag == IrTag::CodegenFunc {
             // Emit call to a named C/compiler function (e.g. __builtin_add_overflow)
             let name = expr.str_val;
 
@@ -1798,7 +1798,7 @@ impl FnCodegen {
                     LLVMBuildCall2(self.ctx.builder, fn_ty, callee, std::mem::zeroed::<&LLVMValueRef>(), 0u32, cname)
                 }
             }
-        } else if expr.tag == IR_TRANSMUTE {
+        } else if expr.tag == IrTag::Transmute {
             let val = self.gen_expr(expr.lhs);
             let target_ty = self.ctx.llvm_type(expr.ty);
             let val_ty = LLVMTypeOf(val);
@@ -1822,30 +1822,30 @@ impl FnCodegen {
     }
 
     fn gen_lvalue(self: &mut FnCodegen, expr: &IrExpr) -> LLVMValueRef {
-        if expr.tag == IR_LOCAL {
+        if expr.tag == IrTag::Local {
             let alloca = self.locals.get(&expr.id._value);
             if alloca.is_some() {
                 alloca.unwrap()
             } else {
                 LLVMGetUndef(self.ctx.ptr_type)
             }
-        } else if expr.tag == IR_PARAM {
+        } else if expr.tag == IrTag::Param {
             let alloca = self.locals.get(&(expr.param_idx as usize));
             if alloca.is_some() {
                 alloca.unwrap()
             } else {
                 LLVMGetUndef(self.ctx.ptr_type)
             }
-        } else if expr.tag == IR_DEREF {
+        } else if expr.tag == IrTag::Deref {
             // Deref of a pointer gives the pointer value itself as lvalue
             self.gen_expr(expr.lhs)
-        } else if expr.tag == IR_FIELD_ACCESS {
+        } else if expr.tag == IrTag::FieldAccess {
             let lhs_ir_ty = FnCodegen::expr_ty(expr.lhs);
             let obj_ty = self.ctx.llvm_type(lhs_ir_ty);
             let obj_kind = LLVMGetTypeKind(obj_ty);
 
             // If LHS is a pointer type, auto-deref to get the struct
-            if obj_kind == LLVMTypeKind::Pointer || lhs_ir_ty.tag == IRTY_POINTER {
+            if obj_kind == LLVMTypeKind::Pointer || lhs_ir_ty.tag == IrTyTag::Pointer {
                 let pointee_ir_ty = FnCodegen::irty_inner(lhs_ir_ty);
                 let pointee_ty = self.ctx.llvm_type(pointee_ir_ty);
                 if LLVMGetTypeKind(pointee_ty) == LLVMTypeKind::Struct {
@@ -1869,7 +1869,7 @@ impl FnCodegen {
                 self.ctx.builder, obj_ty, typed_ptr, expr.field_idx,
                 self.temp_cname()
             )
-        } else if expr.tag == IR_INDEX {
+        } else if expr.tag == IrTag::Index {
             let index_val = self.gen_expr(expr.rhs);
             // Coerce index to integer if it's void
             let safe_index = if LLVMGetTypeKind(LLVMTypeOf(index_val)) == LLVMTypeKind::Void {
@@ -1878,7 +1878,7 @@ impl FnCodegen {
                 index_val
             };
             let lhs_ty = FnCodegen::expr_ty(expr.lhs);
-            if lhs_ty.tag == IRTY_ARRAY {
+            if lhs_ty.tag == IrTyTag::Array {
                 let base_ptr = self.gen_lvalue(expr.lhs);
                 let arr_ty = self.ctx.llvm_type(lhs_ty);
                 let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
@@ -1888,7 +1888,7 @@ impl FnCodegen {
                     self.ctx.builder, arr_ty, base_ptr,
                     &indices[0], 2, self.temp_cname()
                 )
-            } else if lhs_ty.tag == IRTY_POINTER {
+            } else if lhs_ty.tag == IrTyTag::Pointer {
                 let base_val = self.gen_expr(expr.lhs);
                 let elem_ty = self.ctx.llvm_type(FnCodegen::irty_inner(lhs_ty));
                 // Protect against void element type
@@ -1899,7 +1899,7 @@ impl FnCodegen {
                     self.ctx.builder, safe_elem, base_val,
                     &indices[0], 1, self.temp_cname()
                 )
-            } else if lhs_ty.tag == IRTY_SLICE {
+            } else if lhs_ty.tag == IrTyTag::Slice {
                 // Slice lvalue indexing: extract data pointer, then GEP
                 let base_val = self.gen_expr(expr.lhs);
                 let slice_llvm = self.ctx.llvm_type(lhs_ty);
@@ -1924,7 +1924,7 @@ impl FnCodegen {
             } else {
                 LLVMGetUndef(self.ctx.ptr_type)
             }
-        } else if expr.tag == IR_GLOBAL_REF {
+        } else if expr.tag == IrTag::GlobalRef {
             let hash = self.ctx.name_hash(expr.global_ref.mangled_name);
             let existing = self.ctx.global_decls.get(&hash);
             if existing.is_some() {
@@ -1979,19 +1979,19 @@ impl FnCodegen {
             }
         }
 
-        let is_float = if lhs.ty.tag == IRTY_BUILTIN {
+        let is_float = if lhs.ty.tag == IrTyTag::Builtin {
             lhs.ty.builtin.is_float()
         } else {
             false
         };
 
-        let is_signed = if lhs.ty.tag == IRTY_BUILTIN {
+        let is_signed = if lhs.ty.tag == IrTyTag::Builtin {
             lhs.ty.builtin.is_signed()
         } else {
             false
         };
 
-        let is_ptr = lhs.ty.tag == IRTY_POINTER;
+        let is_ptr = lhs.ty.tag == IrTyTag::Pointer;
 
         let n = self.temp_cname();
 
@@ -2027,8 +2027,8 @@ impl FnCodegen {
                 else { LLVMBuildLShr(self.ctx.builder, lhs_val, rhs_val, n) }
             },
             BinOp::Eq => {
-                let is_slice = lhs.ty.tag == IRTY_SLICE ||
-                    (lhs.ty.tag == IRTY_TUPLE && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IRTY_POINTER);
+                let is_slice = lhs.ty.tag == IrTyTag::Slice ||
+                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IrTyTag::Pointer);
                 if is_slice {
                     self.gen_slice_eq(lhs_val, rhs_val, lhs.ty)
                 } else if LLVMGetTypeKind(LLVMTypeOf(lhs_val)) == LLVMTypeKind::Struct {
@@ -2038,8 +2038,8 @@ impl FnCodegen {
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_val, rhs_val, n) }
             },
             BinOp::Ne => {
-                let is_slice = lhs.ty.tag == IRTY_SLICE ||
-                    (lhs.ty.tag == IRTY_TUPLE && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IRTY_POINTER);
+                let is_slice = lhs.ty.tag == IrTyTag::Slice ||
+                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IrTyTag::Pointer);
                 if is_slice {
                     let eq = self.gen_slice_eq(lhs_val, rhs_val, lhs.ty);
                     LLVMBuildNot(self.ctx.builder, eq, n)
@@ -2291,7 +2291,7 @@ impl FnCodegen {
             return LLVMGetUndef(res_llvm);
         }
 
-        let is_float = if operand.ty.tag == IRTY_BUILTIN {
+        let is_float = if operand.ty.tag == IrTyTag::Builtin {
             operand.ty.builtin.is_float()
         } else {
             false
@@ -2330,7 +2330,7 @@ impl FnCodegen {
             arg_vals[i] = self.gen_expr(args[i]);
         }
 
-        let callee: LLVMValueRef = if target.tag == CALL_DIRECT {
+        let callee: LLVMValueRef = if target.tag == CallKind::Direct {
             let mangled = FnCodegen::call_target_name(target);
             let hash = self.ctx.name_hash(mangled);
             let existing = self.ctx.fn_decls.get(&hash);
@@ -2346,7 +2346,7 @@ impl FnCodegen {
                 }
             }
         } else {
-            // CALL_INDIRECT
+            // CallKind::Indirect
             let callee_val = self.gen_expr(target.callee);
             // If callee is void/undef, skip the call
             if LLVMGetTypeKind(LLVMTypeOf(callee_val)) == LLVMTypeKind::Void {
@@ -2365,7 +2365,7 @@ impl FnCodegen {
         let llvm_ret = if is_void_ret { self.ctx.void_type } else { ret_ty };
 
         // For direct calls, use the declared function type and cast arguments to match
-        let fn_type: LLVMTypeRef = if target.tag == CALL_DIRECT {
+        let fn_type: LLVMTypeRef = if target.tag == CallKind::Direct {
             let declared_fn_ty = LLVMGlobalGetValueType(callee);
             // Cast each argument to match the declared parameter type
             let num_params = LLVMCountParamTypes(declared_fn_ty);
@@ -2471,7 +2471,7 @@ impl FnCodegen {
         };
 
         // For indirect calls, bitcast i8* callee to the correct function pointer type
-        let typed_callee = if target.tag == CALL_INDIRECT {
+        let typed_callee = if target.tag == CallKind::Indirect {
             LLVMBuildBitCast(
                 self.ctx.builder, callee,
                 LLVMPointerType(fn_type, 0),
@@ -2494,7 +2494,7 @@ impl FnCodegen {
         };
 
         // Add byval attributes to call site for extern C byval parameters
-        if target.tag == CALL_DIRECT {
+        if target.tag == CallKind::Direct {
             let callee_hash2 = self.ctx.name_hash(FnCodegen::call_target_name(target));
             if self.ctx.extern_c_fns.get(&callee_hash2).is_some() {
                 let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
@@ -2519,38 +2519,38 @@ impl FnCodegen {
         let src_val = self.gen_expr(inner);
         let src_ty = inner.ty;
         let dst_llvm = self.ctx.llvm_type(target_ty);
-        let src_is_int = if src_ty.tag == IRTY_BUILTIN {
+        let src_is_int = if src_ty.tag == IrTyTag::Builtin {
             src_ty.builtin.is_integer() || src_ty.builtin as i32 == BuiltinType::Bool as i32
-        } else if src_ty.tag == IRTY_ENUM {
+        } else if src_ty.tag == IrTyTag::Enum {
             true
         } else {
             false
         };
-        let src_is_float = if src_ty.tag == IRTY_BUILTIN {
+        let src_is_float = if src_ty.tag == IrTyTag::Builtin {
             src_ty.builtin.is_float()
         } else {
             false
         };
-        let src_is_ptr = src_ty.tag == IRTY_POINTER || src_ty.tag == IRTY_FN_POINTER;
-        let src_is_signed = if src_ty.tag == IRTY_BUILTIN {
+        let src_is_ptr = src_ty.tag == IrTyTag::Pointer || src_ty.tag == IrTyTag::FnPointer;
+        let src_is_signed = if src_ty.tag == IrTyTag::Builtin {
             src_ty.builtin.is_signed()
         } else {
             false
         };
 
-        let dst_is_int = if target_ty.tag == IRTY_BUILTIN {
+        let dst_is_int = if target_ty.tag == IrTyTag::Builtin {
             target_ty.builtin.is_integer() || target_ty.builtin as i32 == BuiltinType::Bool as i32
-        } else if target_ty.tag == IRTY_ENUM {
+        } else if target_ty.tag == IrTyTag::Enum {
             true
         } else {
             false
         };
-        let dst_is_float = if target_ty.tag == IRTY_BUILTIN {
+        let dst_is_float = if target_ty.tag == IrTyTag::Builtin {
             target_ty.builtin.is_float()
         } else {
             false
         };
-        let dst_is_ptr = target_ty.tag == IRTY_POINTER || target_ty.tag == IRTY_FN_POINTER;
+        let dst_is_ptr = target_ty.tag == IrTyTag::Pointer || target_ty.tag == IrTyTag::FnPointer;
 
         let n = self.temp_cname();
 
@@ -3099,7 +3099,7 @@ fn generate(
 
         for i in 0usize..unit.functions.len() {
             for j in 0usize..unit.functions[i].attributes.len() {
-                if unit.functions[i].attributes[j].tag == ATTR_STATIC_CTOR {
+                if unit.functions[i].attributes[j].tag == AttrTag::StaticCtor {
                     let hash = ctx.name_hash(unit.functions[i].mangled_name);
                     let decl = ctx.fn_decls.get(&hash);
                     if decl.is_some() {

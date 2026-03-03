@@ -387,57 +387,51 @@ impl Pass1 {
                 let name_node = child_by!(meta, FieldKind::Name);
                 if !name_node.is_none() {
                     let name = self.ctx.node_text(name_node.unwrap());
-                    if name == "inline" {
-                        attrs.push(Attribute::inline_attr());
-                    } else if name == "cold" {
-                        attrs.push(Attribute::cold());
-                    } else if name == "export" {
-                        attrs.push(Attribute::export());
-                    } else if name == "test" {
-                        attrs.push(Attribute::test());
-                    } else if name == "cfg" {
-                        // Evaluate the cfg condition using the tree-sitter node structure
-                        if !self.eval_cfg_meta_item(meta) {
-                            self.skip_item = true;
-                        }
-                    } else if name == "align" {
-                        let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_none() {
-                            let val_text = self.ctx.node_text(args_node.unwrap());
-                            let val = parse_usize(val_text);
-                            attrs.push(Attribute::align(val));
-                        }
-                    } else if name == "link_name" {
-                        let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_none() {
-                            let link_name = self.ctx.node_text(args_node.unwrap());
-                            // Strip quotes if present
-                            if link_name.len() >= 2 && link_name[0] == '"' as u8 {
-                                attrs.push(Attribute::extern_attr(
-                                    self.ctx.intern_str(link_name[1..link_name.len()-1])
-                                ));
+                    switch name {
+                        "inline" => attrs.push(Attribute::inline_attr()),
+                        "cold" => attrs.push(Attribute::cold()),
+                        "export" => attrs.push(Attribute::export()),
+                        "test" => attrs.push(Attribute::test()),
+                        "thread_local" => attrs.push(Attribute::thread_local()),
+                        "static_ctor" => attrs.push(Attribute::static_ctor()),
+                        "always_inline" => attrs.push(Attribute::always_inline()),
+                        "no_return" => attrs.push(Attribute::no_return()),
+                        "builtin" => attrs.push(Attribute::builtin()),
+                        "cfg" => {
+                            if !self.eval_cfg_meta_item(meta) {
+                                self.skip_item = true;
                             }
                         }
-                    } else if name == "thread_local" {
-                        attrs.push(Attribute::thread_local());
-                    } else if name == "static_ctor" {
-                        attrs.push(Attribute::static_ctor());
-                    } else if name == "always_inline" {
-                        attrs.push(Attribute::always_inline());
-                    } else if name == "no_return" {
-                        attrs.push(Attribute::no_return());
-                    } else if name == "builtin" {
-                        attrs.push(Attribute::builtin());
-                    } else if name == "lang" {
-                        let args_node = child_by!(meta, FieldKind::Arguments);
-                        if !args_node.is_none() {
-                            let lang_name = self.ctx.node_text(args_node.unwrap());
-                            // Strip parentheses: "(slice_new)" -> "slice_new"
-                            if lang_name.len() >= 2 && lang_name[0] == '(' as u8 && lang_name[lang_name.len() - 1] == ')' as u8 {
-                                lang_name = lang_name[1..lang_name.len() - 1];
+                        "align" => {
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let val_text = self.ctx.node_text(args_node.unwrap());
+                                let val = parse_usize(val_text);
+                                attrs.push(Attribute::align(val));
                             }
-                            attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
                         }
+                        "link_name" => {
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let link_name = self.ctx.node_text(args_node.unwrap());
+                                if link_name.len() >= 2 && link_name[0] == '"' as u8 {
+                                    attrs.push(Attribute::extern_attr(
+                                        self.ctx.intern_str(link_name[1..link_name.len()-1])
+                                    ));
+                                }
+                            }
+                        }
+                        "lang" => {
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let lang_name = self.ctx.node_text(args_node.unwrap());
+                                if lang_name.len() >= 2 && lang_name[0] == '(' as u8 && lang_name[lang_name.len() - 1] == ')' as u8 {
+                                    lang_name = lang_name[1..lang_name.len() - 1];
+                                }
+                                attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -764,7 +758,7 @@ impl Pass1 {
         let resolved = self.ctx.scopes.resolve(self.current_scope, name);
         let child_scope = if resolved.is_some() {
             let item = resolved.unwrap();
-            if (item.kind.tag == scope::NIK_STRUCT || item.kind.tag == scope::NIK_ENUM) && item.kind.scope_idx != 0 {
+            if (item.kind.tag == scope::NamedItemTag::Struct || item.kind.tag == scope::NamedItemTag::Enum) && item.kind.scope_idx != 0 {
                 // Use the type's existing scope
                 item.kind.scope_idx
             } else {
@@ -880,7 +874,7 @@ impl Pass1 {
                     let resolved = self.ctx.scopes.resolve_path(self.current_scope, segments);
                     if resolved.is_some() {
                         let item = resolved.unwrap();
-                        if item.kind.tag == scope::NIK_MODULE && item.kind.scope_idx != 0 {
+                        if item.kind.tag == scope::NamedItemTag::Module && item.kind.scope_idx != 0 {
                             self.ctx.scopes.add_star_import(self.current_scope, item.kind.scope_idx, self.ctx.arena);
                         }
                     }
@@ -1028,7 +1022,7 @@ impl Pass1 {
         // Check for #[builtin] attribute
         let is_builtin = false;
         for i in 0usize..attrs.len() {
-            if attrs[i].tag == ATTR_BUILTIN {
+            if attrs[i].tag == AttrTag::Builtin {
                 is_builtin = true;
             }
         }
@@ -1087,7 +1081,7 @@ impl Pass1 {
                 if !placeholder.is_none() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let resolved = self.ctx.scopes.resolve(self.current_scope, name);
-                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NIK_GENERIC_PARAM {
+                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
                         ids.push(resolved.unwrap().kind.id);
                     }
                 }
@@ -1337,7 +1331,7 @@ impl Pass2 {
             Option::none()
         };
 
-        // Tag "main" functions with ATTR_MAIN
+        // Tag "main" functions with AttrTag::Main
         let attributes = if pending.name == "main" && body.is_some() {
             let new_attrs = self.ctx.arena.alloc_slice::<Attribute>(pending.attributes.len() + 1);
             for ai in 0usize..pending.attributes.len() {
@@ -1362,7 +1356,7 @@ impl Pass2 {
         };
 
         let item = std::mem::zeroed::<Item>();
-        item.tag = ITEM_FUNCTION;
+        item.tag = ItemTag::Function;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
         item.fn_def = fn_def;
         self.ctx.items.push(item);
@@ -1387,7 +1381,7 @@ impl Pass2 {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     // Reuse the ID from Pass1's scope registration
                     let resolved = self.ctx.scopes.resolve(scope_idx, name);
-                    let id = if resolved.is_some() && resolved.unwrap().kind.tag == scope::NIK_GENERIC_PARAM {
+                    let id = if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
                         resolved.unwrap().kind.id
                     } else {
                         self.ctx.next_id()
@@ -1519,22 +1513,22 @@ impl Pass2 {
                 let resolved = self.ctx.scopes.resolve(scope_idx, name);
                 if resolved.is_some() {
                     let item = resolved.unwrap();
-                    if item.kind.tag == scope::NIK_STRUCT {
+                    if item.kind.tag == scope::NamedItemTag::Struct {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_ENUM {
+                    } else if item.kind.tag == scope::NamedItemTag::Enum {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_PROTOCOL {
+                    } else if item.kind.tag == scope::NamedItemTag::Protocol {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_TYPE_ALIAS {
+                    } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_GENERIC_PARAM {
+                    } else if item.kind.tag == scope::NamedItemTag::GenericParam {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::placeholder(id));
-                    } else if item.kind.tag == scope::NIK_BUILTIN_TYPE {
+                    } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
                         let bt = item.kind.builtin;
                         return self.ctx.alloc_ty(Ty::builtin_ty(bt));
                     }
@@ -1568,7 +1562,7 @@ impl Pass2 {
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let size_expr = expr_parser.parse_expr(size_node.unwrap());
                     let ty = Ty::default();
-                    ty.tag = TY_ARRAY;
+                    ty.tag = TyTag::Array;
                     ty.inner = inner_ty;
                     ty.typeof_expr = size_expr;
                     return self.ctx.alloc_ty(ty);
@@ -1627,16 +1621,16 @@ impl Pass2 {
                 let resolved = self.ctx.scopes.resolve_path(scope_idx, segments);
                 if resolved.is_some() {
                     let item = resolved.unwrap();
-                    if item.kind.tag == scope::NIK_STRUCT {
+                    if item.kind.tag == scope::NamedItemTag::Struct {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_ENUM {
+                    } else if item.kind.tag == scope::NamedItemTag::Enum {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_PROTOCOL {
+                    } else if item.kind.tag == scope::NamedItemTag::Protocol {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
-                    } else if item.kind.tag == scope::NIK_TYPE_ALIAS {
+                    } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
                         let id = item.kind.id;
                         return self.ctx.alloc_ty(Ty::named(id));
                     }
@@ -1661,7 +1655,7 @@ impl Pass2 {
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let expr = expr_parser.parse_expr(inner.unwrap());
                     let ty = Ty::default();
-                    ty.tag = TY_TYPEOF;
+                    ty.tag = TyTag::Typeof;
                     ty.typeof_expr = expr;
                     return self.ctx.alloc_ty(ty);
                 }
@@ -1690,7 +1684,7 @@ impl Pass2 {
                     self.ctx.intern_str(text)
                 };
 
-                // When pre-parsing macro body, create TY_TYPEOF(EXPR_MACRO_PARAM)
+                // When pre-parsing macro body, create TyTag::Typeof(ExprTag::MacroParam)
                 if self.ctx.in_macro_body {
                     let param_idx: i32 = -1i32;
                     for pi in 0usize..self.ctx.macro_param_names.len() {
@@ -1701,12 +1695,12 @@ impl Pass2 {
                     }
                     if param_idx >= 0i32 {
                         let param_expr = Expr::void_expr();
-                        param_expr.tag = EXPR_MACRO_PARAM;
+                        param_expr.tag = ExprTag::MacroParam;
                         param_expr.str_val = name;
                         param_expr.int_val = param_idx as u64;
                         param_expr.flag = (param_idx == self.ctx.macro_variadic_param_idx);
                         let ty = Ty::default();
-                        ty.tag = TY_TYPEOF;
+                        ty.tag = TyTag::Typeof;
                         ty.typeof_expr = self.ctx.alloc_expr(param_expr);
                         return self.ctx.alloc_ty(ty);
                     }
@@ -1734,15 +1728,15 @@ impl Pass2 {
                 let resolved = self.ctx.scopes.resolve(scope_idx, name);
                 if resolved.is_some() {
                     let item = resolved.unwrap();
-                    if item.kind.tag == scope::NIK_STRUCT {
+                    if item.kind.tag == scope::NamedItemTag::Struct {
                         return self.ctx.alloc_ty(Ty::named(item.kind.id));
-                    } else if item.kind.tag == scope::NIK_ENUM {
+                    } else if item.kind.tag == scope::NamedItemTag::Enum {
                         return self.ctx.alloc_ty(Ty::named(item.kind.id));
-                    } else if item.kind.tag == scope::NIK_GENERIC_PARAM {
+                    } else if item.kind.tag == scope::NamedItemTag::GenericParam {
                         return self.ctx.alloc_ty(Ty::placeholder(item.kind.id));
-                    } else if item.kind.tag == scope::NIK_BUILTIN_TYPE {
+                    } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
                         return self.ctx.alloc_ty(Ty::builtin_ty(item.kind.builtin));
-                    } else if item.kind.tag == scope::NIK_TYPE_ALIAS {
+                    } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
                         return self.ctx.alloc_ty(Ty::named(item.kind.id));
                     }
                 }
@@ -1871,7 +1865,7 @@ impl Pass2 {
         let fields_slice = self.ctx.arena.alloc_slice_copy::<StructField>(fields.as_slice());
 
         let item = std::mem::zeroed::<Item>();
-        item.tag = ITEM_STRUCT;
+        item.tag = ItemTag::Struct;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
         item.struct_def = StructDef {
             id: pending.id,
@@ -1920,7 +1914,7 @@ impl Pass2 {
                 };
                 // Look up the variant ID from scope (registered in pass1)
                 let scope_item = self.ctx.scopes.resolve(pending.scope_idx, name);
-                let variant_id = if scope_item.is_some() && scope_item.unwrap().kind.tag == scope::NIK_ENUM_VARIANT {
+                let variant_id = if scope_item.is_some() && scope_item.unwrap().kind.tag == scope::NamedItemTag::EnumVariant {
                     scope_item.unwrap().kind.id2
                 } else {
                     self.ctx.next_id()
@@ -1936,7 +1930,7 @@ impl Pass2 {
         let variants_slice = self.ctx.arena.alloc_slice_copy::<EnumVariant>(variants.as_slice());
 
         let item = std::mem::zeroed::<Item>();
-        item.tag = ITEM_ENUM;
+        item.tag = ItemTag::Enum;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
         item.enum_def = EnumDef {
             id: pending.id,
@@ -2011,7 +2005,7 @@ impl Pass2 {
         let methods_slice = self.ctx.arena.alloc_slice_copy::<FnDef>(methods.as_slice());
 
         let item = std::mem::zeroed::<Item>();
-        item.tag = ITEM_PROTOCOL;
+        item.tag = ItemTag::Protocol;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
         item.protocol_def = ProtocolDef {
             id: pending.id,
@@ -2039,13 +2033,13 @@ impl Pass2 {
             let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
 
             // Extract the protocol ID from the type
-            // It could be TY_NAMED (simple) or TY_GENERIC (with type args)
+            // It could be TyTag::Named (simple) or TyTag::Generic (with type args)
             let proto_id_val: usize = 0usize;
             let has_proto_id = false;
-            if proto_ty.tag == TY_NAMED {
+            if proto_ty.tag == TyTag::Named {
                 proto_id_val = proto_ty.id._value;
                 has_proto_id = true;
-            } else if proto_ty.tag == TY_GENERIC && proto_ty.inner.tag == TY_NAMED {
+            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner.tag == TyTag::Named {
                 proto_id_val = proto_ty.inner.id._value;
                 has_proto_id = true;
             }
@@ -2057,7 +2051,7 @@ impl Pass2 {
             // Find the ProtocolDef by its ID
             let impl_scope_idx = pending.impl_scope_idx;
             for j in 0usize..self.ctx.items.len() {
-                if self.ctx.items[j].tag == ITEM_PROTOCOL && self.ctx.items[j].protocol_def.id._value == proto_id_val {
+                if self.ctx.items[j].tag == ItemTag::Protocol && self.ctx.items[j].protocol_def.id._value == proto_id_val {
                     let proto_def = &self.ctx.items[j].protocol_def;
                     for k in 0usize..proto_def.methods.len() {
                         let method = &proto_def.methods[k];
@@ -2106,7 +2100,7 @@ impl Pass2 {
         };
 
         let item = std::mem::zeroed::<Item>();
-        item.tag = ITEM_TYPE_ALIAS;
+        item.tag = ItemTag::TypeAlias;
         item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end };
         item.type_alias = alias;
         self.ctx.items.push(item);
@@ -2137,7 +2131,7 @@ impl Pass2 {
         };
 
         let item = std::mem::zeroed::<Item>();
-        item.tag = ITEM_STATIC;
+        item.tag = ItemTag::Static;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
         item.static_def = StaticDef {
             id: pending.id,
@@ -2165,7 +2159,7 @@ impl ExprParser {
         ExprParser { ctx: ctx, scope_idx: scope_idx }
     }
 
-    fn make_expr(self: &ExprParser, tag: i32, span: Span) -> Expr {
+    fn make_expr(self: &ExprParser, tag: ExprTag, span: Span) -> Expr {
         let e = Expr::void_expr();
         e.tag = tag;
         e.span = span;
@@ -2190,7 +2184,7 @@ impl ExprParser {
             NodeKind::StringLiteral => self.parse_string_literal(node, span),
             NodeKind::CharLiteral => self.parse_char_literal(node, span),
             NodeKind::PtrLiteral => {
-                let e = self.make_expr(EXPR_NULL_LIT, span);
+                let e = self.make_expr(ExprTag::NullLit, span);
                 self.ctx.alloc_expr(e)
             },
             NodeKind::Identifier => self.parse_identifier(node, span),
@@ -2214,7 +2208,7 @@ impl ExprParser {
             NodeKind::LoopExpression => self.parse_loop(node, span),
             NodeKind::BreakExpression => self.parse_break(node, span),
             NodeKind::ContinueExpression => {
-                let e = self.make_expr(EXPR_CONTINUE, span);
+                let e = self.make_expr(ExprTag::Continue, span);
                 self.ctx.alloc_expr(e)
             },
             NodeKind::ReturnExpression => self.parse_return(node, span),
@@ -2264,7 +2258,7 @@ impl ExprParser {
                     self.ctx.intern_str(text)
                 };
 
-                // When pre-parsing a macro body, produce EXPR_MACRO_PARAM
+                // When pre-parsing a macro body, produce ExprTag::MacroParam
                 if self.ctx.in_macro_body {
                     // Find param index
                     let param_idx: i32 = -1i32;
@@ -2275,7 +2269,7 @@ impl ExprParser {
                         }
                     }
                     if param_idx >= 0i32 {
-                        let e = self.make_expr(EXPR_MACRO_PARAM, span);
+                        let e = self.make_expr(ExprTag::MacroParam, span);
                         e.str_val = name;
                         e.int_val = param_idx as u64;
                         e.flag = (param_idx == self.ctx.macro_variadic_param_idx);
@@ -2340,7 +2334,7 @@ impl ExprParser {
 
         let result = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
 
-        let e = self.make_expr(EXPR_BLOCK, span);
+        let e = self.make_expr(ExprTag::Block, span);
         e.args = result;
         self.ctx.alloc_expr(e)
     }
@@ -2348,7 +2342,7 @@ impl ExprParser {
     fn parse_int_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
         let (value, suffix) = parse_int_with_suffix(text);
-        let e = self.make_expr(EXPR_INT_LIT, span);
+        let e = self.make_expr(ExprTag::IntLit, span);
         e.int_val = value;
         e.type_suffix = suffix;
         self.ctx.alloc_expr(e)
@@ -2357,14 +2351,14 @@ impl ExprParser {
     fn parse_float_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
         let value = parse_float(text);
-        let e = self.make_expr(EXPR_FLOAT_LIT, span);
+        let e = self.make_expr(ExprTag::FloatLit, span);
         e.float_val = value;
         self.ctx.alloc_expr(e)
     }
 
     fn parse_bool_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
-        let e = self.make_expr(EXPR_BOOL_LIT, span);
+        let e = self.make_expr(ExprTag::BoolLit, span);
         e.bool_val = text == "true";
         self.ctx.alloc_expr(e)
     }
@@ -2377,7 +2371,7 @@ impl ExprParser {
         } else {
             ""
         };
-        let e = self.make_expr(EXPR_STRING_LIT, span);
+        let e = self.make_expr(ExprTag::StringLit, span);
         e.str_val = content;
         self.ctx.alloc_expr(e)
     }
@@ -2403,7 +2397,7 @@ impl ExprParser {
         } else {
             0u32
         };
-        let e = self.make_expr(EXPR_CHAR_LIT, span);
+        let e = self.make_expr(ExprTag::CharLit, span);
         e.int_val = ch as u64;
         self.ctx.alloc_expr(e)
     }
@@ -2413,64 +2407,64 @@ impl ExprParser {
         let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
         if resolved.is_some() {
             let item = resolved.unwrap();
-            if item.kind.tag == scope::NIK_LOCAL {
+            if item.kind.tag == scope::NamedItemTag::Local {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_LOCAL, span);
+                let e = self.make_expr(ExprTag::Local, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_PARAM {
+            } else if item.kind.tag == scope::NamedItemTag::Param {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_PARAM, span);
+                let e = self.make_expr(ExprTag::Param, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_FUNCTION {
+            } else if item.kind.tag == scope::NamedItemTag::Function {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_FN_REF, span);
+                let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_METHOD {
+            } else if item.kind.tag == scope::NamedItemTag::Method {
                 let fn_id = item.kind.id2;
-                let e = self.make_expr(EXPR_FN_REF, span);
+                let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = fn_id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_STATIC {
+            } else if item.kind.tag == scope::NamedItemTag::Static {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_STATIC_REF, span);
+                let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_CONST {
+            } else if item.kind.tag == scope::NamedItemTag::Const {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_STATIC_REF, span);
+                let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_BOUND_VALUE {
-                let e = self.make_expr(EXPR_BOUND_VALUE, span);
+            } else if item.kind.tag == scope::NamedItemTag::BoundValue {
+                let e = self.make_expr(ExprTag::BoundValue, span);
                 e.id = item.kind.id;       // binding id
                 e.id2 = item.kind.id2;     // self_param id
                 e.str_val = item.name;     // binding name (for field lookup)
-                e.flag = item.kind.scope_idx == BOUND_BY_REFERENCE as u32;
+                e.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_ENUM_VARIANT {
+            } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
                 let enum_id = item.kind.id;
                 let variant_id = item.kind.id2;
-                let e = self.make_expr(EXPR_ENUM_REF, span);
+                let e = self.make_expr(ExprTag::EnumRef, span);
                 e.id = enum_id;
                 e.id2 = variant_id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_MACRO {
+            } else if item.kind.tag == scope::NamedItemTag::Macro {
                 // Macro used in expression context (e.g. as argument to bind!)
-                let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+                let e = self.make_expr(ExprTag::MacroInvocation, span);
                 e.str_val = self.ctx.intern_str(name);
                 e.args = &[];
                 return self.ctx.alloc_expr(e);
             } else {
-                let e = self.make_expr(EXPR_LOCAL, span);
+                let e = self.make_expr(ExprTag::Local, span);
                 e.id = Id { _value: 0 };
                 return self.ctx.alloc_expr(e);
             }
         } else {
             // Unresolved - may be resolved later during monomorphization
-            let e = self.make_expr(EXPR_LOCAL, span);
+            let e = self.make_expr(ExprTag::Local, span);
             e.id = Id { _value: 0 };
             self.ctx.alloc_expr(e)
         }
@@ -2482,46 +2476,46 @@ impl ExprParser {
         let resolved = self.ctx.scopes.resolve_path(self.scope_idx, segments);
         if resolved.is_some() {
             let item = resolved.unwrap();
-            if item.kind.tag == scope::NIK_FUNCTION {
+            if item.kind.tag == scope::NamedItemTag::Function {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_FN_REF, span);
+                let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_METHOD {
+            } else if item.kind.tag == scope::NamedItemTag::Method {
                 let fn_id = item.kind.id2;
-                let e = self.make_expr(EXPR_FN_REF, span);
+                let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = fn_id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_STATIC {
+            } else if item.kind.tag == scope::NamedItemTag::Static {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_STATIC_REF, span);
+                let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_CONST {
+            } else if item.kind.tag == scope::NamedItemTag::Const {
                 let id = item.kind.id;
-                let e = self.make_expr(EXPR_STATIC_REF, span);
+                let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_ENUM_VARIANT {
+            } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
                 let enum_id = item.kind.id;
                 let variant_id = item.kind.id2;
-                let e = self.make_expr(EXPR_ENUM_REF, span);
+                let e = self.make_expr(ExprTag::EnumRef, span);
                 e.id = enum_id;
                 e.id2 = variant_id;
                 return self.ctx.alloc_expr(e);
-            } else if item.kind.tag == scope::NIK_MACRO {
+            } else if item.kind.tag == scope::NamedItemTag::Macro {
                 // Macro used in expression context (e.g. as argument to bind!)
-                let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+                let e = self.make_expr(ExprTag::MacroInvocation, span);
                 e.str_val = item.name;
                 e.args = &[];
                 return self.ctx.alloc_expr(e);
             } else {
-                let e = self.make_expr(EXPR_LOCAL, span);
+                let e = self.make_expr(ExprTag::Local, span);
                 e.id = Id { _value: 0 };
                 return self.ctx.alloc_expr(e);
             }
         } else {
-            let e = self.make_expr(EXPR_LOCAL, span);
+            let e = self.make_expr(ExprTag::Local, span);
             e.id = Id { _value: 0 };
             self.ctx.alloc_expr(e)
         }
@@ -2542,7 +2536,7 @@ impl ExprParser {
         let lhs = self.parse_expr(left.unwrap());
         let rhs = self.parse_expr(right.unwrap());
 
-        let e = self.make_expr(EXPR_BINARY, span);
+        let e = self.make_expr(ExprTag::Binary, span);
         e.bin_op = op;
         e.lhs = lhs;
         e.rhs = rhs;
@@ -2565,7 +2559,7 @@ impl ExprParser {
 
         let operand = self.parse_expr(operand_node.unwrap());
 
-        let e = self.make_expr(EXPR_UNARY, span);
+        let e = self.make_expr(ExprTag::Unary, span);
         e.un_op = op;
         e.lhs = operand;
         self.ctx.alloc_expr(e)
@@ -2580,7 +2574,7 @@ impl ExprParser {
         let lhs = self.parse_expr(left.unwrap());
         let rhs = self.parse_expr(right.unwrap());
 
-        let e = self.make_expr(EXPR_ASSIGN, span);
+        let e = self.make_expr(ExprTag::Assign, span);
         e.assign_op = AssignOp::Assign;
         e.lhs = lhs;
         e.rhs = rhs;
@@ -2601,7 +2595,7 @@ impl ExprParser {
         let lhs = self.parse_expr(left.unwrap());
         let rhs = self.parse_expr(right.unwrap());
 
-        let e = self.make_expr(EXPR_ASSIGN, span);
+        let e = self.make_expr(ExprTag::Assign, span);
         e.assign_op = op;
         e.lhs = lhs;
         e.rhs = rhs;
@@ -2621,13 +2615,13 @@ impl ExprParser {
         let func_kind = NODE_KINDS[func_node.symbol() as usize];
         if func_kind == NodeKind::Turbofish || func_kind == NodeKind::GenericTypeWithTurbofish {
             let result = self.try_parse_intrinsic_call(func_node, span);
-            if result.tag != EXPR_VOID {
+            if result.tag != ExprTag::Void {
                 // Intrinsic call (e.g., zeroed::<T>())
                 return self.ctx.alloc_expr(result);
             }
             // Non-intrinsic turbofish: parse as generic call with type args
             let turbofish_result = self.parse_turbofish_call(node, func_node, span);
-            if turbofish_result.tag != EXPR_VOID {
+            if turbofish_result.tag != ExprTag::Void {
                 return self.ctx.alloc_expr(turbofish_result);
             }
         }
@@ -2659,7 +2653,7 @@ impl ExprParser {
                         empty
                     };
 
-                    let e = self.make_expr(EXPR_CALL, span);
+                    let e = self.make_expr(ExprTag::Call, span);
                     e.lhs = callee;
                     e.args = call_args;
                     e.type_args = type_args;
@@ -2676,7 +2670,7 @@ impl ExprParser {
             empty
         };
 
-        let e = self.make_expr(EXPR_CALL, span);
+        let e = self.make_expr(ExprTag::Call, span);
         e.lhs = callee;
         e.args = args;
         self.ctx.alloc_expr(e)
@@ -2706,7 +2700,7 @@ impl ExprParser {
         if last_seg == "zeroed" {
             let type_args = pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx);
             if type_args.len() >= 1 {
-                let e = self.make_expr(EXPR_ZEROED, span);
+                let e = self.make_expr(ExprTag::Zeroed, span);
                 e.ty = type_args[0];
                 return e;
             }
@@ -2746,7 +2740,7 @@ impl ExprParser {
             empty
         };
 
-        let e = self.make_expr(EXPR_CALL, span);
+        let e = self.make_expr(ExprTag::Call, span);
         e.lhs = callee;
         e.args = args;
         e.type_args = type_args;
@@ -2764,7 +2758,7 @@ impl ExprParser {
                 let kind = NODE_KINDS[child.symbol() as usize];
                 if kind == NodeKind::EtCeteraExpression {
                     if self.ctx.in_macro_body {
-                        // During pre-parse, store as EXPR_ET_CETERA
+                        // During pre-parse, store as ExprTag::EtCetera
                         args.push(self.parse_expr(child));
                     } else {
                         // Expand et cetera: re-parse inner expression for each variadic arg
@@ -2807,21 +2801,21 @@ impl ExprParser {
                 if idx_kind == NodeKind::IntegerLiteral {
                     // Simple literal index: t.0, t.1, etc.
                     let idx = parse_usize(self.ctx.node_text(idx_inner));
-                    let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+                    let e = self.make_expr(ExprTag::TupleIndex, span);
                     e.lhs = obj_expr;
                     e.index_val = idx;
                     return self.ctx.alloc_expr(e);
                 }
                 // Expression index: t.(expr) - parse and const-eval later
                 let idx_expr = self.parse_expr(idx_inner);
-                let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+                let e = self.make_expr(ExprTag::TupleIndex, span);
                 e.lhs = obj_expr;
                 e.opt_expr = Option::some(idx_expr);
                 return self.ctx.alloc_expr(e);
             }
             // Fallback: try parsing the whole text as a number
             let idx = parse_usize(self.ctx.node_text(field_node));
-            let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+            let e = self.make_expr(ExprTag::TupleIndex, span);
             e.lhs = obj_expr;
             e.index_val = idx;
             return self.ctx.alloc_expr(e);
@@ -2830,7 +2824,7 @@ impl ExprParser {
         let obj_expr = self.parse_expr(obj.unwrap());
         let field_name = self.ctx.intern_str(self.ctx.node_text(field_node));
 
-        let e = self.make_expr(EXPR_FIELD_ACCESS, span);
+        let e = self.make_expr(ExprTag::FieldAccess, span);
         e.lhs = obj_expr;
         e.str_val = field_name;
         self.ctx.alloc_expr(e)
@@ -2855,7 +2849,7 @@ impl ExprParser {
         let obj_expr = self.parse_expr(obj.unwrap());
         let idx_expr = self.parse_expr(index.unwrap());
 
-        let e = self.make_expr(EXPR_INDEX, span);
+        let e = self.make_expr(ExprTag::Index, span);
         e.lhs = obj_expr;
         e.rhs = idx_expr;
         self.ctx.alloc_expr(e)
@@ -2868,7 +2862,7 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let e = self.make_expr(EXPR_REF, span);
+        let e = self.make_expr(ExprTag::Ref, span);
         e.lhs = self.parse_expr(inner.unwrap());
         e.flag = is_mut;
         self.ctx.alloc_expr(e)
@@ -2880,7 +2874,7 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let e = self.make_expr(EXPR_DEREF, span);
+        let e = self.make_expr(ExprTag::Deref, span);
         e.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
     }
@@ -2895,7 +2889,7 @@ impl ExprParser {
         let pass2 = Pass2 { ctx: self.ctx };
         let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
 
-        let e = self.make_expr(EXPR_CAST, span);
+        let e = self.make_expr(ExprTag::Cast, span);
         e.lhs = self.parse_expr(value.unwrap());
         e.ty = ty;
         self.ctx.alloc_expr(e)
@@ -2911,7 +2905,7 @@ impl ExprParser {
         let pass2 = Pass2 { ctx: self.ctx };
         let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
 
-        let e = self.make_expr(EXPR_TYPE_CHECK, span);
+        let e = self.make_expr(ExprTag::TypeCheck, span);
         e.lhs = self.parse_expr(value.unwrap());
         e.ty = ty;
         self.ctx.alloc_expr(e)
@@ -2949,7 +2943,7 @@ impl ExprParser {
             false
         };
 
-        let tag = if is_when { EXPR_WHEN } else { EXPR_IF };
+        let tag = if is_when { ExprTag::When } else { ExprTag::If };
         let e = self.make_expr(tag, span);
         e.cond = cond_expr;
         e.lhs = then_expr;
@@ -3014,7 +3008,7 @@ impl ExprParser {
             }
         }
 
-        let e = self.make_expr(EXPR_SWITCH, span);
+        let e = self.make_expr(ExprTag::Switch, span);
         e.lhs = value_expr;
         e.switch_arms = self.ctx.arena.alloc_slice_copy::<SwitchArm>(arms.as_slice());
         self.ctx.alloc_expr(e)
@@ -3027,7 +3021,7 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let e = self.make_expr(EXPR_WHILE, span);
+        let e = self.make_expr(ExprTag::While, span);
         e.cond = self.parse_expr(cond.unwrap());
         e.lhs = self.parse_expr(body.unwrap());
         self.ctx.alloc_expr(e)
@@ -3046,7 +3040,7 @@ impl ExprParser {
         let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
         let loop_parser = ExprParser::new(self.ctx, loop_scope);
 
-        let e = self.make_expr(EXPR_FOR, span);
+        let e = self.make_expr(ExprTag::For, span);
 
         if name_node.is_some() {
             // Simple case: for item in iterable { body }
@@ -3079,8 +3073,8 @@ impl ExprParser {
                     span: self.ctx.make_span(elem_node),
                 });
 
-                // Store element ID and name in an EXPR_LOCAL node
-                let elem_expr = self.make_expr(EXPR_LOCAL, self.ctx.make_span(elem_node));
+                // Store element ID and name in an ExprTag::Local node
+                let elem_expr = self.make_expr(ExprTag::Local, self.ctx.make_span(elem_node));
                 elem_expr.id = elem_id;
                 elem_expr.str_val = elem_name;
                 elem_exprs.push(self.ctx.alloc_expr(elem_expr));
@@ -3103,14 +3097,14 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let e = self.make_expr(EXPR_LOOP, span);
+        let e = self.make_expr(ExprTag::Loop, span);
         e.lhs = self.parse_expr(body.unwrap());
         self.ctx.alloc_expr(e)
     }
 
     fn parse_break(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Inner);
-        let e = self.make_expr(EXPR_BREAK, span);
+        let e = self.make_expr(ExprTag::Break, span);
         if !value.is_none() {
             e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
@@ -3119,7 +3113,7 @@ impl ExprParser {
 
     fn parse_return(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Inner);
-        let e = self.make_expr(EXPR_RETURN, span);
+        let e = self.make_expr(ExprTag::Return, span);
         if !value.is_none() {
             e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
@@ -3159,7 +3153,7 @@ impl ExprParser {
                 span: self.ctx.make_span(name_node.unwrap()),
             });
 
-            let e = self.make_expr(EXPR_LET, span);
+            let e = self.make_expr(ExprTag::Let, span);
             e.id = var_id;
             e.opt_ty = ty;
             e.opt_expr = init;
@@ -3185,7 +3179,7 @@ impl ExprParser {
         let init_expr = self.parse_expr(value_node.unwrap());
 
         // let _tmp = expr
-        let tmp_let = self.make_expr(EXPR_LET, span);
+        let tmp_let = self.make_expr(ExprTag::Let, span);
         tmp_let.id = tmp_id;
         tmp_let.opt_expr = Option::some(init_expr);
         let ir_tmp_let = self.ctx.alloc_expr(tmp_let);
@@ -3206,24 +3200,24 @@ impl ExprParser {
             });
 
             // _tmp reference
-            let tmp_ref = self.make_expr(EXPR_LOCAL, span);
+            let tmp_ref = self.make_expr(ExprTag::Local, span);
             tmp_ref.id = tmp_id;
             let ir_tmp_ref = self.ctx.alloc_expr(tmp_ref);
 
             // _tmp.i (tuple index)
-            let idx_expr = self.make_expr(EXPR_TUPLE_INDEX, span);
+            let idx_expr = self.make_expr(ExprTag::TupleIndex, span);
             idx_expr.lhs = ir_tmp_ref;
             idx_expr.index_val = i;
             let ir_idx = self.ctx.alloc_expr(idx_expr);
 
             // let elem = _tmp.i
-            let elem_let = self.make_expr(EXPR_LET, span);
+            let elem_let = self.make_expr(ExprTag::Let, span);
             elem_let.id = elem_id;
             elem_let.opt_expr = Option::some(ir_idx);
             stmts[i + 1] = self.ctx.alloc_expr(elem_let);
         }
 
-        let block = self.make_expr(EXPR_BLOCK, span);
+        let block = self.make_expr(ExprTag::Block, span);
         block.args = stmts;
         self.ctx.alloc_expr(block)
     }
@@ -3260,7 +3254,7 @@ impl ExprParser {
             }
         }
 
-        let e = self.make_expr(EXPR_STRUCT_LIT, span);
+        let e = self.make_expr(ExprTag::StructLit, span);
         e.ty = ty;
         e.field_inits = self.ctx.arena.alloc_slice_copy::<FieldInit>(fields.as_slice());
         self.ctx.alloc_expr(e)
@@ -3276,7 +3270,7 @@ impl ExprParser {
             elems.push(self.parse_expr(child));
         }
 
-        let e = self.make_expr(EXPR_TUPLE_LIT, span);
+        let e = self.make_expr(ExprTag::TupleLit, span);
         e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
         self.ctx.alloc_expr(e)
     }
@@ -3291,7 +3285,7 @@ impl ExprParser {
             elems.push(self.parse_expr(child));
         }
 
-        let e = self.make_expr(EXPR_ARRAY_LIT, span);
+        let e = self.make_expr(ExprTag::ArrayLit, span);
         e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
         self.ctx.alloc_expr(e)
     }
@@ -3332,9 +3326,9 @@ impl ExprParser {
 
                         let by_ref_node = child_by!(child, FieldKind::ByReference);
                         let bound_type = if !by_ref_node.is_none() {
-                            BOUND_BY_REFERENCE
+                            BoundType::ByReference
                         } else {
-                            BOUND_BY_VALUE
+                            BoundType::ByValue
                         };
 
                         // Resolve the original variable in the parent scope (self.scope_idx)
@@ -3342,21 +3336,21 @@ impl ExprParser {
                             let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
                             if resolved.is_some() {
                                 let item = resolved.unwrap();
-                                if item.kind.tag == scope::NIK_LOCAL {
-                                    let ve = self.make_expr(EXPR_LOCAL, span);
+                                if item.kind.tag == scope::NamedItemTag::Local {
+                                    let ve = self.make_expr(ExprTag::Local, span);
                                     ve.id = item.kind.id;
                                     self.ctx.alloc_expr(ve)
-                                } else if item.kind.tag == scope::NIK_PARAM {
-                                    let ve = self.make_expr(EXPR_PARAM, span);
+                                } else if item.kind.tag == scope::NamedItemTag::Param {
+                                    let ve = self.make_expr(ExprTag::Param, span);
                                     ve.id = item.kind.id;
                                     self.ctx.alloc_expr(ve)
-                                } else if item.kind.tag == scope::NIK_BOUND_VALUE {
+                                } else if item.kind.tag == scope::NamedItemTag::BoundValue {
                                     // Nested closure: capture from enclosing closure
-                                    let ve = self.make_expr(EXPR_BOUND_VALUE, span);
+                                    let ve = self.make_expr(ExprTag::BoundValue, span);
                                     ve.id = item.kind.id;
                                     ve.id2 = item.kind.id2;
                                     ve.str_val = item.name;
-                                    ve.flag = item.kind.scope_idx == BOUND_BY_REFERENCE as u32;
+                                    ve.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                                     self.ctx.alloc_expr(ve)
                                 } else {
                                     self.alloc_void(span) // Can only close over locals
@@ -3426,7 +3420,7 @@ impl ExprParser {
         let lambda_parser = ExprParser::new(self.ctx, lambda_scope);
         let body = lambda_parser.parse_expr(body_node.unwrap());
 
-        let e = self.make_expr(EXPR_LAMBDA, span);
+        let e = self.make_expr(ExprTag::Lambda, span);
         e.lambda_params = self.ctx.arena.alloc_slice_copy::<LambdaParam>(params.as_slice());
         e.closure_bindings = self.ctx.arena.alloc_slice_copy::<ClosureBinding>(bindings.as_slice());
         e.opt_ty = ret_ty;
@@ -3442,7 +3436,7 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let e = self.make_expr(EXPR_DEFER, span);
+        let e = self.make_expr(ExprTag::Defer, span);
         e.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
     }
@@ -3468,7 +3462,7 @@ impl ExprParser {
         }
 
         // Fallback: no try macro in scope, use hardcoded IR lowering
-        let e = self.make_expr(EXPR_TRY, span);
+        let e = self.make_expr(ExprTag::Try, span);
         e.lhs = inner_expr;
         self.ctx.alloc_expr(e)
     }
@@ -3478,7 +3472,7 @@ impl ExprParser {
         let upper = child_by!(node, FieldKind::Upper);
         let inclusive_node = child_by!(node, FieldKind::Inclusive);
 
-        let e = self.make_expr(EXPR_RANGE, span);
+        let e = self.make_expr(ExprTag::Range, span);
         e.flag = if !inclusive_node.is_none() {
             let text = self.ctx.node_text(inclusive_node.unwrap());
             text.len() == 3  // "..=" is 3 bytes, ".." is 2 bytes
@@ -3511,9 +3505,9 @@ impl ExprParser {
             empty
         };
 
-        // When pre-parsing a macro body, store as EXPR_MACRO_INVOCATION without expanding
+        // When pre-parsing a macro body, store as ExprTag::MacroInvocation without expanding
         if self.ctx.in_macro_body {
-            let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+            let e = self.make_expr(ExprTag::MacroInvocation, span);
             e.str_val = name;
             e.args = args;
             e.flag = true;  // Mark as actual invocation (not bare macro reference)
@@ -3535,7 +3529,7 @@ impl ExprParser {
         }
 
         // Fallback: unresolved macro invocation
-        let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+        let e = self.make_expr(ExprTag::MacroInvocation, span);
         e.str_val = name;
         e.args = args;
         self.ctx.alloc_expr(e)
@@ -3546,14 +3540,14 @@ impl ExprParser {
     fn expand_builtin_macro(self: &ExprParser, name: &[u8], args: &[&Expr], span: Span) -> &Expr {
         if name == "cfg" {
             // cfg!(flag) -> bool literal
-            if args.len() > 0usize && args[0].tag == EXPR_STRING_LIT {
+            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
                 let flag = args[0].str_val;
-                let e = self.make_expr(EXPR_BOOL_LIT, span);
+                let e = self.make_expr(ExprTag::BoolLit, span);
                 e.bool_val = self.ctx.has_cfg(flag);
                 return self.ctx.alloc_expr(e);
             }
             // Fallback: false
-            let e = self.make_expr(EXPR_BOOL_LIT, span);
+            let e = self.make_expr(ExprTag::BoolLit, span);
             e.bool_val = false;
             return self.ctx.alloc_expr(e);
         } else if name == "line" {
@@ -3564,7 +3558,7 @@ impl ExprParser {
                 let (l, _c) = file.line_col(span.start);
                 line = l as u64;
             }
-            let e = self.make_expr(EXPR_INT_LIT, span);
+            let e = self.make_expr(ExprTag::IntLit, span);
             e.int_val = line;
             return self.ctx.alloc_expr(e);
         } else if name == "column" {
@@ -3575,7 +3569,7 @@ impl ExprParser {
                 let (_l, c) = file.line_col(span.start);
                 col = c as u64;
             }
-            let e = self.make_expr(EXPR_INT_LIT, span);
+            let e = self.make_expr(ExprTag::IntLit, span);
             e.int_val = col;
             return self.ctx.alloc_expr(e);
         } else if name == "file" {
@@ -3585,7 +3579,7 @@ impl ExprParser {
                 let file = &self.ctx.diag.files[span.file_id as usize];
                 path = file.path;
             }
-            let e = self.make_expr(EXPR_STRING_LIT, span);
+            let e = self.make_expr(ExprTag::StringLit, span);
             e.str_val = path;
             return self.ctx.alloc_expr(e);
         } else if name == "stringify" {
@@ -3606,13 +3600,13 @@ impl ExprParser {
                     }
                 }
             }
-            let e = self.make_expr(EXPR_STRING_LIT, span);
+            let e = self.make_expr(ExprTag::StringLit, span);
             e.str_val = text;
             return self.ctx.alloc_expr(e);
         } else if name == "env" {
             // env!(var) -> string literal from environment variable
             let value: &[u8] = "";
-            if args.len() > 0usize && args[0].tag == EXPR_STRING_LIT {
+            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
                 let var_name = args[0].str_val;
                 // Copy to null-terminated buffer for getenv
                 let buf = self.ctx.arena.alloc_slice::<u8>(var_name.len() + 1);
@@ -3632,21 +3626,21 @@ impl ExprParser {
                     value = val_buf;
                 }
             }
-            let e = self.make_expr(EXPR_STRING_LIT, span);
+            let e = self.make_expr(ExprTag::StringLit, span);
             e.str_val = value;
             return self.ctx.alloc_expr(e);
         } else if name == "concat" {
             // concat!(str1, str2, ...) -> concatenated string literal
             let total_len: usize = 0;
             for i in 0usize..args.len() {
-                if args[i].tag == EXPR_STRING_LIT {
+                if args[i].tag == ExprTag::StringLit {
                     total_len = total_len + args[i].str_val.len();
                 }
             }
             let buf = self.ctx.arena.alloc_slice::<u8>(total_len);
             let offset: usize = 0;
             for i in 0usize..args.len() {
-                if args[i].tag == EXPR_STRING_LIT {
+                if args[i].tag == ExprTag::StringLit {
                     let s = args[i].str_val;
                     for j in 0usize..s.len() {
                         buf[offset + j] = s[j];
@@ -3654,12 +3648,12 @@ impl ExprParser {
                     offset = offset + s.len();
                 }
             }
-            let e = self.make_expr(EXPR_STRING_LIT, span);
+            let e = self.make_expr(ExprTag::StringLit, span);
             e.str_val = buf;
             return self.ctx.alloc_expr(e);
         } else if name == "include_bytes" {
             // include_bytes!(path) -> string literal with file contents
-            if args.len() > 0usize && args[0].tag == EXPR_STRING_LIT {
+            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
                 let path = args[0].str_val;
                 // Null-terminate for fopen
                 let path_buf = self.ctx.arena.alloc_slice::<u8>(path.len() + 1);
@@ -3674,12 +3668,12 @@ impl ExprParser {
                     let data = self.ctx.arena.alloc_slice::<u8>(size);
                     libc::fread(&data[0] as &mut libc::c_void, 1usize, size, fp);
                     libc::fclose(fp);
-                    let e = self.make_expr(EXPR_STRING_LIT, span);
+                    let e = self.make_expr(ExprTag::StringLit, span);
                     e.str_val = data;
                     return self.ctx.alloc_expr(e);
                 }
             }
-            let e = self.make_expr(EXPR_STRING_LIT, span);
+            let e = self.make_expr(ExprTag::StringLit, span);
             e.str_val = "";
             return self.ctx.alloc_expr(e);
         } else if name == "format_args" {
@@ -3689,7 +3683,7 @@ impl ExprParser {
             return self.expand_format_args(args, span);
         } else if name == "bind" {
             // bind!(macro_ref, extra_args...) -> bound macro expression
-            // Returns an EXPR_MACRO_INVOCATION with the macro name and bound args.
+            // Returns an ExprTag::MacroInvocation with the macro name and bound args.
             if args.len() == 0usize {
                 return self.alloc_void(span);
             }
@@ -3697,7 +3691,7 @@ impl ExprParser {
             // Extract macro name from the reference
             let macro_name: &[u8] = "";
             let prev_bound: &[&Expr] = &[];
-            if macro_ref.tag == EXPR_MACRO_INVOCATION {
+            if macro_ref.tag == ExprTag::MacroInvocation {
                 macro_name = macro_ref.str_val;
                 prev_bound = macro_ref.args;
             }
@@ -3710,7 +3704,7 @@ impl ExprParser {
             for i in 1usize..args.len() {
                 bound_args[prev_bound.len() + i - 1] = args[i];
             }
-            let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+            let e = self.make_expr(ExprTag::MacroInvocation, span);
             e.str_val = macro_name;
             e.args = bound_args;
             return self.ctx.alloc_expr(e);
@@ -3723,7 +3717,7 @@ impl ExprParser {
             let macro_ref = args[0];
             let macro_name: &[u8] = "";
             let prev_bound: &[&Expr] = &[];
-            if macro_ref.tag == EXPR_MACRO_INVOCATION {
+            if macro_ref.tag == ExprTag::MacroInvocation {
                 macro_name = macro_ref.str_val;
                 prev_bound = macro_ref.args;
             }
@@ -3749,7 +3743,7 @@ impl ExprParser {
             return accumulator;
         } else if name == "count" {
             // count!(args...) -> integer literal counting the number of args
-            let e = self.make_expr(EXPR_INT_LIT, span);
+            let e = self.make_expr(ExprTag::IntLit, span);
             e.int_val = args.len() as u64;
             return self.ctx.alloc_expr(e);
         }
@@ -3766,13 +3760,13 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        // First arg should be a macro reference (EXPR_MACRO_INVOCATION with no args,
+        // First arg should be a macro reference (ExprTag::MacroInvocation with no args,
         // or a bound macro). We need to find the macro name.
         let wrapper_expr = args[0];
         let fmt_str_expr = args[1];
 
         // Format string must be a string literal
-        if fmt_str_expr.tag != EXPR_STRING_LIT {
+        if fmt_str_expr.tag != ExprTag::StringLit {
             return self.alloc_void(span);
         }
         let fmt_str = fmt_str_expr.str_val;
@@ -3781,7 +3775,7 @@ impl ExprParser {
         let pieces: Vector<&Expr> = Vector::new();
         defer pieces.free();
 
-        // Collect bound args from wrapper (if it's a bound macro / EXPR_MACRO_INVOCATION)
+        // Collect bound args from wrapper (if it's a bound macro / ExprTag::MacroInvocation)
         // In practice, wrapper is passed as a macro parameter ($fmt) which is just an Expr.
         // We need to figure out the wrapper macro name and any bound args.
         // For now, collect interleaved pieces.
@@ -3803,7 +3797,7 @@ impl ExprParser {
                     // Start of format placeholder
                     // Flush current string part
                     if string_part.len() > 0usize {
-                        let e = self.make_expr(EXPR_STRING_LIT, span);
+                        let e = self.make_expr(ExprTag::StringLit, span);
                         e.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
                         pieces.push(self.ctx.alloc_expr(e));
                         string_part.clear();
@@ -3855,7 +3849,7 @@ impl ExprParser {
 
         // Flush remaining string part
         if string_part.len() > 0usize {
-            let e = self.make_expr(EXPR_STRING_LIT, span);
+            let e = self.make_expr(ExprTag::StringLit, span);
             e.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
             pieces.push(self.ctx.alloc_expr(e));
         }
@@ -3864,15 +3858,15 @@ impl ExprParser {
         // The wrapper is args[0], which should be a macro reference.
         // We need to expand: wrapper_macro(pieces...)
         // The wrapper is typically passed as bind!(static_format_args, fmt),
-        // which means args[0] is an EXPR_MACRO_INVOCATION.
+        // which means args[0] is an ExprTag::MacroInvocation.
         //
         // However, in aluminac's macro system, bound macros are tricky since
         // we don't have first-class macro values. The wrapper is passed as a $param
         // which is whatever expression was substituted.
         //
-        // For now, if wrapper is an EXPR_MACRO_INVOCATION, invoke that macro with
+        // For now, if wrapper is an ExprTag::MacroInvocation, invoke that macro with
         // the collected pieces as args.
-        if wrapper_expr.tag == EXPR_MACRO_INVOCATION {
+        if wrapper_expr.tag == ExprTag::MacroInvocation {
             let wrapper_name = wrapper_expr.str_val;
             // Combine wrapper's existing args with format pieces
             let wrapper_args = wrapper_expr.args;
@@ -3935,7 +3929,7 @@ impl ExprParser {
             return self.do_expand_macro(entry, args_slice, span);
         }
 
-        let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+        let e = self.make_expr(ExprTag::MacroInvocation, span);
         e.str_val = name;
         e.args = args_slice;
         self.ctx.alloc_expr(e)
@@ -3966,7 +3960,7 @@ impl ExprParser {
             span: self.ctx.make_span(name_node.unwrap()),
         });
 
-        let e = self.make_expr(EXPR_STATIC_FOR, span);
+        let e = self.make_expr(ExprTag::StaticFor, span);
         e.id = var_id;
         e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
         e.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
@@ -3979,7 +3973,7 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let e = self.make_expr(EXPR_ET_CETERA, span);
+        let e = self.make_expr(ExprTag::EtCetera, span);
         e.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
     }
@@ -4052,8 +4046,8 @@ impl ExprParser {
     }
 
     // Recursively expand a pre-parsed macro body expression.
-    // Substitutes EXPR_MACRO_PARAM with args, expands EXPR_ET_CETERA,
-    // and recursively expands nested EXPR_MACRO_INVOCATION.
+    // Substitutes ExprTag::MacroParam with args, expands ExprTag::EtCetera,
+    // and recursively expands nested ExprTag::MacroInvocation.
     fn expand_macro_expr(
         self: &ExprParser,
         expr: &Expr,
@@ -4064,7 +4058,7 @@ impl ExprParser {
         id_map: &mut HashMap<usize, Id>,
     ) -> &Expr {
         // Substitute macro parameter
-        if expr.tag == EXPR_MACRO_PARAM {
+        if expr.tag == ExprTag::MacroParam {
             let idx = expr.int_val as i32;
             if expr.flag && et_cetera_idx != NO_VARIADIC {
                 // Variadic param in et cetera context
@@ -4081,7 +4075,7 @@ impl ExprParser {
         }
 
         // Expand nested macro invocation (only actual invocations, not bare references)
-        if expr.tag == EXPR_MACRO_INVOCATION && expr.flag {
+        if expr.tag == ExprTag::MacroInvocation && expr.flag {
             // First expand the args
             let expanded_args = self.expand_macro_args_list(
                 expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
@@ -4102,19 +4096,19 @@ impl ExprParser {
         }
 
         // Leaf expressions that don't need expansion
-        if expr.tag == EXPR_INT_LIT || expr.tag == EXPR_FLOAT_LIT ||
-           expr.tag == EXPR_BOOL_LIT || expr.tag == EXPR_STRING_LIT ||
-           expr.tag == EXPR_CHAR_LIT || expr.tag == EXPR_NULL_LIT ||
-           expr.tag == EXPR_VOID || expr.tag == EXPR_ZEROED {
+        if expr.tag == ExprTag::IntLit || expr.tag == ExprTag::FloatLit ||
+           expr.tag == ExprTag::BoolLit || expr.tag == ExprTag::StringLit ||
+           expr.tag == ExprTag::CharLit || expr.tag == ExprTag::NullLit ||
+           expr.tag == ExprTag::Void || expr.tag == ExprTag::Zeroed {
             return expr;
         }
 
         // For non-macro identifiers (resolved at pre-parse time), just return as-is
-        if expr.tag == EXPR_LOCAL || expr.tag == EXPR_PARAM ||
-           expr.tag == EXPR_STATIC_REF || expr.tag == EXPR_FN_REF ||
-           expr.tag == EXPR_ENUM_REF || expr.tag == EXPR_BOUND_VALUE {
+        if expr.tag == ExprTag::Local || expr.tag == ExprTag::Param ||
+           expr.tag == ExprTag::StaticRef || expr.tag == ExprTag::FnRef ||
+           expr.tag == ExprTag::EnumRef || expr.tag == ExprTag::BoundValue {
             // Check if this local needs ID remapping (hygiene)
-            if expr.tag == EXPR_LOCAL {
+            if expr.tag == ExprTag::Local {
                 let mapped = id_map.get(&expr.id._value);
                 if mapped.is_some() {
                     let e = *expr;
@@ -4129,7 +4123,7 @@ impl ExprParser {
         let e = *expr;
 
         // Generate fresh ID for let bindings (hygiene)
-        if e.tag == EXPR_LET {
+        if e.tag == ExprTag::Let {
             let new_id = self.ctx.next_id();
             id_map.insert(e.id._value, new_id);
             e.id = new_id;
@@ -4197,7 +4191,7 @@ impl ExprParser {
         self.ctx.alloc_expr(e)
     }
 
-    // Expand an argument list, handling EXPR_ET_CETERA by unrolling variadic args.
+    // Expand an argument list, handling ExprTag::EtCetera by unrolling variadic args.
     fn expand_macro_args_list(
         self: &ExprParser,
         args: &[&Expr],
@@ -4211,7 +4205,7 @@ impl ExprParser {
         defer result.free();
 
         for i in 0usize..args.len() {
-            if args[i].tag == EXPR_ET_CETERA {
+            if args[i].tag == ExprTag::EtCetera {
                 // Expand inner expression for each variadic arg
                 let inner = args[i].lhs;
                 for vi in 0usize..variadic_args.len() {
@@ -4317,39 +4311,43 @@ fn parse_float(text: &[u8]) -> f64 {
 }
 
 fn parse_binop(text: &[u8]) -> BinOp {
-    if text == "+" { BinOp::Add }
-    else if text == "-" { BinOp::Sub }
-    else if text == "*" { BinOp::Mul }
-    else if text == "/" { BinOp::Div }
-    else if text == "%" { BinOp::Rem }
-    else if text == "&" { BinOp::BitAnd }
-    else if text == "|" { BinOp::BitOr }
-    else if text == "^" { BinOp::BitXor }
-    else if text == "<<" { BinOp::Shl }
-    else if text == ">>" { BinOp::Shr }
-    else if text == "==" { BinOp::Eq }
-    else if text == "!=" { BinOp::Ne }
-    else if text == "<" { BinOp::Lt }
-    else if text == "<=" { BinOp::Le }
-    else if text == ">" { BinOp::Gt }
-    else if text == ">=" { BinOp::Ge }
-    else if text == "&&" { BinOp::And }
-    else if text == "||" { BinOp::Or }
-    else { BinOp::Add }
+    switch text {
+        "+" => BinOp::Add,
+        "-" => BinOp::Sub,
+        "*" => BinOp::Mul,
+        "/" => BinOp::Div,
+        "%" => BinOp::Rem,
+        "&" => BinOp::BitAnd,
+        "|" => BinOp::BitOr,
+        "^" => BinOp::BitXor,
+        "<<" => BinOp::Shl,
+        ">>" => BinOp::Shr,
+        "==" => BinOp::Eq,
+        "!=" => BinOp::Ne,
+        "<" => BinOp::Lt,
+        "<=" => BinOp::Le,
+        ">" => BinOp::Gt,
+        ">=" => BinOp::Ge,
+        "&&" => BinOp::And,
+        "||" => BinOp::Or,
+        _ => BinOp::Add,
+    }
 }
 
 fn parse_assign_op(text: &[u8]) -> AssignOp {
-    if text == "+=" { AssignOp::AddAssign }
-    else if text == "-=" { AssignOp::SubAssign }
-    else if text == "*=" { AssignOp::MulAssign }
-    else if text == "/=" { AssignOp::DivAssign }
-    else if text == "%=" { AssignOp::RemAssign }
-    else if text == "&=" { AssignOp::BitAndAssign }
-    else if text == "|=" { AssignOp::BitOrAssign }
-    else if text == "^=" { AssignOp::BitXorAssign }
-    else if text == "<<=" { AssignOp::ShlAssign }
-    else if text == ">>=" { AssignOp::ShrAssign }
-    else { AssignOp::Assign }
+    switch text {
+        "+=" => AssignOp::AddAssign,
+        "-=" => AssignOp::SubAssign,
+        "*=" => AssignOp::MulAssign,
+        "/=" => AssignOp::DivAssign,
+        "%=" => AssignOp::RemAssign,
+        "&=" => AssignOp::BitAndAssign,
+        "|=" => AssignOp::BitOrAssign,
+        "^=" => AssignOp::BitXorAssign,
+        "<<=" => AssignOp::ShlAssign,
+        ">>=" => AssignOp::ShrAssign,
+        _ => AssignOp::Assign,
+    }
 }
 
 fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {

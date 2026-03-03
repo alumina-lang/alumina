@@ -5,52 +5,30 @@ use of language features we already support, or could benefit from refactoring.
 
 ---
 
-## 1. Constants-as-enums (HIGH PRIORITY)
+## 1. ~~Constants-as-enums~~ DONE
 
-The entire codebase uses `const FOO: i32 = 0i32; const BAR: i32 = 1i32;` chains
-for discriminated unions instead of proper `enum` types. This loses type safety
-(any i32 can be used where a tag is expected) and makes `switch` less useful.
+**Fixed:** Converted all ~190 tag constants to proper enum types:
+- `ast.alu`: `TyTag`, `ExprTag`, `AttrTag`, `ItemTag`, `IrTyTag`, `IrTag`,
+  `CallKind`, `BoundType`, `CValTag`, `CLVTag`
+- `scope.alu`: `NamedItemTag`
+- `const_eval.alu`: `CECode`
 
-**~190 constants across 3 files that should be enums:**
-
-| File | Constants | Suggested Enum |
-|------|-----------|----------------|
-| `ast.alu:127-139` | 13 `TY_*` constants | `enum TyTag` |
-| `ast.alu:292-339` | 28 `EXPR_*` constants | `enum ExprTag` |
-| `ast.alu:450-464` | 15 `ATTR_*` constants | `enum AttrTag` |
-| `ast.alu:582-592` | 10 `ITEM_*` constants | `enum ItemTag` |
-| `ast.alu:612-622` | 11 `IRTY_*` constants | `enum IrTyTag` |
-| `ast.alu:778-818` | 20 `IR_*` constants | `enum IrTag` |
-| `ast.alu:820-821` | 2 `CALL_*` constants | `enum CallKind` |
-| `ast.alu:406-407` | 2 `BOUND_*` constants | `enum BoundType` |
-| `ast.alu:950-961` | 12 `CVAL_*` constants | `enum CValTag` |
-| `ast.alu:964-969` | 6 `CLV_*` constants | `enum CLVTag` |
-| `scope.alu:9-25` | 16 `NIK_*` constants | `enum NamedItemTag` |
-| `const_eval.alu:17-29` | 13 `CE_*` constants | `enum ConstEvalError` |
-
-Converting these would enable proper `switch` exhaustiveness and catch
-tag-mismatch bugs at compile time. This is a large but mechanical refactor.
+All struct tag fields changed from `i32` to the appropriate enum type.
+~700 constant references updated across all files.
 
 ---
 
-## 2. if-else chains that should be `switch` (HIGH PRIORITY)
+## 2. ~~if-else chains that should be `switch`~~ PARTIALLY DONE
 
-Many dispatchers use long if-else-if chains on integer tags. Once the tags are
-enums (see #1), these become natural `switch` statements.
+**Fixed:** Converted key dispatchers to `switch` statements:
+- `mono.alu:resolve_type` — 12-branch type resolution (TyTag switch)
+- `mono.alu:lower_expr` — 20+ branch expression dispatch (ExprTag switch)
+- `parser.alu` — Attribute name dispatch (13-arm string switch)
+- `parser.alu` — `parse_binop` and `parse_assign_op` (19+10 arm string switches)
 
-**Key locations:**
-
-- **`mono.alu:426-519`** — Type resolution (~90 lines, 12 branches on `ty.tag`)
-- **`mono.alu:877-945`** — Expression lowering dispatch (~70 lines, 20+ branches on `expr.tag`)
-- **`mono.alu:173-221`** — Item processing (~50 lines, 6 branches on `ITEM_*`)
-- **`codegen.alu` expression dispatch** — Similar pattern for IR codegen
-- **`const_eval.alu` expression eval** — Similar pattern for const eval
-- **`parser.alu:387-438`** — Attribute name dispatch (13 string comparisons)
-- **`parser.alu:4452-4486`** — Binary/assign operator parsing (19+10 string comparisons)
-- **`parser.alu:3665-3808`** — Builtin macro dispatch (12 string comparisons)
-
-Note: String `switch` now works in aluminac (#10 fixed). These if-else chains
-can be converted to `switch` statements for better readability.
+**Remaining:** codegen.alu `gen_expr` (~40 branches, ~550 lines) and
+`gen_lvalue`, const_eval.alu dispatchers, parser.alu builtin macro dispatch.
+These are large but mechanical conversions.
 
 ---
 
@@ -161,7 +139,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 
 1. ~~**#10 (bug fix)** — Fix switch codegen for non-integer types~~ DONE
 2. ~~**#5 (IR helpers)** — Biggest readability/LOC win, no risk~~ DONE
-3. **#1 + #2 (enums + switch)** — Large refactor but huge type safety win
+3. ~~**#1 + #2 (enums + switch)** — Large refactor but huge type safety win~~ DONE (#2 partially)
 4. ~~**#4 (default constructors)** — Reduce zeroed boilerplate~~ DONE
 5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
 6. ~~**#6 (magic numbers)** — Quick wins~~ DONE
