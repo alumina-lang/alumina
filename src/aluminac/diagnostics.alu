@@ -139,12 +139,10 @@ impl DiagnosticContext {
     fn emit_all(self: &DiagnosticContext) {
         for i in 0usize..self.errors.len() {
             let diag = self.errors[i];
-            let level_str: &[u8] = if diag.level as i32 == DiagLevel::Error as i32 {
-                "error"
-            } else if diag.level as i32 == DiagLevel::Warning as i32 {
-                "warning"
-            } else {
-                "note"
+            let level_str: &[u8] = switch diag.level {
+                DiagLevel::Error => "error",
+                DiagLevel::Warning => "warning",
+                _ => "note",
             };
 
             DiagnosticContext::_write_stderr(level_str);

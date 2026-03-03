@@ -326,7 +326,7 @@ impl ConstEvaluator {
         if !lhs_r.ok { return lhs_r; }
 
         // Short-circuit for && and ||
-        if expr.bin_op as i32 == BinOp::And as i32 {
+        if expr.bin_op == BinOp::And {
             if lhs_r.value.tag == CValTag::Bool {
                 if !lhs_r.value.is_truthy() {
                     return ConstResult::success(ConstValue::make_bool(false));
@@ -335,7 +335,7 @@ impl ConstEvaluator {
                 if !rhs_r.ok { return rhs_r; }
                 return ConstResult::success(ConstValue::make_bool(rhs_r.value.is_truthy()));
             }
-        } else if expr.bin_op as i32 == BinOp::Or as i32 {
+        } else if expr.bin_op == BinOp::Or {
             if lhs_r.value.tag == CValTag::Bool {
                 if lhs_r.value.is_truthy() {
                     return ConstResult::success(ConstValue::make_bool(true));
@@ -383,85 +383,59 @@ impl ConstEvaluator {
         let width = bt.bit_width();
 
         // For comparisons, handle signed/unsigned properly
-        if op as i32 == BinOp::Eq as i32 {
-            return ConstResult::success(ConstValue::make_bool(a == b));
-        } else if op as i32 == BinOp::Ne as i32 {
-            return ConstResult::success(ConstValue::make_bool(a != b));
-        } else if op as i32 == BinOp::Lt as i32 {
-            if is_signed {
-                return ConstResult::success(ConstValue::make_bool((a as i64) < (b as i64)));
-            } else {
-                return ConstResult::success(ConstValue::make_bool(a < b));
-            }
-        } else if op as i32 == BinOp::Le as i32 {
-            if is_signed {
-                return ConstResult::success(ConstValue::make_bool((a as i64) <= (b as i64)));
-            } else {
-                return ConstResult::success(ConstValue::make_bool(a <= b));
-            }
-        } else if op as i32 == BinOp::Gt as i32 {
-            if is_signed {
-                return ConstResult::success(ConstValue::make_bool((a as i64) > (b as i64)));
-            } else {
-                return ConstResult::success(ConstValue::make_bool(a > b));
-            }
-        } else if op as i32 == BinOp::Ge as i32 {
-            if is_signed {
-                return ConstResult::success(ConstValue::make_bool((a as i64) >= (b as i64)));
-            } else {
-                return ConstResult::success(ConstValue::make_bool(a >= b));
-            }
+        switch op {
+        BinOp::Eq => return ConstResult::success(ConstValue::make_bool(a == b)),
+        BinOp::Ne => return ConstResult::success(ConstValue::make_bool(a != b)),
+        BinOp::Lt => {
+            return ConstResult::success(ConstValue::make_bool(
+                if is_signed { (a as i64) < (b as i64) } else { a < b }));
+        }
+        BinOp::Le => {
+            return ConstResult::success(ConstValue::make_bool(
+                if is_signed { (a as i64) <= (b as i64) } else { a <= b }));
+        }
+        BinOp::Gt => {
+            return ConstResult::success(ConstValue::make_bool(
+                if is_signed { (a as i64) > (b as i64) } else { a > b }));
+        }
+        BinOp::Ge => {
+            return ConstResult::success(ConstValue::make_bool(
+                if is_signed { (a as i64) >= (b as i64) } else { a >= b }));
+        }
+        _ => {}
         }
 
         // Arithmetic - compute then mask to width
         let result: u64 = 0;
 
-        if op as i32 == BinOp::Add as i32 {
-            result = a + b;
-        } else if op as i32 == BinOp::Sub as i32 {
-            result = a - b;
-        } else if op as i32 == BinOp::Mul as i32 {
-            result = a * b;
-        } else if op as i32 == BinOp::Div as i32 {
+        switch op {
+        BinOp::Add => result = a + b,
+        BinOp::Sub => result = a - b,
+        BinOp::Mul => result = a * b,
+        BinOp::Div => {
             if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
-            if is_signed {
-                result = ((a as i64) / (b as i64)) as u64;
-            } else {
-                result = a / b;
-            }
-        } else if op as i32 == BinOp::Rem as i32 {
+            result = if is_signed { ((a as i64) / (b as i64)) as u64 } else { a / b };
+        }
+        BinOp::Rem => {
             if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
-            if is_signed {
-                result = ((a as i64) % (b as i64)) as u64;
-            } else {
-                result = a % b;
-            }
-        } else if op as i32 == BinOp::BitAnd as i32 {
-            result = a & b;
-        } else if op as i32 == BinOp::BitOr as i32 {
-            result = a | b;
-        } else if op as i32 == BinOp::BitXor as i32 {
-            result = a ^ b;
-        } else if op as i32 == BinOp::Shl as i32 {
+            result = if is_signed { ((a as i64) % (b as i64)) as u64 } else { a % b };
+        }
+        BinOp::BitAnd => result = a & b,
+        BinOp::BitOr => result = a | b,
+        BinOp::BitXor => result = a ^ b,
+        BinOp::Shl => {
             let shift = b as u32;
             if shift >= width { return ConstResult::fail(ConstEvalError::overflow()); }
             result = a << shift;
-        } else if op as i32 == BinOp::Shr as i32 {
+        }
+        BinOp::Shr => {
             let shift = b as u32;
             if shift >= width { return ConstResult::fail(ConstEvalError::overflow()); }
-            if is_signed {
-                result = ((a as i64) >> shift) as u64;
-            } else {
-                result = a >> shift;
-            }
-        } else if op as i32 == BinOp::And as i32 {
-            result = if a != 0u64 && b != 0u64 { 1u64 } else { 0u64 };
-            return ConstResult::success(ConstValue::make_bool(result != 0u64));
-        } else if op as i32 == BinOp::Or as i32 {
-            result = if a != 0u64 || b != 0u64 { 1u64 } else { 0u64 };
-            return ConstResult::success(ConstValue::make_bool(result != 0u64));
-        } else {
-            return ConstResult::fail(ConstEvalError::unsupported());
+            result = if is_signed { ((a as i64) >> shift) as u64 } else { a >> shift };
+        }
+        BinOp::And => return ConstResult::success(ConstValue::make_bool(a != 0u64 && b != 0u64)),
+        BinOp::Or => return ConstResult::success(ConstValue::make_bool(a != 0u64 || b != 0u64)),
+        _ => return ConstResult::fail(ConstEvalError::unsupported()),
         }
 
         // Mask to width
@@ -481,62 +455,45 @@ impl ConstEvaluator {
         let b = rhs.float_val;
         let bt = lhs.builtin_type;
 
-        if op as i32 == BinOp::Add as i32 {
-            return ConstResult::success(ConstValue::make_float(a + b, bt));
-        } else if op as i32 == BinOp::Sub as i32 {
-            return ConstResult::success(ConstValue::make_float(a - b, bt));
-        } else if op as i32 == BinOp::Mul as i32 {
-            return ConstResult::success(ConstValue::make_float(a * b, bt));
-        } else if op as i32 == BinOp::Div as i32 {
-            return ConstResult::success(ConstValue::make_float(a / b, bt));
-        } else if op as i32 == BinOp::Eq as i32 {
-            return ConstResult::success(ConstValue::make_bool(a == b));
-        } else if op as i32 == BinOp::Ne as i32 {
-            return ConstResult::success(ConstValue::make_bool(a != b));
-        } else if op as i32 == BinOp::Lt as i32 {
-            return ConstResult::success(ConstValue::make_bool(a < b));
-        } else if op as i32 == BinOp::Le as i32 {
-            return ConstResult::success(ConstValue::make_bool(a <= b));
-        } else if op as i32 == BinOp::Gt as i32 {
-            return ConstResult::success(ConstValue::make_bool(a > b));
-        } else if op as i32 == BinOp::Ge as i32 {
-            return ConstResult::success(ConstValue::make_bool(a >= b));
+        switch op {
+        BinOp::Add => ConstResult::success(ConstValue::make_float(a + b, bt)),
+        BinOp::Sub => ConstResult::success(ConstValue::make_float(a - b, bt)),
+        BinOp::Mul => ConstResult::success(ConstValue::make_float(a * b, bt)),
+        BinOp::Div => ConstResult::success(ConstValue::make_float(a / b, bt)),
+        BinOp::Eq => ConstResult::success(ConstValue::make_bool(a == b)),
+        BinOp::Ne => ConstResult::success(ConstValue::make_bool(a != b)),
+        BinOp::Lt => ConstResult::success(ConstValue::make_bool(a < b)),
+        BinOp::Le => ConstResult::success(ConstValue::make_bool(a <= b)),
+        BinOp::Gt => ConstResult::success(ConstValue::make_bool(a > b)),
+        BinOp::Ge => ConstResult::success(ConstValue::make_bool(a >= b)),
+        _ => ConstResult::fail(ConstEvalError::unsupported()),
         }
-        ConstResult::fail(ConstEvalError::unsupported())
     }
 
     fn bool_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
         let a = lhs.int_val != 0u64;
         let b = rhs.int_val != 0u64;
 
-        if op as i32 == BinOp::Eq as i32 {
-            return ConstResult::success(ConstValue::make_bool(a == b));
-        } else if op as i32 == BinOp::Ne as i32 {
-            return ConstResult::success(ConstValue::make_bool(a != b));
-        } else if op as i32 == BinOp::And as i32 {
-            return ConstResult::success(ConstValue::make_bool(a && b));
-        } else if op as i32 == BinOp::Or as i32 {
-            return ConstResult::success(ConstValue::make_bool(a || b));
-        } else if op as i32 == BinOp::BitAnd as i32 {
-            return ConstResult::success(ConstValue::make_bool(a && b));
-        } else if op as i32 == BinOp::BitOr as i32 {
-            return ConstResult::success(ConstValue::make_bool(a || b));
-        } else if op as i32 == BinOp::BitXor as i32 {
-            return ConstResult::success(ConstValue::make_bool(a != b));
+        switch op {
+        BinOp::Eq => ConstResult::success(ConstValue::make_bool(a == b)),
+        BinOp::Ne => ConstResult::success(ConstValue::make_bool(a != b)),
+        BinOp::And, BinOp::BitAnd => ConstResult::success(ConstValue::make_bool(a && b)),
+        BinOp::Or, BinOp::BitOr => ConstResult::success(ConstValue::make_bool(a || b)),
+        BinOp::BitXor => ConstResult::success(ConstValue::make_bool(a != b)),
+        _ => ConstResult::fail(ConstEvalError::unsupported()),
         }
-        ConstResult::fail(ConstEvalError::unsupported())
     }
 
     fn bytes_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
         // Byte pointer + integer offset
         if rhs.tag == CValTag::Int {
-            if op as i32 == BinOp::Add as i32 {
+            if op == BinOp::Add {
                 let new_off = lhs.bytes_offset + (rhs.int_val as usize);
                 if new_off > lhs.bytes.len() {
                     return ConstResult::fail(ConstEvalError::index_oob());
                 }
                 return ConstResult::success(ConstValue::make_bytes(lhs.bytes, new_off));
-            } else if op as i32 == BinOp::Sub as i32 {
+            } else if op == BinOp::Sub {
                 let offset = rhs.int_val as usize;
                 if offset > lhs.bytes_offset {
                     return ConstResult::fail(ConstEvalError::index_oob());
@@ -545,7 +502,7 @@ impl ConstEvaluator {
             }
         }
         // Byte pointer - byte pointer (same provenance)
-        if rhs.tag == CValTag::Bytes && op as i32 == BinOp::Sub as i32 {
+        if rhs.tag == CValTag::Bytes && op == BinOp::Sub {
             let diff = (lhs.bytes_offset as i64) - (rhs.bytes_offset as i64);
             return ConstResult::success(ConstValue::make_int(diff as u64, BuiltinType::ISize));
         }
@@ -556,9 +513,9 @@ impl ConstEvaluator {
         if lhs.lvalue.tag == CLVTag::Index {
             let offset = lhs.lvalue.index;
             let new_offset: usize = 0;
-            if op as i32 == BinOp::Add as i32 {
+            if op == BinOp::Add {
                 new_offset = offset + (rhs.int_val as usize);
-            } else if op as i32 == BinOp::Sub as i32 {
+            } else if op == BinOp::Sub {
                 if (rhs.int_val as usize) > offset {
                     return ConstResult::fail(ConstEvalError::index_oob());
                 }
@@ -586,24 +543,24 @@ impl ConstEvaluator {
         let inner = inner_r.value;
 
         if inner.tag == CValTag::Bool {
-            if expr.un_op as i32 == UnOp::Not as i32 {
+            if expr.un_op == UnOp::Not {
                 return ConstResult::success(ConstValue::make_bool(!inner.is_truthy()));
             }
         } else if inner.tag == CValTag::Int {
-            if expr.un_op as i32 == UnOp::Neg as i32 {
+            if expr.un_op == UnOp::Neg {
                 let result = (0u64 - inner.int_val);
                 let result = self.mask_to_width(result, inner.builtin_type.bit_width());
                 return ConstResult::success(ConstValue::make_int(result, inner.builtin_type));
-            } else if expr.un_op as i32 == UnOp::BitNot as i32 {
+            } else if expr.un_op == UnOp::BitNot {
                 let result = ~inner.int_val;
                 let result = self.mask_to_width(result, inner.builtin_type.bit_width());
                 return ConstResult::success(ConstValue::make_int(result, inner.builtin_type));
-            } else if expr.un_op as i32 == UnOp::Not as i32 {
+            } else if expr.un_op == UnOp::Not {
                 // logical not on integer (shouldn't happen but handle it)
                 return ConstResult::success(ConstValue::make_bool(inner.int_val == 0u64));
             }
         } else if inner.tag == CValTag::Float {
-            if expr.un_op as i32 == UnOp::Neg as i32 {
+            if expr.un_op == UnOp::Neg {
                 return ConstResult::success(ConstValue::make_float(-inner.float_val, inner.builtin_type));
             }
         }
@@ -619,7 +576,7 @@ impl ConstEvaluator {
         let target_bt = self.irty_to_builtin(expr.ir_ty);
 
         // Same type - no-op
-        if inner.tag == CValTag::Int && target_bt as i32 == inner.builtin_type as i32 {
+        if inner.tag == CValTag::Int && target_bt == inner.builtin_type {
             return ConstResult::success(inner);
         }
 
@@ -647,7 +604,7 @@ impl ConstEvaluator {
         }
 
         // Int -> Bool
-        if inner.tag == CValTag::Int && target_bt as i32 == BuiltinType::Bool as i32 {
+        if inner.tag == CValTag::Int && target_bt == BuiltinType::Bool {
             return ConstResult::success(ConstValue::make_bool(inner.int_val != 0u64));
         }
 
@@ -659,7 +616,7 @@ impl ConstEvaluator {
             } else {
                 fval = inner.int_val as f64;
             }
-            if target_bt as i32 == BuiltinType::F32 as i32 {
+            if target_bt == BuiltinType::F32 {
                 fval = (fval as f32) as f64;
             }
             return ConstResult::success(ConstValue::make_float(fval, target_bt));
@@ -680,7 +637,7 @@ impl ConstEvaluator {
         // Float -> Float (f64 -> f32 or f32 -> f64)
         if inner.tag == CValTag::Float && target_bt.is_float() {
             let fval = inner.float_val;
-            if target_bt as i32 == BuiltinType::F32 as i32 {
+            if target_bt == BuiltinType::F32 {
                 fval = (fval as f32) as f64;
             }
             return ConstResult::success(ConstValue::make_float(fval, target_bt));
@@ -1169,12 +1126,12 @@ impl ConstEvaluator {
         let target_bt = self.irty_to_builtin(expr.ir_ty);
 
         // Int -> Float (reinterpret bits via pointer cast)
-        if inner.tag == CValTag::Int && target_bt as i32 == BuiltinType::F32 as i32 {
+        if inner.tag == CValTag::Int && target_bt == BuiltinType::F32 {
             let bits = inner.int_val as u32;
             let f = *(&bits as &f32);
             return ConstResult::success(ConstValue::make_float(f as f64, BuiltinType::F32));
         }
-        if inner.tag == CValTag::Int && target_bt as i32 == BuiltinType::F64 as i32 {
+        if inner.tag == CValTag::Int && target_bt == BuiltinType::F64 {
             let bits = inner.int_val;
             let f = *(&bits as &f64);
             return ConstResult::success(ConstValue::make_float(f, BuiltinType::F64));
@@ -1182,7 +1139,7 @@ impl ConstEvaluator {
 
         // Float -> Int (reinterpret bits via pointer cast)
         if inner.tag == CValTag::Float && target_bt.is_integer() {
-            if inner.builtin_type as i32 == BuiltinType::F32 as i32 {
+            if inner.builtin_type == BuiltinType::F32 {
                 let f32_val = inner.float_val as f32;
                 let bits = *(&f32_val as &u32);
                 return ConstResult::success(ConstValue::make_int(bits as u64, target_bt));
@@ -1223,7 +1180,7 @@ impl ConstEvaluator {
 
     fn make_zeroed(self: &mut ConstEvaluator, ty: &IrTy) -> ConstValue {
         if ty.tag == IrTyTag::Builtin {
-            if ty.builtin as i32 == BuiltinType::Bool as i32 {
+            if ty.builtin == BuiltinType::Bool {
                 ConstValue::make_bool(false)
             } else if ty.builtin.is_integer() {
                 ConstValue::make_int(0u64, ty.builtin)

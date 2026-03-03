@@ -1507,12 +1507,12 @@ impl Mono {
             let ir_rhs = self.lower_expr_coerced(expr.rhs, ir_lhs.ty);
 
             // For comparison operators on struct types, try operator overloading
-            let is_comparison = expr.bin_op as i32 == BinOp::Eq as i32
-                || expr.bin_op as i32 == BinOp::Ne as i32
-                || expr.bin_op as i32 == BinOp::Lt as i32
-                || expr.bin_op as i32 == BinOp::Le as i32
-                || expr.bin_op as i32 == BinOp::Gt as i32
-                || expr.bin_op as i32 == BinOp::Ge as i32;
+            let is_comparison = expr.bin_op == BinOp::Eq
+                || expr.bin_op == BinOp::Ne
+                || expr.bin_op == BinOp::Lt
+                || expr.bin_op == BinOp::Le
+                || expr.bin_op == BinOp::Gt
+                || expr.bin_op == BinOp::Ge;
             if is_comparison && ir_lhs.ty.tag == IrTyTag::Struct {
                 let overload = self.try_operator_overload(expr.bin_op, ir_lhs, ir_rhs);
                 if overload.is_some() {
@@ -1697,7 +1697,7 @@ impl Mono {
             let ir_value = self.lower_expr(expr.lhs);
 
             // Check if the discriminant type supports LLVM switch (integer types only)
-            let is_int_switch = (ir_value.ty.tag == IrTyTag::Builtin && (ir_value.ty.builtin.is_integer() || ir_value.ty.builtin as i32 == BuiltinType::Bool as i32))
+            let is_int_switch = (ir_value.ty.tag == IrTyTag::Builtin && (ir_value.ty.builtin.is_integer() || ir_value.ty.builtin == BuiltinType::Bool))
                 || ir_value.ty.tag == IrTyTag::Enum;
 
             if is_int_switch {
