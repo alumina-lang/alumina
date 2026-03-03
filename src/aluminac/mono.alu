@@ -3940,16 +3940,21 @@ impl Mono {
             }
         }
 
-        // If the method has generic params but no type args were provided,
-        // infer the type args from the actual call arguments.
-        // Note: def.params[0] is self, but expr.args does NOT include self,
-        // so we offset by 1 when matching params to args.
-        if combined_type_args.len() == 0 && def.generic_params.len() > 0 {
+        // Infer any remaining type args from the actual call arguments.
+        // Some type args may already be provided (e.g. struct type args for slice/builtin methods),
+        // but additional method-level generics need to be inferred.
+        if combined_type_args.len() < def.generic_params.len() {
             let num_generics = def.generic_params.len();
             let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
             let found_count = 0usize;
+            // Pre-fill with already-known type args
             for i in 0usize..num_generics {
-                inferred[i] = self.ctx.void_ty;
+                if i < combined_type_args.len() {
+                    inferred[i] = combined_type_args[i];
+                    found_count = found_count + 1usize;
+                } else {
+                    inferred[i] = self.ctx.void_ty;
+                }
             }
             // Match params (starting from index 1, skipping self) against args
             let num_explicit_params = if def.params.len() > 0 { def.params.len() - 1 } else { 0usize };

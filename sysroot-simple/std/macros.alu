@@ -1,0 +1,18 @@
+// Macro utilities for bootstrap sysroot
+
+/// Create a macro "closure" - partial application of macro arguments
+#[builtin] macro bind($mac, $arg...) {}
+
+/// Left-associative fold over arguments
+#[builtin] macro reduce($mac, $base, $arg...) {}
+
+/// Count the number of arguments
+macro count($arg...) {
+    reduce!(internal::count_reducer, 0usize, $arg$...)
+}
+
+mod internal {
+    macro count_reducer($acc, $_) {
+        $acc + 1usize
+    }
+}

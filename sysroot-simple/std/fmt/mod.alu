@@ -1,16 +1,130 @@
-// Stub std::fmt for self-hosted compiler bootstrap
-// Only provides type declarations used by imports
-
-struct Formatter {
-    _dummy: i32,
-}
-
-struct Error {
-    _dummy: i32,
-}
+// String formatting for bootstrap sysroot
+//
+// Mirrors the real sysroot's fmt module with the minimum needed for write!/writeln!.
 
 type Result = std::result::Result<(), Error>;
 
-fn write() {
-    // stub
+struct Error {}
+
+impl Error {
+    fn new() -> Error { Error {} }
+
+    fn from<T>(_: T) -> Error { Error {} }
+}
+
+/// A sink for string formatting operations
+protocol Formatter<Self> {
+    fn write_str(self: &mut Self, buf: &[u8]) -> Result;
+    fn write_byte(self: &mut Self, byte: u8) -> Result {
+        self.write_str(std::mem::slice::from_raw(&byte, 1))
+    }
+}
+
+/// Formatter that writes into a fixed-size buffer
+struct SliceFormatter {
+    buf: &mut [u8],
+    buf_pos: usize,
+}
+
+impl SliceFormatter {
+    fn new(buf: &mut [u8]) -> SliceFormatter {
+        SliceFormatter { buf: buf, buf_pos: 0usize }
+    }
+
+    /// @ Formatter::write_str
+    fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result {
+        if self.buf_pos + buf.len() > self.buf.len() {
+            return Result::err(Error::new());
+        }
+        buf.copy_to(&self.buf[self.buf_pos]);
+        self.buf_pos = self.buf_pos + buf.len();
+        Result::ok(())
+    }
+
+    /// @ Formatter::write_byte
+    fn write_byte(self: &mut SliceFormatter, byte: u8) -> Result {
+        if self.buf_pos >= self.buf.len() {
+            return Result::err(Error::new());
+        }
+        self.buf[self.buf_pos] = byte;
+        self.buf_pos = self.buf_pos + 1usize;
+        Result::ok(())
+    }
+
+    fn get(self: &SliceFormatter) -> &[u8] {
+        self.buf[0usize..self.buf_pos]
+    }
+}
+
+// Builtin macro declarations (local because aluminac doesn't support
+// path-qualified macro calls like macros::bind! yet)
+#[builtin] macro bind($mac, $arg...) {}
+#[builtin] macro reduce($mac, $base, $arg...) {}
+#[builtin] macro format_args($fmt, $args...) { }
+
+// Formatting macros - these must be at module level (not in a submodule)
+// because macro expansion happens at the call site and path-qualified
+// macro references (internal::static_format_args) don't resolve across modules.
+
+macro _fold_result($left, $right) {
+    let left = $left;
+    if left.is_err() {
+        left
+    } else {
+        $right
+    }
+}
+
+macro static_format_args($fmt, $arg...) {
+    reduce!(
+        _fold_result,
+        Result::ok::<(), fmt::Error>(()),
+        $arg.fmt($fmt)$...
+    )
+}
+
+/// write!(formatter, "fmt string {}", args...)
+macro write($fmt, $fmt_str, $arg...) {
+    let fmt = $fmt;
+    format_args!(
+        bind!(static_format_args, fmt),
+        $fmt_str,
+        $arg$...
+    )
+}
+
+/// writeln!(formatter, "fmt string {}", args...)
+macro writeln($fmt, $fmt_str, $arg...) {
+    write!($fmt, concat!($fmt_str, "\n"), $arg$...)
+}
+
+mod internal {
+    /// Integer formatting helper
+    fn format_integer_unsigned<F: Formatter<F>>(val: u64, fmt: &mut F) -> Result {
+        let buf: [u8; 20]; // max digits for u64
+        let i: usize = 0;
+        let v = val;
+        if v == 0u64 {
+            return fmt.write_byte('0' as u8);
+        }
+        while v > 0u64 {
+            buf[19usize - i] = (v % 10u64) as u8 + '0' as u8;
+            v = v / 10u64;
+            i = i + 1usize;
+        }
+        fmt.write_str(buf[20usize - i .. 20usize])
+    }
+
+    fn format_integer_signed<F: Formatter<F>>(val: i64, fmt: &mut F) -> Result {
+        if val < 0i64 {
+            fmt.write_byte('-' as u8)?;
+            // Handle MIN_VALUE: can't negate it directly
+            if val == -9223372036854775808i64 {
+                return fmt.write_str("9223372036854775808");
+            }
+            format_integer_unsigned::<F>((0i64 - val) as u64, fmt)
+        } else {
+            format_integer_unsigned::<F>(val as u64, fmt)
+        }
+    }
 }

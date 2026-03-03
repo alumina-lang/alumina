@@ -14,6 +14,73 @@ protocol Tuple {}
 protocol Struct {}
 protocol Enum {}
 
+// Lang item structs for builtin type methods.
+// These map to the corresponding builtin types and provide methods on them.
+
+#[lang(builtin_bool)]
+struct bool {}
+impl bool {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &bool, f: &mut F) -> std::fmt::Result {
+        f.write_str(if *self { "true" } else { "false" })
+    }
+}
+
+#[lang(builtin_u8)]
+struct u8 {}
+impl u8 {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &u8, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+    }
+}
+
+#[lang(builtin_u32)]
+struct u32 {}
+impl u32 {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &u32, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+    }
+}
+
+#[lang(builtin_u64)]
+struct u64 {}
+impl u64 {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &u64, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_unsigned::<F>(*self, f)
+    }
+}
+
+#[lang(builtin_usize)]
+struct usize {}
+impl usize {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &usize, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+    }
+}
+
+#[lang(builtin_i32)]
+struct i32 {}
+impl i32 {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &i32, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+    }
+}
+
+#[lang(builtin_i64)]
+struct i64 {}
+impl i64 {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &i64, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_signed::<F>(*self, f)
+    }
+}
+
+#[lang(builtin_isize)]
+struct isize {}
+impl isize {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &isize, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+    }
+}
+
 // Type operators: conditional type aliases using when-types.
 // unsigned_of<T> maps signed integer types to their unsigned counterparts.
 type unsigned_of<T> = when std::typing::is_same::<T, i8>() {
