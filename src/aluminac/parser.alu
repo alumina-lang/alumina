@@ -1567,17 +1567,10 @@ impl Pass2 {
                     // Parse size as expression for const evaluation
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let size_expr = expr_parser.parse_expr(size_node.unwrap());
-                    let ty = Ty {
-                        tag: TY_ARRAY,
-                        builtin: BuiltinType::Void,
-                        id: Id { _value: 0 },
-                        inner: inner_ty,
-                        is_const: false,
-                        array_size: 0,
-                        elems: &[],
-                        ret_ty: std::mem::zeroed::<&Ty>(),
-                        typeof_expr: size_expr,
-                    };
+                    let ty = Ty::default();
+                    ty.tag = TY_ARRAY;
+                    ty.inner = inner_ty;
+                    ty.typeof_expr = size_expr;
                     return self.ctx.alloc_ty(ty);
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -1667,17 +1660,9 @@ impl Pass2 {
                 if !inner.is_none() {
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let expr = expr_parser.parse_expr(inner.unwrap());
-                    let ty = Ty {
-                        tag: TY_TYPEOF,
-                        builtin: BuiltinType::Void,
-                        id: Id { _value: 0 },
-                        inner: std::mem::zeroed::<&Ty>(),
-                        is_const: false,
-                        array_size: 0,
-                        elems: &[],
-                        ret_ty: std::mem::zeroed::<&Ty>(),
-                        typeof_expr: expr,
-                    };
+                    let ty = Ty::default();
+                    ty.tag = TY_TYPEOF;
+                    ty.typeof_expr = expr;
                     return self.ctx.alloc_ty(ty);
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -1720,17 +1705,9 @@ impl Pass2 {
                         param_expr.str_val = name;
                         param_expr.int_val = param_idx as u64;
                         param_expr.flag = (param_idx == self.ctx.macro_variadic_param_idx);
-                        let ty = Ty {
-                            tag: TY_TYPEOF,
-                            builtin: BuiltinType::Void,
-                            id: Id { _value: 0 },
-                            inner: std::mem::zeroed::<&Ty>(),
-                            is_const: false,
-                            array_size: 0,
-                            elems: &[],
-                            ret_ty: std::mem::zeroed::<&Ty>(),
-                            typeof_expr: self.ctx.alloc_expr(param_expr),
-                        };
+                        let ty = Ty::default();
+                        ty.tag = TY_TYPEOF;
+                        ty.typeof_expr = self.ctx.alloc_expr(param_expr);
                         return self.ctx.alloc_ty(ty);
                     }
                     return self.ctx.alloc_ty(Ty::unresolved());

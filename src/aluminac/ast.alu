@@ -152,78 +152,49 @@ struct Ty {
 }
 
 impl Ty {
+    /// Returns a zeroed Ty with empty slices. Callers set tag + relevant fields.
+    fn default() -> Ty {
+        let ty: Ty = std::mem::zeroed::<Ty>();
+        ty.elems = &[];
+        ty
+    }
+
     fn placeholder(id: Id) -> Ty {
-        Ty { tag: TY_PLACEHOLDER, builtin: BuiltinType::Void, id: id,
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_PLACEHOLDER; ty.id = id; ty
     }
     fn named(id: Id) -> Ty {
-        Ty { tag: TY_NAMED, builtin: BuiltinType::Void, id: id,
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_NAMED; ty.id = id; ty
     }
     fn builtin_ty(bt: BuiltinType) -> Ty {
-        Ty { tag: TY_BUILTIN, builtin: bt, id: Id { _value: 0 },
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_BUILTIN; ty.builtin = bt; ty
     }
     fn pointer_ty(pointee: &Ty, is_const: bool) -> Ty {
-        Ty { tag: TY_POINTER, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: pointee, is_const: is_const, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_POINTER; ty.inner = pointee; ty.is_const = is_const; ty
     }
     fn slice_ty(elem: &Ty, is_const: bool) -> Ty {
-        Ty { tag: TY_SLICE, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: elem, is_const: is_const, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_SLICE; ty.inner = elem; ty.is_const = is_const; ty
     }
     fn array_ty(elem: &Ty, size: usize) -> Ty {
-        Ty { tag: TY_ARRAY, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: elem, is_const: false, array_size: size,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_ARRAY; ty.inner = elem; ty.array_size = size; ty
     }
     fn tuple_ty(elems: &[&Ty]) -> Ty {
-        Ty { tag: TY_TUPLE, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: elems, ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_TUPLE; ty.elems = elems; ty
     }
     fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
-        Ty { tag: TY_FN_POINTER, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: params, ret_ty: ret,
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_FN_POINTER; ty.elems = params; ty.ret_ty = ret; ty
     }
     fn generic_ty(base: &Ty, args: &[&Ty]) -> Ty {
-        Ty { tag: TY_GENERIC, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: base, is_const: false, array_size: 0,
-             elems: args, ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_GENERIC; ty.inner = base; ty.elems = args; ty
     }
     fn never_ty() -> Ty {
-        Ty { tag: TY_NEVER, builtin: BuiltinType::Never, id: Id { _value: 0 },
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_NEVER; ty.builtin = BuiltinType::Never; ty
     }
     // TY_WHEN: condition in typeof_expr, consequence in inner, alternative in ret_ty
     fn when_ty(condition: &Expr, consequence: &Ty, alternative: &Ty) -> Ty {
-        Ty { tag: TY_WHEN, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: consequence, is_const: false, array_size: 0,
-             elems: &[], ret_ty: alternative,
-             typeof_expr: condition }
+        let ty = Ty::default(); ty.tag = TY_WHEN; ty.inner = consequence; ty.ret_ty = alternative; ty.typeof_expr = condition; ty
     }
     fn unresolved() -> Ty {
-        Ty { tag: TY_UNRESOLVED, builtin: BuiltinType::Void, id: Id { _value: 0 },
-             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-             typeof_expr: std::mem::zeroed::<&Expr>() }
+        let ty = Ty::default(); ty.tag = TY_UNRESOLVED; ty
     }
     fn void_ty() -> Ty {
         Ty::builtin_ty(BuiltinType::Void)
@@ -639,71 +610,48 @@ struct IrTy {
 }
 
 impl IrTy {
+    /// Returns a zeroed IrTy with empty slices and refs. Callers set tag + relevant fields.
+    fn default() -> IrTy {
+        let ty: IrTy = std::mem::zeroed::<IrTy>();
+        ty.elems = &[];
+        ty.struct_ref = IrStructRef::empty();
+        ty.enum_ref = IrEnumRef::empty();
+        ty.closure_fn = IrFnRef::empty();
+        ty
+    }
+
     fn mk_builtin(bt: BuiltinType) -> IrTy {
-        IrTy { tag: IRTY_BUILTIN, builtin: bt,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_BUILTIN; ty.builtin = bt; ty
     }
     fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
-        IrTy { tag: IRTY_POINTER, builtin: BuiltinType::Void,
-               inner: pointee, is_const: is_const, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_POINTER; ty.inner = pointee; ty.is_const = is_const; ty
     }
     fn mk_array(elem: &IrTy, size: usize) -> IrTy {
-        IrTy { tag: IRTY_ARRAY, builtin: BuiltinType::Void,
-               inner: elem, is_const: false, array_size: size,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_ARRAY; ty.inner = elem; ty.array_size = size; ty
     }
     fn mk_tuple(elems: &[&IrTy]) -> IrTy {
-        IrTy { tag: IRTY_TUPLE, builtin: BuiltinType::Void,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: elems, ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_TUPLE; ty.elems = elems; ty
     }
     fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
-        IrTy { tag: IRTY_FN_POINTER, builtin: BuiltinType::Void,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: params, ret_ty: ret,
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_FN_POINTER; ty.elems = params; ty.ret_ty = ret; ty
     }
     fn mk_struct(s: IrStructRef) -> IrTy {
-        IrTy { tag: IRTY_STRUCT, builtin: BuiltinType::Void,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: s, enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_STRUCT; ty.struct_ref = s; ty
     }
     fn mk_closure(s: IrStructRef, fn_ref: IrFnRef) -> IrTy {
-        IrTy { tag: IRTY_CLOSURE, builtin: BuiltinType::Void,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: s, enum_ref: IrEnumRef::empty(), closure_fn: fn_ref }
+        let ty = IrTy::default(); ty.tag = IRTY_CLOSURE; ty.struct_ref = s; ty.closure_fn = fn_ref; ty
     }
     fn mk_enum(e: IrEnumRef) -> IrTy {
-        IrTy { tag: IRTY_ENUM, builtin: BuiltinType::Void,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: e, closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_ENUM; ty.enum_ref = e; ty
     }
     fn mk_void() -> IrTy {
-        IrTy { tag: IRTY_VOID, builtin: BuiltinType::Void,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_VOID; ty
     }
     fn mk_never() -> IrTy {
-        IrTy { tag: IRTY_NEVER, builtin: BuiltinType::Never,
-               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_NEVER; ty.builtin = BuiltinType::Never; ty
     }
     fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
-        IrTy { tag: IRTY_SLICE, builtin: BuiltinType::Void,
-               inner: elem, is_const: is_const, array_size: 0,
-               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
-               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty(), closure_fn: IrFnRef::empty() }
+        let ty = IrTy::default(); ty.tag = IRTY_SLICE; ty.inner = elem; ty.is_const = is_const; ty
     }
 
     fn is_void(self: &IrTy) -> bool {

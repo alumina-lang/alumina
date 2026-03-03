@@ -66,28 +66,12 @@ reverse iteration, and i32-typed loops.
 
 ---
 
-## 4. `std::mem::zeroed` boilerplate (113 occurrences)
+## 4. ~~`std::mem::zeroed` boilerplate~~ DONE
 
-The flat struct representation forces every constructor to zero out unused fields:
-
-```alumina
-fn placeholder(id: Id) -> Ty {
-    Ty { tag: TY_PLACEHOLDER, builtin: BuiltinType::Void, id: id,
-         inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
-         elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
-         typeof_expr: std::mem::zeroed::<&Expr>() }
-}
-```
-
-**Options:**
-- Add a `Ty::default()` / `IrTy::default()` / `IrExpr::default()` that returns
-  a fully-zeroed instance, then callers just set the fields they care about.
-  `IrExpr::void_expr()` already does this for IR exprs — extend the pattern to
-  `Ty` and `IrTy`.
-- Alternatively, use `std::mem::zeroed::<Ty>()` as base and set fields.
-
-The `IrExpr::void_expr(ty)` pattern already exists and is used ~274 times in
-mono.alu — it's the right approach but `Ty` and `IrTy` don't have equivalents.
+**Fixed:** Added `Ty::default()` and `IrTy::default()` that return zeroed
+instances with empty slices/refs pre-filled. Simplified all 13 `Ty` constructors
+and 11 `IrTy` constructors to one-liners. Also updated 3 ad-hoc Ty constructions
+in parser.alu to use `Ty::default()`.
 
 ---
 
@@ -177,7 +161,7 @@ const BYTE_BACKSLASH: u8 = '\\' as u8;
 1. ~~**#10 (bug fix)** — Fix switch codegen for non-integer types~~ DONE
 2. ~~**#5 (IR helpers)** — Biggest readability/LOC win, no risk~~ DONE
 3. **#1 + #2 (enums + switch)** — Large refactor but huge type safety win
-4. **#4 (default constructors)** — Reduce zeroed boilerplate
+4. ~~**#4 (default constructors)** — Reduce zeroed boilerplate~~ DONE
 5. ~~**#3 (for loops)** — Mechanical cleanup~~ DONE
 6. ~~**#6 (magic numbers)** — Quick wins~~ DONE
 7. ~~**#7 (arena helper)** — Small utility addition~~ DONE
