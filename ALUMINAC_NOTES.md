@@ -364,6 +364,17 @@ alumina-boot emits C string literals with hex escaping. aluminac creates LLVM gl
 
 alumina-boot computes explicit padding via `Layouter`. aluminac delegates to LLVM's `LLVMStructSetBody`. For unions, aluminac finds the largest field.
 
+### 4.10. Diagnostics
+
+alumina-boot has rich error reporting (~590 lines) with source spans, caret highlighting, notes, and suggestions. aluminac now has basic error reporting with file:line:column positions and errors for:
+- Unresolved field access
+- Unresolved method calls (suppresses redundant field error)
+- Unresolved function references
+- Unknown intrinsics
+- Format message helper (`format_msg`) for building error strings in arena
+
+Still missing vs alumina-boot: source line display, caret highlighting, notes/suggestions, multi-span errors.
+
 ---
 
 ## 5. Feature-by-Feature Deep Dive

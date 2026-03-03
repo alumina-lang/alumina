@@ -388,6 +388,8 @@ struct Mono {
     expected_type: &IrTy,
     // Debug: mono_function nesting depth
     mono_depth: usize,
+    // Suppress field errors when lowering call target (method error takes priority)
+    suppress_field_error: bool,
 }
 
 impl Mono {
@@ -401,6 +403,7 @@ impl Mono {
             current_fn_name: "",
             expected_type: ctx.void_ty,
             mono_depth: 0usize,
+            suppress_field_error: false,
         }
     }
 
@@ -414,6 +417,7 @@ impl Mono {
             current_fn_name: "",
             expected_type: ctx.void_ty,
             mono_depth: 0usize,
+            suppress_field_error: false,
         }
     }
 
@@ -1072,6 +1076,12 @@ impl Mono {
                 };
                 self.ctx.arena.alloc(result)
             } else {
+                if expr.str_val.len() > 0usize {
+                    let msg = DiagnosticContext::format_msg(self.ctx.arena, "could not resolve function '", expr.str_val, "'");
+                    self.ctx.diag.error(expr.span, msg);
+                } else if expr.id._value != 0usize {
+                    self.ctx.diag.error(expr.span, "could not resolve function");
+                }
                 let result = IrExpr::void_expr(self.ctx.void_ty);
                 result.tag = IR_NULL_LIT;
                 self.ctx.arena.alloc(result)
@@ -2913,7 +2923,11 @@ impl Mono {
                 actual_obj = self.ctx.arena.alloc(deref_expr);
             }
             // Find field index on the dereferenced struct type
-            let (field_idx, field_ty) = self.resolve_field(actual_obj.ty, expr.str_val);
+            let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val);
+            if !field_found && expr.str_val.len() > 0usize && !self.suppress_field_error {
+                let msg = DiagnosticContext::format_msg(self.ctx.arena, "could not resolve field '", expr.str_val, "'");
+                self.ctx.diag.error(expr.span, msg);
+            }
             let result = IrExpr::void_expr(field_ty);
             result.tag = IR_FIELD_ACCESS;
             result.lhs = actual_obj;
@@ -4362,7 +4376,9 @@ impl Mono {
             result.tag = IR_VOID;
             return self.ctx.arena.alloc(result);
         }
-        // Unknown intrinsic - emit void
+        // Unknown intrinsic - emit void with error
+        let msg = DiagnosticContext::format_msg(self.ctx.arena, "unknown intrinsic '", name, "'");
+        self.ctx.diag.error(expr.span, msg);
         let result = IrExpr::void_expr(self.ctx.void_ty);
         result.tag = IR_VOID;
         self.ctx.arena.alloc(result)
@@ -4393,6 +4409,8 @@ impl Mono {
                     return method_result.unwrap();
                 }
                 // Fall through to normal field access (function pointer in struct field)
+                // Suppress field error since method error will be reported if this also fails
+                self.suppress_field_error = true;
             }
 
             // Check for turbofish generic calls: func::<T>(args)
@@ -4580,6 +4598,7 @@ impl Mono {
             }
 
             let ir_callee = self.lower_expr(expr.lhs);
+            self.suppress_field_error = false;
             let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
             for i in 0usize..expr.args.len() {
                 ir_args[i] = self.lower_expr(expr.args[i]);
@@ -4627,7 +4646,13 @@ impl Mono {
                 result.items = all_args;
                 self.ctx.arena.alloc(result)
             } else {
-                // Not a function pointer or closure - method resolution failed, emit void
+                // Not a function pointer or closure - method resolution failed
+                if expr.lhs.tag == EXPR_FIELD_ACCESS && expr.lhs.str_val.len() > 0usize {
+                    let msg = DiagnosticContext::format_msg(self.ctx.arena, "could not resolve method '", expr.lhs.str_val, "'");
+                    self.ctx.diag.error(expr.span, msg);
+                } else {
+                    self.ctx.diag.error(expr.span, "expression is not callable");
+                }
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
             }
@@ -4738,7 +4763,8 @@ impl Mono {
         }
     }
 
-    fn resolve_field(self: &mut Mono, ty: &IrTy, field_name: &[u8]) -> (u32, &IrTy) {
+    // Returns (field_idx, field_ty, found)
+    fn resolve_field(self: &mut Mono, ty: &IrTy, field_name: &[u8]) -> (u32, &IrTy, bool) {
         if ty.tag == IRTY_STRUCT {
             let nf = ty.struct_ref.fields.len();
             let i = 0usize;
@@ -4746,17 +4772,17 @@ impl Mono {
                 let fname = ty.struct_ref.fields[i].name;
                 if fname.len() == field_name.len() {
                     if fname.len() == 0usize || libc::memcmp(&fname[0] as &libc::c_void, &field_name[0] as &libc::c_void, fname.len()) == 0i32 {
-                        return (i as u32, ty.struct_ref.fields[i].ty);
+                        return (i as u32, ty.struct_ref.fields[i].ty, true);
                     }
                 }
                 i = i + 1usize;
             }
-            (0u32, self.ctx.void_ty)
+            (0u32, self.ctx.void_ty, false)
         } else if ty.tag == IRTY_POINTER {
             // Auto-deref
             self.resolve_field(ty.inner, field_name)
         } else {
-            (0u32, self.ctx.void_ty)
+            (0u32, self.ctx.void_ty, false)
         }
     }
 

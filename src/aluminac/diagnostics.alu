@@ -1,6 +1,7 @@
 // Diagnostics and error reporting for the self-hosted compiler
 
 use ast::Span;
+use std::collections::Vector;
 
 enum DiagLevel {
     Error,
@@ -112,21 +113,27 @@ impl DiagnosticContext {
     }
 
     fn _write_u32(n: u32) {
-        let buf: [u8; 12] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-        let pos: usize = 11;
-        let val = n;
-        if val == 0u32 {
-            buf[pos] = '0' as u8;
-            pos = pos - 1;
-        } else {
-            while val > 0u32 {
-                buf[pos] = ('0' as u8) + (val % 10u32) as u8;
-                val = val / 10u32;
-                pos = pos - 1;
-            }
+        if n == 0u32 {
+            DiagnosticContext::_write_stderr("0");
+            return;
         }
-        let start = pos + 1;
-        DiagnosticContext::_write_stderr(buf[start..12]);
+        // Convert to digits by printing in reverse, then reversing
+        // Max 10 digits for u32
+        let buf: Vector<u8> = Vector::new();
+        defer buf.free();
+        let val = n;
+        while val > 0u32 {
+            let digit = (val % 10u32) as u8 + '0' as u8;
+            buf.push(digit);
+            val = val / 10u32;
+        }
+        // Write in reverse order
+        let i = buf.len();
+        while i > 0usize {
+            i = i - 1usize;
+            let b = buf[i];
+            libc::write(2i32, &b as &libc::c_void, 1usize);
+        }
     }
 
     fn emit_all(self: &DiagnosticContext) {
@@ -145,16 +152,34 @@ impl DiagnosticContext {
             DiagnosticContext::_write_stderr(": ");
             DiagnosticContext::_write_stderr(diag.message);
 
-            if diag.span.start != 0 && diag.span.file_id < self.files.len() as u32 {
+            if diag.span.file_id < self.files.len() as u32 {
                 let file = &self.files[diag.span.file_id as usize];
                 let (line, col) = file.line_col(diag.span.start);
-                DiagnosticContext::_write_stderr(" at ");
+                DiagnosticContext::_write_stderr("\n  --> ");
                 DiagnosticContext::_write_stderr(file.path);
+                DiagnosticContext::_write_stderr(":");
+                DiagnosticContext::_write_u32(line);
+                DiagnosticContext::_write_stderr(":");
+                DiagnosticContext::_write_u32(col);
             }
             DiagnosticContext::_write_stderr("\n");
 
             i = i + 1;
         }
+    }
+
+    // Format an error message with up to 3 parts: prefix + name + suffix
+    // e.g. format_msg(arena, "could not resolve field '", "foo", "' on type")
+    fn format_msg(arena: &mut aluminac_common::arena::Arena, a: &[u8], b: &[u8], c: &[u8]) -> &[u8] {
+        let total = a.len() + b.len() + c.len();
+        let buf = arena.alloc_slice::<u8>(total);
+        let pos: usize = 0;
+        for i in 0usize..a.len() { buf[pos + i] = a[i]; }
+        pos = pos + a.len();
+        for i in 0usize..b.len() { buf[pos + i] = b[i]; }
+        pos = pos + b.len();
+        for i in 0usize..c.len() { buf[pos + i] = c[i]; }
+        buf as &[u8]
     }
 
     fn free(self: &mut DiagnosticContext) {
