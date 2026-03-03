@@ -23,10 +23,11 @@ struct ParseError {
 
 struct MacroEntry {
     params: &[&[u8]],
-    body_node: Node,
-    source: &[u8],
+    body: &Expr,              // Pre-parsed AST body (parsed in definition-site scope)
+    source: &[u8],            // Source text for error reporting
     is_builtin: bool,
     variadic_param_idx: i32,  // -1 if no variadic param, otherwise index into params
+    scope_idx: u32,           // Definition-site scope for nested macro resolution
 }
 
 struct ParseContext {
@@ -52,13 +53,18 @@ struct ParseContext {
     // Macro definitions: name -> MacroEntry
     macro_defs: HashMap<&[u8], MacroEntry>,
 
-    // Current macro expansion arguments (for $param substitution)
+    // Current macro expansion arguments (for $param substitution in old code paths)
     macro_args: HashMap<&[u8], &Expr>,
 
     // Variadic (et cetera) macro expansion state
     macro_variadic_name: &[u8],       // name of the variadic param (empty if none)
     macro_variadic_args: &[&Expr],    // the variadic arguments
     macro_et_cetera_idx: i32,         // -1 if not in et cetera expansion, otherwise current index
+
+    // Macro body pre-parsing state
+    in_macro_body: bool,              // true when pre-parsing a macro body
+    macro_param_names: &[&[u8]],      // param names for current macro being pre-parsed
+    macro_variadic_param_idx: i32,    // variadic param index during pre-parse
 
     // Items ready for compilation
     items: Vector<Item>,
@@ -176,6 +182,9 @@ impl ParseContext {
             macro_variadic_name: "",
             macro_variadic_args: &[],
             macro_et_cetera_idx: -1i32,
+            in_macro_body: false,
+            macro_param_names: &[],
+            macro_variadic_param_idx: -1i32,
             items: Vector::new(),
         }
     }
@@ -1216,12 +1225,36 @@ impl Pass2 {
                     params_slice[j] = param_names[j];
                 }
 
+                // Pre-parse the macro body in definition-site scope
+                let body_expr: &Expr = if !pending.is_builtin {
+                    // Set up macro body pre-parsing state
+                    let prev_in_macro_body = self.ctx.in_macro_body;
+                    let prev_param_names = self.ctx.macro_param_names;
+                    let prev_variadic_idx = self.ctx.macro_variadic_param_idx;
+                    self.ctx.in_macro_body = true;
+                    self.ctx.macro_param_names = params_slice;
+                    self.ctx.macro_variadic_param_idx = variadic_idx;
+
+                    let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+                    let parsed = expr_parser.parse_expr(body);
+
+                    // Restore state
+                    self.ctx.in_macro_body = prev_in_macro_body;
+                    self.ctx.macro_param_names = prev_param_names;
+                    self.ctx.macro_variadic_param_idx = prev_variadic_idx;
+                    parsed
+                } else {
+                    // Builtin macros don't need pre-parsed bodies
+                    std::mem::zeroed::<&Expr>()
+                };
+
                 let entry = MacroEntry {
                     params: params_slice,
-                    body_node: body,
+                    body: body_expr,
                     source: self.ctx.source,
                     is_builtin: pending.is_builtin,
                     variadic_param_idx: variadic_idx,
+                    scope_idx: pending.scope_idx,
                 };
                 self.ctx.macro_defs.insert(pending.name, entry);
             }
@@ -1691,6 +1724,38 @@ impl Pass2 {
                 } else {
                     self.ctx.intern_str(text)
                 };
+
+                // When pre-parsing macro body, create TY_TYPEOF(EXPR_MACRO_PARAM)
+                if self.ctx.in_macro_body {
+                    let param_idx: i32 = -1i32;
+                    for pi in 0usize..self.ctx.macro_param_names.len() {
+                        if self.ctx.macro_param_names[pi] == name {
+                            param_idx = pi as i32;
+                            break;
+                        }
+                    }
+                    if param_idx >= 0i32 {
+                        let param_expr = Expr::void_expr();
+                        param_expr.tag = EXPR_MACRO_PARAM;
+                        param_expr.str_val = name;
+                        param_expr.int_val = param_idx as u64;
+                        param_expr.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        let ty = Ty {
+                            tag: TY_TYPEOF,
+                            builtin: BuiltinType::Void,
+                            id: Id { _value: 0 },
+                            inner: std::mem::zeroed::<&Ty>(),
+                            is_const: false,
+                            array_size: 0,
+                            elems: &[],
+                            ret_ty: std::mem::zeroed::<&Ty>(),
+                            typeof_expr: self.ctx.alloc_expr(param_expr),
+                        };
+                        return self.ctx.alloc_ty(ty);
+                    }
+                    return self.ctx.alloc_ty(Ty::unresolved());
+                }
+
                 let arg = self.ctx.macro_args.get(&name);
                 if arg.is_some() {
                     // The macro arg is an Expr, but we need a Ty
@@ -2251,13 +2316,35 @@ impl ExprParser {
             NodeKind::MacroInvocation => self.parse_macro_invocation(node, span),
             NodeKind::UniversalMacroInvocation => self.parse_universal_macro(node, span),
             NodeKind::MacroIdentifier => {
-                // $param reference during macro expansion
+                // $param reference
                 let text = self.ctx.node_text(node);
                 let name = if text.len() > 0 && text[0] == 36u8 {
                     self.ctx.intern_str(text[1..])
                 } else {
                     self.ctx.intern_str(text)
                 };
+
+                // When pre-parsing a macro body, produce EXPR_MACRO_PARAM
+                if self.ctx.in_macro_body {
+                    // Find param index
+                    let param_idx: i32 = -1i32;
+                    for pi in 0usize..self.ctx.macro_param_names.len() {
+                        if self.ctx.macro_param_names[pi] == name {
+                            param_idx = pi as i32;
+                            break;
+                        }
+                    }
+                    if param_idx >= 0i32 {
+                        let e = self.make_expr(EXPR_MACRO_PARAM, span);
+                        e.str_val = name;
+                        e.int_val = param_idx as u64;
+                        e.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        return self.ctx.alloc_expr(e);
+                    }
+                    return self.alloc_void(span);
+                }
+
+                // Normal expansion: look up in macro_args
                 let arg = self.ctx.macro_args.get(&name);
                 if arg.is_some() {
                     return arg.unwrap();
@@ -2739,15 +2826,20 @@ impl ExprParser {
             if child.is_named() {
                 let kind = NODE_KINDS[child.symbol() as usize];
                 if kind == NodeKind::EtCeteraExpression {
-                    // Expand et cetera: re-parse inner expression for each variadic arg
-                    let inner = child_by!(child, FieldKind::Inner);
-                    if !inner.is_none() && self.ctx.macro_variadic_args.len() > 0usize {
-                        let inner_node = inner.unwrap();
-                        for vi in 0usize..self.ctx.macro_variadic_args.len() {
-                            self.ctx.macro_et_cetera_idx = vi as i32;
-                            args.push(self.parse_expr(inner_node));
+                    if self.ctx.in_macro_body {
+                        // During pre-parse, store as EXPR_ET_CETERA
+                        args.push(self.parse_expr(child));
+                    } else {
+                        // Expand et cetera: re-parse inner expression for each variadic arg
+                        let inner = child_by!(child, FieldKind::Inner);
+                        if !inner.is_none() && self.ctx.macro_variadic_args.len() > 0usize {
+                            let inner_node = inner.unwrap();
+                            for vi in 0usize..self.ctx.macro_variadic_args.len() {
+                                self.ctx.macro_et_cetera_idx = vi as i32;
+                                args.push(self.parse_expr(inner_node));
+                            }
+                            self.ctx.macro_et_cetera_idx = -1i32;
                         }
-                        self.ctx.macro_et_cetera_idx = -1i32;
                     }
                 } else if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
                     args.push(self.parse_expr(child));
@@ -3425,22 +3517,9 @@ impl ExprParser {
         if macro_entry.is_some() {
             let entry = macro_entry.unwrap();
 
-            let prev_args = self.ctx.macro_args;
-            self.ctx.macro_args = HashMap::new();
-
-            if entry.params.len() > 0usize {
-                self.ctx.macro_args.insert(entry.params[0], inner_expr);
-            }
-
-            let prev_source = self.ctx.source;
-            self.ctx.source = entry.source;
-            let result = self.parse_expr(entry.body_node);
-            self.ctx.source = prev_source;
-
-            self.ctx.macro_args.free();
-            self.ctx.macro_args = prev_args;
-
-            return result;
+            let try_args = self.ctx.arena.alloc_slice::<&Expr>(1usize);
+            try_args[0] = inner_expr;
+            return self.do_expand_macro(entry, try_args, span);
         }
 
         // Fallback: no try macro in scope, use hardcoded IR lowering
@@ -3487,6 +3566,15 @@ impl ExprParser {
             empty
         };
 
+        // When pre-parsing a macro body, store as EXPR_MACRO_INVOCATION without expanding
+        if self.ctx.in_macro_body {
+            let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+            e.str_val = name;
+            e.args = args;
+            e.flag = true;  // Mark as actual invocation (not bare macro reference)
+            return self.ctx.alloc_expr(e);
+        }
+
         // Try to expand the macro
         let macro_entry = self.ctx.macro_defs.get(&name);
         if macro_entry.is_some() {
@@ -3497,66 +3585,8 @@ impl ExprParser {
                 return self.expand_builtin_macro(name, args, span);
             }
 
-            // Save previous macro state
-            let prev_args = self.ctx.macro_args;
-            let prev_variadic_name = self.ctx.macro_variadic_name;
-            let prev_variadic_args = self.ctx.macro_variadic_args;
-            let prev_et_cetera_idx = self.ctx.macro_et_cetera_idx;
-            self.ctx.macro_args = HashMap::new();
-            self.ctx.macro_variadic_name = "";
-            self.ctx.macro_variadic_args = &[];
-            self.ctx.macro_et_cetera_idx = -1i32;
-
-            // Set up argument substitution
-            if entry.variadic_param_idx >= 0i32 {
-                let vi = entry.variadic_param_idx as usize;
-                // Non-variadic params before the variadic one
-                for i in 0usize..vi {
-                    if i < args.len() {
-                        self.ctx.macro_args.insert(entry.params[i], args[i]);
-                    }
-                }
-                // Variadic args
-                let etc_count = if args.len() + 1 >= entry.params.len() {
-                    args.len() + 1 - entry.params.len()
-                } else {
-                    0usize
-                };
-                let etc_args = self.ctx.arena.alloc_slice::<&Expr>(etc_count);
-                for i in 0usize..etc_count {
-                    etc_args[i] = args[vi + i];
-                }
-                self.ctx.macro_variadic_name = entry.params[vi];
-                self.ctx.macro_variadic_args = etc_args;
-                // Non-variadic params after the variadic one
-                for i in vi + 1..entry.params.len() {
-                    let arg_idx = i + etc_count - 1;
-                    if arg_idx < args.len() {
-                        self.ctx.macro_args.insert(entry.params[i], args[arg_idx]);
-                    }
-                }
-            } else {
-                for i in 0usize..entry.params.len() {
-                    if i < args.len() {
-                        self.ctx.macro_args.insert(entry.params[i], args[i]);
-                    }
-                }
-            }
-
-            // Parse the macro body using the macro's source buffer
-            let prev_source = self.ctx.source;
-            self.ctx.source = entry.source;
-            let result = self.parse_expr(entry.body_node);
-            self.ctx.source = prev_source;
-
-            // Restore previous macro state
-            self.ctx.macro_args.free();
-            self.ctx.macro_args = prev_args;
-            self.ctx.macro_variadic_name = prev_variadic_name;
-            self.ctx.macro_variadic_args = prev_variadic_args;
-            self.ctx.macro_et_cetera_idx = prev_et_cetera_idx;
-
-            return result;
+            // Expand using pre-parsed body
+            return self.do_expand_macro(entry, args, span);
         }
 
         // Fallback: unresolved macro invocation
@@ -3764,23 +3794,11 @@ impl ExprParser {
                 call_args[prev_bound.len()] = accumulator;
                 call_args[prev_bound.len() + 1] = args[i];
 
-                // Expand the macro
+                // Expand the macro using pre-parsed body
                 let macro_entry = self.ctx.macro_defs.get(&macro_name);
                 if macro_entry.is_some() {
                     let entry = macro_entry.unwrap();
-                    let prev_macro_args = self.ctx.macro_args;
-                    self.ctx.macro_args = HashMap::new();
-                    for j in 0usize..entry.params.len() {
-                        if j < total {
-                            self.ctx.macro_args.insert(entry.params[j], call_args[j]);
-                        }
-                    }
-                    let prev_source = self.ctx.source;
-                    self.ctx.source = entry.source;
-                    accumulator = self.parse_expr(entry.body_node);
-                    self.ctx.source = prev_source;
-                    self.ctx.macro_args.free();
-                    self.ctx.macro_args = prev_macro_args;
+                    accumulator = self.do_expand_macro(entry, call_args, span);
                 }
             }
             return accumulator;
@@ -3930,64 +3948,11 @@ impl ExprParser {
                 all_args[wrapper_args.len() + j] = pieces[j];
             }
 
-            // Look up and expand the macro
+            // Look up and expand the macro using pre-parsed body
             let macro_entry = self.ctx.macro_defs.get(&wrapper_name);
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
-
-                let prev_args = self.ctx.macro_args;
-                let prev_vn = self.ctx.macro_variadic_name;
-                let prev_va = self.ctx.macro_variadic_args;
-                let prev_ei = self.ctx.macro_et_cetera_idx;
-                self.ctx.macro_args = HashMap::new();
-                self.ctx.macro_variadic_name = "";
-                self.ctx.macro_variadic_args = &[];
-                self.ctx.macro_et_cetera_idx = -1i32;
-
-                if entry.variadic_param_idx >= 0i32 {
-                    let vi = entry.variadic_param_idx as usize;
-                    for j in 0usize..vi {
-                        if j < total_args {
-                            self.ctx.macro_args.insert(entry.params[j], all_args[j]);
-                        }
-                    }
-                    let etc_count = if total_args + 1 >= entry.params.len() {
-                        total_args + 1 - entry.params.len()
-                    } else {
-                        0usize
-                    };
-                    let etc_args = self.ctx.arena.alloc_slice::<&Expr>(etc_count);
-                    for j in 0usize..etc_count {
-                        etc_args[j] = all_args[vi + j];
-                    }
-                    self.ctx.macro_variadic_name = entry.params[vi];
-                    self.ctx.macro_variadic_args = etc_args;
-                    for j in vi + 1..entry.params.len() {
-                        let ai = j + etc_count - 1;
-                        if ai < total_args {
-                            self.ctx.macro_args.insert(entry.params[j], all_args[ai]);
-                        }
-                    }
-                } else {
-                    for j in 0usize..entry.params.len() {
-                        if j < total_args {
-                            self.ctx.macro_args.insert(entry.params[j], all_args[j]);
-                        }
-                    }
-                }
-
-                let prev_source = self.ctx.source;
-                self.ctx.source = entry.source;
-                let result = self.parse_expr(entry.body_node);
-                self.ctx.source = prev_source;
-
-                self.ctx.macro_args.free();
-                self.ctx.macro_args = prev_args;
-                self.ctx.macro_variadic_name = prev_vn;
-                self.ctx.macro_variadic_args = prev_va;
-                self.ctx.macro_et_cetera_idx = prev_ei;
-
-                return result;
+                return self.do_expand_macro(entry, all_args, span);
             }
         }
 
@@ -4029,24 +3994,11 @@ impl ExprParser {
         if macro_entry.is_some() {
             let entry = macro_entry.unwrap();
 
-            let prev_args = self.ctx.macro_args;
-            self.ctx.macro_args = HashMap::new();
-
-            for i in 0usize..entry.params.len() {
-                if i < args_slice.len() {
-                    self.ctx.macro_args.insert(entry.params[i], args_slice[i]);
-                }
+            if entry.is_builtin {
+                return self.expand_builtin_macro(name, args_slice, span);
             }
 
-            let prev_source = self.ctx.source;
-            self.ctx.source = entry.source;
-            let result = self.parse_expr(entry.body_node);
-            self.ctx.source = prev_source;
-
-            self.ctx.macro_args.free();
-            self.ctx.macro_args = prev_args;
-
-            return result;
+            return self.do_expand_macro(entry, args_slice, span);
         }
 
         let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
@@ -4096,6 +4048,255 @@ impl ExprParser {
         let e = self.make_expr(EXPR_ET_CETERA, span);
         e.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
+    }
+
+    // === AST-based macro expansion ===
+
+    // Entry point: expand a macro with pre-parsed body.
+    // Sets up param_args and variadic_args, then calls expand_macro_expr.
+    fn do_expand_macro(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
+        let param_count = entry.params.len();
+        let param_args = self.ctx.arena.alloc_slice::<&Expr>(param_count);
+        let variadic_args: &[&Expr] = &[];
+
+        if entry.variadic_param_idx >= 0i32 {
+            let vi = entry.variadic_param_idx as usize;
+            // Non-variadic params before variadic
+            for i in 0usize..vi {
+                if i < call_args.len() {
+                    param_args[i] = call_args[i];
+                } else {
+                    param_args[i] = self.alloc_void(span);
+                }
+            }
+            // Variadic args: everything between non-variadic params
+            let non_variadic_count = param_count - 1; // exclude the variadic param itself
+            let etc_count = if call_args.len() > non_variadic_count {
+                call_args.len() - non_variadic_count
+            } else {
+                0usize
+            };
+            let etc_args = self.ctx.arena.alloc_slice::<&Expr>(etc_count);
+            for i in 0usize..etc_count {
+                etc_args[i] = call_args[vi + i];
+            }
+            variadic_args = etc_args;
+            // Placeholder for variadic param slot
+            param_args[vi] = self.alloc_void(span);
+            // Non-variadic params after variadic
+            for i in vi + 1..param_count {
+                let arg_idx = i + etc_count - 1;
+                if arg_idx < call_args.len() {
+                    param_args[i] = call_args[arg_idx];
+                } else {
+                    param_args[i] = self.alloc_void(span);
+                }
+            }
+        } else {
+            for i in 0usize..param_count {
+                if i < call_args.len() {
+                    param_args[i] = call_args[i];
+                } else {
+                    param_args[i] = self.alloc_void(span);
+                }
+            }
+        }
+
+        // Create ID replacement map for hygiene
+        let id_map: HashMap<usize, Id> = HashMap::new();
+        defer id_map.free();
+
+        let result = self.expand_macro_expr(
+            entry.body,
+            param_args,
+            variadic_args,
+            entry.variadic_param_idx,
+            -1i32,  // not in et cetera
+            &id_map,
+        );
+        result
+    }
+
+    // Recursively expand a pre-parsed macro body expression.
+    // Substitutes EXPR_MACRO_PARAM with args, expands EXPR_ET_CETERA,
+    // and recursively expands nested EXPR_MACRO_INVOCATION.
+    fn expand_macro_expr(
+        self: &ExprParser,
+        expr: &Expr,
+        param_args: &[&Expr],
+        variadic_args: &[&Expr],
+        variadic_param_idx: i32,
+        et_cetera_idx: i32,
+        id_map: &mut HashMap<usize, Id>,
+    ) -> &Expr {
+        // Substitute macro parameter
+        if expr.tag == EXPR_MACRO_PARAM {
+            let idx = expr.int_val as i32;
+            if expr.flag && et_cetera_idx >= 0i32 {
+                // Variadic param in et cetera context
+                let vi = et_cetera_idx as usize;
+                if vi < variadic_args.len() {
+                    return variadic_args[vi];
+                }
+                return self.alloc_void(expr.span);
+            }
+            if idx >= 0i32 && (idx as usize) < param_args.len() {
+                return param_args[idx as usize];
+            }
+            return self.alloc_void(expr.span);
+        }
+
+        // Expand nested macro invocation (only actual invocations, not bare references)
+        if expr.tag == EXPR_MACRO_INVOCATION && expr.flag {
+            // First expand the args
+            let expanded_args = self.expand_macro_args_list(
+                expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
+            );
+            // Look up the macro
+            let macro_entry = self.ctx.macro_defs.get(&expr.str_val);
+            if macro_entry.is_some() {
+                let entry = macro_entry.unwrap();
+                if entry.is_builtin {
+                    return self.expand_builtin_macro(expr.str_val, expanded_args, expr.span);
+                }
+                return self.do_expand_macro(entry, expanded_args, expr.span);
+            }
+            // Unresolved macro - keep with expanded args
+            let e = *expr;
+            e.args = expanded_args;
+            return self.ctx.alloc_expr(e);
+        }
+
+        // Leaf expressions that don't need expansion
+        if expr.tag == EXPR_INT_LIT || expr.tag == EXPR_FLOAT_LIT ||
+           expr.tag == EXPR_BOOL_LIT || expr.tag == EXPR_STRING_LIT ||
+           expr.tag == EXPR_CHAR_LIT || expr.tag == EXPR_NULL_LIT ||
+           expr.tag == EXPR_VOID || expr.tag == EXPR_ZEROED {
+            return expr;
+        }
+
+        // For non-macro identifiers (resolved at pre-parse time), just return as-is
+        if expr.tag == EXPR_LOCAL || expr.tag == EXPR_PARAM ||
+           expr.tag == EXPR_STATIC_REF || expr.tag == EXPR_FN_REF ||
+           expr.tag == EXPR_ENUM_REF || expr.tag == EXPR_BOUND_VALUE {
+            // Check if this local needs ID remapping (hygiene)
+            if expr.tag == EXPR_LOCAL {
+                let mapped = id_map.get(&expr.id._value);
+                if mapped.is_some() {
+                    let e = *expr;
+                    e.id = mapped.unwrap();
+                    return self.ctx.alloc_expr(e);
+                }
+            }
+            return expr;
+        }
+
+        // Clone the expression and recursively expand children
+        let e = *expr;
+
+        // Generate fresh ID for let bindings (hygiene)
+        if e.tag == EXPR_LET {
+            let new_id = self.ctx.next_id();
+            id_map.insert(e.id._value, new_id);
+            e.id = new_id;
+            // Register the new local in scope so it can be referenced
+            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                name: e.str_val,
+                kind: NamedItemKind::local(new_id),
+                span: e.span,
+            });
+        }
+
+        // Expand sub-expressions
+        if e.lhs as &void as usize != 0usize {
+            e.lhs = self.expand_macro_expr(e.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        }
+        if e.rhs as &void as usize != 0usize {
+            e.rhs = self.expand_macro_expr(e.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        }
+        if e.cond as &void as usize != 0usize {
+            e.cond = self.expand_macro_expr(e.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        }
+
+        // Expand arg lists (handling et cetera)
+        if e.args.len() > 0usize {
+            e.args = self.expand_macro_args_list(e.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        }
+
+        // Expand optional expression
+        if e.opt_expr.is_some() {
+            e.opt_expr = Option::some(self.expand_macro_expr(e.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+        }
+
+        // Expand switch arms
+        if e.switch_arms.len() > 0usize {
+            let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e.switch_arms.len());
+            for i in 0usize..e.switch_arms.len() {
+                let arm = e.switch_arms[i];
+                let new_patterns = self.ctx.arena.alloc_slice::<&Expr>(arm.pattern.len());
+                for j in 0usize..arm.pattern.len() {
+                    new_patterns[j] = self.expand_macro_expr(arm.pattern[j], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+                new_arms[i] = SwitchArm {
+                    pattern: new_patterns,
+                    body: self.expand_macro_expr(arm.body, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                };
+            }
+            e.switch_arms = new_arms;
+        }
+
+        // Expand field inits
+        if e.field_inits.len() > 0usize {
+            let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e.field_inits.len());
+            for i in 0usize..e.field_inits.len() {
+                new_inits[i] = FieldInit {
+                    name: e.field_inits[i].name,
+                    value: self.expand_macro_expr(e.field_inits[i].value, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                };
+            }
+            e.field_inits = new_inits;
+        }
+
+        // Expand lambda params (their types use Ty, not Expr - skip for now)
+        // Lambda bodies are in lhs, already handled above
+
+        self.ctx.alloc_expr(e)
+    }
+
+    // Expand an argument list, handling EXPR_ET_CETERA by unrolling variadic args.
+    fn expand_macro_args_list(
+        self: &ExprParser,
+        args: &[&Expr],
+        param_args: &[&Expr],
+        variadic_args: &[&Expr],
+        variadic_param_idx: i32,
+        et_cetera_idx: i32,
+        id_map: &mut HashMap<usize, Id>,
+    ) -> &[&Expr] {
+        let result: Vector<&Expr> = Vector::new();
+        defer result.free();
+
+        for i in 0usize..args.len() {
+            if args[i].tag == EXPR_ET_CETERA {
+                // Expand inner expression for each variadic arg
+                let inner = args[i].lhs;
+                for vi in 0usize..variadic_args.len() {
+                    result.push(self.expand_macro_expr(
+                        inner, param_args, variadic_args, variadic_param_idx, vi as i32, id_map
+                    ));
+                }
+            } else {
+                result.push(self.expand_macro_expr(
+                    args[i], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
+                ));
+            }
+        }
+
+        let slice = self.ctx.arena.alloc_slice::<&Expr>(result.len());
+        for i in 0usize..result.len() {
+            slice[i] = result[i];
+        }
+        slice
     }
 }
 

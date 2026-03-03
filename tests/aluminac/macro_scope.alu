@@ -1,0 +1,56 @@
+// Test that macros resolve names from their definition site, not call site.
+// This is the key behavior change: macro bodies are pre-parsed in the
+// definition-site scope, so unqualified names resolve correctly.
+
+// A helper function only visible at the module level
+fn _helper() -> i32 { 42i32 }
+
+// A macro that calls _helper - should resolve from definition site
+macro get_value!() {
+    _helper()
+}
+
+// A macro that calls another macro
+macro get_double!() {
+    get_value!() + get_value!()
+}
+
+// Nested: a macro calling a function and another macro
+fn _adder(a: i32, b: i32) -> i32 { a + b }
+
+macro add_helper($a, $b) {
+    _adder($a, $b)
+}
+
+macro add_and_double($x) {
+    add_helper!($x, $x)
+}
+
+// Test macro hygiene: let bindings don't collide across expansions
+macro make_let($val) {
+    {
+        let x = $val;
+        x
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: macro calling function from definition scope
+    if get_value!() != 42i32 { return 1i32; }
+
+    // Test 2: nested macro calling macro calling function
+    if get_double!() != 84i32 { return 2i32; }
+
+    // Test 3: macro calling function with arguments
+    if add_helper!(10i32, 20i32) != 30i32 { return 3i32; }
+
+    // Test 4: nested macro expansion
+    if add_and_double!(5i32) != 10i32 { return 4i32; }
+
+    // Test 5: hygiene - multiple macro expansions with let bindings
+    let a = make_let!(10i32);
+    let b = make_let!(20i32);
+    if a + b != 30i32 { return 5i32; }
+
+    0i32
+}

@@ -396,12 +396,14 @@ Still missing vs alumina-boot: source line display, caret highlighting, notes/su
 - Type substitution within macros
 - 11 builtin macros (see 2.2)
 
-**aluminac** (`parser.alu:3168-3278`):
-- Inline expansion by swapping `macro_args` array and re-parsing body node
+**aluminac** (`parser.alu`):
+- AST-based macro expansion: macro bodies are pre-parsed into `&Expr` trees at definition time (in the definition-site scope), not re-parsed at each call site
+- `EXPR_MACRO_PARAM` nodes in the pre-parsed body represent `$param` references, substituted with actual args during expansion
+- `expand_macro_expr` walks the pre-parsed AST and substitutes parameters, unrolls `EXPR_ET_CETERA` for variadic args, and recursively expands nested macro invocations
+- Fresh ID generation for `let` bindings in macro bodies (hygiene)
 - Handles `universal_macro_invocation` (method-syntax macros: `obj.macro!(args)`)
-- No fresh ID generation for macro locals (potential hygiene issues)
-- No higher-order macro support
-- No builtin macro infrastructure
+- Definition-site name resolution: names in macro bodies resolve where the macro is defined, not where it's called
+- 12 builtin macros: cfg, line, column, file, stringify, env, concat, include_bytes, format_args, bind, reduce, count
 
 ### 5.2. When/Static If
 
