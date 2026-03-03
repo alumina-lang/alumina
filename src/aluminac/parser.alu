@@ -2406,6 +2406,12 @@ impl ExprParser {
                 e.id = enum_id;
                 e.id2 = variant_id;
                 return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_MACRO {
+                // Macro used in expression context (e.g. as argument to bind!)
+                let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+                e.str_val = self.ctx.intern_str(name);
+                e.args = &[];
+                return self.ctx.alloc_expr(e);
             } else {
                 let e = self.make_expr(EXPR_LOCAL, span);
                 e.id = Id { _value: 0 };
@@ -2451,6 +2457,12 @@ impl ExprParser {
                 let e = self.make_expr(EXPR_ENUM_REF, span);
                 e.id = enum_id;
                 e.id2 = variant_id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_MACRO {
+                // Macro used in expression context (e.g. as argument to bind!)
+                let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+                e.str_val = item.name;
+                e.args = &[];
                 return self.ctx.alloc_expr(e);
             } else {
                 let e = self.make_expr(EXPR_LOCAL, span);
@@ -3624,6 +3636,83 @@ impl ExprParser {
             // Parse format string and interleave pieces with arguments,
             // then invoke the wrapper macro with the result.
             return self.expand_format_args(args, span);
+        } else if name == "bind" {
+            // bind!(macro_ref, extra_args...) -> bound macro expression
+            // Returns an EXPR_MACRO_INVOCATION with the macro name and bound args.
+            if args.len() == 0usize {
+                return self.alloc_void(span);
+            }
+            let macro_ref = args[0];
+            // Extract macro name from the reference
+            let macro_name: &[u8] = "";
+            let prev_bound: &[&Expr] = &[];
+            if macro_ref.tag == EXPR_MACRO_INVOCATION {
+                macro_name = macro_ref.str_val;
+                prev_bound = macro_ref.args;
+            }
+            // Combine previously bound args with new args
+            let new_bound_count = prev_bound.len() + args.len() - 1;
+            let bound_args = self.ctx.arena.alloc_slice::<&Expr>(new_bound_count);
+            for i in 0usize..prev_bound.len() {
+                bound_args[i] = prev_bound[i];
+            }
+            for i in 1usize..args.len() {
+                bound_args[prev_bound.len() + i - 1] = args[i];
+            }
+            let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+            e.str_val = macro_name;
+            e.args = bound_args;
+            return self.ctx.alloc_expr(e);
+        } else if name == "reduce" {
+            // reduce!(macro_ref, base, arg1, arg2, ...) -> fold
+            // Equivalent to: macro_ref(macro_ref(macro_ref(base, arg1), arg2), arg3)
+            if args.len() < 2usize {
+                return self.alloc_void(span);
+            }
+            let macro_ref = args[0];
+            let macro_name: &[u8] = "";
+            let prev_bound: &[&Expr] = &[];
+            if macro_ref.tag == EXPR_MACRO_INVOCATION {
+                macro_name = macro_ref.str_val;
+                prev_bound = macro_ref.args;
+            }
+            let accumulator: &Expr = args[1];
+            // Fold over remaining args
+            for i in 2usize..args.len() {
+                // Invoke the macro with (bound_args..., accumulator, args[i])
+                let total = prev_bound.len() + 2;
+                let call_args = self.ctx.arena.alloc_slice::<&Expr>(total);
+                for j in 0usize..prev_bound.len() {
+                    call_args[j] = prev_bound[j];
+                }
+                call_args[prev_bound.len()] = accumulator;
+                call_args[prev_bound.len() + 1] = args[i];
+
+                // Expand the macro
+                let macro_entry = self.ctx.macro_defs.get(&macro_name);
+                if macro_entry.is_some() {
+                    let entry = macro_entry.unwrap();
+                    let prev_macro_args = self.ctx.macro_args;
+                    self.ctx.macro_args = HashMap::new();
+                    for j in 0usize..entry.params.len() {
+                        if j < total {
+                            self.ctx.macro_args.insert(entry.params[j], call_args[j]);
+                        }
+                    }
+                    let prev_source = self.ctx.source;
+                    self.ctx.source = entry.source;
+                    accumulator = self.parse_expr(entry.body_node);
+                    self.ctx.source = prev_source;
+                    self.ctx.macro_args.free();
+                    self.ctx.macro_args = prev_macro_args;
+                }
+            }
+            return accumulator;
+        } else if name == "count" {
+            // count!(args...) -> integer literal counting the number of args
+            let e = self.make_expr(EXPR_INT_LIT, span);
+            e.int_val = args.len() as u64;
+            return self.ctx.alloc_expr(e);
         }
 
         // Unknown builtin macro - emit void
