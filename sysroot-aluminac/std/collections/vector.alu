@@ -197,6 +197,26 @@ impl Vector<T> {
         self._data[0usize..self._length]
     }
 
+    /// @ std::mem::Borrowable::borrow
+    fn borrow(self: &Vector<T>) -> &[T] {
+        self.as_slice()
+    }
+
+    /// @ std::mem::BorrowableMut::borrow_mut
+    fn borrow_mut(self: &mut Vector<T>) -> &mut [T] {
+        self.as_slice_mut()
+    }
+
+    /// Free the vector and all its elements (if they are Freeable).
+    fn free_all(self: &mut Vector<T>) {
+        when std::typing::matches::<T, std::mem::Freeable<T>>() {
+            for i in 0usize..self._length {
+                self._data[i].free();
+            }
+        }
+        self.free();
+    }
+
     /// Move the vector's contents, leaving `self` empty.
     fn move(self: &mut Vector<T>) -> Vector<T> {
         let ret = *self;
@@ -221,3 +241,4 @@ impl Vector<T> {
         self._length = 0usize;
     }
 }
+

@@ -50,6 +50,15 @@ the protocol because it only resolves Named types, not Placeholders.
 **Workaround**: Use `is` directly with concrete protocol types (e.g.
 `std::intrinsics::uninitialized::<T>() is std::builtins::Signed`).
 
+### Generic method in generic impl with same-name type parameter
+When a generic method inside `impl Foo<T>` has a bound like `I: Iterator<I, T>`,
+the monomorphizer incorrectly resolves T to the iterator type I instead of the
+element type. For example, `vec.push(item.unwrap())` in
+`fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: &mut I)` generates a
+push call with SliceIterator type instead of i32.
+**Workaround**: Move the generic method to a free function outside the impl block,
+or use `iter.to_vector()` instead of `Vector::from_iter()`.
+
 ## Features to Port
 
 ### Protocol mixin annotations

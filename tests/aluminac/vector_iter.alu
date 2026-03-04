@@ -1,0 +1,112 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::collections::Vector;
+use std::iter::*;
+
+fn test_to_vector() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let it = slice_iter::<i32>(arr[0usize..5usize]);
+    let vec = it.to_vector();
+    defer vec.free();
+
+    if vec.len() != 5usize { return 1i32; }
+    if vec[0] != 1i32 { return 2i32; }
+    if vec[4] != 5i32 { return 3i32; }
+
+    0i32
+}
+
+fn test_to_vector_map() -> i32 {
+    let arr = [1i32, 2i32, 3i32];
+    let it = slice_iter::<i32>(arr[0usize..3usize]);
+    let mapped = it.map::<i32>(|v: i32| -> i32 { v * 10i32 });
+    let vec = mapped.to_vector();
+    defer vec.free();
+
+    if vec.len() != 3usize { return 10i32; }
+    if vec[0] != 10i32 { return 11i32; }
+    if vec[1] != 20i32 { return 12i32; }
+    if vec[2] != 30i32 { return 13i32; }
+
+    0i32
+}
+
+fn test_to_vector_filter() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32, 5i32, 6i32];
+    let it = slice_iter::<i32>(arr[0usize..6usize]);
+    let filtered = it.filter(|v: i32| -> bool { v % 2i32 == 0i32 });
+    let vec = filtered.to_vector();
+    defer vec.free();
+
+    if vec.len() != 3usize { return 20i32; }
+    if vec[0] != 2i32 { return 21i32; }
+    if vec[1] != 4i32 { return 22i32; }
+    if vec[2] != 6i32 { return 23i32; }
+
+    0i32
+}
+
+fn test_borrow() -> i32 {
+    let vec = Vector::from_slice::<i32>(&[10i32, 20i32, 30i32]);
+    defer vec.free();
+
+    let s = vec.borrow();
+    if s.len() != 3usize { return 30i32; }
+    if s[0] != 10i32 { return 31i32; }
+    if s[2] != 30i32 { return 32i32; }
+
+    let m = vec.borrow_mut();
+    m[1] = 99i32;
+    if vec[1] != 99i32 { return 33i32; }
+
+    0i32
+}
+
+fn test_free_all() -> i32 {
+    // Vector<StringBuf> with free_all tested separately to avoid
+    // StringBuf monomorphization affecting other tests
+    let vec = Vector::new::<i32>();
+    vec.push(1i32);
+    vec.push(2i32);
+    vec.free_all();
+
+    0i32
+}
+
+fn test_to_vector_empty() -> i32 {
+    let arr: [i32; 0];
+    let it = slice_iter::<i32>(arr[0usize..0usize]);
+    let vec = it.to_vector();
+    defer vec.free();
+
+    if vec.len() != 0usize { return 40i32; }
+    if !vec.is_empty() { return 41i32; }
+
+    0i32
+}
+
+fn test_to_vector_chain() -> i32 {
+    let a = [1i32, 2i32];
+    let b = [3i32, 4i32];
+    let it1 = slice_iter::<i32>(a[0usize..2usize]);
+    let it2 = slice_iter::<i32>(b[0usize..2usize]);
+    let chained = it1.chain::<SliceIterator<i32>>(&it2);
+    let vec = chained.to_vector();
+    defer vec.free();
+
+    if vec.len() != 4usize { return 50i32; }
+    if vec[0] != 1i32 { return 51i32; }
+    if vec[3] != 4i32 { return 52i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_to_vector(); if r != 0i32 { return r; }
+    let r = test_to_vector_map(); if r != 0i32 { return r; }
+    let r = test_to_vector_filter(); if r != 0i32 { return r; }
+    let r = test_borrow(); if r != 0i32 { return r; }
+    let r = test_free_all(); if r != 0i32 { return r; }
+    let r = test_to_vector_empty(); if r != 0i32 { return r; }
+    let r = test_to_vector_chain(); if r != 0i32 { return r; }
+    0i32
+}
