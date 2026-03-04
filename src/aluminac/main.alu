@@ -205,7 +205,7 @@ impl Compiler {
                     child_prefix.extend_from_slice(name);
 
                     dir_stack.push((child_path, child_prefix));
-                } else if name.len() > 4 && name[name.len() - 4..] == ".alu" {
+                } else if std::string::ends_with(name, ".alu") {
                     // Skip test.alu in the sysroot root
                     if name == "test.alu" && mod_prefix.len() == 0 {
                         continue;
@@ -532,29 +532,15 @@ impl Compiler {
     /// the nested module scope hierarchy, returning the innermost scope.
     fn resolve_or_create_module_scope(self: &mut Compiler, root_scope: u32, module_path: &[u8]) -> u32 {
         let current = root_scope;
-
-        // Split module_path by "::"
-        let seg_start: usize = 0;
-        let pos: usize = 0;
-        while pos < module_path.len() {
-            if pos + 1 < module_path.len() && module_path[pos] == ':' as u8 && module_path[pos + 1] == ':' as u8 {
-                if pos > seg_start {
-                    let seg = module_path[seg_start..pos];
-                    current = self.ensure_module_scope(current, seg);
-                }
-                pos = pos + 2;
-                seg_start = pos;
-            } else {
-                pos = pos + 1;
+        let iter = std::string::split(module_path, "::");
+        loop {
+            let seg = iter.next();
+            if seg.is_none() { break; }
+            let s = seg.unwrap();
+            if s.len() > 0usize {
+                current = self.ensure_module_scope(current, s);
             }
         }
-
-        // Last segment
-        if seg_start < module_path.len() {
-            let seg = module_path[seg_start..module_path.len()];
-            current = self.ensure_module_scope(current, seg);
-        }
-
         current
     }
 
