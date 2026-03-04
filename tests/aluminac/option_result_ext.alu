@@ -1,0 +1,96 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::string::StringBuf;
+use std::io::StringWriter;
+
+fn test_option_combinators() -> i32 {
+    // map
+    let a = Option::some(42i32);
+    let b = a.map(|v: i32| -> i32 { v + 1i32 });
+    if b.unwrap() != 43i32 { return 1i32; }
+
+    // and_then
+    let c = Option::some(10i32);
+    let d = c.and_then(|v: i32| -> Option<i32> {
+        if v > 5i32 { Option::some(v * 2i32) } else { Option::none() }
+    });
+    if d.unwrap() != 20i32 { return 2i32; }
+
+    // or
+    let e: Option<i32> = Option::none();
+    let f = e.or(Option::some(99i32));
+    if f.unwrap() != 99i32 { return 3i32; }
+
+    // ok_or
+    let l = Option::some(42i32);
+    let m = l.ok_or(0i32);
+    if m.unwrap() != 42i32 { return 6i32; }
+    let n: Option<i32> = Option::none();
+    let o = n.ok_or(99i32);
+    if o.unwrap_err() != 99i32 { return 7i32; }
+
+    // unwrap_or_else
+    let p: Option<i32> = Option::none();
+    let q = p.unwrap_or_else(|| -> i32 { 123i32 });
+    if q != 123i32 { return 8i32; }
+
+    // replace
+    let r = Option::some(10i32);
+    let old = r.replace(20i32);
+    if old.unwrap() != 10i32 { return 9i32; }
+    if r.unwrap() != 20i32 { return 10i32; }
+
+    0i32
+}
+
+fn test_result_combinators() -> i32 {
+    // map
+    let a: Result<i32, i32> = Result::ok(42i32);
+    let b = a.map(|v: i32| -> i32 { v + 1i32 });
+    if b.unwrap() != 43i32 { return 20i32; }
+
+    // map_err
+    let c: Result<i32, i32> = Result::err(5i32);
+    let d = c.map_err(|v: i32| -> i32 { v * 2i32 });
+    if d.unwrap_err() != 10i32 { return 21i32; }
+
+    // and_then
+    let e: Result<i32, i32> = Result::ok(42i32);
+    let f = e.and_then(|v: i32| -> Result<i32, i32> { Result::ok(v + 1i32) });
+    if f.unwrap() != 43i32 { return 22i32; }
+
+    // get / get_err
+    let g: Result<i32, i32> = Result::ok(42i32);
+    let h = g.get();
+    if h.unwrap() != 42i32 { return 23i32; }
+
+    let i: Result<i32, i32> = Result::err(99i32);
+    let j = i.get_err();
+    if j.unwrap() != 99i32 { return 24i32; }
+
+    // unwrap_or
+    let k: Result<i32, i32> = Result::err(0i32);
+    if k.unwrap_or(42i32) != 42i32 { return 25i32; }
+
+    // unwrap_or_else
+    let l: Result<i32, i32> = Result::err(5i32);
+    if l.unwrap_or_else(|e: i32| -> i32 { e * 10i32 }) != 50i32 { return 26i32; }
+
+    0i32
+}
+
+fn test_string_writer_formatter() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+    let w = StringWriter::new(&s);
+    let _ = write!(&w, "hello {} world {}", 42i32, "test");
+    if s.as_slice() != "hello 42 world test" { return 70i32; }
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = 0i32;
+    r = test_option_combinators(); if r != 0i32 { return r; }
+    r = test_result_combinators(); if r != 0i32 { return r; }
+    r = test_string_writer_formatter(); if r != 0i32 { return r; }
+    0i32
+}
