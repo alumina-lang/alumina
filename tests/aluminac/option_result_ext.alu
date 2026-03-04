@@ -39,6 +39,41 @@ fn test_option_combinators() -> i32 {
     if old.unwrap() != 10i32 { return 9i32; }
     if r.unwrap() != 20i32 { return 10i32; }
 
+    // flatten
+    let nested = Option::some(Option::some(42i32));
+    let flat = nested.flatten();
+    if flat.unwrap() != 42i32 { return 11i32; }
+    let nested2: Option<Option<i32>> = Option::some(Option::none());
+    if nested2.flatten().is_some() { return 12i32; }
+
+    // zip
+    let x = Option::some(1i32);
+    let y = Option::some(2i32);
+    let z = x.zip(y);
+    if z.is_none() { return 13i32; }
+    let pair = z.unwrap();
+    if pair.0 != 1i32 { return 14i32; }
+    if pair.1 != 2i32 { return 15i32; }
+
+    // ok_or_else
+    let empty: Option<i32> = Option::none();
+    let res = empty.ok_or_else(|| -> i32 { 404i32 });
+    if res.unwrap_err() != 404i32 { return 16i32; }
+
+    // transpose
+    let inner_ok: Result<i32, i32> = Result::ok(42i32);
+    let opt_ok: Option<Result<i32, i32>> = Option::some(inner_ok);
+    let res_opt = opt_ok.transpose();
+    if res_opt.is_err() { return 17i32; }
+    let opt_val = res_opt.unwrap();
+    if opt_val.unwrap() != 42i32 { return 18i32; }
+
+    let opt_none: Option<Result<i32, i32>> = Option::none();
+    let res_opt2 = opt_none.transpose();
+    if res_opt2.is_err() { return 19i32; }
+    let opt_val2 = res_opt2.unwrap();
+    if opt_val2.is_some() { return 110i32; }
+
     0i32
 }
 
@@ -74,6 +109,33 @@ fn test_result_combinators() -> i32 {
     // unwrap_or_else
     let l: Result<i32, i32> = Result::err(5i32);
     if l.unwrap_or_else(|e: i32| -> i32 { e * 10i32 }) != 50i32 { return 26i32; }
+
+    // or_else
+    let m: Result<i32, i32> = Result::err(5i32);
+    let n = m.or_else(|e: i32| -> Result<i32, i32> { Result::ok(e * 10i32) });
+    if n.unwrap() != 50i32 { return 27i32; }
+    let o: Result<i32, i32> = Result::ok(42i32);
+    let p = o.or_else(|e: i32| -> Result<i32, i32> { Result::err(e) });
+    if p.unwrap() != 42i32 { return 28i32; }
+
+    // transpose
+    let q_inner: Option<i32> = Option::some(42i32);
+    let q: Result<Option<i32>, i32> = Result::ok(q_inner);
+    let r = q.transpose();
+    if r.is_none() { return 29i32; }
+    let r_inner = r.unwrap();
+    if r_inner.unwrap() != 42i32 { return 30i32; }
+
+    let s_inner: Option<i32> = Option::none();
+    let s: Result<Option<i32>, i32> = Result::ok(s_inner);
+    let s_t = s.transpose();
+    if s_t.is_some() { return 31i32; }
+
+    let t: Result<Option<i32>, i32> = Result::err(99i32);
+    let u = t.transpose();
+    if u.is_none() { return 32i32; }
+    let u_inner = u.unwrap();
+    if u_inner.unwrap_err() != 99i32 { return 33i32; }
 
     0i32
 }

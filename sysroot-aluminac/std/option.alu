@@ -186,6 +186,24 @@ impl Option<T> {
 }
 
 impl Option {
+    /// Convert `Option<Result<T, E>>` to `Result<Option<T>, E>`.
+    fn transpose<T, E>(self: Option<std::result::Result<T, E>>) -> std::result::Result<Option<T>, E> {
+        if self.is_some() {
+            let inner = self.unwrap();
+            if inner.is_ok() {
+                let v: T = inner.unwrap();
+                let opt: Option<T> = Option::some(v);
+                std::result::Result::ok(opt)
+            } else {
+                let e: E = inner.unwrap_err();
+                std::result::Result::err(e)
+            }
+        } else {
+            let none_val: Option<T> = Option::none();
+            std::result::Result::ok(none_val)
+        }
+    }
+
     /// Compare two options for equality.
     fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
         if lhs._is_some && rhs._is_some {

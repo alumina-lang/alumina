@@ -1541,9 +1541,15 @@ impl Mono {
         }
         let def = method_def.unwrap();
 
-        // Build type args from the concrete type's struct type args
+        // Build type args from the concrete type's struct type args.
+        // Only use them when the count matches the method's generic params,
+        // indicating the method's generics correspond to the struct's type params
+        // (e.g. `impl Option<T> { fn foo(self: &Option<T>) }`).
+        // When counts differ, the method has its own generic params independent
+        // of the struct (e.g. `impl Option { fn transpose<T, E>(...) }`).
         let method_type_args: &[&IrTy] = &[];
-        if concrete_ty.tag == IrTyTag::Struct {
+        if concrete_ty.tag == IrTyTag::Struct
+            && concrete_ty.struct_ref.type_args.len() == def.generic_params.len() {
             method_type_args = concrete_ty.struct_ref.type_args;
         }
 
@@ -1559,10 +1565,21 @@ impl Mono {
             method_type_args = extra;
         }
 
-        // If any type args are void (unresolved from type alias generic params),
-        // use argument/return type inference to fill them in.
-        // This happens when calling e.g. Result::ok(val) where Result is a type alias
-        // `type Result<T> = std::result::Result<T, Error>` and T wasn't bound.
+        // Pad method_type_args with void if shorter than needed, so inference
+        // can fill in the missing generic params.
+        if method_type_args.len() < def.generic_params.len() {
+            let padded = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
+            for i in 0usize..method_type_args.len() {
+                padded[i] = method_type_args[i];
+            }
+            for i in method_type_args.len()..def.generic_params.len() {
+                padded[i] = self.ctx.void_ty;
+            }
+            method_type_args = padded as &[&IrTy];
+        }
+
+        // If any type args are void (unresolved from type alias generic params
+        // or from padding above), use argument type inference to fill them in.
         if def.generic_params.len() > 0 {
             let has_unresolved = false;
             for i in 0usize..method_type_args.len() {
@@ -3328,9 +3345,52 @@ impl Mono {
         }
     }
 
+    // Recursively unify a parameter type pattern against a concrete IR type to extract
+    // placeholder bindings for generic inference.
+    fn unify_type_for_inference(
+        self: &mut Mono,
+        param_ty: &Ty,
+        arg_ty: &IrTy,
+        inferred: &mut [&IrTy],
+        found: &mut [bool],
+        generic_params: &[GenericParam],
+    ) {
+        if param_ty.tag == TyTag::Placeholder {
+            for g in 0usize..generic_params.len() {
+                if generic_params[g].id._value == param_ty.id._value && !found[g] {
+                    inferred[g] = arg_ty;
+                    found[g] = true;
+                    break;
+                }
+            }
+        } else if param_ty.tag == TyTag::Pointer {
+            if arg_ty.tag == IrTyTag::Pointer {
+                self.unify_type_for_inference(param_ty.inner, arg_ty.inner, inferred, found, generic_params);
+            }
+        } else if param_ty.tag == TyTag::Slice {
+            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems.len() == 2 && arg_ty.elems[0].tag == IrTyTag::Pointer {
+                self.unify_type_for_inference(param_ty.inner, arg_ty.elems[0].inner, inferred, found, generic_params);
+            } else if arg_ty.tag == IrTyTag::Slice {
+                self.unify_type_for_inference(param_ty.inner, arg_ty.inner, inferred, found, generic_params);
+            }
+        } else if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
+            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref.type_args.len() >= param_ty.elems.len() {
+                for i in 0usize..param_ty.elems.len() {
+                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.struct_ref.type_args[i], inferred, found, generic_params);
+                }
+            }
+        } else if param_ty.tag == TyTag::Tuple && param_ty.elems.len() > 0 {
+            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems.len() >= param_ty.elems.len() {
+                for i in 0usize..param_ty.elems.len() {
+                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.elems[i], inferred, found, generic_params);
+                }
+            }
+        }
+    }
+
     // Infer type arguments for a generic function call from the argument types.
-    // For each generic parameter, if it appears directly as a param type (TyTag::Placeholder),
-    // use the monomorphized type of the corresponding argument.
+    // Recursively unifies parameter types against argument types to extract
+    // placeholder bindings, supporting arbitrarily nested generic types.
     fn infer_type_args(self: &mut Mono, def: &FnDef, args: &[&Expr]) -> &[&IrTy] {
         let num_generics = def.generic_params.len();
         let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
@@ -3345,66 +3405,8 @@ impl Mono {
         for p in 0usize..num_params {
             if p >= args.len() { break; }
             let param_ty = def.params[p].ty;
-
-            // Direct placeholder match: fn foo<T>(x: T) -> T maps from x's type
-            if param_ty.tag == TyTag::Placeholder {
-                for g in 0usize..num_generics {
-                    if def.generic_params[g].id._value == param_ty.id._value {
-                        let direct_arg_ty = self.lower_expr(args[p]).ty;
-                        inferred[g] = direct_arg_ty;
-                        found[g] = true;
-                        break;
-                    }
-                }
-            }
-            // Pointer to placeholder: fn foo<T>(x: &T)
-            if param_ty.tag == TyTag::Pointer && param_ty.inner.tag == TyTag::Placeholder {
-                for g in 0usize..num_generics {
-                    if def.generic_params[g].id._value == param_ty.inner.id._value {
-                        let ptr_arg_ty = self.lower_expr(args[p]).ty;
-                        // Unwrap pointer
-                        if ptr_arg_ty.tag == IrTyTag::Pointer {
-                            inferred[g] = ptr_arg_ty.inner;
-                            found[g] = true;
-                        }
-                        break;
-                    }
-                }
-            }
-            // Slice of placeholder: fn foo<T>(x: &[T])
-            if param_ty.tag == TyTag::Slice && param_ty.inner.tag == TyTag::Placeholder {
-                for g in 0usize..num_generics {
-                    if def.generic_params[g].id._value == param_ty.inner.id._value {
-                        let slice_arg_ty = self.lower_expr(args[p]).ty;
-                        // Unwrap slice (tuple of ptr + len)
-                        if slice_arg_ty.tag == IrTyTag::Tuple && slice_arg_ty.elems.len() == 2 && slice_arg_ty.elems[0].tag == IrTyTag::Pointer {
-                            inferred[g] = slice_arg_ty.elems[0].inner;
-                            found[g] = true;
-                        } else if slice_arg_ty.tag == IrTyTag::Slice {
-                            inferred[g] = slice_arg_ty.inner;
-                            found[g] = true;
-                        }
-                        break;
-                    }
-                }
-            }
-            // Generic type with placeholder args: fn foo<Tm>(x: SomeType<Tm>)
-            if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
-                let gen_arg_ty = self.lower_expr(args[p]).ty;
-                if gen_arg_ty.tag == IrTyTag::Struct && gen_arg_ty.struct_ref.type_args.len() >= param_ty.elems.len() {
-                    for te in 0usize..param_ty.elems.len() {
-                        if param_ty.elems[te].tag == TyTag::Placeholder {
-                            for g in 0usize..num_generics {
-                                if def.generic_params[g].id._value == param_ty.elems[te].id._value && !found[g] {
-                                    inferred[g] = gen_arg_ty.struct_ref.type_args[te];
-                                    found[g] = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let arg_ty = self.lower_expr(args[p]).ty;
+            self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
         }
 
         // Try to infer remaining generics from Fn bounds.
@@ -3844,84 +3846,50 @@ impl Mono {
             }
         }
 
-        // Infer any remaining type args from the actual call arguments.
-        // Some type args may already be provided (e.g. struct type args for slice/builtin methods),
-        // but additional method-level generics need to be inferred.
-        if combined_type_args.len() < def.generic_params.len() {
+        // Infer type args from the actual call arguments (including self).
+        // For methods in non-generic impl blocks (e.g. `impl Option { fn transpose<T, E>(...) }`),
+        // the struct's type_args don't correspond to the method's generic params, so we must
+        // infer from the self parameter via recursive type unification.
+        if def.generic_params.len() > 0 {
             let num_generics = def.generic_params.len();
             let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
+            let found = self.ctx.arena.alloc_slice::<bool>(num_generics);
             let found_count = 0usize;
-            // Pre-fill with already-known type args
             for i in 0usize..num_generics {
-                if i < combined_type_args.len() {
-                    inferred[i] = combined_type_args[i];
-                    found_count = found_count + 1usize;
-                } else {
-                    inferred[i] = self.ctx.void_ty;
-                }
+                inferred[i] = self.ctx.void_ty;
+                found[i] = false;
             }
-            // Match params (starting from index 1, skipping self) against args
+
+            // Infer from the self parameter using recursive unification.
+            if def.params.len() > 0 {
+                let self_param_ty = def.params[0].ty;
+                let self_arg_ty = ir_obj.ty;
+                // Unwrap pointer for &self / &mut self
+                if self_param_ty.tag == TyTag::Pointer {
+                    self_param_ty = self_param_ty.inner;
+                    if self_arg_ty.tag == IrTyTag::Pointer {
+                        self_arg_ty = self_arg_ty.inner;
+                    }
+                }
+                self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, def.generic_params);
+            }
+
+            // Then infer from explicit args (skipping self)
             let num_explicit_params = if def.params.len() > 0 { def.params.len() - 1 } else { 0usize };
             for p in 0usize..num_explicit_params {
                 if p >= expr.args.len() { break; }
                 let param_ty = def.params[p + 1].ty;  // +1 to skip self
-                // Direct placeholder match: fn foo<T>(value: T)
-                if param_ty.tag == TyTag::Placeholder {
-                    for g in 0usize..num_generics {
-                        if def.generic_params[g].id._value == param_ty.id._value {
-                            let m_direct_arg_ty = self.lower_expr(expr.args[p]).ty;
-                            inferred[g] = m_direct_arg_ty;
-                            found_count = found_count + 1usize;
-                            break;
-                        }
-                    }
-                }
-                // Pointer to placeholder: fn foo<T>(x: &T)
-                if param_ty.tag == TyTag::Pointer && param_ty.inner.tag == TyTag::Placeholder {
-                    for g in 0usize..num_generics {
-                        if def.generic_params[g].id._value == param_ty.inner.id._value {
-                            let m_ptr_arg_ty = self.lower_expr(expr.args[p]).ty;
-                            if m_ptr_arg_ty.tag == IrTyTag::Pointer {
-                                inferred[g] = m_ptr_arg_ty.inner;
-                                found_count = found_count + 1usize;
-                            }
-                            break;
-                        }
-                    }
-                }
-                // Generic type with placeholder args: fn foo<Tm>(x: SomeType<Tm>)
-                if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
-                    let m_gen_arg_ty = self.lower_expr(expr.args[p]).ty;
-                    // Match against struct type args
-                    if m_gen_arg_ty.tag == IrTyTag::Struct && m_gen_arg_ty.struct_ref.type_args.len() >= param_ty.elems.len() {
-                        for te in 0usize..param_ty.elems.len() {
-                            if param_ty.elems[te].tag == TyTag::Placeholder {
-                                for g in 0usize..num_generics {
-                                    if def.generic_params[g].id._value == param_ty.elems[te].id._value && inferred[g].is_void() {
-                                        inferred[g] = m_gen_arg_ty.struct_ref.type_args[te];
-                                        found_count = found_count + 1usize;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Slice of placeholder: fn foo<T>(x: &[T])
-                if param_ty.tag == TyTag::Slice && param_ty.inner.tag == TyTag::Placeholder {
-                    for g in 0usize..num_generics {
-                        if def.generic_params[g].id._value == param_ty.inner.id._value {
-                            let m_slice_arg_ty = self.lower_expr(expr.args[p]).ty;
-                            if m_slice_arg_ty.tag == IrTyTag::Slice {
-                                inferred[g] = m_slice_arg_ty.inner;
-                                found_count = found_count + 1usize;
-                            } else if m_slice_arg_ty.tag == IrTyTag::Tuple && m_slice_arg_ty.elems.len() == 2 && m_slice_arg_ty.elems[0].tag == IrTyTag::Pointer {
-                                inferred[g] = m_slice_arg_ty.elems[0].inner;
-                                found_count = found_count + 1usize;
-                            }
-                            break;
-                        }
-                    }
+                let arg_ty = self.lower_expr(expr.args[p]).ty;
+                self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
+            }
+
+            // Fill remaining from combined_type_args where inference didn't produce a result
+            for i in 0usize..num_generics {
+                if found[i] {
+                    found_count = found_count + 1usize;
+                } else if i < combined_type_args.len() {
+                    inferred[i] = combined_type_args[i];
+                    found_count = found_count + 1usize;
                 }
             }
             // Infer generics from Fn bounds (e.g. F: Fn(T) -> Tm => infer Tm from lambda return type)
