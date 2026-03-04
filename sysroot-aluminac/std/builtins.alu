@@ -54,6 +54,30 @@ impl u8 {
     }
 }
 
+#[lang(builtin_u16)]
+struct u16 {}
+impl u16 {
+    fn min_value() -> u16 { 0u16 }
+    fn max_value() -> u16 { 65535u16 }
+    fn equals(lhs: &u16, rhs: &u16) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &u16, rhs: &u16) -> bool { *lhs != *rhs }
+    fn compare(lhs: &u16, rhs: &u16) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &u16, rhs: &u16) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &u16, rhs: &u16) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &u16, rhs: &u16) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &u16, rhs: &u16) -> bool { *lhs >= *rhs }
+    fn fmt<F: std::fmt::Formatter<F>>(self: &u16, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+    }
+    fn hash<H: std::hash::Hasher<H>>(self: &u16, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 2usize));
+    }
+}
+
 #[lang(builtin_u32)]
 struct u32 {}
 impl u32 {
@@ -136,6 +160,56 @@ impl usize {
     }
 }
 
+#[lang(builtin_i8)]
+struct i8 {}
+impl i8 {
+    fn min_value() -> i8 { -128i8 }
+    fn max_value() -> i8 { 127i8 }
+    fn abs(self: &i8) -> i8 { if *self < 0i8 { -*self } else { *self } }
+    fn equals(lhs: &i8, rhs: &i8) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &i8, rhs: &i8) -> bool { *lhs != *rhs }
+    fn compare(lhs: &i8, rhs: &i8) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &i8, rhs: &i8) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &i8, rhs: &i8) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &i8, rhs: &i8) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &i8, rhs: &i8) -> bool { *lhs >= *rhs }
+    fn fmt<F: std::fmt::Formatter<F>>(self: &i8, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+    }
+    fn hash<H: std::hash::Hasher<H>>(self: &i8, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 1usize));
+    }
+}
+
+#[lang(builtin_i16)]
+struct i16 {}
+impl i16 {
+    fn min_value() -> i16 { -32768i16 }
+    fn max_value() -> i16 { 32767i16 }
+    fn abs(self: &i16) -> i16 { if *self < 0i16 { -*self } else { *self } }
+    fn equals(lhs: &i16, rhs: &i16) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &i16, rhs: &i16) -> bool { *lhs != *rhs }
+    fn compare(lhs: &i16, rhs: &i16) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &i16, rhs: &i16) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &i16, rhs: &i16) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &i16, rhs: &i16) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &i16, rhs: &i16) -> bool { *lhs >= *rhs }
+    fn fmt<F: std::fmt::Formatter<F>>(self: &i16, f: &mut F) -> std::fmt::Result {
+        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+    }
+    fn hash<H: std::hash::Hasher<H>>(self: &i16, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 2usize));
+    }
+}
+
 #[lang(builtin_i32)]
 struct i32 {}
 impl i32 {
@@ -208,6 +282,102 @@ impl isize {
     }
     fn hash<H: std::hash::Hasher<H>>(self: &isize, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, std::mem::size_of::<isize>()));
+    }
+}
+
+#[lang(builtin_f32)]
+struct f32 {}
+impl f32 {
+    fn nan() -> f32 { 0.0f32 / 0.0f32 }
+    fn infinity() -> f32 { 1.0f32 / 0.0f32 }
+    fn neg_infinity() -> f32 { -1.0f32 / 0.0f32 }
+    fn min_value() -> f32 { -3.40282347e+38f32 }
+    fn max_value() -> f32 { 3.40282347e+38f32 }
+    fn epsilon() -> f32 { 1.1920929e-7f32 }
+    fn is_nan(self: &f32) -> bool { *self != *self }
+    fn is_infinite(self: &f32) -> bool { *self == f32::infinity() || *self == f32::neg_infinity() }
+    fn is_finite(self: &f32) -> bool { !self.is_nan() && !self.is_infinite() }
+    fn abs(self: &f32) -> f32 { libc::fabsf(*self) }
+    fn sqrt(self: &f32) -> f32 { libc::sqrtf(*self) }
+    fn ceil(self: &f32) -> f32 { libc::ceilf(*self) }
+    fn floor(self: &f32) -> f32 { libc::floorf(*self) }
+    fn round(self: &f32) -> f32 { libc::roundf(*self) }
+    fn sin(self: &f32) -> f32 { libc::sinf(*self) }
+    fn cos(self: &f32) -> f32 { libc::cosf(*self) }
+    fn pow(self: &f32, n: f32) -> f32 { libc::powf(*self, n) }
+    fn log(self: &f32) -> f32 { libc::logf(*self) }
+    fn exp(self: &f32) -> f32 { libc::expf(*self) }
+    fn equals(lhs: &f32, rhs: &f32) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &f32, rhs: &f32) -> bool { *lhs != *rhs }
+    fn compare(lhs: &f32, rhs: &f32) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &f32, rhs: &f32) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &f32, rhs: &f32) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &f32, rhs: &f32) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &f32, rhs: &f32) -> bool { *lhs >= *rhs }
+    fn fmt<F: std::fmt::Formatter<F>>(self: &f32, f: &mut F) -> std::fmt::Result {
+        // Simple float formatting: convert to f64 and format
+        let v = *self as f64;
+        let buf: [u8; 32];
+        let len = libc::snprintf(&buf[0] as &mut libc::c_char, 32usize, &"%.6g\0"[0] as &libc::c_char, v);
+        if len > 0i32 && len < 32i32 {
+            f.write_str(buf[0usize..len as usize])
+        } else {
+            f.write_str("NaN")
+        }
+    }
+    fn hash<H: std::hash::Hasher<H>>(self: &f32, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 4usize));
+    }
+}
+
+#[lang(builtin_f64)]
+struct f64 {}
+impl f64 {
+    fn nan() -> f64 { 0.0f64 / 0.0f64 }
+    fn infinity() -> f64 { 1.0f64 / 0.0f64 }
+    fn neg_infinity() -> f64 { -1.0f64 / 0.0f64 }
+    fn min_value() -> f64 { -1.7976931348623157e+308f64 }
+    fn max_value() -> f64 { 1.7976931348623157e+308f64 }
+    fn epsilon() -> f64 { 2.2204460492503131e-16f64 }
+    fn is_nan(self: &f64) -> bool { *self != *self }
+    fn is_infinite(self: &f64) -> bool { *self == f64::infinity() || *self == f64::neg_infinity() }
+    fn is_finite(self: &f64) -> bool { !self.is_nan() && !self.is_infinite() }
+    fn abs(self: &f64) -> f64 { libc::fabs(*self) }
+    fn sqrt(self: &f64) -> f64 { libc::sqrt(*self) }
+    fn ceil(self: &f64) -> f64 { libc::ceil(*self) }
+    fn floor(self: &f64) -> f64 { libc::floor(*self) }
+    fn round(self: &f64) -> f64 { libc::round(*self) }
+    fn sin(self: &f64) -> f64 { libc::sin(*self) }
+    fn cos(self: &f64) -> f64 { libc::cos(*self) }
+    fn pow(self: &f64, n: f64) -> f64 { libc::pow(*self, n) }
+    fn log(self: &f64) -> f64 { libc::log(*self) }
+    fn exp(self: &f64) -> f64 { libc::exp(*self) }
+    fn equals(lhs: &f64, rhs: &f64) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &f64, rhs: &f64) -> bool { *lhs != *rhs }
+    fn compare(lhs: &f64, rhs: &f64) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &f64, rhs: &f64) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &f64, rhs: &f64) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &f64, rhs: &f64) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &f64, rhs: &f64) -> bool { *lhs >= *rhs }
+    fn fmt<F: std::fmt::Formatter<F>>(self: &f64, f: &mut F) -> std::fmt::Result {
+        let buf: [u8; 32];
+        let len = libc::snprintf(&buf[0] as &mut libc::c_char, 32usize, &"%.15g\0"[0] as &libc::c_char, *self);
+        if len > 0i32 && len < 32i32 {
+            f.write_str(buf[0usize..len as usize])
+        } else {
+            f.write_str("NaN")
+        }
+    }
+    fn hash<H: std::hash::Hasher<H>>(self: &f64, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 8usize));
     }
 }
 

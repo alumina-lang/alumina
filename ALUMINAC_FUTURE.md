@@ -2,15 +2,35 @@
 
 ## Compiler Bugs
 
-### `equals` method on `impl Option {}` causes miscompilation
-When an `equals` function is added to `impl Option {}` (non-generic impl), the compiler's
-operator overloading (`try_operator_overload`) picks it up for `==` comparisons on all
-Option types. This causes S2 to crash with infinite recursion in the parser. The issue is
-that the generic `<T>` on the method doesn't match how the compiler resolves type args
-for operator overloading on non-generic impl blocks.
+### Protocol method resolution fails in non-generic impl blocks during bootstrap
+Methods in `impl Option { ... }` (non-generic impl) that call protocol methods on
+constrained generic parameters fail during bootstrap compilation. For example:
+```
+impl Option {
+    fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
+        lhs._inner.equals(&rhs._inner)  // fails: "could not resolve method 'equals'"
+    }
+}
+```
+The error occurs at stage 2 compilation. The `.equals()` call on `T: Equatable<T>` works
+in user code tests but fails when compiling the compiler itself via `make bootstrap`.
+Root cause: protocol constraints on method-level generics in non-generic impl blocks
+don't provide method resolution context during monomorphization for all instantiation
+sites.
 
-**Workaround**: Don't add `equals`/`not_equals`/`compare` to `impl Option {}` or
-`impl Result {}` until this is fixed.
+**Workaround**: Don't add protocol-constrained methods (equals, compare, hash, fmt with
+inner formatting) to `impl Option {}` or `impl Result {}` until this is fixed.
+
+### Type alias static method calls fail for non-generic aliases
+Calling static methods through non-generic type aliases fails:
+`std::fmt::Result::ok(())` where `type Result = std::result::Result<(), Error>`.
+**Workaround**: Use `let r: std::fmt::Result = std::result::Result::ok(()); r`
+
+### Nested generic type inference in non-generic impl blocks
+`Option::transpose()` with signature `fn transpose<T, E>(self: Option<Result<T, E>>)`
+incorrectly binds T to `Result<i32, i32>` instead of `i32` when called on
+`Option<Result<i32, i32>>`. The type inference doesn't decompose nested generic types.
+**Workaround**: Avoid methods that pattern-match nested generic types in self position.
 
 ### Nested `Option<Option<T>>` causes LLVM IR verification failure
 `Option::some(Option::some(42i32))` generates invalid IR where an `i32` is stored into

@@ -1418,8 +1418,13 @@ impl Pass2 {
             Option::none()
         };
 
-        // Check variadic
-        let is_variadic = !child_by!(node, FieldKind::EtCetera).is_none();
+        // Check variadic: `...` is a field of parameter_list, not function_definition
+        let params_node = child_by!(node, FieldKind::Parameters);
+        let is_variadic = if !params_node.is_none() {
+            !child_by!(params_node.unwrap(), FieldKind::EtCetera).is_none()
+        } else {
+            false
+        };
 
         // Parse body
         let body_node = child_by!(node, FieldKind::Body);
@@ -2554,9 +2559,10 @@ impl ExprParser {
 
     fn parse_float_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
-        let value = parse_float(text);
+        let (value, suffix) = parse_float_with_suffix(text);
         let e = self.make_expr(ExprTag::FloatLit, span);
         e.float_val = value;
+        e.type_suffix = suffix;
         self.ctx.alloc_expr(e)
     }
 
@@ -4534,13 +4540,23 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
     (value, suffix)
 }
 
-fn parse_float(text: &[u8]) -> f64 {
+fn parse_float_with_suffix(text: &[u8]) -> (f64, Option<BuiltinType>) {
     // Simple float parser - we'll use libc strtod for accuracy
     let cstr = std::ffi::CString::from_slice(text);
     defer cstr.free();
 
     let end: &mut libc::c_char = null;
-    libc::strtod(cstr.ptr, &end)
+    let value = libc::strtod(cstr.ptr, &end);
+
+    // Check for type suffix (f32, f64)
+    let consumed = (end as usize) - (cstr.ptr as usize);
+    let suffix = if consumed < text.len() {
+        parse_builtin_type(text[consumed..])
+    } else {
+        Option::none()
+    };
+
+    (value, suffix)
 }
 
 fn parse_binop(text: &[u8]) -> BinOp {
@@ -4729,6 +4745,25 @@ fn parse_file_pass2(
     pass2.run(root);
 
     ctx.arena.alloc_slice_copy::<Item>(ctx.items.as_slice())
+}
+
+/// After phase 1, link #[lang(builtin_X)] struct scopes to the root scope's
+/// BuiltinType entries so that `u8::max_value()` style calls can resolve.
+fn link_builtin_lang_items(contexts: &[ParseContext], scopes: &mut ScopeArena, root_scope: u32) {
+    for i in 0usize..contexts.len() {
+        let ctx = &contexts[i];
+        for j in 0usize..ctx.pending_structs.len() {
+            let pending = &ctx.pending_structs[j];
+            for k in 0usize..pending.attributes.len() {
+                let attr = &pending.attributes[k];
+                if attr.tag == AttrTag::Lang && std::string::starts_with(attr.str_val, "builtin_") {
+                    // Extract the type name from "builtin_u8" -> "u8"
+                    let type_name = attr.str_val[8..];
+                    scopes.set_builtin_scope(root_scope, type_name, pending.scope_idx);
+                }
+            }
+        }
+    }
 }
 
 fn format_num_small(n: usize) -> &[u8] {

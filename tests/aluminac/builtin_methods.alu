@@ -1,0 +1,169 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::string::StringBuf;
+use std::io::StringWriter;
+
+fn test_integer_static_methods() -> i32 {
+    // u8
+    if u8::min_value() != 0u8 { return 1i32; }
+    if u8::max_value() != 255u8 { return 2i32; }
+
+    // u16
+    if u16::min_value() != 0u16 { return 3i32; }
+    if u16::max_value() != 65535u16 { return 4i32; }
+
+    // u32
+    if u32::min_value() != 0u32 { return 5i32; }
+    if u32::max_value() != 4294967295u32 { return 6i32; }
+
+    // i32
+    if i32::min_value() != -2147483648i32 { return 7i32; }
+    if i32::max_value() != 2147483647i32 { return 8i32; }
+
+    // i32 abs
+    let v = -42i32;
+    if v.abs() != 42i32 { return 9i32; }
+    let v2 = 42i32;
+    if v2.abs() != 42i32 { return 10i32; }
+
+    // i64 abs
+    let v3 = -100i64;
+    if v3.abs() != 100i64 { return 11i32; }
+
+    0i32
+}
+
+fn test_integer_comparison() -> i32 {
+    let a = 10u32;
+    let b = 20u32;
+
+    if !a.less_than(&b) { return 20i32; }
+    if a.greater_than(&b) { return 21i32; }
+    if !a.less_than_or_equal(&a) { return 22i32; }
+    if !a.equals(&a) { return 23i32; }
+    if a.equals(&b) { return 24i32; }
+
+    0i32
+}
+
+fn test_integer_formatting() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+    let w = StringWriter::new(&s);
+    let _ = write!(&w, "{}", 42i32);
+    if s.as_slice() != "42" { return 30i32; }
+
+    s.clear();
+    let _ = write!(&w, "{}", 255u8);
+    if s.as_slice() != "255" { return 31i32; }
+
+    s.clear();
+    let _ = write!(&w, "{}", -123i32);
+    if s.as_slice() != "-123" { return 32i32; }
+
+    s.clear();
+    let _ = write!(&w, "{}", 0i32);
+    if s.as_slice() != "0" { return 33i32; }
+
+    0i32
+}
+
+fn test_bool_formatting() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+    let w = StringWriter::new(&s);
+    let _ = write!(&w, "{}", true);
+    if s.as_slice() != "true" { return 40i32; }
+
+    s.clear();
+    let _ = write!(&w, "{}", false);
+    if s.as_slice() != "false" { return 41i32; }
+
+    0i32
+}
+
+fn test_float_methods() -> i32 {
+    // f64 basic math
+    let x = 4.0f64;
+    let s = x.sqrt();
+    if s != 2.0f64 { return 50i32; }
+
+    let y = -3.5f64;
+    if y.abs() != 3.5f64 { return 51i32; }
+
+    let z = 2.7f64;
+    if z.ceil() != 3.0f64 { return 52i32; }
+    if z.floor() != 2.0f64 { return 53i32; }
+
+    // f64 nan/infinity
+    let nan = f64::nan();
+    if !nan.is_nan() { return 54i32; }
+    if nan.is_finite() { return 55i32; }
+
+    let inf = f64::infinity();
+    if !inf.is_infinite() { return 56i32; }
+    if inf.is_finite() { return 57i32; }
+    if inf.is_nan() { return 58i32; }
+
+    // f64 trig
+    let zero = 0.0f64;
+    if zero.sin() != 0.0f64 { return 59i32; }
+    if zero.cos() != 1.0f64 { return 60i32; }
+
+    // f32 basic math
+    let x32 = 9.0f32;
+    if x32.sqrt() != 3.0f32 { return 61i32; }
+
+    let y32 = -2.5f32;
+    if y32.abs() != 2.5f32 { return 62i32; }
+
+    // f32 nan/infinity
+    let nan32 = f32::nan();
+    if !nan32.is_nan() { return 63i32; }
+
+    let inf32 = f32::infinity();
+    if !inf32.is_infinite() { return 64i32; }
+
+    0i32
+}
+
+fn test_float_formatting() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+    let w = StringWriter::new(&s);
+
+    let _ = write!(&w, "{}", 3.14f64);
+    if s.as_slice() != "3.14" { return 70i32; }
+
+    s.clear();
+    let _ = write!(&w, "{}", 0.0f64);
+    if s.as_slice() != "0" { return 71i32; }
+
+    s.clear();
+    let _ = write!(&w, "{}", 1.0f32);
+    if s.as_slice() != "1" { return 72i32; }
+
+    0i32
+}
+
+fn test_u64_rotate() -> i32 {
+    let v = 1u64;
+    if v.rotate_left(1usize) != 2u64 { return 80i32; }
+    if v.rotate_left(63usize) != 9223372036854775808u64 { return 81i32; }
+
+    let v2 = 2u64;
+    if v2.rotate_right(1usize) != 1u64 { return 82i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = 0i32;
+    r = test_integer_static_methods(); if r != 0i32 { return r; }
+    r = test_integer_comparison(); if r != 0i32 { return r; }
+    r = test_integer_formatting(); if r != 0i32 { return r; }
+    r = test_bool_formatting(); if r != 0i32 { return r; }
+    r = test_float_methods(); if r != 0i32 { return r; }
+    r = test_float_formatting(); if r != 0i32 { return r; }
+    r = test_u64_rotate(); if r != 0i32 { return r; }
+    0i32
+}

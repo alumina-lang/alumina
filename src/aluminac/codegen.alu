@@ -2032,11 +2032,14 @@ impl FnCodegen {
                     let field_val = self.gen_expr(expr.items[i]);
                     let fv_ty = LLVMTypeOf(field_val);
                     if !self.is_void_type(fv_ty) {
+                        // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
+                        let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, i as u32);
+                        let coerced = self.coerce_value(field_val, expected_ty);
                         let field_ptr = LLVMBuildStructGEP2(
                             self.ctx.builder, llvm_ty, alloca, i as u32,
                             self.temp_cname()
                         );
-                        self.safe_store(field_val, field_ptr);
+                        self.safe_store(coerced, field_ptr);
                     }
                 }
             }
@@ -2055,11 +2058,14 @@ impl FnCodegen {
                 let elem_val = self.gen_expr(expr.items[i]);
                 let ev_ty = LLVMTypeOf(elem_val);
                 if !self.is_void_type(ev_ty) {
+                    // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
+                    let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, i as u32);
+                    let coerced = self.coerce_value(elem_val, expected_ty);
                     let elem_ptr = LLVMBuildStructGEP2(
                         self.ctx.builder, llvm_ty, alloca, i as u32,
                         self.temp_cname()
                     );
-                    self.safe_store(elem_val, elem_ptr);
+                    self.safe_store(coerced, elem_ptr);
                 }
             }
 
@@ -2550,7 +2556,7 @@ impl FnCodegen {
                 } else if LLVMGetTypeKind(LLVMTypeOf(lhs_val)) == LLVMTypeKind::Struct {
                     let eq = self.gen_struct_eq(lhs_val, rhs_val);
                     LLVMBuildNot(self.ctx.builder, eq, n)
-                } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::ONE, lhs_val, rhs_val, n) }
+                } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::UNE, lhs_val, rhs_val, n) }
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::NE, lhs_val, rhs_val, n) }
             },
             BinOp::Lt => {
@@ -2920,8 +2926,13 @@ impl FnCodegen {
                 }
             }
 
-            // For extern C calls, handle byval: convert large struct args to pointer+byval
-            if is_extern_c_call {
+            // For variadic functions, just use the declared type directly.
+            // LLVM allows passing additional arguments beyond the fixed params.
+            let is_variadic_fn = LLVMIsFunctionVarArg(declared_fn_ty) != 0i32;
+            if is_variadic_fn {
+                declared_fn_ty
+            } else if is_extern_c_call {
+                // For extern C calls, handle byval: convert large struct args to pointer+byval
                 let has_byval = false;
                 for i in 0usize..args.len() {
                     let at = LLVMTypeOf(arg_vals[i]);

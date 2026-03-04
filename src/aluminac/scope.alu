@@ -200,6 +200,19 @@ impl ScopeArena {
         scope.items.insert(item.name, item);
     }
 
+    /// Update a BuiltinType entry's scope_idx so that `u8::method()` style
+    /// static calls can navigate into the lang item struct's scope.
+    fn set_builtin_scope(self: &mut ScopeArena, scope_idx: u32, name: &[u8], struct_scope: u32) {
+        let scope = self.get_mut(scope_idx);
+        let found = scope.items.get_mut(&name);
+        if found.is_some() {
+            let item = found.unwrap();
+            if item.kind.tag == NamedItemTag::BuiltinType {
+                item.kind.scope_idx = struct_scope;
+            }
+        }
+    }
+
     fn add_star_import(self: &mut ScopeArena, scope_idx: u32, import_scope: u32, arena: &mut Arena) {
         let scope = self.get_mut(scope_idx);
         let old = scope.star_imports;
@@ -316,6 +329,8 @@ impl ScopeArena {
             self.resolve_in_module(item.kind.scope_idx, segments[1..])
         } else if item.kind.tag == NamedItemTag::Protocol && item.kind.scope_idx != 0u32 {
             self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NamedItemTag::BuiltinType && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
         } else {
             Option::none()
         };
@@ -349,6 +364,10 @@ impl ScopeArena {
             if tag == NamedItemTag::Module || tag == NamedItemTag::Struct || tag == NamedItemTag::Enum || tag == NamedItemTag::Protocol || tag == NamedItemTag::UseAlias {
                 return found;
             }
+            // BuiltinType with a scope_idx (from #[lang(builtin_X)] struct) can be navigated
+            if tag == NamedItemTag::BuiltinType && item.kind.scope_idx != 0u32 {
+                return found;
+            }
             // TypeAlias is not scope-bearing but should shadow parent scope items
             // (e.g. `type Result<T> = std::result::Result<T, Error>` should shadow
             // the prelude's Result). Return None to let the parser handle it via Defered.
@@ -365,6 +384,9 @@ impl ScopeArena {
                 let imp_item = imp_found.unwrap();
                 let imp_tag = imp_item.kind.tag;
                 if imp_tag == NamedItemTag::Module || imp_tag == NamedItemTag::Struct || imp_tag == NamedItemTag::Enum || imp_tag == NamedItemTag::Protocol || imp_tag == NamedItemTag::UseAlias {
+                    return imp_found;
+                }
+                if imp_tag == NamedItemTag::BuiltinType && imp_item.kind.scope_idx != 0u32 {
                     return imp_found;
                 }
             }
@@ -438,6 +460,8 @@ impl ScopeArena {
             } else if ritem.kind.tag == NamedItemTag::Enum && ritem.kind.scope_idx != 0 {
                 self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
             } else if ritem.kind.tag == NamedItemTag::Protocol && ritem.kind.scope_idx != 0 {
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else if ritem.kind.tag == NamedItemTag::BuiltinType && ritem.kind.scope_idx != 0 {
                 self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
             } else {
                 Option::none()
