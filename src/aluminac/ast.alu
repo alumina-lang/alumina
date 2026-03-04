@@ -446,29 +446,38 @@ enum AttrTag {
     ReturnsTwice = 15i32,
 }
 
-struct Attribute {
-    tag: AttrTag,
+union _AttributeData {
     str_val: &[u8],     // for AttrTag::Extern, AttrTag::Cfg, AttrTag::Lang
     int_val: usize,     // for AttrTag::Align
 }
 
+struct Attribute {
+    tag: AttrTag,
+    _data: _AttributeData,
+}
+
 impl Attribute {
-    fn export() -> Attribute { Attribute { tag: AttrTag::Export, str_val: "", int_val: 0 } }
-    fn inline_attr() -> Attribute { Attribute { tag: AttrTag::Inline, str_val: "", int_val: 0 } }
-    fn always_inline() -> Attribute { Attribute { tag: AttrTag::AlwaysInline, str_val: "", int_val: 0 } }
-    fn cold() -> Attribute { Attribute { tag: AttrTag::Cold, str_val: "", int_val: 0 } }
-    fn align(n: usize) -> Attribute { Attribute { tag: AttrTag::Align, str_val: "", int_val: n } }
-    fn extern_attr(abi: &[u8]) -> Attribute { Attribute { tag: AttrTag::Extern, str_val: abi, int_val: 0 } }
-    fn cfg(val: &[u8]) -> Attribute { Attribute { tag: AttrTag::Cfg, str_val: val, int_val: 0 } }
-    fn no_return() -> Attribute { Attribute { tag: AttrTag::NoReturn, str_val: "", int_val: 0 } }
-    fn thread_local() -> Attribute { Attribute { tag: AttrTag::ThreadLocal, str_val: "", int_val: 0 } }
-    fn test() -> Attribute { Attribute { tag: AttrTag::Test, str_val: "", int_val: 0 } }
-    fn main_attr() -> Attribute { Attribute { tag: AttrTag::Main, str_val: "", int_val: 0 } }
-    fn static_ctor() -> Attribute { Attribute { tag: AttrTag::StaticCtor, str_val: "", int_val: 0 } }
-    fn lang(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Lang, str_val: name, int_val: 0 } }
-    fn inline_ir() -> Attribute { Attribute { tag: AttrTag::InlineIr, str_val: "", int_val: 0 } }
-    fn builtin() -> Attribute { Attribute { tag: AttrTag::Builtin, str_val: "", int_val: 0 } }
-    fn returns_twice() -> Attribute { Attribute { tag: AttrTag::ReturnsTwice, str_val: "", int_val: 0 } }
+    fn str_val(self: &Attribute) -> &[u8] { self._data.str_val }
+    fn int_val(self: &Attribute) -> usize { self._data.int_val }
+
+    fn _no_data() -> _AttributeData { _AttributeData { str_val: "" } }
+
+    fn export() -> Attribute { Attribute { tag: AttrTag::Export, _data: Attribute::_no_data() } }
+    fn inline_attr() -> Attribute { Attribute { tag: AttrTag::Inline, _data: Attribute::_no_data() } }
+    fn always_inline() -> Attribute { Attribute { tag: AttrTag::AlwaysInline, _data: Attribute::_no_data() } }
+    fn cold() -> Attribute { Attribute { tag: AttrTag::Cold, _data: Attribute::_no_data() } }
+    fn align(n: usize) -> Attribute { Attribute { tag: AttrTag::Align, _data: _AttributeData { int_val: n } } }
+    fn extern_attr(abi: &[u8]) -> Attribute { Attribute { tag: AttrTag::Extern, _data: _AttributeData { str_val: abi } } }
+    fn cfg(val: &[u8]) -> Attribute { Attribute { tag: AttrTag::Cfg, _data: _AttributeData { str_val: val } } }
+    fn no_return() -> Attribute { Attribute { tag: AttrTag::NoReturn, _data: Attribute::_no_data() } }
+    fn thread_local() -> Attribute { Attribute { tag: AttrTag::ThreadLocal, _data: Attribute::_no_data() } }
+    fn test() -> Attribute { Attribute { tag: AttrTag::Test, _data: Attribute::_no_data() } }
+    fn main_attr() -> Attribute { Attribute { tag: AttrTag::Main, _data: Attribute::_no_data() } }
+    fn static_ctor() -> Attribute { Attribute { tag: AttrTag::StaticCtor, _data: Attribute::_no_data() } }
+    fn lang(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Lang, _data: _AttributeData { str_val: name } } }
+    fn inline_ir() -> Attribute { Attribute { tag: AttrTag::InlineIr, _data: Attribute::_no_data() } }
+    fn builtin() -> Attribute { Attribute { tag: AttrTag::Builtin, _data: Attribute::_no_data() } }
+    fn returns_twice() -> Attribute { Attribute { tag: AttrTag::ReturnsTwice, _data: Attribute::_no_data() } }
 }
 
 struct FnDef {
