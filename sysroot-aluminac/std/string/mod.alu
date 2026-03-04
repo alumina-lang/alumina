@@ -23,6 +23,17 @@ impl StringBuf {
         buf
     }
 
+    /// Create a string buffer from a raw slice and a length.
+    ///
+    /// The slice must be allocated with `std::mem::slice_alloc` and its length must be
+    /// greater than or equal to `length`.
+    fn from_raw(data: &mut [u8], length: usize) -> StringBuf {
+        StringBuf {
+            _data: data,
+            _length: length,
+        }
+    }
+
     /// Create a string buffer with pre-allocated capacity.
     fn with_capacity(cap: usize) -> StringBuf {
         if cap == 0usize {
@@ -47,6 +58,17 @@ impl StringBuf {
     /// Returns `true` if the string is empty.
     fn is_empty(self: &StringBuf) -> bool {
         self._length == 0usize
+    }
+
+    /// Get the byte at the given index.
+    ///
+    /// Returns `Option::none()` if the index is out of bounds.
+    fn get(self: &StringBuf, index: usize) -> Option<u8> {
+        if index < self._length {
+            Option::some(self._data[index])
+        } else {
+            Option::none()
+        }
     }
 
     /// Return a slice of the string's contents.
@@ -188,6 +210,66 @@ impl StringBuf {
         self._data = std::mem::slice_empty::<u8>();
         self._length = 0usize;
     }
+
+    /// Shrink the underlying buffer to the length of the string.
+    fn shrink_to_fit(self: &mut StringBuf) {
+        if self._data.len() > self._length {
+            if self._length == 0usize {
+                if self._data.len() > 0usize {
+                    std::mem::slice_free::<u8>(self._data);
+                }
+                self._data = std::mem::slice_empty::<u8>();
+            } else {
+                let new_data = std::mem::slice_alloc::<u8>(self._length);
+                std::mem::memcpy(&new_data[0] as &mut void, &self._data[0] as &void, self._length);
+                std::mem::slice_free::<u8>(self._data);
+                self._data = new_data;
+            }
+        }
+    }
+
+    /// Compare two string buffers for equality.
+    fn equals(self: &StringBuf, other: &StringBuf) -> bool {
+        self._data[0usize..self._length] == other._data[0usize..other._length]
+    }
+
+    /// Compare two string buffers lexicographically.
+    fn compare(self: &StringBuf, other: &StringBuf) -> std::cmp::Ordering {
+        let min_len = self._length;
+        if other._length < min_len {
+            min_len = other._length;
+        }
+        if min_len > 0usize {
+            let c = std::mem::memcmp(
+                &self._data[0] as &void,
+                &other._data[0] as &void,
+                min_len,
+            );
+            if c < 0i32 {
+                return std::cmp::Ordering::Less;
+            }
+            if c > 0i32 {
+                return std::cmp::Ordering::Greater;
+            }
+        }
+        if self._length < other._length {
+            std::cmp::Ordering::Less
+        } else if self._length > other._length {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    }
+
+    /// Hash the string buffer's contents.
+    fn hash<H: std::hash::Hasher<H>>(self: &StringBuf, hasher: &mut H) {
+        if self._length > 0usize {
+            hasher.write(self._data[0usize..self._length]);
+        }
+    }
+
+    mixin std::cmp::Equatable<StringBuf>;
+    mixin std::cmp::Comparable<StringBuf>;
 }
 
 // === String utility functions (on &[u8] slices) ===
@@ -380,23 +462,43 @@ fn join(parts: &[&[u8]], sep: &[u8]) -> StringBuf {
 
 /// Replace all occurrences of `from` with `to` in `s`.
 fn replace(s: &[u8], from: &[u8], to: &[u8]) -> StringBuf {
-    if from.len() == 0usize {
-        return StringBuf::from_slice(s);
-    }
-    let result = StringBuf::new();
-    let remaining = s;
-    loop {
-        let pos = find(remaining, from);
-        if pos.is_none() {
-            result.extend_from_slice(remaining);
-            break;
+    let ret = StringBuf::new();
+    replace_fmt(s, from, to).fmt(&ret).unwrap();
+    ret
+}
+
+/// Non-allocating formattable object that replaces all occurrences of `needle` with `replacement`.
+struct ReplaceAdapter {
+    _inner: &[u8],
+    _needle: &[u8],
+    _replacement: &[u8],
+}
+
+impl ReplaceAdapter {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &ReplaceAdapter, f: &mut F) -> std::fmt::Result {
+        if self._needle.len() == 0usize {
+            return f.write_str(self._inner);
         }
-        let p = pos.unwrap();
-        result.extend_from_slice(remaining[0usize..p]);
-        result.extend_from_slice(to);
-        remaining = remaining[p + from.len()..];
+        let remaining = self._inner;
+        loop {
+            let pos = find(remaining, self._needle);
+            if pos.is_none() {
+                return f.write_str(remaining);
+            }
+            let p = pos.unwrap();
+            let r = f.write_str(remaining[0usize..p]);
+            if r.is_err() { return r; }
+            let r = f.write_str(self._replacement);
+            if r.is_err() { return r; }
+            remaining = remaining[p + self._needle.len()..];
+        }
     }
-    result
+}
+
+/// Returns an object that formats to the string with all `needle` occurrences replaced with
+/// `replacement`.
+fn replace_fmt(s: &[u8], needle: &[u8], replacement: &[u8]) -> ReplaceAdapter {
+    ReplaceAdapter { _inner: s, _needle: needle, _replacement: replacement }
 }
 
 // === Integer parsing functions ===
