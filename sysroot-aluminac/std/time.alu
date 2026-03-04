@@ -1,0 +1,126 @@
+/// A duration of time (seconds + nanoseconds).
+struct Duration {
+    _secs: i64,
+    _nanos: u32,
+}
+
+impl Duration {
+    /// Create a duration from seconds and nanoseconds.
+    fn new(secs: i64, nanos: u32) -> Duration {
+        Duration { _secs: secs, _nanos: nanos }
+    }
+
+    /// Create a duration from seconds.
+    fn from_secs(secs: i64) -> Duration {
+        Duration { _secs: secs, _nanos: 0u32 }
+    }
+
+    /// Create a duration from milliseconds.
+    fn from_millis(millis: i64) -> Duration {
+        Duration {
+            _secs: millis / 1000i64,
+            _nanos: ((millis % 1000i64) * 1000000i64) as u32,
+        }
+    }
+
+    /// Create a duration from microseconds.
+    fn from_micros(micros: i64) -> Duration {
+        Duration {
+            _secs: micros / 1000000i64,
+            _nanos: ((micros % 1000000i64) * 1000i64) as u32,
+        }
+    }
+
+    /// Create a duration from nanoseconds.
+    fn from_nanos(nanos: i64) -> Duration {
+        Duration {
+            _secs: nanos / 1000000000i64,
+            _nanos: (nanos % 1000000000i64) as u32,
+        }
+    }
+
+    /// Return the whole seconds component.
+    fn secs(self: &Duration) -> i64 {
+        self._secs
+    }
+
+    /// Return the nanoseconds component (0 to 999_999_999).
+    fn nanos(self: &Duration) -> u32 {
+        self._nanos
+    }
+
+    /// Return the total duration in seconds as a float.
+    fn total_secs(self: &Duration) -> f64 {
+        self._secs as f64 + self._nanos as f64 / 1000000000.0
+    }
+
+    /// Return the total duration in milliseconds.
+    fn total_millis(self: &Duration) -> i64 {
+        self._secs * 1000i64 + self._nanos as i64 / 1000000i64
+    }
+
+    /// Return the total duration in microseconds.
+    fn total_micros(self: &Duration) -> i64 {
+        self._secs * 1000000i64 + self._nanos as i64 / 1000i64
+    }
+
+    /// Format the duration for display.
+    fn fmt<F: std::fmt::Formatter<F>>(self: &Duration, f: &mut F) -> std::fmt::Result {
+        if self._secs > 0i64 {
+            (self._secs as i64).fmt(f)?;
+            f.write_byte('.')?;
+            // Write fractional part (3 digits = milliseconds)
+            let ms = self._nanos / 1000000u32;
+            if ms < 100u32 { f.write_byte('0')?; }
+            if ms < 10u32 { f.write_byte('0')?; }
+            (ms as i64).fmt(f)?;
+            f.write_byte('s')
+        } else if self._nanos >= 1000000u32 {
+            let ms = self._nanos / 1000000u32;
+            (ms as i64).fmt(f)?;
+            f.write_str("ms")
+        } else if self._nanos >= 1000u32 {
+            let us = self._nanos / 1000u32;
+            (us as i64).fmt(f)?;
+            f.write_str("us")
+        } else {
+            (self._nanos as i64).fmt(f)?;
+            f.write_str("ns")
+        }
+    }
+}
+
+/// A point in time from a monotonic clock.
+struct Instant {
+    _tv_sec: i64,
+    _tv_nsec: i64,
+}
+
+extern "C" fn clock_gettime(clk_id: i32, tp: &mut void) -> i32;
+
+impl Instant {
+    /// Get the current instant from the monotonic clock.
+    fn now() -> Instant {
+        let inst: Instant;
+        // CLOCK_MONOTONIC = 1
+        clock_gettime(1i32, &inst as &mut void);
+        inst
+    }
+
+    /// Return the time elapsed since an earlier instant.
+    fn elapsed(self: &Instant, earlier: &Instant) -> Duration {
+        let secs = self._tv_sec - earlier._tv_sec;
+        let nanos = (self._tv_nsec - earlier._tv_nsec) as i32;
+
+        if nanos < 0i32 {
+            secs = secs - 1i64;
+            nanos = nanos + 1000000000i32;
+        }
+        Duration::new(secs, nanos as u32)
+    }
+
+    /// Return the duration since this instant was created.
+    fn since(self: &Instant) -> Duration {
+        Instant::now().elapsed(self)
+    }
+}
