@@ -125,7 +125,20 @@ impl Result<T, E> {
     }
 }
 
-// Protocol-constrained methods for Result (equals, hash, fmt with inner
-// formatting, transpose) require protocol method resolution on generic
-// type parameters in non-generic impl blocks, which is not yet fully
-// supported in aluminac. These will be added once that feature lands.
+impl Result {
+    /// Compare two results for equality.
+    fn equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
+        if lhs._is_ok && rhs._is_ok {
+            lhs._ok.equals(&rhs._ok)
+        } else if !lhs._is_ok && !rhs._is_ok {
+            lhs._err.equals(&rhs._err)
+        } else {
+            false
+        }
+    }
+
+    /// Compare two results for inequality.
+    fn not_equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
+        !Result::equals::<T, E>(lhs, rhs)
+    }
+}

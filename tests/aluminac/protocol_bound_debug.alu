@@ -1,0 +1,45 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::cmp::Equatable;
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl Wrapper {
+    fn check_field<U: Equatable<U>>(a: &Wrapper<U>, b: &Wrapper<U>) -> bool {
+        a.value.equals(&b.value)
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: Wrapper::check_field - protocol method call through generic struct field
+    let w1 = Wrapper::<i32> { value: 42i32 };
+    let w2 = Wrapper::<i32> { value: 42i32 };
+    let w3 = Wrapper::<i32> { value: 99i32 };
+    if !Wrapper::check_field::<i32>(&w1, &w2) { return 1i32; }
+    if Wrapper::check_field::<i32>(&w1, &w3) { return 2i32; }
+
+    // Test 2: Option::equals (protocol-constrained methods in non-generic impl)
+    let o1 = Option::some(42i32);
+    let o2 = Option::some(42i32);
+    let o3 = Option::some(99i32);
+    let o4: Option<i32> = Option::none();
+    if !Option::equals::<i32>(&o1, &o2) { return 10i32; }
+    if Option::equals::<i32>(&o1, &o3) { return 11i32; }
+    if Option::equals::<i32>(&o1, &o4) { return 12i32; }
+    if !Option::equals::<i32>(&o4, &o4) { return 13i32; }
+
+    // Test 3: Option::not_equals
+    if Option::not_equals::<i32>(&o1, &o2) { return 20i32; }
+    if !Option::not_equals::<i32>(&o1, &o3) { return 21i32; }
+
+    // Test 4: Option == and != operators
+    if !(o1 == o2) { return 30i32; }
+    if o1 == o3 { return 31i32; }
+    if o1 == o4 { return 32i32; }
+    if !(o4 == o4) { return 33i32; }
+    if o1 != o2 { return 34i32; }
+    if !(o1 != o3) { return 35i32; }
+
+    0i32
+}

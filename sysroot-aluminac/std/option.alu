@@ -185,7 +185,18 @@ impl Option<T> {
     }
 }
 
-// Protocol-constrained methods for Option (equals, compare, hash, fmt with
-// inner formatting, transpose) require protocol method resolution on generic
-// type parameters in non-generic impl blocks, which is not yet fully
-// supported in aluminac. These will be added once that feature lands.
+impl Option {
+    /// Compare two options for equality.
+    fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
+        if lhs._is_some && rhs._is_some {
+            lhs._inner.equals(&rhs._inner)
+        } else {
+            lhs._is_some == rhs._is_some
+        }
+    }
+
+    /// Compare two options for inequality.
+    fn not_equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
+        !Option::equals::<T>(lhs, rhs)
+    }
+}

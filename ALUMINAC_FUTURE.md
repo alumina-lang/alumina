@@ -2,25 +2,6 @@
 
 ## Compiler Bugs
 
-### Protocol method resolution fails in non-generic impl blocks during bootstrap
-Methods in `impl Option { ... }` (non-generic impl) that call protocol methods on
-constrained generic parameters fail during bootstrap compilation. For example:
-```
-impl Option {
-    fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
-        lhs._inner.equals(&rhs._inner)  // fails: "could not resolve method 'equals'"
-    }
-}
-```
-The error occurs at stage 2 compilation. The `.equals()` call on `T: Equatable<T>` works
-in user code tests but fails when compiling the compiler itself via `make bootstrap`.
-Root cause: protocol constraints on method-level generics in non-generic impl blocks
-don't provide method resolution context during monomorphization for all instantiation
-sites.
-
-**Workaround**: Don't add protocol-constrained methods (equals, compare, hash, fmt with
-inner formatting) to `impl Option {}` or `impl Result {}` until this is fixed.
-
 ### Type alias static method calls fail for non-generic aliases
 Calling static methods through non-generic type aliases fails:
 `std::fmt::Result::ok(())` where `type Result = std::result::Result<(), Error>`.
@@ -48,11 +29,20 @@ same module (e.g. `trim_prefix` calling `self.starts_with(prefix)`).
 
 ## Features to Port
 
-### Method calls on bounded generic types
-`lhs._inner.equals(&rhs._inner)` where `T: Equatable<T>` — the compiler can't resolve
-methods through protocol bounds on generic type parameters. Need to implement protocol
-constraint satisfaction during method resolution.
-
 ### Protocol mixin annotations
 The `/// @ cmp::Equatable::equals` doc comment annotation for registering protocol
 implementations needs proper support.
+
+### IteratorExt mixin triggers monomorphization of all methods
+When a non-generic type like SplitIterator mixes in IteratorExt<SplitIterator, &[u8]>,
+all methods get monomorphized eagerly, including those with additional generic parameters
+(like `find<F: Fn(T) -> bool>`). This can cause "could not resolve method" errors even
+for methods the user never calls.
+**Workaround**: Only mixin Iterator (not IteratorExt) for simple types, and provide
+a manual `iter()` method for for-in compatibility.
+
+### Named parameter convention for mixin methods
+Methods in protocols that use a parameter name other than `self` (e.g. `iter: &mut Self`)
+fail to resolve when mixed in. The compiler appears to only properly bind Self for
+parameters named `self`.
+**Workaround**: Always use `self` as the first parameter name in protocol methods.

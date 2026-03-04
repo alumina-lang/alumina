@@ -1467,8 +1467,18 @@ impl Mono {
 
     // Call a method on a type, monomorphizing it with the type's type args.
     fn call_method_on_type(self: &mut Mono, def: &FnDef, ty: &IrTy, ir_lhs: &IrExpr, ir_rhs: &IrExpr, ret_ty: &IrTy) -> &IrExpr {
-        let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
-        type_args[0] = ty;
+        // Use the struct's type_args (e.g. [i16] for Option<i16>) rather than
+        // the full type. This correctly maps to the method's generic params,
+        // whether the method is in a generic impl (impl Option<T>) or a
+        // non-generic impl (impl Option { fn equals<T>(...) }).
+        let type_args: &[&IrTy] = if ty.tag == IrTyTag::Struct && ty.struct_ref.type_args.len() > 0 && def.generic_params.len() == ty.struct_ref.type_args.len() {
+            ty.struct_ref.type_args
+        } else {
+            // Fallback for non-generic structs, enums, etc: pass the whole type
+            let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+            ta[0] = ty;
+            ta as &[&IrTy]
+        };
         let fn_idx = self.mono_function(def, type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
 
