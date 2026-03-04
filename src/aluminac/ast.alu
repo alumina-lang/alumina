@@ -575,12 +575,6 @@ struct ProtocolDef {
     attributes: &[Attribute],
 }
 
-struct ImplDef {
-    target_type: &Ty,
-    methods: &[FnDef],
-    generic_params: &[GenericParam],
-}
-
 struct StaticDef {
     id: Id,
     name: &[u8],
@@ -590,23 +584,6 @@ struct StaticDef {
     is_const: bool,
 }
 
-struct MacroDef {
-    id: Id,
-    name: &[u8],
-    params: &[&[u8]],
-    is_variadic: bool,
-}
-
-struct UseDef {
-    path: &[&[u8]],
-    alias: Option<&[u8]>,
-    is_wildcard: bool,
-}
-
-struct ModuleDef {
-    name: &[u8],
-    items: &[Item],
-}
 
 // Item tags
 enum ItemTag {
@@ -615,26 +592,31 @@ enum ItemTag {
     Enum = 2i32,
     TypeAlias = 3i32,
     Protocol = 4i32,
-    Impl = 5i32,
     Static = 6i32,
-    Macro = 7i32,
-    Use = 8i32,
-    Module = 9i32,
+}
+
+union _ItemData {
+    fn_def: FnDef,             // Function
+    struct_def: StructDef,     // Struct
+    enum_def: EnumDef,         // Enum
+    type_alias: TypeAlias,     // TypeAlias
+    protocol_def: ProtocolDef, // Protocol
+    static_def: StaticDef,     // Static
 }
 
 struct Item {
     tag: ItemTag,
     span: Span,
-    fn_def: FnDef,
-    struct_def: StructDef,
-    enum_def: EnumDef,
-    type_alias: TypeAlias,
-    protocol_def: ProtocolDef,
-    impl_def: ImplDef,
-    static_def: StaticDef,
-    macro_def: MacroDef,
-    use_def: UseDef,
-    module_def: ModuleDef,
+    _data: _ItemData,
+}
+
+impl Item {
+    fn fn_def(self: &Item) -> &FnDef { &self._data.fn_def }
+    fn struct_def(self: &Item) -> &StructDef { &self._data.struct_def }
+    fn enum_def(self: &Item) -> &EnumDef { &self._data.enum_def }
+    fn type_alias(self: &Item) -> &TypeAlias { &self._data.type_alias }
+    fn protocol_def(self: &Item) -> &ProtocolDef { &self._data.protocol_def }
+    fn static_def(self: &Item) -> &StaticDef { &self._data.static_def }
 }
 
 // === IR (Monomorphized) types ===

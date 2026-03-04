@@ -346,7 +346,7 @@ impl Pass2 {
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Function;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
-        item.fn_def = fn_def;
+        item._data.fn_def = fn_def;
         self.ctx.items.push(item);
     }
 
@@ -847,7 +847,7 @@ impl Pass2 {
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Struct;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
-        item.struct_def = StructDef {
+        item._data.struct_def = StructDef {
             id: pending.id,
             name: pending.name,
             generic_params: generic_params,
@@ -912,7 +912,7 @@ impl Pass2 {
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Enum;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
-        item.enum_def = EnumDef {
+        item._data.enum_def = EnumDef {
             id: pending.id,
             name: pending.name,
             underlying_type: underlying,
@@ -1016,7 +1016,7 @@ impl Pass2 {
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Protocol;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
-        item.protocol_def = ProtocolDef {
+        item._data.protocol_def = ProtocolDef {
             id: pending.id,
             name: pending.name,
             generic_params: generic_params,
@@ -1118,7 +1118,7 @@ impl Pass2 {
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::TypeAlias;
         item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end };
-        item.type_alias = alias;
+        item._data.type_alias = alias;
         self.ctx.items.push(item);
     }
 
@@ -1149,7 +1149,7 @@ impl Pass2 {
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Static;
         item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
-        item.static_def = StaticDef {
+        item._data.static_def = StaticDef {
             id: pending.id,
             name: pending.name,
             ty: ty,

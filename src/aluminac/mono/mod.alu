@@ -180,33 +180,33 @@ impl MonoCtx {
         // Pass 1: protocols, structs, enums, type aliases, statics
         for i in 0usize..self.items.len() {
             if self.items[i].tag == ItemTag::Struct {
-                self.struct_defs.insert(self.items[i].struct_def.id._value, &self.items[i].struct_def);
-                for attr in self.items[i].struct_def.attributes {
+                self.struct_defs.insert(self.items[i].struct_def().id._value, self.items[i].struct_def());
+                for attr in self.items[i].struct_def().attributes {
                     if attr.tag == AttrTag::Lang {
                         let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].struct_def.id._value);
+                        self.lang_items.insert(hash, self.items[i].struct_def().id._value);
                     }
                 }
             } else if self.items[i].tag == ItemTag::Enum {
-                self.enum_defs.insert(self.items[i].enum_def.id._value, &self.items[i].enum_def);
-                for attr in self.items[i].enum_def.attributes {
+                self.enum_defs.insert(self.items[i].enum_def().id._value, self.items[i].enum_def());
+                for attr in self.items[i].enum_def().attributes {
                     if attr.tag == AttrTag::Lang {
                         let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].enum_def.id._value);
+                        self.lang_items.insert(hash, self.items[i].enum_def().id._value);
                     }
                 }
             } else if self.items[i].tag == ItemTag::TypeAlias {
-                self.type_aliases.insert(self.items[i].type_alias.id._value, &self.items[i].type_alias);
+                self.type_aliases.insert(self.items[i].type_alias().id._value, self.items[i].type_alias());
             } else if self.items[i].tag == ItemTag::Protocol {
-                self.protocol_defs.insert(self.items[i].protocol_def.id._value, &self.items[i].protocol_def);
-                for attr in self.items[i].protocol_def.attributes {
+                self.protocol_defs.insert(self.items[i].protocol_def().id._value, self.items[i].protocol_def());
+                for attr in self.items[i].protocol_def().attributes {
                     if attr.tag == AttrTag::Lang {
                         let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].protocol_def.id._value);
+                        self.lang_items.insert(hash, self.items[i].protocol_def().id._value);
                     }
                 }
                 // Register protocol methods in fn_defs with protocol generic_params prepended
-                let proto_def = &self.items[i].protocol_def;
+                let proto_def = self.items[i].protocol_def();
                 let self_gp_id: usize = 0usize;
                 if proto_def.generic_params.len() > 0 {
                     self_gp_id = proto_def.generic_params[0].id._value;
@@ -219,18 +219,18 @@ impl MonoCtx {
                     }
                 }
             } else if self.items[i].tag == ItemTag::Static {
-                self.static_defs.insert(self.items[i].static_def.id._value, &self.items[i].static_def);
+                self.static_defs.insert(self.items[i].static_def().id._value, self.items[i].static_def());
             }
         }
 
         // Pass 2: functions (skip if already registered as protocol method)
         for i in 0usize..self.items.len() {
             if self.items[i].tag == ItemTag::Function {
-                let fn_id = self.items[i].fn_def.id._value;
+                let fn_id = self.items[i].fn_def().id._value;
                 if !self.proto_method_self_id.get(&fn_id).is_some() {
-                    self.fn_defs.insert(fn_id, &self.items[i].fn_def);
+                    self.fn_defs.insert(fn_id, self.items[i].fn_def());
                 }
-                for attr in self.items[i].fn_def.attributes {
+                for attr in self.items[i].fn_def().attributes {
                     if attr.tag == AttrTag::Lang {
                         let hash = self.hash_lang_name(attr.str_val());
                         self.lang_items.insert(hash, fn_id);
@@ -419,7 +419,7 @@ fn monomorphize(
     for ii in 0usize..items.len() {
         let item = &items[ii];
         if item.tag == ItemTag::Function {
-            let fn_def = &item.fn_def;
+            let fn_def = item.fn_def();
             let is_root = false;
             for attr in fn_def.attributes {
                 if attr.tag == AttrTag::Export {
@@ -438,7 +438,7 @@ fn monomorphize(
         } else if item.tag == ItemTag::Static {
             // Process statics - only process extern statics eagerly
             // Other statics will be processed on demand when referenced
-            let sd = &item.static_def;
+            let sd = item.static_def();
             let is_extern = false;
             for attr in sd.attributes {
                 if attr.tag == AttrTag::Extern {
