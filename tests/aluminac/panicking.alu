@@ -1,0 +1,111 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::panicking::catch_panic;
+
+fn test_assert_true() -> i32 {
+    assert!(1i32 == 1i32);
+    assert!(true);
+    0i32
+}
+
+fn test_assert_eq_equal() -> i32 {
+    assert_eq!(42i32, 42i32);
+    assert_eq!(0i32, 0i32);
+    0i32
+}
+
+fn test_assert_ne_different() -> i32 {
+    assert_ne!(1i32, 2i32);
+    assert_ne!(0i32, 1i32);
+    0i32
+}
+
+fn test_catch_panic_basic() -> i32 {
+    let result = catch_panic(|| -> () {
+        panic!("test panic");
+    });
+    if result.is_ok() { return 10i32; }
+    0i32
+}
+
+fn test_catch_panic_with_args() -> i32 {
+    let result = catch_panic(|| -> () {
+        panic!("value is {}", 42i32);
+    });
+    if result.is_ok() { return 20i32; }
+    0i32
+}
+
+fn test_catch_panic_no_panic() -> i32 {
+    let result = catch_panic(|| -> i32 {
+        42i32
+    });
+    if result.is_err() { return 30i32; }
+    if result.unwrap() != 42i32 { return 31i32; }
+    0i32
+}
+
+fn test_catch_assert_failure() -> i32 {
+    let result = catch_panic(|| -> () {
+        assert!(false);
+    });
+    if result.is_ok() { return 40i32; }
+    0i32
+}
+
+fn test_catch_assert_eq_failure() -> i32 {
+    let result = catch_panic(|| -> () {
+        assert_eq!(1i32, 2i32);
+    });
+    if result.is_ok() { return 50i32; }
+    0i32
+}
+
+fn test_catch_assert_ne_failure() -> i32 {
+    let result = catch_panic(|| -> () {
+        assert_ne!(42i32, 42i32);
+    });
+    if result.is_ok() { return 60i32; }
+    0i32
+}
+
+fn test_catch_nested() -> i32 {
+    let result = catch_panic(|| -> () {
+        let inner = catch_panic(|| -> () {
+            panic!("inner panic");
+        });
+        if inner.is_ok() {
+            panic!("inner should have panicked");
+        }
+    });
+    if result.is_err() { return 70i32; }
+    0i32
+}
+
+fn test_catch_panic_twice() -> i32 {
+    let r1 = catch_panic(|| -> () {
+        panic!("first");
+    });
+    if r1.is_ok() { return 80i32; }
+
+    let r2 = catch_panic(|| -> () {
+        panic!("second");
+    });
+    if r2.is_ok() { return 81i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_assert_true(); if r != 0i32 { return r; }
+    let r = test_assert_eq_equal(); if r != 0i32 { return r; }
+    let r = test_assert_ne_different(); if r != 0i32 { return r; }
+    let r = test_catch_panic_basic(); if r != 0i32 { return r; }
+    let r = test_catch_panic_with_args(); if r != 0i32 { return r; }
+    let r = test_catch_panic_no_panic(); if r != 0i32 { return r; }
+    let r = test_catch_assert_failure(); if r != 0i32 { return r; }
+    let r = test_catch_assert_eq_failure(); if r != 0i32 { return r; }
+    let r = test_catch_assert_ne_failure(); if r != 0i32 { return r; }
+    let r = test_catch_nested(); if r != 0i32 { return r; }
+    let r = test_catch_panic_twice(); if r != 0i32 { return r; }
+    0i32
+}

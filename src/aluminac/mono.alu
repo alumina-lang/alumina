@@ -41,6 +41,9 @@ struct MonoCtx {
     ir_structs: Vector<IrStructRef>,
     ir_enums: Vector<IrEnumRef>,
 
+    // Track emitted globals to avoid duplicates
+    emitted_globals: HashSet<usize>,
+
     // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
     fn_cache: HashMap<u64, usize>,
     struct_cache: HashMap<u64, usize>,
@@ -130,6 +133,7 @@ impl MonoCtx {
             ir_globals: Vector::new(),
             ir_structs: Vector::new(),
             ir_enums: Vector::new(),
+            emitted_globals: HashSet::new(),
             fn_cache: HashMap::new(),
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
@@ -371,6 +375,7 @@ impl MonoCtx {
         self.ir_globals.free();
         self.ir_structs.free();
         self.ir_enums.free();
+        self.emitted_globals.free();
         self.fn_cache.free();
         self.struct_cache.free();
         self.struct_ty_cache.free();
@@ -1323,6 +1328,33 @@ impl Mono {
                     } else {
                         self.ctx.void_ty
                     };
+
+                    // Ensure the global is emitted (non-extern statics are lazy)
+                    if !self.ctx.emitted_globals.contains(&def.id._value) {
+                        self.ctx.emitted_globals.insert(def.id._value);
+                        let init: Option<&IrExpr> = if def.init.is_some() {
+                            Option::some(self.lower_expr(def.init.unwrap()))
+                        } else {
+                            Option::none()
+                        };
+                        let is_extern = false;
+                        for attr in def.attributes {
+                            if attr.tag == AttrTag::Extern {
+                                is_extern = true;
+                            }
+                        }
+                        self.ctx.ir_globals.push(IrGlobal {
+                            id: def.id,
+                            name: def.name,
+                            mangled_name: def.name,
+                            ty: ty,
+                            init: init,
+                            is_const: def.is_const,
+                            is_extern: is_extern,
+                            attributes: def.attributes,
+                        });
+                    }
+
                     let result = IrExpr::void_expr(ty);
                     result.tag = IrTag::GlobalRef;
                     result.global_ref = IrGlobalRef {
@@ -5022,6 +5054,7 @@ fn monomorphize(
             if !is_extern {
                 continue;
             }
+            ctx.emitted_globals.insert(sd.id._value);
             let mono = Mono::new(&ctx);
             let ty = if sd.ty.is_some() {
                 mono.resolve_type(sd.ty.unwrap())

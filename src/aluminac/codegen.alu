@@ -730,6 +730,8 @@ impl CodegenCtx {
                 self.add_fn_attribute(llvm_fn, "alwaysinline");
             } else if attr.tag == AttrTag::Cold {
                 self.add_fn_attribute(llvm_fn, "cold");
+            } else if attr.tag == AttrTag::ReturnsTwice {
+                self.add_fn_attribute(llvm_fn, "returns_twice");
             }
         }
 
@@ -1790,10 +1792,6 @@ impl FnCodegen {
             self.gen_unary(expr.un_op, expr.lhs, expr.ty)
         }
         IrTag::Assign => {
-            let rhs_ty = self.ctx.llvm_type(FnCodegen::expr_ty(expr.rhs));
-            if self.is_void_type(rhs_ty) {
-                return LLVMGetUndef(self.ctx.void_type);
-            }
             let rhs_val = self.gen_expr(expr.rhs);
             let rhs_val_ty = LLVMTypeOf(rhs_val);
             if LLVMGetTypeKind(rhs_val_ty) != LLVMTypeKind::Void {
@@ -1996,9 +1994,9 @@ impl FnCodegen {
             // init_expr.ty, because field accesses on locals from unwrap() are broken
             // in the bootstrap binary.
             if expr.opt_expr.is_some() {
+                let init_val = self.gen_expr(expr.opt_expr.unwrap());
                 let var_ty = self.ctx.llvm_type(expr.ir_ty);
                 if !self.is_void_type(var_ty) {
-                    let init_val = self.gen_expr(expr.opt_expr.unwrap());
                     let alloca = self.locals.get(&expr.id._value);
                     if alloca.is_some() {
                         self.safe_store(init_val, alloca.unwrap());

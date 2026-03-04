@@ -197,6 +197,24 @@ mod internal {
         fmt.write_str(buf[64usize - i .. 64usize])
     }
 
+    /// Convert a formattable value to a type-erased dyn reference.
+    fn dyn_format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<Self, F> {
+        self
+    }
+
+    /// Receiver macro for format_args that constructs an array of type-erased pointers.
+    macro dyn_format_args($args...) {
+        [dyn_format_arg(&$args)$...]
+    }
+
+    /// Write an array of type-erased formattable parts to a formatter.
+    fn write_fmt<F: Formatter<F>>(parts: &[&dyn Formattable<Self, F>], f: &mut F) -> Result {
+        for i in 0usize..parts.len() {
+            parts[i].fmt(f)?;
+        }
+        Result::ok(())
+    }
+
     /// Float formatting using snprintf
     fn format_float_f64<F: Formatter<F>>(val: f64, fmt: &mut F) -> Result {
         // Handle special cases

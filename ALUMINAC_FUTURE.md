@@ -78,3 +78,9 @@ Methods in protocols that use a parameter name other than `self` (e.g. `iter: &m
 fail to resolve when mixed in. The compiler appears to only properly bind Self for
 parameters named `self`.
 **Workaround**: Always use `self` as the first parameter name in protocol methods.
+
+### Dyn dispatch method calls fail
+Calling methods on `&dyn Protocol<Self, F>` references (e.g. `parts[i].fmt(f)`) fails with
+"could not resolve method 'fmt'". The dyn vtable dispatch doesn't resolve protocol methods.
+**Workaround**: Use non-dyn patterns. For formatting, use the static `format_args!` approach
+with `static_format_args` instead of `dyn_format_args` + `write_fmt`.

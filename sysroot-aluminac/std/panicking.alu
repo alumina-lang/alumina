@@ -1,0 +1,73 @@
+//! Panic support for the self-hosted compiler sysroot.
+
+/// Information about a panic.
+struct PanicInfo {
+    file: &[u8],
+    line: i32,
+    column: i32,
+}
+
+/// Catch a panic and return it as a result.
+///
+/// Executes the closure and returns `Result::ok` on success, or `Result::err` with a
+/// `PanicInfo` if the closure panics. Does not unwind the stack.
+fn catch_panic<T, F: Fn() -> T>(f: F) -> Result<T, PanicInfo> {
+    let prev_hook = internal::PANIC_HOOK;
+
+    let buf: internal::jmp_buf;
+    let panic_info: PanicInfo;
+
+    internal::PANIC_HOOK = Option::some(internal::PanicHook {
+        buf: &buf as &mut void,
+        info: &panic_info as &mut void,
+    });
+
+    let val = internal::_setjmp(&buf);
+    if val != 0i32 {
+        internal::PANIC_HOOK = prev_hook;
+        internal::PANICKING = false;
+        return Result::err(panic_info);
+    }
+
+    let result: T = f();
+    internal::PANIC_HOOK = prev_hook;
+    Result::ok(result)
+}
+
+mod internal {
+    // jmp_buf on x86_64 Linux is 200 bytes (25 * 8)
+    type jmp_buf = [libc::c_long; 25];
+
+    #[returns_twice]
+    extern "C" fn _setjmp(buf: &jmp_buf) -> libc::c_int;
+    extern "C" fn longjmp(buf: &jmp_buf, val: libc::c_int) -> !;
+
+    struct PanicHook {
+        buf: &mut void,
+        info: &mut void,
+    }
+
+    #[thread_local] static PANICKING: bool;
+    #[thread_local] static PANIC_HOOK: Option<PanicHook>;
+
+    fn panic_with_hook(file: &[u8], line: i32, column: i32) -> ! {
+        if std::mem::replace::<bool>(&PANICKING, true) {
+            std::intrinsics::trap();
+        }
+
+        // If there's a panic hook (set by catch_panic), use it
+        if PANIC_HOOK.is_some() {
+            let hook = PANIC_HOOK.unwrap();
+            let info_ptr = hook.info as &mut PanicInfo;
+            *info_ptr = PanicInfo {
+                file: file,
+                line: line,
+                column: column,
+            };
+            let buf_ptr = hook.buf as &mut jmp_buf;
+            longjmp(buf_ptr, 1i32);
+        }
+
+        libc::abort();
+    }
+}

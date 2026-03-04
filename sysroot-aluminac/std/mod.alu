@@ -1,18 +1,25 @@
 // Simplified standard library for self-hosted compiler bootstrap
 // Modules are auto-loaded from directory structure by the sysroot loader.
 
-extern "C" fn abort() -> !;
-
 macro panic($reason, $args...) {
     {
-        eprintln!(concat!("panic: ", $reason), $args$...);
-        abort();
+        let _file: &[u8] = file!();
+        let _line: i32 = line!();
+        let _col: i32 = column!();
+        eprint!("panic at {}:{}:{}: ", _file, _line, _col);
+        eprintln!($reason, $args$...);
+        panicking::internal::panic_with_hook(_file, _line, _col);
     }
 }
 
 macro assert($cond) {
     if !$cond {
-        panic!("assertion failed");
+        let _file: &[u8] = file!();
+        let _line: i32 = line!();
+        let _col: i32 = column!();
+        eprint!("panic at {}:{}:{}: ", _file, _line, _col);
+        eprintln!("assertion failed");
+        panicking::internal::panic_with_hook(_file, _line, _col);
     }
 }
 
@@ -21,8 +28,12 @@ macro assert_eq($a, $b) {
         let _a = $a;
         let _b = $b;
         if _a != _b {
+            let _file: &[u8] = file!();
+            let _line: i32 = line!();
+            let _col: i32 = column!();
+            eprint!("panic at {}:{}:{}: ", _file, _line, _col);
             eprintln!("assertion failed: {} != {}", _a, _b);
-            abort();
+            panicking::internal::panic_with_hook(_file, _line, _col);
         }
     }
 }
@@ -32,8 +43,12 @@ macro assert_ne($a, $b) {
         let _a = $a;
         let _b = $b;
         if _a == _b {
+            let _file: &[u8] = file!();
+            let _line: i32 = line!();
+            let _col: i32 = column!();
+            eprint!("panic at {}:{}:{}: ", _file, _line, _col);
             eprintln!("assertion failed: {} == {}", _a, _b);
-            abort();
+            panicking::internal::panic_with_hook(_file, _line, _col);
         }
     }
 }
