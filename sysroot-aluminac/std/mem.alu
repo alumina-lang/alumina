@@ -1,10 +1,42 @@
-// Simplified memory operations for self-hosted compiler bootstrap
+// Memory operations for self-hosted compiler
 
 extern "C" fn malloc(size: usize) -> &mut void;
 extern "C" fn realloc(ptr: &mut void, size: usize) -> &mut void;
 extern "C" fn free(ptr: &mut void);
 extern "C" fn memcpy(dest: &mut void, src: &void, n: usize) -> &mut void;
 extern "C" fn memcmp(a: &void, b: &void, n: usize) -> i32;
+
+/// Types that own heap-allocated memory.
+protocol Freeable<Self> {
+    /// Frees the memory backing the object.
+    fn free(self: &mut Self);
+}
+
+/// Types that implement move semantics.
+///
+/// If a type allocates memory, it is a good idea to implement move function, so that instances
+/// can be passed around by value, leaving inert instances behind. This is chiefly used so that
+/// `defer` expressions are more ergonomic.
+protocol Movable<Self> {
+    /// Creates a copy of the object, leaving an inert object behind.
+    fn move(self: &mut Self) -> Self;
+}
+
+/// Types that can be copied non-trivially (usually types containing a heap allocation).
+protocol Clonable<Self> {
+    /// Returns a copy of the object.
+    fn clone(self: &Self) -> Self;
+}
+
+/// Types that can be viewed as a const slice.
+protocol AsSlice<Self, T> {
+    fn as_slice(self: &Self) -> &[T];
+}
+
+/// Types that can be viewed as a mutable slice.
+protocol AsSliceMut<Self: AsSlice<Self, T>, T> {
+    fn as_mut_slice(self: &mut Self) -> &mut [T];
+}
 
 /// Return a zero-initialized value of type T.
 fn zeroed<T>() -> T {

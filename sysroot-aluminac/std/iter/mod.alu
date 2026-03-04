@@ -223,6 +223,41 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         index
     }
 
+    /// Wrap iterator to allow peeking at the next element.
+    fn peekable(self: &mut Self) -> PeekableIterator<Self, T> {
+        PeekableIterator { _it: self, _peeked: Option::none() }
+    }
+
+    /// Returns the minimum element, or `Option::none()` if empty.
+    fn min(iter: &mut Self) -> Option<T> {
+        let result: Option<T> = Option::none();
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                return result;
+            }
+            let val = next.unwrap();
+            if result.is_none() || val < result.unwrap() {
+                result = Option::some(val);
+            }
+        }
+    }
+
+    /// Returns the maximum element, or `Option::none()` if empty.
+    fn max(iter: &mut Self) -> Option<T> {
+        let result: Option<T> = Option::none();
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                return result;
+            }
+            let val = next.unwrap();
+            if result.is_none() || val > result.unwrap() {
+                result = Option::some(val);
+            }
+        }
+    }
+
     /// Collect the iterator into a Vector.
     fn to_vector(self: &mut Self) -> std::collections::Vector<T> {
         let v: std::collections::Vector<T> = std::collections::Vector::new();
@@ -625,4 +660,68 @@ impl FromFnIterator<F: Fn() -> Option<T>, T> {
 /// Returns an iterator that calls a function to produce each element.
 fn from_fn<T, F: Fn() -> Option<T>>(fun: F) -> FromFnIterator<F, T> {
     FromFnIterator { _fun: fun }
+}
+
+/// A countdown iterator. See [countdown].
+struct Countdown {
+    _remaining: usize,
+}
+
+impl Countdown {
+    fn next(self: &mut Countdown) -> Option<usize> {
+        if self._remaining == 0usize {
+            Option::none()
+        } else {
+            self._remaining = self._remaining - 1usize;
+            Option::some(self._remaining)
+        }
+    }
+    fn size_hint(self: &Countdown) -> Option<usize> {
+        Option::some(self._remaining)
+    }
+    mixin Iterator<Countdown, usize>;
+    mixin IteratorExt<Countdown, usize>;
+}
+
+/// Returns a countdown iterator from `n-1` down to `0`.
+fn countdown(n: usize) -> Countdown {
+    Countdown { _remaining: n }
+}
+
+/// Peekable iterator. See [IteratorExt::peekable].
+struct PeekableIterator<It: Iterator<It, T>, T> {
+    _it: &mut It,
+    _peeked: Option<T>,
+}
+
+impl PeekableIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut PeekableIterator<It, T>) -> Option<T> {
+        if self._peeked.is_some() {
+            let v = self._peeked;
+            self._peeked = Option::none();
+            v
+        } else {
+            self._it.next()
+        }
+    }
+
+    /// Look at the next element without consuming it.
+    fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
+        if self._peeked.is_none() {
+            self._peeked = self._it.next();
+        }
+        self._peeked
+    }
+
+    fn size_hint(self: &PeekableIterator<It, T>) -> Option<usize> {
+        let extra = if self._peeked.is_some() { 1usize } else { 0usize };
+        let hint = self._it.size_hint();
+        if hint.is_some() {
+            Option::some(hint.unwrap() + extra)
+        } else {
+            Option::none()
+        }
+    }
+    mixin Iterator<PeekableIterator<It, T>, T>;
+    mixin IteratorExt<PeekableIterator<It, T>, T>;
 }
