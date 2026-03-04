@@ -6,7 +6,14 @@ extern "C" fn free(ptr: &mut void);
 extern "C" fn memcpy(dest: &mut void, src: &void, n: usize) -> &mut void;
 extern "C" fn memcmp(a: &void, b: &void, n: usize) -> i32;
 
+/// Return a zero-initialized value of type T.
 fn zeroed<T>() -> T {
+    let val: T;
+    val
+}
+
+/// Same as zeroed - for compatibility with alumina-boot's mem::uninitialized.
+fn uninitialized<T>() -> T {
     let val: T;
     val
 }
@@ -52,6 +59,19 @@ fn slice_free<T>(data: &mut [T]) {
     if data.len() > 0usize {
         free(&data[0] as &mut void);
     }
+}
+
+extern "C" fn calloc(nmemb: usize, size: usize) -> &mut void;
+
+/// Allocate a zero-initialized slice.
+fn slice_alloc_zeroed<T>(len: usize) -> &mut [T] {
+    let ptr = calloc(len, size_of::<T>()) as &mut T;
+    slice_from_raw::<T>(ptr, len)
+}
+
+/// Copy memory with potential overlap (uses memmove).
+fn copy<T>(src: &T, dst: &mut T, count: usize) {
+    libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
 }
 
 /// Swap the values at two mutable references.

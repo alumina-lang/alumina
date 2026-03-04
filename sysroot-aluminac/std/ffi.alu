@@ -27,4 +27,26 @@ impl CString {
     fn as_slice(self: &CString) -> &[u8] {
         std::mem::slice_from_raw_const(self.ptr as &u8, self.len())
     }
+
+    /// A null C string.
+    fn null() -> CString {
+        CString { ptr: null }
+    }
+
+    /// Clone the CString, copying all bytes.
+    fn clone(self: &CString) -> CString {
+        CString::from_slice(self.as_slice())
+    }
+
+    /// Move the CString, leaving self null.
+    fn move(self: &mut CString) -> CString {
+        let ret = *self;
+        self.ptr = null;
+        ret
+    }
+
+    /// Format the CString.
+    fn fmt<F: std::fmt::Formatter<F>>(self: &CString, f: &mut F) -> std::fmt::Result {
+        f.write_str(self.as_slice())
+    }
 }

@@ -1875,7 +1875,7 @@ impl Mono {
 
                 // The result of .iter() might be a slice
                 if self.is_slice_ty(iter_ty) {
-                    return self.lower_for_slice(expr, iter_ir, iter_ty);
+                    return self.lower_for_slice_with_preamble(expr, iter_ir, iter_ty, iter_let_stmt);
                 }
             }
         }
@@ -2471,6 +2471,10 @@ impl Mono {
     // Lower a for-in loop over a slice: for item in slice { body }
     // Desugar to: { let _s = slice; let _i = 0usize; let _end = _s.len; while _i < _end { let item = _s[_i]; body; _i = _i + 1; } }
     fn lower_for_slice(self: &mut Mono, expr: &Expr, slice_ir: &IrExpr, slice_ty: &IrTy) -> &IrExpr {
+        self.lower_for_slice_with_preamble(expr, slice_ir, slice_ty, Option::none())
+    }
+
+    fn lower_for_slice_with_preamble(self: &mut Mono, expr: &Expr, slice_ir: &IrExpr, slice_ty: &IrTy, extra_preamble: Option<&IrExpr>) -> &IrExpr {
         let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
         let bool_ty = self.ctx.intern_builtin_ty(BuiltinType::Bool);
 
@@ -2509,10 +2513,17 @@ impl Mono {
         let ir_element = self.mk_index(ir_data_ptr, self.mk_local(idx_var_id, usize_ty), elem_ty);
 
         // Build the common loop structure
-        let preamble = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-        preamble[0] = ir_let_s;
-        preamble[1] = ir_let_i;
-        preamble[2] = ir_let_end;
+        let base_count = 3usize;
+        let extra_count = if extra_preamble.is_some() { 1usize } else { 0usize };
+        let preamble = self.ctx.arena.alloc_slice::<&IrExpr>(base_count + extra_count);
+        let idx = 0usize;
+        if extra_preamble.is_some() {
+            preamble[idx] = extra_preamble.unwrap();
+            idx = idx + 1usize;
+        }
+        preamble[idx] = ir_let_s;
+        preamble[idx + 1usize] = ir_let_i;
+        preamble[idx + 2usize] = ir_let_end;
         self.build_for_indexed_loop(expr, preamble, ir_cond, ir_element, elem_ty, idx_var_id)
     }
 

@@ -1,5 +1,4 @@
-// Stub std::range for self-hosted compiler bootstrap
-
+/// A range with both lower and upper bounds (a..b)
 struct Range<T> {
     lower: T,
     upper: T,
@@ -10,8 +9,35 @@ impl Range<T> {
     fn new(lower: T, upper: T) -> Range<T> {
         Range { lower: lower, upper: upper }
     }
+
+    /// Returns true if value is within the range [lower, upper).
+    fn contains(self: &Range<T>, value: T) -> bool {
+        value >= self.lower && value < self.upper
+    }
+
+    /// Returns true if the range is empty (lower >= upper).
+    fn is_empty(self: &Range<T>) -> bool {
+        self.lower >= self.upper
+    }
+
+    /// Returns the iterator (self copy) for use in for loops.
+    fn iter(self: &Range<T>) -> Range<T> {
+        *self
+    }
+
+    /// Returns the next value in the range, or none if exhausted.
+    fn next(self: &mut Range<T>) -> Option<T> {
+        if self.lower < self.upper {
+            let lower = self.lower;
+            self.lower += 1;
+            Option::some(lower)
+        } else {
+            Option::none()
+        }
+    }
 }
 
+/// An inclusive range with both lower and upper bounds (a..=b)
 struct RangeInclusive<T> {
     lower: T,
     upper: T,
@@ -22,5 +48,35 @@ impl RangeInclusive<T> {
     #[lang(range_inclusive_new)]
     fn new(lower: T, upper: T) -> RangeInclusive<T> {
         RangeInclusive { lower: lower, upper: upper, _exhausted: false }
+    }
+
+    /// Returns true if value is within the range [lower, upper].
+    fn contains(self: &RangeInclusive<T>, value: T) -> bool {
+        value >= self.lower && value <= self.upper
+    }
+
+    /// Returns true if the range is empty.
+    fn is_empty(self: &RangeInclusive<T>) -> bool {
+        self.lower > self.upper || self._exhausted
+    }
+
+    /// Returns the iterator (self copy) for use in for loops.
+    fn iter(self: &RangeInclusive<T>) -> RangeInclusive<T> {
+        *self
+    }
+
+    /// Returns the next value in the range, or none if exhausted.
+    fn next(self: &mut RangeInclusive<T>) -> Option<T> {
+        if self.lower <= self.upper && !self._exhausted {
+            let lower = self.lower;
+            if self.lower == self.upper {
+                self._exhausted = true;
+            } else {
+                self.lower += 1;
+            }
+            Option::some(lower)
+        } else {
+            Option::none()
+        }
     }
 }
