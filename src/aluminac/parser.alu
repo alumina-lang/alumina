@@ -135,6 +135,7 @@ struct PendingMixin {
     node_end: u32,
     impl_scope_idx: u32,     // the impl block's scope
     type_scope_idx: u32,     // the scope for resolving the protocol type ref
+    impl_generic_param_ids: &[Id],  // generic param IDs from the enclosing impl
 }
 
 struct PendingImpl {
@@ -1125,6 +1126,7 @@ impl Pass1 {
             node_end: node.end_byte() as u32,
             impl_scope_idx: self.current_scope,
             type_scope_idx: self.current_scope,
+            impl_generic_param_ids: self.impl_generic_param_ids,
         });
     }
 }
@@ -1216,32 +1218,37 @@ impl Pass2 {
             let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
             let proto_id_val: usize = 0usize;
             let has_proto_id = false;
+            let mixin_ty_args: &[&Ty] = &[];
             if proto_ty.tag == TyTag::Named {
                 proto_id_val = proto_ty.id._value;
                 has_proto_id = true;
             } else if proto_ty.tag == TyTag::Generic && proto_ty.inner.tag == TyTag::Named {
                 proto_id_val = proto_ty.inner.id._value;
                 has_proto_id = true;
+                mixin_ty_args = proto_ty.elems;
             }
             if !has_proto_id {
                 continue;
             }
             let impl_scope_idx = pending.impl_scope_idx;
-            for j in 0usize..self.ctx.items.len() {
-                if self.ctx.items[j].tag == ItemTag::Protocol && self.ctx.items[j].protocol_def.id._value == proto_id_val {
-                    let proto_def = &self.ctx.items[j].protocol_def;
-                    for k in 0usize..proto_def.methods.len() {
-                        let method = &proto_def.methods[k];
-                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&method.name);
+            let proto_scope = self.ctx.scopes.find_protocol_scope_by_id(proto_id_val);
+            if proto_scope.is_some() {
+                let proto_scope_idx = proto_scope.unwrap();
+                for pair in self.ctx.scopes.get(proto_scope_idx).items {
+                    let item = pair.1;
+                    if item.kind.tag == NamedItemTag::Function || item.kind.tag == NamedItemTag::Method {
+                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&item.name);
                         if existing.is_none() {
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
-                                name: method.name,
-                                kind: NamedItemKind::function(method.id),
+                                name: item.name,
+                                kind: NamedItemKind::function(item.kind.id),
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
+                            if mixin_ty_args.len() > 0 {
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                            }
                         }
                     }
-                    break;
                 }
             }
         }
@@ -2062,9 +2069,6 @@ impl Pass2 {
                 let fn_name_node = child_by!(child, FieldKind::Name);
                 if fn_name_node.is_none() { continue; }
                 let fn_name = self.ctx.intern_str(self.ctx.node_text(fn_name_node.unwrap()));
-                let fn_generic_params = self.parse_generic_params(child, pending.scope_idx);
-                let fn_params = self.parse_fn_params(child, pending.scope_idx);
-                let fn_ret = self.parse_return_type(child, pending.scope_idx);
 
                 // Look up the fn ID from the protocol's scope
                 let scope_item = self.ctx.scopes.resolve(pending.scope_idx, fn_name);
@@ -2074,19 +2078,50 @@ impl Pass2 {
                     self.ctx.next_id()
                 };
 
+                // Find the function's own scope from pending_functions.
+                // Parameters are registered in the function scope (child of protocol scope),
+                // so we must use it for parsing params and body.
+                let fn_scope_idx = pending.scope_idx;
+                for pfi in 0usize..self.ctx.pending_functions.len() {
+                    if self.ctx.pending_functions[pfi].id._value == fn_id._value {
+                        fn_scope_idx = self.ctx.pending_functions[pfi].scope_idx;
+                        break;
+                    }
+                }
+
+                let fn_generic_params = self.parse_generic_params(child, fn_scope_idx);
+                let fn_params = self.parse_fn_params(child, fn_scope_idx);
+                let fn_ret = self.parse_return_type(child, fn_scope_idx);
+
                 // Parse optional body (default method implementation)
                 let fn_body_node = child_by!(child, FieldKind::Body);
                 let fn_body: Option<&Expr> = if !fn_body_node.is_none() {
-                    let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+                    let expr_parser = ExprParser::new(self.ctx, fn_scope_idx);
                     Option::some(expr_parser.parse_expr(fn_body_node.unwrap()))
                 } else {
                     Option::none()
                 };
 
+                // Prepend protocol generic params to method generic params
+                // (mirrors how build_function handles impl generic params)
+                let all_generic_params = if generic_params.len() > 0 {
+                    let total = generic_params.len() + fn_generic_params.len();
+                    let combined = self.ctx.arena.alloc_slice::<GenericParam>(total);
+                    for gi in 0usize..generic_params.len() {
+                        combined[gi] = generic_params[gi];
+                    }
+                    for gi in 0usize..fn_generic_params.len() {
+                        combined[generic_params.len() + gi] = fn_generic_params[gi];
+                    }
+                    combined as &[GenericParam]
+                } else {
+                    fn_generic_params
+                };
+
                 methods.push(FnDef {
                     id: fn_id,
                     name: fn_name,
-                    generic_params: fn_generic_params,
+                    generic_params: all_generic_params,
                     params: fn_params,
                     return_type: fn_ret,
                     body: fn_body,
@@ -2128,41 +2163,47 @@ impl Pass2 {
             // Parse the protocol type reference
             let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
 
-            // Extract the protocol ID from the type
+            // Extract the protocol ID and type args from the type
             // It could be TyTag::Named (simple) or TyTag::Generic (with type args)
             let proto_id_val: usize = 0usize;
             let has_proto_id = false;
+            let mixin_ty_args: &[&Ty] = &[];
             if proto_ty.tag == TyTag::Named {
                 proto_id_val = proto_ty.id._value;
                 has_proto_id = true;
             } else if proto_ty.tag == TyTag::Generic && proto_ty.inner.tag == TyTag::Named {
                 proto_id_val = proto_ty.inner.id._value;
                 has_proto_id = true;
+                mixin_ty_args = proto_ty.elems;  // e.g. [Counter, i32] from mixin IteratorExt<Counter, i32>
             }
 
             if !has_proto_id {
                 continue;
             }
 
-            // Find the ProtocolDef by its ID
+            // Find the protocol's scope and copy its methods to the impl scope.
+            // Uses the shared scope system so cross-file mixins work.
             let impl_scope_idx = pending.impl_scope_idx;
-            for j in 0usize..self.ctx.items.len() {
-                if self.ctx.items[j].tag == ItemTag::Protocol && self.ctx.items[j].protocol_def.id._value == proto_id_val {
-                    let proto_def = &self.ctx.items[j].protocol_def;
-                    for k in 0usize..proto_def.methods.len() {
-                        let method = &proto_def.methods[k];
-                        // Register this method in the impl scope
+            let proto_scope = self.ctx.scopes.find_protocol_scope_by_id(proto_id_val);
+            if proto_scope.is_some() {
+                let proto_scope_idx = proto_scope.unwrap();
+                for pair in self.ctx.scopes.get(proto_scope_idx).items {
+                    let item = pair.1;
+                    if item.kind.tag == NamedItemTag::Function || item.kind.tag == NamedItemTag::Method {
                         // Only add if not already present (direct methods take priority)
-                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&method.name);
+                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&item.name);
                         if existing.is_none() {
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
-                                name: method.name,
-                                kind: NamedItemKind::function(method.id),
+                                name: item.name,
+                                kind: NamedItemKind::function(item.kind.id),
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
+                            // Store mixin type args so mono can substitute protocol generics
+                            if mixin_ty_args.len() > 0 {
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                            }
                         }
                     }
-                    break;
                 }
             }
         }

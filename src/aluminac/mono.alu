@@ -168,21 +168,13 @@ impl MonoCtx {
     }
 
     fn build_lookup_tables(self: &mut MonoCtx) {
-        // Use index-based iteration to get stable pointers into the slice
+        // Two-pass approach: register protocols first so their method FnDefs
+        // (which have protocol generic_params prepended) are not overwritten
+        // by the duplicate function Items that build_function creates.
+
+        // Pass 1: protocols, structs, enums, type aliases, statics
         for i in 0usize..self.items.len() {
-            if self.items[i].tag == ItemTag::Function {
-                self.fn_defs.insert(self.items[i].fn_def.id._value, &self.items[i].fn_def);
-                // Register lang items
-                for attr in self.items[i].fn_def.attributes {
-                    if attr.tag == AttrTag::Lang {
-                        let hash = self.hash_lang_name(attr.str_val);
-                        self.lang_items.insert(hash, self.items[i].fn_def.id._value);
-                        if attr.str_val == "slice_new" {
-                            self.slice_new_fn_id = self.items[i].fn_def.id._value;
-                        }
-                    }
-                }
-            } else if self.items[i].tag == ItemTag::Struct {
+            if self.items[i].tag == ItemTag::Struct {
                 self.struct_defs.insert(self.items[i].struct_def.id._value, &self.items[i].struct_def);
                 for attr in self.items[i].struct_def.attributes {
                     if attr.tag == AttrTag::Lang {
@@ -202,7 +194,7 @@ impl MonoCtx {
                 self.type_aliases.insert(self.items[i].type_alias.id._value, &self.items[i].type_alias);
             } else if self.items[i].tag == ItemTag::Protocol {
                 self.protocol_defs.insert(self.items[i].protocol_def.id._value, &self.items[i].protocol_def);
-                // Also register protocol methods in fn_defs so they can be called
+                // Register protocol methods in fn_defs with protocol generic_params prepended
                 let proto_def = &self.items[i].protocol_def;
                 let self_gp_id: usize = 0usize;
                 if proto_def.generic_params.len() > 0 {
@@ -211,13 +203,31 @@ impl MonoCtx {
                 for j in 0usize..proto_def.methods.len() {
                     let method = &proto_def.methods[j];
                     self.fn_defs.insert(method.id._value, method);
-                    // Record the Self generic param id for this method
                     if self_gp_id != 0usize || proto_def.generic_params.len() > 0 {
                         self.proto_method_self_id.insert(method.id._value, self_gp_id);
                     }
                 }
             } else if self.items[i].tag == ItemTag::Static {
                 self.static_defs.insert(self.items[i].static_def.id._value, &self.items[i].static_def);
+            }
+        }
+
+        // Pass 2: functions (skip if already registered as protocol method)
+        for i in 0usize..self.items.len() {
+            if self.items[i].tag == ItemTag::Function {
+                let fn_id = self.items[i].fn_def.id._value;
+                if !self.proto_method_self_id.get(&fn_id).is_some() {
+                    self.fn_defs.insert(fn_id, &self.items[i].fn_def);
+                }
+                for attr in self.items[i].fn_def.attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val);
+                        self.lang_items.insert(hash, fn_id);
+                        if attr.str_val == "slice_new" {
+                            self.slice_new_fn_id = fn_id;
+                        }
+                    }
+                }
             }
         }
     }
@@ -647,6 +657,79 @@ impl Mono {
             }
             _ => self.ctx.void_ty,
         }
+    }
+
+    /// Resolve the type of a struct literal, using type hints when explicit type args are absent.
+    /// When a generic struct is referenced without type args (e.g. `TakeIterator { ... }`),
+    /// uses the function's return type as a hint, matching alumina-boot's type_hint mechanism.
+    fn resolve_struct_lit_type(self: &mut Mono, expr: &Expr) -> &IrTy {
+        let ir_ty = self.resolve_type(expr.ty);
+
+        // Only apply hints when the type is a struct with generic params but no type args
+        if ir_ty.tag != IrTyTag::Struct || ir_ty.struct_ref.type_args.len() > 0 {
+            return ir_ty;
+        }
+        let sd = self.ctx.struct_defs.get(&ir_ty.struct_ref.id._value);
+        if sd.is_none() || sd.unwrap().generic_params.len() == 0 {
+            return ir_ty;
+        }
+
+        // Hint 1: function return type matches the same struct
+        if self.return_type.tag == IrTyTag::Struct {
+            if self.return_type.struct_ref.id._value == ir_ty.struct_ref.id._value
+                && self.return_type.struct_ref.type_args.len() > 0 {
+                return self.return_type;
+            }
+        }
+
+        // Hint 2: field-based type inference from the struct literal's field values
+        let struct_def = sd.unwrap();
+        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(struct_def.generic_params.len());
+        let inferred_count = 0usize;
+        for i in 0usize..struct_def.generic_params.len() {
+            inferred[i] = self.ctx.void_ty;
+        }
+
+        for fi in 0usize..expr.field_inits.len() {
+            let field_name = expr.field_inits[fi].name;
+            // Find matching field in struct definition
+            for di in 0usize..struct_def.fields.len() {
+                if struct_def.fields[di].name == field_name {
+                    let field_ast_ty = struct_def.fields[di].ty;
+                    let value_ir = self.lower_expr(expr.field_inits[fi].value);
+                    let value_ty = value_ir.ty;
+                    // Try to match field type against value type to infer generic params
+                    // Handle &mut T pattern: field is Pointer(Placeholder), value is Pointer(concrete)
+                    if field_ast_ty.tag == TyTag::Pointer && field_ast_ty.inner.tag == TyTag::Placeholder {
+                        let target_ty = if value_ty.tag == IrTyTag::Pointer { value_ty.inner } else { value_ty };
+                        for gi in 0usize..struct_def.generic_params.len() {
+                            if struct_def.generic_params[gi].id._value == field_ast_ty.inner.id._value {
+                                inferred[gi] = target_ty;
+                                inferred_count = inferred_count + 1usize;
+                                break;
+                            }
+                        }
+                    }
+                    // Handle direct Placeholder: field is Placeholder, value is concrete
+                    if field_ast_ty.tag == TyTag::Placeholder {
+                        for gi in 0usize..struct_def.generic_params.len() {
+                            if struct_def.generic_params[gi].id._value == field_ast_ty.id._value {
+                                inferred[gi] = value_ty;
+                                inferred_count = inferred_count + 1usize;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        if inferred_count > 0 {
+            return self.mono_struct(struct_def, inferred);
+        }
+
+        ir_ty
     }
 
     fn resolve_named_type(self: &mut Mono, item_ref: ItemRef, type_args: &[&IrTy]) -> &IrTy {
@@ -1955,8 +2038,14 @@ impl Mono {
         // let _iter = iterator_expr
         let ir_let_iter = self.mk_let(iter_var_id, iter_ty, iter_ir);
 
-        // &_iter (for method calls)
-        let ir_iter_ref = self.mk_ref(self.mk_local(iter_var_id, iter_ty), false);
+        // Reference to the iterator for method calls.
+        // If iter_ty is already a pointer (e.g. &mut Counter from .iter()), use it directly.
+        // Otherwise, take a reference (&_iter) for the method call.
+        let ir_iter_ref = if iter_ty.tag == IrTyTag::Pointer {
+            self.mk_local(iter_var_id, iter_ty)
+        } else {
+            self.mk_ref(self.mk_local(iter_var_id, iter_ty), false)
+        };
 
         // _iter.next() - resolve via method call on the iterator type
         let next_result = self.resolve_method_call_on_type(iter_ty, "next", ir_iter_ref, &[]);
@@ -2696,6 +2785,33 @@ impl Mono {
             return Option::none();
         }
         let def = fn_def.unwrap();
+
+        // For mixin'd methods, resolve the mixin's type args.
+        // The mixin type args contain Placeholder refs to the IMPL's generic params,
+        // so we must map those impl param IDs to concrete types from the struct's type_args.
+        let mixin_args = self.ctx.scopes.get_mixin_type_args(scope_idx, fn_id._value);
+        if mixin_args.is_some() {
+            let ast_args = mixin_args.unwrap();
+            let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, fn_id._value);
+            if impl_gp_ids.is_some() && resolved_ty.tag == IrTyTag::Struct {
+                let ids = impl_gp_ids.unwrap();
+                let n_gp = std::cmp::min(ids.len(), resolved_ty.struct_ref.type_args.len());
+                for gi in 0usize..n_gp {
+                    self.type_map.insert(ids[gi]._value, resolved_ty.struct_ref.type_args[gi]);
+                }
+            }
+            let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
+            for i in 0usize..ast_args.len() {
+                resolved[i] = self.resolve_type(ast_args[i]);
+            }
+            method_type_args = resolved;
+        }
+
+        // For protocol methods, also set Self type from resolved_ty
+        let self_id_opt = self.ctx.proto_method_self_id.get(&fn_id._value);
+        if self_id_opt.is_some() {
+            self.type_map.insert(self_id_opt.unwrap(), resolved_ty);
+        }
 
         // Merge generic type args from the struct + method
         let all_type_args = method_type_args;
@@ -3615,6 +3731,28 @@ impl Mono {
             return Option::none();
         }
         let def = fn_def.unwrap();
+        // For mixin'd methods, resolve the mixin's type args and use them as method_type_args.
+        // Protocol generic params are now prepended to the method's FnDef.generic_params,
+        // so these type args map to positions 0..N in the function's generic params.
+        // The mixin type args contain Placeholder refs to the IMPL's generic params,
+        // so we must map those impl param IDs to concrete types from the struct's type_args.
+        let mixin_args = self.ctx.scopes.get_mixin_type_args(scope_idx, fn_id._value);
+        if mixin_args.is_some() {
+            let ast_args = mixin_args.unwrap();
+            let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, fn_id._value);
+            if impl_gp_ids.is_some() && resolved_ty.tag == IrTyTag::Struct {
+                let ids = impl_gp_ids.unwrap();
+                let n_gp = std::cmp::min(ids.len(), resolved_ty.struct_ref.type_args.len());
+                for gi in 0usize..n_gp {
+                    self.type_map.insert(ids[gi]._value, resolved_ty.struct_ref.type_args[gi]);
+                }
+            }
+            let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
+            for i in 0usize..ast_args.len() {
+                resolved[i] = self.resolve_type(ast_args[i]);
+            }
+            method_type_args = resolved;
+        }
 
         // Combine struct type args with method turbofish type args
         // e.g. for Container<i32>.transform::<String>(), struct args=[i32], turbofish=[String]
@@ -3745,6 +3883,21 @@ impl Mono {
                                 let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
                                 inferred[g] = ret_ty;
                                 found_count = found_count + 1usize;
+                            } else if arg_expr.tag == ExprTag::FnRef {
+                                // For named function refs, infer from the function's return type
+                                let fn_ref_def = self.ctx.fn_defs.get(&arg_expr.id._value);
+                                if fn_ref_def.is_some() {
+                                    let ret_ty = self.resolve_type(fn_ref_def.unwrap().return_type);
+                                    inferred[g] = ret_ty;
+                                    found_count = found_count + 1usize;
+                                }
+                            } else {
+                                // General case: lower the arg and check if it's a function pointer
+                                let arg_ir = self.lower_expr(arg_expr);
+                                if arg_ir.ty.tag == IrTyTag::FnPointer {
+                                    inferred[g] = arg_ir.ty.ret_ty;
+                                    found_count = found_count + 1usize;
+                                }
                             }
                         }
                         // Check if Fn bound return type is a Generic containing our placeholder
@@ -3753,13 +3906,24 @@ impl Mono {
                             for re in 0usize..bound.ret_ty.elems.len() {
                                 if !inferred[g].is_void() { break; }
                                 if bound.ret_ty.elems[re].tag == TyTag::Placeholder && bound.ret_ty.elems[re].id._value == def.generic_params[g].id._value {
-                                    // Resolve the lambda's return type and extract the type arg
+                                    // Resolve the callable's return type and extract the type arg
+                                    let resolved_ret: &IrTy = self.ctx.void_ty;
                                     if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
-                                        let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
-                                        if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref.type_args.len() > re {
-                                            inferred[g] = ret_ty.struct_ref.type_args[re];
-                                            found_count = found_count + 1usize;
+                                        resolved_ret = self.resolve_type(arg_expr.opt_ty.unwrap());
+                                    } else if arg_expr.tag == ExprTag::FnRef {
+                                        let fn_ref_def2 = self.ctx.fn_defs.get(&arg_expr.id._value);
+                                        if fn_ref_def2.is_some() {
+                                            resolved_ret = self.resolve_type(fn_ref_def2.unwrap().return_type);
                                         }
+                                    } else {
+                                        let arg_ir2 = self.lower_expr(arg_expr);
+                                        if arg_ir2.ty.tag == IrTyTag::FnPointer {
+                                            resolved_ret = arg_ir2.ty.ret_ty;
+                                        }
+                                    }
+                                    if resolved_ret.tag == IrTyTag::Struct && resolved_ret.struct_ref.type_args.len() > re {
+                                        inferred[g] = resolved_ret.struct_ref.type_args[re];
+                                        found_count = found_count + 1usize;
                                     }
                                 }
                             }
@@ -4578,7 +4742,7 @@ impl Mono {
                 self.ctx.arena.alloc(r)
             }
         } else if expr.tag == ExprTag::StructLit {
-            let ir_ty = self.resolve_type(expr.ty);
+            let ir_ty = self.resolve_struct_lit_type(expr);
             // Reorder field_inits to match struct definition order
             let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref.fields.len() } else { expr.field_inits.len() };
             let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);

@@ -1,0 +1,88 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::iter::{Iterator, IteratorExt};
+
+struct Counter {
+    current: i32,
+    max: i32,
+}
+
+impl Counter {
+    fn new(max: i32) -> Counter {
+        Counter { current: 0i32, max: max }
+    }
+    fn next(self: &mut Counter) -> Option<i32> {
+        if self.current >= self.max {
+            Option::none()
+        } else {
+            let val = self.current;
+            self.current = self.current + 1i32;
+            Option::some(val)
+        }
+    }
+    fn size_hint(self: &Counter) -> Option<usize> {
+        Option::some(0usize)
+    }
+    mixin Iterator<Counter, i32>;
+    mixin IteratorExt<Counter, i32>;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: basic iteration
+    let c = Counter::new(5i32);
+    if c.next() != Option::some(0i32) { return 1i32; }
+    if c.next() != Option::some(1i32) { return 2i32; }
+    if c.next() != Option::some(2i32) { return 3i32; }
+    if c.next() != Option::some(3i32) { return 4i32; }
+    if c.next() != Option::some(4i32) { return 5i32; }
+    if !c.next().is_none() { return 6i32; }
+
+    // Test 2: count
+    let c2 = Counter::new(5i32);
+    if c2.count() != 5usize { return 10i32; }
+
+    // Test 3: take
+    let c3 = Counter::new(100i32);
+    let taken = c3.take(3usize);
+    if taken.next() != Option::some(0i32) { return 40i32; }
+    if taken.next() != Option::some(1i32) { return 41i32; }
+    if taken.next() != Option::some(2i32) { return 42i32; }
+    if !taken.next().is_none() { return 43i32; }
+
+    // Test 4: skip
+    let c4 = Counter::new(5i32);
+    let skipped = c4.skip(3usize);
+    if skipped.next() != Option::some(3i32) { return 50i32; }
+
+    // Test 5: last / nth
+    let c5 = Counter::new(5i32);
+    if c5.last() != Option::some(4i32) { return 80i32; }
+    let c5b = Counter::new(5i32);
+    if c5b.nth(2usize) != Option::some(2i32) { return 81i32; }
+
+    // Test 6: step_by
+    let c6 = Counter::new(10i32);
+    let stepped = c6.step_by(3usize);
+    if stepped.next() != Option::some(0i32) { return 120i32; }
+    if stepped.next() != Option::some(3i32) { return 121i32; }
+
+    // Test 7: chain
+    let ca = Counter::new(3i32);
+    let cb = Counter::new(2i32);
+    let chained = ca.chain(&cb);
+    if chained.next() != Option::some(0i32) { return 100i32; }
+    if chained.next() != Option::some(1i32) { return 101i32; }
+    if chained.next() != Option::some(2i32) { return 102i32; }
+    if chained.next() != Option::some(0i32) { return 103i32; }
+    if chained.next() != Option::some(1i32) { return 104i32; }
+    if !chained.next().is_none() { return 105i32; }
+
+    // Test 8: for-in loop
+    let c8 = Counter::new(4i32);
+    let sum = 0i32;
+    for x in c8 {
+        sum = sum + x;
+    }
+    if sum != 6i32 { return 130i32; }
+
+    0i32
+}

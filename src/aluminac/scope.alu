@@ -163,12 +163,21 @@ impl Scope {
 
 struct ScopeArena {
     scopes: std::collections::Vector<Scope>,
+    // Mixin info: maps (scope_idx << 32 | fn_id) -> (protocol_id, type_args, impl_generic_ids)
+    // Used to propagate mixin type args (e.g. [Counter, i32] from `mixin IteratorExt<Counter, i32>`)
+    // to monomorphization when calling mixin'd methods.
+    mixin_proto_ids: HashMap<u64, usize>,
+    mixin_type_args: HashMap<u64, &[&Ty]>,
+    mixin_impl_generic_ids: HashMap<u64, &[Id]>,
 }
 
 impl ScopeArena {
     fn new() -> ScopeArena {
         ScopeArena {
             scopes: std::collections::Vector::new(),
+            mixin_proto_ids: HashMap::new(),
+            mixin_type_args: HashMap::new(),
+            mixin_impl_generic_ids: HashMap::new(),
         }
     }
 
@@ -200,6 +209,43 @@ impl ScopeArena {
         }
         new_imports[old.len()] = import_scope;
         scope.star_imports = new_imports;
+    }
+
+    // Find a protocol's scope_idx by its item id.
+    // Searches all scopes for a Protocol NamedItem with matching id.
+    fn find_protocol_scope_by_id(self: &ScopeArena, proto_id: usize) -> Option<u32> {
+        for i in 0usize..self.scopes.len() {
+            let scope = &self.scopes[i];
+            for pair in scope.items {
+                if pair.1.kind.tag == NamedItemTag::Protocol && pair.1.kind.id._value == proto_id {
+                    return Option::some(pair.1.kind.scope_idx);
+                }
+            }
+        }
+        Option::none()
+    }
+
+    fn mixin_key(scope_idx: u32, fn_id: usize) -> u64 {
+        ((scope_idx as u64) << 32u64) | (fn_id as u64)
+    }
+
+    fn set_mixin_info(self: &mut ScopeArena, scope_idx: u32, fn_id: usize, proto_id: usize, type_args: &[&Ty], impl_generic_ids: &[Id]) {
+        let key = ScopeArena::mixin_key(scope_idx, fn_id);
+        self.mixin_proto_ids.insert(key, proto_id);
+        self.mixin_type_args.insert(key, type_args);
+        self.mixin_impl_generic_ids.insert(key, impl_generic_ids);
+    }
+
+    fn get_mixin_type_args(self: &ScopeArena, scope_idx: u32, fn_id: usize) -> Option<&[&Ty]> {
+        self.mixin_type_args.get(&ScopeArena::mixin_key(scope_idx, fn_id))
+    }
+
+    fn get_mixin_impl_generic_ids(self: &ScopeArena, scope_idx: u32, fn_id: usize) -> Option<&[Id]> {
+        self.mixin_impl_generic_ids.get(&ScopeArena::mixin_key(scope_idx, fn_id))
+    }
+
+    fn get_mixin_proto_id(self: &ScopeArena, scope_idx: u32, fn_id: usize) -> Option<usize> {
+        self.mixin_proto_ids.get(&ScopeArena::mixin_key(scope_idx, fn_id))
     }
 
     // Resolve a name starting from the given scope

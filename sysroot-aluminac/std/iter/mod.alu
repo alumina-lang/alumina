@@ -1,0 +1,628 @@
+/// Iterator protocols and combinators.
+
+use std::option::Option;
+
+/// Core iterator protocol.
+///
+/// Types implementing this protocol can produce elements one at a time.
+protocol Iterator<Self, T> {
+    /// Returns the next item, or `Option::none()` if exhausted.
+    fn next(self: &mut Self) -> Option<T>;
+
+    /// Returns the number of remaining elements, if known.
+    fn size_hint(self: &Self) -> Option<usize> {
+        Option::none()
+    }
+}
+
+/// Types that can produce an iterator.
+protocol Iterable<Self, It: Iterator<It, T>, T> {
+    fn iter(self: &Self) -> It;
+}
+
+/// Extension methods for iterators.
+///
+/// All types implementing `Iterator` should also mix in `IteratorExt`.
+protocol IteratorExt<Self: Iterator<Self, T>, T> {
+    /// Return self, enabling for-loop compatibility on iterators.
+    fn iter(self: &mut Self) -> &mut Self {
+        self
+    }
+
+    /// Transform each element using a function.
+    fn map<U, F: Fn(T) -> U>(iter: &mut Self, fun: F) -> MapIterator<Self, F, T, U> {
+        MapIterator { _it: iter, _fun: fun }
+    }
+
+    /// Keep only elements matching a predicate.
+    fn filter<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> FilterIterator<Self, F, T> {
+        FilterIterator { _it: iter, _fun: fun }
+    }
+
+    /// Transform and filter simultaneously.
+    fn filter_map<U, F: Fn(T) -> Option<U>>(iter: &mut Self, fun: F) -> FilterMapIterator<Self, F, T, U> {
+        FilterMapIterator { _it: iter, _fun: fun }
+    }
+
+    /// Skip the first `n` elements.
+    fn skip(self: &mut Self, n: usize) -> SkipIterator<Self, T> {
+        SkipIterator { _it: self, _n: n }
+    }
+
+    /// Yield at most `n` elements.
+    fn take(self: &mut Self, n: usize) -> TakeIterator<Self, T> {
+        TakeIterator { _it: self, _n: n }
+    }
+
+    /// Yield elements while a predicate is true.
+    fn take_while<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> TakeWhileIterator<Self, F, T> {
+        TakeWhileIterator { _it: iter, _fun: fun }
+    }
+
+    /// Skip elements while a predicate is true.
+    fn skip_while<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> SkipWhileIterator<Self, F, T> {
+        SkipWhileIterator { _it: iter, _fun: fun, _finished: false }
+    }
+
+    /// Attach a sequence number to each element.
+    fn enumerate(self: &mut Self) -> EnumerateIterator<Self, T> {
+        EnumerateIterator { _it: self, _n: 0usize }
+    }
+
+    /// Step through elements by `n` at a time.
+    fn step_by(self: &mut Self, n: usize) -> StepByIterator<Self, T> {
+        assert!(n > 0usize);
+        StepByIterator { _it: self, _index: 0usize, _n: n }
+    }
+
+    /// Chain two iterators together.
+    fn chain<Other: Iterator<Other, T>>(self: &mut Self, other: &mut Other) -> ChainIterator<Self, Other, T> {
+        ChainIterator {
+            _it1: FusedIterator { _done: false, _it: self },
+            _it2: FusedIterator { _done: false, _it: other },
+        }
+    }
+
+    /// Combine two iterators into pairs.
+    fn zip<Other: Iterator<Other, U>, U>(self: &mut Self, other: &mut Other) -> ZipIterator<Self, Other, T, U> {
+        ZipIterator { _it1: self, _it2: other }
+    }
+
+    /// Prevent resumption after exhaustion.
+    fn fuse(self: &mut Self) -> FusedIterator<Self, T> {
+        FusedIterator { _done: false, _it: self }
+    }
+
+    /// Execute a callback on each element (pass-through).
+    fn inspect<F: Fn(T)>(it: &mut Self, func: F) -> InspectIterator<Self, F, T> {
+        InspectIterator { _it: it, _func: func }
+    }
+
+    /// Execute a function on each element, consuming the iterator.
+    fn foreach<F: Fn(T)>(iter: &mut Self, fun: F) {
+        loop {
+            let val = iter.next();
+            if val.is_some() {
+                fun(val.unwrap());
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Count the number of elements.
+    fn count(self: &mut Self) -> usize {
+        let n = 0usize;
+        loop {
+            if self.next().is_none() {
+                return n;
+            }
+            n = n + 1usize;
+        }
+    }
+
+    /// Get the last element.
+    fn last(self: &mut Self) -> Option<T> {
+        let value: Option<T> = Option::none();
+        loop {
+            let next = self.next();
+            if next.is_some() {
+                value = next;
+            } else {
+                return value;
+            }
+        }
+    }
+
+    /// Get the n-th element.
+    fn nth(self: &mut Self, n: usize) -> Option<T> {
+        let i = 0usize;
+        while i < n {
+            if self.next().is_none() {
+                return Option::none();
+            }
+            i = i + 1usize;
+        }
+        self.next()
+    }
+
+    /// Find the first element matching a predicate.
+    fn find<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> Option<T> {
+        iter.filter(fun).next()
+    }
+
+    /// Find the index of the first element matching a predicate.
+    fn find_index<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> Option<usize> {
+        let idx = 0usize;
+        loop {
+            let val = iter.next();
+            if val.is_none() {
+                return Option::none();
+            }
+            if fun(val.unwrap()) {
+                return Option::some(idx);
+            }
+            idx = idx + 1usize;
+        }
+    }
+
+    /// Reduce the iterator to a single value.
+    fn reduce<U, F: Fn(U, T) -> U>(iter: &mut Self, initial: U, func: F) -> U {
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                break;
+            }
+            initial = func(initial, next.unwrap());
+        }
+        initial
+    }
+
+    /// Return true if all elements match a predicate.
+    fn all<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> bool {
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                break;
+            }
+            if !fun(next.unwrap()) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Return true if any element matches a predicate.
+    fn any<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> bool {
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                break;
+            }
+            if fun(next.unwrap()) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Fill a slice with iterator elements, returning the number of elements written.
+    fn fill_slice(self: &mut Self, slice: &mut [T]) -> usize {
+        let index = 0usize;
+        loop {
+            if slice.len() <= index {
+                break;
+            }
+            let next = self.next();
+            if next.is_none() {
+                break;
+            }
+            slice[index] = next.unwrap();
+            index = index + 1usize;
+        }
+        index
+    }
+
+    /// Collect the iterator into a Vector.
+    fn to_vector(self: &mut Self) -> std::collections::Vector<T> {
+        let v: std::collections::Vector<T> = std::collections::Vector::new();
+        loop {
+            let next = self.next();
+            if next.is_none() {
+                break;
+            }
+            v.push(next.unwrap());
+        }
+        v
+    }
+}
+
+// === Adapter structs ===
+
+/// Map iterator. See [IteratorExt::map].
+struct MapIterator<It: Iterator<It, T>, F: Fn(T) -> U, T, U> {
+    _it: &mut It,
+    _fun: F,
+}
+
+impl MapIterator<It: Iterator<It, T>, F: Fn(T) -> U, T, U> {
+    fn next(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
+        self._it.next().map(self._fun)
+    }
+    fn size_hint(self: &MapIterator<It, F, T, U>) -> Option<usize> {
+        self._it.size_hint()
+    }
+    mixin Iterator<MapIterator<It, F, T, U>, U>;
+    mixin IteratorExt<MapIterator<It, F, T, U>, U>;
+}
+
+/// Filter iterator. See [IteratorExt::filter].
+struct FilterIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
+    _it: &mut It,
+    _fun: F,
+}
+
+impl FilterIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
+    fn next(self: &mut FilterIterator<It, F, T>) -> Option<T> {
+        loop {
+            let value = self._it.next();
+            if value.is_none() {
+                return Option::none();
+            }
+            if self._fun(value.unwrap()) {
+                return value;
+            }
+        }
+    }
+    mixin Iterator<FilterIterator<It, F, T>, T>;
+    mixin IteratorExt<FilterIterator<It, F, T>, T>;
+}
+
+/// Filter-map iterator. See [IteratorExt::filter_map].
+struct FilterMapIterator<It: Iterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
+    _it: &mut It,
+    _fun: F,
+}
+
+impl FilterMapIterator<It: Iterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
+    fn next(self: &mut FilterMapIterator<It, F, T, U>) -> Option<U> {
+        loop {
+            let value = self._it.next();
+            if value.is_none() {
+                return Option::none();
+            }
+            let mapped = self._fun(value.unwrap());
+            if mapped.is_some() {
+                return mapped;
+            }
+        }
+    }
+    mixin Iterator<FilterMapIterator<It, F, T, U>, U>;
+    mixin IteratorExt<FilterMapIterator<It, F, T, U>, U>;
+}
+
+/// Skip iterator. See [IteratorExt::skip].
+struct SkipIterator<It: Iterator<It, T>, T> {
+    _it: &mut It,
+    _n: usize,
+}
+
+impl SkipIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut SkipIterator<It, T>) -> Option<T> {
+        while self._n > 0usize {
+            self._n = self._n - 1usize;
+            if self._it.next().is_none() {
+                return Option::none();
+            }
+        }
+        self._it.next()
+    }
+    mixin Iterator<SkipIterator<It, T>, T>;
+    mixin IteratorExt<SkipIterator<It, T>, T>;
+}
+
+/// Take iterator. See [IteratorExt::take].
+struct TakeIterator<It: Iterator<It, T>, T> {
+    _it: &mut It,
+    _n: usize,
+}
+
+impl TakeIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut TakeIterator<It, T>) -> Option<T> {
+        if self._n == 0usize {
+            return Option::none();
+        }
+        self._n = self._n - 1usize;
+        self._it.next()
+    }
+    fn size_hint(self: &TakeIterator<It, T>) -> Option<usize> {
+        Option::some(self._n)
+    }
+    mixin Iterator<TakeIterator<It, T>, T>;
+    mixin IteratorExt<TakeIterator<It, T>, T>;
+}
+
+/// Take-while iterator. See [IteratorExt::take_while].
+struct TakeWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
+    _it: &mut It,
+    _fun: F,
+}
+
+impl TakeWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
+    fn next(self: &mut TakeWhileIterator<It, F, T>) -> Option<T> {
+        let value = self._it.next();
+        if value.is_none() {
+            return Option::none();
+        }
+        if self._fun(value.unwrap()) {
+            value
+        } else {
+            Option::none()
+        }
+    }
+    mixin Iterator<TakeWhileIterator<It, F, T>, T>;
+    mixin IteratorExt<TakeWhileIterator<It, F, T>, T>;
+}
+
+/// Skip-while iterator. See [IteratorExt::skip_while].
+struct SkipWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
+    _it: &mut It,
+    _fun: F,
+    _finished: bool,
+}
+
+impl SkipWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
+    fn next(self: &mut SkipWhileIterator<It, F, T>) -> Option<T> {
+        loop {
+            let v = self._it.next();
+            if self._finished || v.is_none() {
+                return v;
+            } else if self._fun(v.unwrap()) {
+                continue;
+            } else {
+                self._finished = true;
+                return v;
+            }
+        }
+    }
+    mixin Iterator<SkipWhileIterator<It, F, T>, T>;
+    mixin IteratorExt<SkipWhileIterator<It, F, T>, T>;
+}
+
+/// Enumerate iterator. See [IteratorExt::enumerate].
+struct EnumerateIterator<It: Iterator<It, T>, T> {
+    _it: &mut It,
+    _n: usize,
+}
+
+impl EnumerateIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut EnumerateIterator<It, T>) -> Option<(usize, T)> {
+        let value = self._it.next();
+        if value.is_none() {
+            return Option::none();
+        }
+        let idx = self._n;
+        self._n = self._n + 1usize;
+        Option::some((idx, value.unwrap()))
+    }
+    fn size_hint(self: &EnumerateIterator<It, T>) -> Option<usize> {
+        self._it.size_hint()
+    }
+    mixin Iterator<EnumerateIterator<It, T>, (usize, T)>;
+    mixin IteratorExt<EnumerateIterator<It, T>, (usize, T)>;
+}
+
+/// Step-by iterator. See [IteratorExt::step_by].
+struct StepByIterator<It: Iterator<It, T>, T> {
+    _it: &mut It,
+    _index: usize,
+    _n: usize,
+}
+
+impl StepByIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut StepByIterator<It, T>) -> Option<T> {
+        while self._index > 0usize {
+            self._index = self._index - 1usize;
+            if self._it.next().is_none() {
+                return Option::none();
+            }
+        }
+        self._index = self._n - 1usize;
+        self._it.next()
+    }
+    mixin Iterator<StepByIterator<It, T>, T>;
+    mixin IteratorExt<StepByIterator<It, T>, T>;
+}
+
+/// Fused iterator. See [IteratorExt::fuse].
+struct FusedIterator<It: Iterator<It, T>, T> {
+    _done: bool,
+    _it: &mut It,
+}
+
+impl FusedIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut FusedIterator<It, T>) -> Option<T> {
+        if self._done {
+            return Option::none();
+        }
+        let value = self._it.next();
+        if value.is_none() {
+            self._done = true;
+        }
+        value
+    }
+    fn size_hint(self: &FusedIterator<It, T>) -> Option<usize> {
+        if self._done {
+            Option::some(0usize)
+        } else {
+            self._it.size_hint()
+        }
+    }
+    mixin Iterator<FusedIterator<It, T>, T>;
+    mixin IteratorExt<FusedIterator<It, T>, T>;
+}
+
+/// Chain iterator. See [IteratorExt::chain].
+struct ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
+    _it1: FusedIterator<It1, T>,
+    _it2: FusedIterator<It2, T>,
+}
+
+impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
+    fn next(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
+        let v = self._it1.next();
+        if v.is_some() {
+            return v;
+        }
+        self._it2.next()
+    }
+    fn size_hint(self: &ChainIterator<It1, It2, T>) -> Option<usize> {
+        let a = self._it1.size_hint();
+        let b = self._it2.size_hint();
+        if a.is_some() && b.is_some() {
+            Option::some(a.unwrap() + b.unwrap())
+        } else {
+            Option::none()
+        }
+    }
+    mixin Iterator<ChainIterator<It1, It2, T>, T>;
+    mixin IteratorExt<ChainIterator<It1, It2, T>, T>;
+}
+
+/// Zip iterator. See [IteratorExt::zip].
+struct ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
+    _it1: &mut It1,
+    _it2: &mut It2,
+}
+
+impl ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
+    fn next(self: &mut ZipIterator<It1, It2, T1, T2>) -> Option<(T1, T2)> {
+        let a = self._it1.next();
+        if a.is_none() {
+            return Option::none();
+        }
+        let b = self._it2.next();
+        if b.is_none() {
+            return Option::none();
+        }
+        Option::some((a.unwrap(), b.unwrap()))
+    }
+    fn size_hint(self: &ZipIterator<It1, It2, T1, T2>) -> Option<usize> {
+        let a = self._it1.size_hint();
+        let b = self._it2.size_hint();
+        if a.is_some() && b.is_some() {
+            let av = a.unwrap();
+            let bv = b.unwrap();
+            Option::some(if av < bv { av } else { bv })
+        } else {
+            Option::none()
+        }
+    }
+    mixin Iterator<ZipIterator<It1, It2, T1, T2>, (T1, T2)>;
+    mixin IteratorExt<ZipIterator<It1, It2, T1, T2>, (T1, T2)>;
+}
+
+/// Inspect iterator. See [IteratorExt::inspect].
+struct InspectIterator<It: Iterator<It, T>, F: Fn(T), T> {
+    _it: &mut It,
+    _func: F,
+}
+
+impl InspectIterator<It: Iterator<It, T>, F: Fn(T), T> {
+    fn next(self: &mut InspectIterator<It, F, T>) -> Option<T> {
+        let value = self._it.next();
+        if value.is_some() {
+            self._func(value.unwrap());
+        }
+        value
+    }
+    fn size_hint(self: &InspectIterator<It, F, T>) -> Option<usize> {
+        self._it.size_hint()
+    }
+    mixin Iterator<InspectIterator<It, F, T>, T>;
+    mixin IteratorExt<InspectIterator<It, F, T>, T>;
+}
+
+// === Factory iterators ===
+
+/// An empty iterator. See [empty].
+struct EmptyIterator<T> {}
+
+impl EmptyIterator<T> {
+    fn next(self: &mut EmptyIterator<T>) -> Option<T> {
+        Option::none()
+    }
+    fn size_hint(self: &EmptyIterator<T>) -> Option<usize> {
+        Option::some(0usize)
+    }
+    mixin Iterator<EmptyIterator<T>, T>;
+    mixin IteratorExt<EmptyIterator<T>, T>;
+}
+
+/// Returns an empty iterator.
+fn empty<T>() -> EmptyIterator<T> {
+    EmptyIterator::<T> {}
+}
+
+/// An iterator that yields a single element. See [once].
+struct OnceIterator<T> {
+    _value: Option<T>,
+}
+
+impl OnceIterator<T> {
+    fn next(self: &mut OnceIterator<T>) -> Option<T> {
+        let v = self._value;
+        self._value = Option::none();
+        v
+    }
+    fn size_hint(self: &OnceIterator<T>) -> Option<usize> {
+        if self._value.is_some() {
+            Option::some(1usize)
+        } else {
+            Option::some(0usize)
+        }
+    }
+    mixin Iterator<OnceIterator<T>, T>;
+    mixin IteratorExt<OnceIterator<T>, T>;
+}
+
+/// Returns an iterator that yields a single element.
+fn once<T>(value: T) -> OnceIterator<T> {
+    OnceIterator { _value: Option::some(value) }
+}
+
+/// An iterator that repeats a value forever. See [repeat].
+struct RepeatIterator<T> {
+    _value: T,
+}
+
+impl RepeatIterator<T> {
+    fn next(self: &mut RepeatIterator<T>) -> Option<T> {
+        Option::some(self._value)
+    }
+    mixin Iterator<RepeatIterator<T>, T>;
+    mixin IteratorExt<RepeatIterator<T>, T>;
+}
+
+/// Returns an iterator that repeats a value forever.
+fn repeat<T>(value: T) -> RepeatIterator<T> {
+    RepeatIterator { _value: value }
+}
+
+/// An iterator from a function. See [from_fn].
+struct FromFnIterator<F: Fn() -> Option<T>, T> {
+    _fun: F,
+}
+
+impl FromFnIterator<F: Fn() -> Option<T>, T> {
+    fn next(self: &mut FromFnIterator<F, T>) -> Option<T> {
+        self._fun()
+    }
+    mixin Iterator<FromFnIterator<F, T>, T>;
+    mixin IteratorExt<FromFnIterator<F, T>, T>;
+}
+
+/// Returns an iterator that calls a function to produce each element.
+fn from_fn<T, F: Fn() -> Option<T>>(fun: F) -> FromFnIterator<F, T> {
+    FromFnIterator { _fun: fun }
+}
