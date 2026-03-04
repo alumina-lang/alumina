@@ -1,0 +1,379 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::collections::Deque;
+use std::collections::BinaryHeap;
+
+fn test_deque_basic() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    if !dq.is_empty() { return 1i32; }
+    if dq.len() != 0usize { return 2i32; }
+
+    dq.push(1i32);
+    dq.push(2i32);
+    if dq.len() != 2usize { return 3i32; }
+    if dq.is_empty() { return 4i32; }
+    0i32
+}
+
+fn test_deque_push_pop() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    dq.push(1i32);
+    dq.push(2i32);
+    dq.push(3i32);
+
+    let r = dq.pop();
+    if r.unwrap() != 3i32 { return 10i32; }
+    let r = dq.pop();
+    if r.unwrap() != 2i32 { return 11i32; }
+    let r = dq.pop();
+    if r.unwrap() != 1i32 { return 12i32; }
+    let r = dq.pop();
+    if r.is_some() { return 13i32; }
+    0i32
+}
+
+fn test_deque_push_front_pop_front() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    dq.push_front(1i32);
+    dq.push_front(2i32);
+    dq.push_front(3i32);
+
+    let r = dq.pop_front();
+    if r.unwrap() != 3i32 { return 20i32; }
+    let r = dq.pop_front();
+    if r.unwrap() != 2i32 { return 21i32; }
+    let r = dq.pop_front();
+    if r.unwrap() != 1i32 { return 22i32; }
+    let r = dq.pop_front();
+    if r.is_some() { return 23i32; }
+    0i32
+}
+
+fn test_deque_mixed() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    // push back: [1, 2]
+    dq.push(1i32);
+    dq.push(2i32);
+    // push front: [4, 3, 1, 2]
+    dq.push_front(3i32);
+    dq.push_front(4i32);
+
+    if dq.len() != 4usize { return 30i32; }
+
+    // pop back: 2, pop front: 4
+    let r = dq.pop();
+    if r.unwrap() != 2i32 { return 31i32; }
+    let r = dq.pop_front();
+    if r.unwrap() != 4i32 { return 32i32; }
+    // remaining: [3, 1]
+    let r = dq.pop();
+    if r.unwrap() != 1i32 { return 33i32; }
+    let r = dq.pop_front();
+    if r.unwrap() != 3i32 { return 34i32; }
+    0i32
+}
+
+fn test_deque_with_capacity() -> i32 {
+    let dq = Deque::with_capacity::<i32>(10usize);
+    defer dq.free();
+
+    if dq.capacity() < 10usize { return 40i32; }
+    if dq.len() != 0usize { return 41i32; }
+
+    let i = 0i32;
+    while i < 10i32 {
+        dq.push(i);
+        i = i + 1i32;
+    }
+    if dq.len() != 10usize { return 42i32; }
+    0i32
+}
+
+fn test_deque_wrap_around() -> i32 {
+    let dq = Deque::with_capacity::<i32>(4usize);
+    defer dq.free();
+
+    // Fill and drain to move head/tail forward
+    dq.push(1i32);
+    dq.push(2i32);
+    dq.push(3i32);
+    dq.pop_front();
+    dq.pop_front();
+    dq.pop_front();
+
+    // Now push more to wrap around
+    dq.push(10i32);
+    dq.push(20i32);
+    dq.push(30i32);
+
+    if dq.len() != 3usize { return 50i32; }
+    if dq.pop_front().unwrap() != 10i32 { return 51i32; }
+    if dq.pop_front().unwrap() != 20i32 { return 52i32; }
+    if dq.pop_front().unwrap() != 30i32 { return 53i32; }
+    0i32
+}
+
+fn test_deque_as_slices() -> i32 {
+    let dq = Deque::with_capacity::<i32>(10usize);
+    defer dq.free();
+
+    dq.push(1i32);
+    dq.push(2i32);
+    dq.push(3i32);
+
+    let slices = dq.as_slices();
+    // Contiguous: all in first slice
+    if slices.0.len() != 3usize { return 60i32; }
+    if slices.0[0] != 1i32 { return 61i32; }
+    if slices.0[2] != 3i32 { return 62i32; }
+    if slices.1.len() != 0usize { return 63i32; }
+    0i32
+}
+
+fn test_deque_extend_from_slice() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    dq.extend_from_slice(&[1i32, 2i32, 3i32, 4i32, 5i32]);
+    if dq.len() != 5usize { return 70i32; }
+    if dq.pop_front().unwrap() != 1i32 { return 71i32; }
+    if dq.pop_front().unwrap() != 2i32 { return 72i32; }
+    if dq.pop_front().unwrap() != 3i32 { return 73i32; }
+    if dq.pop_front().unwrap() != 4i32 { return 74i32; }
+    if dq.pop_front().unwrap() != 5i32 { return 75i32; }
+    0i32
+}
+
+fn test_deque_retain() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    dq.push(1i32);
+    dq.push(2i32);
+    dq.push(3i32);
+    dq.push(4i32);
+    dq.push(5i32);
+    dq.push(6i32);
+
+    // Keep only even numbers
+    dq.retain(|x: &i32| -> bool { *x % 2i32 == 0i32 });
+    if dq.len() != 3usize { return 80i32; }
+    if dq.pop_front().unwrap() != 2i32 { return 81i32; }
+    if dq.pop_front().unwrap() != 4i32 { return 82i32; }
+    if dq.pop_front().unwrap() != 6i32 { return 83i32; }
+    0i32
+}
+
+fn test_deque_iter() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    dq.push(1i32);
+    dq.push(2i32);
+    dq.push_front(0i32);
+
+    let iter = dq.iter();
+    if iter.next().unwrap() != 0i32 { return 90i32; }
+    if iter.next().unwrap() != 1i32 { return 91i32; }
+    if iter.next().unwrap() != 2i32 { return 92i32; }
+    if iter.next().is_some() { return 93i32; }
+    0i32
+}
+
+fn test_deque_move_clone() -> i32 {
+    let dq = Deque::new::<i32>();
+    dq.push(1i32);
+    dq.push(2i32);
+
+    let dq2 = dq.move();
+    defer dq2.free();
+
+    if dq.len() != 0usize { return 100i32; }
+    if dq2.len() != 2usize { return 101i32; }
+
+    let dq3 = dq2.clone();
+    defer dq3.free();
+
+    if dq3.len() != 2usize { return 102i32; }
+    if dq3.pop_front().unwrap() != 1i32 { return 103i32; }
+    0i32
+}
+
+fn test_deque_many() -> i32 {
+    let dq = Deque::new::<i32>();
+    defer dq.free();
+
+    // Push many elements to trigger multiple resizes
+    let i = 0i32;
+    while i < 100i32 {
+        dq.push(i);
+        i = i + 1i32;
+    }
+    if dq.len() != 100usize { return 110i32; }
+
+    // Verify FIFO order
+    let j = 0i32;
+    while j < 100i32 {
+        if dq.pop_front().unwrap() != j { return 111i32; }
+        j = j + 1i32;
+    }
+    0i32
+}
+
+fn test_heap_basic() -> i32 {
+    let heap = BinaryHeap::new::<i32>();
+    defer heap.free();
+
+    if !heap.is_empty() { return 200i32; }
+
+    heap.push(5i32);
+    heap.push(3i32);
+    heap.push(8i32);
+    heap.push(1i32);
+    heap.push(9i32);
+
+    if heap.len() != 5usize { return 201i32; }
+
+    // Should pop in descending order (max-heap)
+    if heap.pop().unwrap() != 9i32 { return 202i32; }
+    if heap.pop().unwrap() != 8i32 { return 203i32; }
+    if heap.pop().unwrap() != 5i32 { return 204i32; }
+    if heap.pop().unwrap() != 3i32 { return 205i32; }
+    if heap.pop().unwrap() != 1i32 { return 206i32; }
+    if heap.pop().is_some() { return 207i32; }
+    0i32
+}
+
+fn test_heap_peek() -> i32 {
+    let heap = BinaryHeap::new::<i32>();
+    defer heap.free();
+
+    if heap.peek().is_some() { return 210i32; }
+
+    heap.push(5i32);
+    if heap.peek().unwrap() != 5i32 { return 211i32; }
+
+    heap.push(10i32);
+    if heap.peek().unwrap() != 10i32 { return 212i32; }
+
+    heap.push(3i32);
+    if heap.peek().unwrap() != 10i32 { return 213i32; }  // still 10
+    0i32
+}
+
+fn test_heap_with_capacity() -> i32 {
+    let heap = BinaryHeap::with_capacity::<i32>(50usize);
+    defer heap.free();
+
+    if heap.capacity() < 50usize { return 220i32; }
+
+    let i = 0i32;
+    while i < 50i32 {
+        heap.push(i);
+        i = i + 1i32;
+    }
+    if heap.len() != 50usize { return 221i32; }
+    // Top should be 49
+    if heap.peek().unwrap() != 49i32 { return 222i32; }
+    0i32
+}
+
+fn test_heap_duplicates() -> i32 {
+    let heap = BinaryHeap::new::<i32>();
+    defer heap.free();
+
+    heap.push(5i32);
+    heap.push(5i32);
+    heap.push(5i32);
+
+    if heap.len() != 3usize { return 230i32; }
+    if heap.pop().unwrap() != 5i32 { return 231i32; }
+    if heap.pop().unwrap() != 5i32 { return 232i32; }
+    if heap.pop().unwrap() != 5i32 { return 233i32; }
+    0i32
+}
+
+fn test_heap_sorted() -> i32 {
+    let heap = BinaryHeap::new::<i32>();
+    defer heap.free();
+
+    // Insert in random-ish order
+    heap.push(42i32);
+    heap.push(17i32);
+    heap.push(99i32);
+    heap.push(3i32);
+    heap.push(55i32);
+    heap.push(1i32);
+    heap.push(88i32);
+
+    // Extract all - should come out sorted descending
+    let prev = heap.pop().unwrap();
+    while !heap.is_empty() {
+        let curr = heap.pop().unwrap();
+        if curr > prev { return 240i32; }
+        prev = curr;
+    }
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_deque_basic();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_push_pop();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_push_front_pop_front();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_mixed();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_with_capacity();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_wrap_around();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_as_slices();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_extend_from_slice();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_retain();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_iter();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_move_clone();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_many();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_basic();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_peek();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_with_capacity();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_duplicates();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_sorted();
+    if r != 0i32 { return r; }
+
+    0i32
+}

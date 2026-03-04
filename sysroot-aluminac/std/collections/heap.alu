@@ -1,0 +1,133 @@
+/// Binary max-heap (priority queue).
+///
+/// Elements are compared using the `<` operator. The largest element
+/// is at the top and returned first by `pop()`.
+struct BinaryHeap<T> {
+    _data: std::collections::vector::Vector<T>,
+}
+
+impl BinaryHeap<T> {
+    /// Create an empty binary heap.
+    fn new() -> BinaryHeap<T> {
+        BinaryHeap::<T> {
+            _data: std::collections::vector::Vector::new::<T>(),
+        }
+    }
+
+    /// Create a binary heap with pre-allocated capacity.
+    fn with_capacity(capacity: usize) -> BinaryHeap<T> {
+        BinaryHeap::<T> {
+            _data: std::collections::vector::Vector::with_capacity::<T>(capacity),
+        }
+    }
+
+    /// Return the number of elements in the heap.
+    fn len(self: &BinaryHeap<T>) -> usize {
+        self._data.len()
+    }
+
+    /// Returns `true` if the heap is empty.
+    fn is_empty(self: &BinaryHeap<T>) -> bool {
+        self._data.len() == 0usize
+    }
+
+    /// Return the capacity of the underlying storage.
+    fn capacity(self: &BinaryHeap<T>) -> usize {
+        self._data.capacity()
+    }
+
+    /// Peek at the largest element without removing it.
+    fn peek(self: &BinaryHeap<T>) -> Option<T> {
+        self._data.get(0usize)
+    }
+
+    /// Push an element onto the heap.
+    fn push(self: &mut BinaryHeap<T>, value: T) {
+        self._data.push(value);
+        self._sift_up(self._data.len() - 1usize);
+    }
+
+    /// Pop the largest element from the heap.
+    fn pop(self: &mut BinaryHeap<T>) -> Option<T> {
+        if self._data.len() == 0usize {
+            return Option::none();
+        }
+        if self._data.len() == 1usize {
+            return self._data.pop();
+        }
+
+        // Swap root with last, remove last, sift down root
+        let slice = self._data.as_slice_mut();
+        let last_idx = self._data.len() - 1usize;
+        let tmp = slice[0];
+        slice[0] = slice[last_idx];
+        slice[last_idx] = tmp;
+
+        let result = self._data.pop();
+        if self._data.len() > 0usize {
+            self._sift_down(0usize);
+        }
+        result
+    }
+
+    /// Clear the heap.
+    fn clear(self: &mut BinaryHeap<T>) {
+        self._data.clear();
+    }
+
+    fn _sift_up(self: &mut BinaryHeap<T>, idx: usize) {
+        let i = idx;
+        let slice = self._data.as_slice_mut();
+        while i > 0usize {
+            let parent = (i - 1usize) / 2usize;
+            if slice[parent] < slice[i] {
+                // Swap
+                let tmp = slice[parent];
+                slice[parent] = slice[i];
+                slice[i] = tmp;
+                i = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn _sift_down(self: &mut BinaryHeap<T>, idx: usize) {
+        let i = idx;
+        let len = self._data.len();
+        let slice = self._data.as_slice_mut();
+        loop {
+            let left = 2usize * i + 1usize;
+            let right = 2usize * i + 2usize;
+            let largest = i;
+
+            if left < len && slice[largest] < slice[left] {
+                largest = left;
+            }
+            if right < len && slice[largest] < slice[right] {
+                largest = right;
+            }
+
+            if largest != i {
+                let tmp = slice[i];
+                slice[i] = slice[largest];
+                slice[largest] = tmp;
+                i = largest;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Move the heap's contents, leaving `self` empty.
+    fn move(self: &mut BinaryHeap<T>) -> BinaryHeap<T> {
+        BinaryHeap::<T> {
+            _data: self._data.move(),
+        }
+    }
+
+    /// Free the heap's underlying storage.
+    fn free(self: &mut BinaryHeap<T>) {
+        self._data.free();
+    }
+}

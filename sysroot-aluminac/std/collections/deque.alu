@@ -1,0 +1,239 @@
+/// A double-ended queue (growable ring buffer).
+///
+/// Elements can be pushed to and popped from either end. The internal buffer
+/// is always a power-of-2 size for efficient modular arithmetic.
+struct Deque<T> {
+    _data: &mut [T],
+    _tail: usize,
+    _head: usize,
+}
+
+/// Round up to the next power of 2 that is > n.
+fn _next_power_of_two(n: usize) -> usize {
+    if n == 0usize {
+        return 0usize;
+    }
+    let v = n;
+    // Spread the highest set bit downward
+    v = v | (v >> 1usize);
+    v = v | (v >> 2usize);
+    v = v | (v >> 4usize);
+    v = v | (v >> 8usize);
+    v = v | (v >> 16usize);
+    v = v | (v >> 32usize);
+    v + 1usize
+}
+
+impl Deque<T> {
+    /// Create an empty deque.
+    fn new() -> Deque<T> {
+        Deque::<T> {
+            _data: std::mem::slice_empty::<T>(),
+            _tail: 0usize,
+            _head: 0usize,
+        }
+    }
+
+    /// Create a deque with capacity for at least `capacity` elements.
+    fn with_capacity(capacity: usize) -> Deque<T> {
+        if capacity == 0usize {
+            return Deque::new::<T>();
+        }
+        // Need size > capacity (one slot is wasted to distinguish full from empty)
+        let size = _next_power_of_two(capacity);
+        Deque::<T> {
+            _data: std::mem::slice_alloc::<T>(size),
+            _tail: 0usize,
+            _head: 0usize,
+        }
+    }
+
+    /// Return the number of elements in the deque.
+    fn len(self: &Deque<T>) -> usize {
+        (self._tail - self._head) & (self._data.len() - 1usize)
+    }
+
+    /// Return the capacity of the deque.
+    fn capacity(self: &Deque<T>) -> usize {
+        if self._data.len() == 0usize {
+            0usize
+        } else {
+            self._data.len() - 1usize
+        }
+    }
+
+    /// Returns `true` if the deque is empty.
+    fn is_empty(self: &Deque<T>) -> bool {
+        self._tail == self._head
+    }
+
+    /// Clear the deque, removing all elements.
+    fn clear(self: &mut Deque<T>) {
+        self._head = 0usize;
+        self._tail = 0usize;
+    }
+
+    /// Reserve capacity for at least `additional` more elements.
+    fn reserve(self: &mut Deque<T>, additional: usize) {
+        if self._data.len() <= self.len() + additional {
+            self._resize(_next_power_of_two(self.len() + additional));
+        }
+    }
+
+    fn _resize(self: &mut Deque<T>, new_size: usize) {
+        let len = self.len();
+        let new_data = std::mem::slice_alloc::<T>(new_size);
+
+        if self._tail > self._head {
+            self._data[self._head..self._tail]
+                .copy_to_nonoverlapping(&new_data[0]);
+        } else if self._tail < self._head {
+            let first_part_len = self._data.len() - self._head;
+            self._data[self._head..]
+                .copy_to_nonoverlapping(&new_data[0]);
+            if self._tail > 0usize {
+                self._data[0usize..self._tail]
+                    .copy_to_nonoverlapping(&new_data[first_part_len]);
+            }
+        }
+
+        if self._data.len() > 0usize {
+            std::mem::slice_free::<T>(self._data);
+        }
+        self._data = new_data;
+        self._head = 0usize;
+        self._tail = len;
+    }
+
+    fn _offset(self: &Deque<T>, index: usize) -> usize {
+        (self._head + index) & (self._data.len() - 1usize)
+    }
+
+    /// Push an element to the back of the deque.
+    fn push(self: &mut Deque<T>, element: T) {
+        self.reserve(1usize);
+        self._data[self._tail] = element;
+        self._tail = (self._tail + 1usize) & (self._data.len() - 1usize);
+    }
+
+    /// Pop an element from the back of the deque.
+    fn pop(self: &mut Deque<T>) -> Option<T> {
+        if self.is_empty() {
+            Option::none()
+        } else {
+            self._tail = (self._tail - 1usize) & (self._data.len() - 1usize);
+            Option::some(self._data[self._tail])
+        }
+    }
+
+    /// Push an element to the front of the deque.
+    fn push_front(self: &mut Deque<T>, element: T) {
+        self.reserve(1usize);
+        self._head = (self._head - 1usize) & (self._data.len() - 1usize);
+        self._data[self._head] = element;
+    }
+
+    /// Pop an element from the front of the deque.
+    fn pop_front(self: &mut Deque<T>) -> Option<T> {
+        if self.is_empty() {
+            Option::none()
+        } else {
+            let element = self._data[self._head];
+            self._head = (self._head + 1usize) & (self._data.len() - 1usize);
+            Option::some(element)
+        }
+    }
+
+    /// Return a pair of slices representing the deque's contents in order.
+    fn as_slices(self: &Deque<T>) -> (&[T], &[T]) {
+        if self._head <= self._tail {
+            (self._data[self._head..self._tail], std::mem::slice_empty::<T>())
+        } else {
+            (self._data[self._head..], self._data[0usize..self._tail])
+        }
+    }
+
+    /// Extend the deque from a slice.
+    fn extend_from_slice(self: &mut Deque<T>, value: &[T]) {
+        if value.len() == 0usize {
+            return;
+        }
+
+        self.reserve(value.len());
+
+        if self._tail < self._head {
+            value.copy_to_nonoverlapping(&self._data[self._tail]);
+        } else {
+            let spare = self._data.len() - self._tail;
+            if value.len() <= spare {
+                value.copy_to_nonoverlapping(&self._data[self._tail]);
+            } else {
+                value[0usize..spare].copy_to_nonoverlapping(&self._data[self._tail]);
+                value[spare..].copy_to_nonoverlapping(&self._data[0]);
+            }
+        }
+
+        self._tail = (self._tail + value.len()) & (self._data.len() - 1usize);
+    }
+
+    /// Remove elements that don't match the predicate.
+    fn retain<F: Fn(&T) -> bool>(self: &mut Deque<T>, func: F) {
+        let i = 0usize;
+        let off = 0usize;
+
+        while i + off < self.len() {
+            if !func(&self._data[self._offset(i + off)]) {
+                off = off + 1usize;
+            } else {
+                self._data[self._offset(i)] =
+                    self._data[self._offset(i + off)];
+                i = i + 1usize;
+            }
+        }
+        self._tail = (self._tail - off) & (self._data.len() - 1usize);
+    }
+
+    /// Return an iterator over the elements.
+    fn iter(self: &Deque<T>) -> DequeIterator<T> {
+        DequeIterator::<T> { _inner: *self }
+    }
+
+    /// Move the deque's contents, leaving `self` empty.
+    fn move(self: &mut Deque<T>) -> Deque<T> {
+        let ret = *self;
+        self._data = std::mem::slice_empty::<T>();
+        self._head = 0usize;
+        self._tail = 0usize;
+        ret
+    }
+
+    /// Clone the deque.
+    fn clone(self: &Deque<T>) -> Deque<T> {
+        let cloned = Deque::with_capacity::<T>(self.len());
+        let slices = self.as_slices();
+        cloned.extend_from_slice(slices.0);
+        cloned.extend_from_slice(slices.1);
+        cloned
+    }
+
+    /// Free the deque's underlying buffer.
+    fn free(self: &mut Deque<T>) {
+        if self._data.len() > 0usize {
+            std::mem::slice_free::<T>(self._data);
+        }
+        self._data = std::mem::slice_empty::<T>();
+        self._head = 0usize;
+        self._tail = 0usize;
+    }
+}
+
+/// Iterator over elements of a Deque.
+struct DequeIterator<T> {
+    _inner: Deque<T>,
+}
+
+impl DequeIterator<T> {
+    fn next(self: &mut DequeIterator<T>) -> Option<T> {
+        self._inner.pop_front()
+    }
+}
