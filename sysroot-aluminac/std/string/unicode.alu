@@ -1,0 +1,262 @@
+/// Utilities for handling Unicode text
+
+const TAG_CONT: u8 = 0b10000000u8;
+const TAG_TWO_B: u8 = 0b11000000u8;
+const TAG_THREE_B: u8 = 0b11100000u8;
+const TAG_FOUR_B: u8 = 0b11110000u8;
+const MAX_ONE_B: u32 = 0x80u32;
+const MAX_TWO_B: u32 = 0x800u32;
+const MAX_THREE_B: u32 = 0x10000u32;
+
+/// Error type for Unicode conversion
+enum Error {
+    /// The buffer is too small to hold the encoded value
+    BufferTooSmall = 0,
+    /// The code point is not a valid Unicode scalar value
+    InvalidCodepoint = 1,
+    /// The UTF-8 sequence is invalid
+    InvalidUTF8 = 2,
+    /// The UTF-16 sequence is invalid
+    InvalidUTF16 = 3,
+    /// UTF-16 surrogate not followed (or preceded) by a surrogate of
+    /// the opposite type
+    SurrogateMismatch = 4,
+}
+
+impl Error {
+    fn equals(self: &Error, other: &Error) -> bool {
+        *self == *other
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &Error, f: &mut F) -> std::fmt::Result {
+        switch *self {
+            Error::BufferTooSmall => f.write_str("buffer too small"),
+            Error::InvalidCodepoint => f.write_str("invalid codepoint"),
+            Error::InvalidUTF8 => f.write_str("invalid UTF-8"),
+            Error::InvalidUTF16 => f.write_str("invalid UTF-16"),
+            Error::SurrogateMismatch => f.write_str("surrogate mismatch"),
+            _ => f.write_str("unknown error"),
+        }
+    }
+}
+
+/// Returns the number of bytes needed to encode the given Unicode
+/// code point as UTF-8.
+fn len_utf8(code: u32) -> usize {
+    if code < MAX_ONE_B {
+        1usize
+    } else if code < MAX_TWO_B {
+        2usize
+    } else if code < MAX_THREE_B {
+        3usize
+    } else {
+        4usize
+    }
+}
+
+/// Returns the number of 16-bit values needed to encode the
+/// given Unicode code point as UTF-16.
+fn len_utf16(code: u32) -> usize {
+    if code & 0xFFFFu32 == code {
+        1usize
+    } else {
+        2usize
+    }
+}
+
+/// Returns `true` if the Unicode code point is a valid
+/// Unicode scalar value.
+fn is_scalar_value(code: u32) -> bool {
+    code < 0x110000u32 && !(code >= 0xD800u32 && code <= 0xDFFFu32)
+}
+
+/// Returns `true` if the 16-bit value is a surrogate (either high or low).
+fn is_utf16_surrogate(code: u16) -> bool {
+    code >= 0xD800u16 && code <= 0xDFFFu16
+}
+
+/// Encodes the given Unicode code point as UTF-8 into the given
+/// byte buffer. Returns the number of bytes written.
+fn encode_utf8(code: u32, dst: &mut [u8]) -> Result<usize, Error> {
+    if !is_scalar_value(code) {
+        return Result::err(Error::InvalidCodepoint);
+    }
+
+    let len = len_utf8(code);
+    if dst.len() < len {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    if len == 1usize {
+        dst[0] = code as u8;
+    } else if len == 2usize {
+        dst[0] = (code >> 6u32 & 0x1Fu32) as u8 | TAG_TWO_B;
+        dst[1] = (code & 0x3Fu32) as u8 | TAG_CONT;
+    } else if len == 3usize {
+        dst[0] = (code >> 12u32 & 0x0Fu32) as u8 | TAG_THREE_B;
+        dst[1] = (code >> 6u32 & 0x3Fu32) as u8 | TAG_CONT;
+        dst[2] = (code & 0x3Fu32) as u8 | TAG_CONT;
+    } else {
+        dst[0] = (code >> 18u32 & 0x07u32) as u8 | TAG_FOUR_B;
+        dst[1] = (code >> 12u32 & 0x3Fu32) as u8 | TAG_CONT;
+        dst[2] = (code >> 6u32 & 0x3Fu32) as u8 | TAG_CONT;
+        dst[3] = (code & 0x3Fu32) as u8 | TAG_CONT;
+    }
+
+    Result::ok(len)
+}
+
+/// Encodes the given Unicode code point as UTF-16 into the given
+/// 16-bit value buffer. Returns the number of values written.
+fn encode_utf16(code: u32, dst: &mut [u16]) -> Result<usize, Error> {
+    if !is_scalar_value(code) {
+        return Result::err(Error::InvalidCodepoint);
+    }
+
+    let len = len_utf16(code);
+    if dst.len() < len {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    if len == 1usize {
+        dst[0] = code as u16;
+    } else {
+        let adj = code - 0x10000u32;
+        dst[0] = ((adj >> 10u32) as u16) + 0xD800u16;
+        dst[1] = ((adj as u16) & 0x3FFu16) + 0xDC00u16;
+    }
+
+    Result::ok(len)
+}
+
+/// Table of character widths for UTF-8 first byte.
+const UTF8_CHAR_WIDTH: [u8; 256] = [
+    // 1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 0
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 1
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 2
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 3
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 4
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 5
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 6
+    1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, // 7
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, // 8
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, // 9
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, // A
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, // B
+    0u8, 0u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, // C
+    2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, 2u8, // D
+    3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, 3u8, // E
+    4u8, 4u8, 4u8, 4u8, 4u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, // F
+];
+
+/// Decodes a single UTF-8 code point from the given byte slice.
+/// Returns the code point and the number of bytes read.
+fn decode_utf8(src: &[u8]) -> Result<(u32, usize), Error> {
+    if src.len() < 1usize {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    let width = UTF8_CHAR_WIDTH[src[0] as usize];
+    if width == 0u8 {
+        return Result::err(Error::InvalidUTF8);
+    }
+    if width == 1u8 {
+        return Result::ok((src[0] as u32, 1usize));
+    }
+    if width == 2u8 {
+        if src.len() < 2usize { return Result::err(Error::BufferTooSmall); }
+        if (src[1] as i8) >= -64i8 { return Result::err(Error::InvalidUTF8); }
+        return Result::ok((
+            (src[0] as u32 & 0x1Fu32) << 6u32 | (src[1] as u32 & 0x3Fu32),
+            2usize
+        ));
+    }
+    if width == 3u8 {
+        if src.len() < 3usize { return Result::err(Error::BufferTooSmall); }
+        // Validate second byte ranges for 3-byte sequences
+        if !(src[0] == 0xE0u8 && src[1] >= 0xA0u8 && src[1] <= 0xBFu8)
+            && !(src[0] >= 0xE1u8 && src[0] <= 0xECu8 && src[1] >= 0x80u8 && src[1] <= 0xBFu8)
+            && !(src[0] == 0xEDu8 && src[1] >= 0x80u8 && src[1] <= 0x9Fu8)
+            && !(src[0] >= 0xEEu8 && src[0] <= 0xEFu8 && src[1] >= 0x80u8 && src[1] <= 0xBFu8) {
+            return Result::err(Error::InvalidUTF8);
+        }
+        if (src[2] as i8) >= -64i8 { return Result::err(Error::InvalidUTF8); }
+        return Result::ok((
+            (src[0] as u32 & 0x0Fu32) << 12u32 | (src[1] as u32 & 0x3Fu32) << 6u32 |
+            (src[2] as u32 & 0x3Fu32),
+            3usize
+        ));
+    }
+    // width == 4
+    if src.len() < 4usize { return Result::err(Error::BufferTooSmall); }
+    // Validate second byte ranges for 4-byte sequences
+    if !(src[0] == 0xF0u8 && src[1] >= 0x90u8 && src[1] <= 0xBFu8)
+        && !(src[0] >= 0xF1u8 && src[0] <= 0xF3u8 && src[1] >= 0x80u8 && src[1] <= 0xBFu8)
+        && !(src[0] == 0xF4u8 && src[1] >= 0x80u8 && src[1] <= 0x8Fu8) {
+        return Result::err(Error::InvalidUTF8);
+    }
+    if (src[2] as i8) >= -64i8 { return Result::err(Error::InvalidUTF8); }
+    if (src[3] as i8) >= -64i8 { return Result::err(Error::InvalidUTF8); }
+    Result::ok((
+        (src[0] as u32 & 0x07u32) << 18u32 | (src[1] as u32 & 0x3Fu32) << 12u32 |
+        (src[2] as u32 & 0x3Fu32) << 6u32 | (src[3] as u32 & 0x3Fu32),
+        4usize
+    ))
+}
+
+/// Decodes a single UTF-8 code point from the given byte slice without validation.
+fn decode_utf8_unchecked(src: &[u8]) -> (u32, usize) {
+    if src[0] < TAG_TWO_B {
+        (src[0] as u32, 1usize)
+    } else if src[0] < TAG_THREE_B {
+        ((src[0] as u32 & 0x1Fu32) << 6u32 | (src[1] as u32 & 0x3Fu32), 2usize)
+    } else if src[0] < TAG_FOUR_B {
+        ((src[0] as u32 & 0x0Fu32) << 12u32 | (src[1] as u32 & 0x3Fu32) << 6u32 |
+         (src[2] as u32 & 0x3Fu32), 3usize)
+    } else {
+        ((src[0] as u32 & 0x07u32) << 18u32 | (src[1] as u32 & 0x3Fu32) << 12u32 |
+         (src[2] as u32 & 0x3Fu32) << 6u32 | (src[3] as u32 & 0x3Fu32), 4usize)
+    }
+}
+
+/// Decodes a single UTF-16 code point from the given 16-bit value slice.
+fn decode_utf16(src: &[u16]) -> Result<(u32, usize), Error> {
+    if src.len() < 1usize {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    if !is_utf16_surrogate(src[0]) {
+        // BMP code point
+        let result = (src[0] as u32, 1usize);
+        if !is_scalar_value(result.0) {
+            return Result::err(Error::InvalidCodepoint);
+        }
+        return Result::ok(result);
+    }
+
+    if src[0] >= 0xDC00u16 {
+        // we expected a high surrogate, but got a low surrogate
+        return Result::err(Error::SurrogateMismatch);
+    }
+
+    if src.len() < 2usize {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    if src[1] < 0xDC00u16 || src[1] > 0xDFFFu16 {
+        // second unit is not a low surrogate
+        return Result::err(Error::InvalidUTF16);
+    }
+
+    let result = (
+        (((src[0] - 0xD800u16) as u32 << 10u32) | ((src[1] - 0xDC00u16) as u32)) + 0x10000u32,
+        2usize
+    );
+
+    if !is_scalar_value(result.0) {
+        return Result::err(Error::InvalidCodepoint);
+    }
+
+    Result::ok(result)
+}

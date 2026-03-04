@@ -17,6 +17,15 @@ for operator overloading on non-generic impl blocks.
 an `Option<Option<i32>>*`. Type inference for `Option::some()` incorrectly infers `T=i32`
 instead of `T=Option<i32>` when the argument is itself an `Option<i32>`.
 
+### UFCS doesn't work for free functions on built-in/slice types
+Free functions defined with `self: &[u8]` as the first parameter cannot be called using
+UFCS (universal function call syntax) as methods on `&[u8]` slices. E.g. defining
+`fn starts_with(self: &[u8], prefix: &[u8]) -> bool` and calling `"hello".starts_with("hel")`
+fails with "could not resolve method 'starts_with'". This also affects calls within the
+same module (e.g. `trim_prefix` calling `self.starts_with(prefix)`).
+
+**Workaround**: Use regular parameter names and call as `std::string::starts_with(s, prefix)`.
+
 ## Features to Port
 
 ### Method calls on bounded generic types
