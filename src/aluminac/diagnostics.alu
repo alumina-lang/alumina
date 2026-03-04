@@ -117,23 +117,15 @@ impl DiagnosticContext {
             DiagnosticContext::_write_stderr("0");
             return;
         }
-        // Convert to digits by printing in reverse, then reversing
-        // Max 10 digits for u32
-        let buf: Vector<u8> = Vector::new();
-        defer buf.free();
+        let buf: [u8; 16];
+        let pos: usize = 15usize;
         let val = n;
         while val > 0u32 {
-            let digit = (val % 10u32) as u8 + '0' as u8;
-            buf.push(digit);
+            pos = pos - 1usize;
+            buf[pos] = (val % 10u32) as u8 + '0' as u8;
             val = val / 10u32;
         }
-        // Write in reverse order
-        let i = buf.len();
-        while i > 0usize {
-            i = i - 1usize;
-            let b = buf[i];
-            libc::write(2i32, &b as &libc::c_void, 1usize);
-        }
+        DiagnosticContext::_write_stderr(buf[pos..15usize]);
     }
 
     fn emit_all(self: &DiagnosticContext) {

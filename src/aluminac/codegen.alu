@@ -458,22 +458,22 @@ impl CodegenCtx {
         let suffix_buf: [u8; 20];
         let suffix_len: usize = 0;
         let val = key;
-        if val == 0 {
-            suffix_buf[0] = 48u8; // '0'
-            suffix_len = 1;
+        if val == 0usize {
+            suffix_buf[0] = '0' as u8;
+            suffix_len = 1usize;
         } else {
-            while val > 0 {
-                suffix_buf[suffix_len] = (val % 10) as u8 + 48u8;
-                val = val / 10;
-                suffix_len += 1;
+            while val > 0usize {
+                suffix_buf[suffix_len] = (val % 10usize) as u8 + '0' as u8;
+                val = val / 10usize;
+                suffix_len = suffix_len + 1usize;
             }
         }
-        let total = name.len() + 1 + suffix_len;
+        let total = name.len() + 1usize + suffix_len;
         let buf = self.arena.alloc_slice::<u8>(total);
         for i in 0usize..name.len() { buf[i] = name[i]; }
-        buf[name.len()] = 46u8; // '.'
+        buf[name.len()] = '.' as u8;
         for i in 0usize..suffix_len {
-            buf[name.len() + 1 + i] = suffix_buf[suffix_len - 1 - i];
+            buf[name.len() + 1usize + i] = suffix_buf[suffix_len - 1usize - i];
         }
         buf
     }
