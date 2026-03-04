@@ -3108,13 +3108,25 @@ impl Mono {
                             is_match = false;
                         }
                     } else if proto.name == "Struct" {
-                        is_match = val_ty.tag == IrTyTag::Struct;
+                        is_match = val_ty.tag == IrTyTag::Struct && !val_ty.struct_ref.is_union;
+                    } else if proto.name == "Union" {
+                        is_match = val_ty.tag == IrTyTag::Struct && val_ty.struct_ref.is_union;
                     } else if proto.name == "Enum" {
                         is_match = val_ty.tag == IrTyTag::Enum;
                     } else if proto.name == "Array" {
                         is_match = val_ty.tag == IrTyTag::Array;
                     } else if proto.name == "Tuple" {
                         is_match = val_ty.tag == IrTyTag::Tuple;
+                    } else if proto.name == "Closure" {
+                        is_match = val_ty.tag == IrTyTag::Closure;
+                    } else if proto.name == "FunctionPointer" {
+                        is_match = val_ty.tag == IrTyTag::FnPointer;
+                    } else if proto.name == "Range" {
+                        is_match = self.is_range_ty(val_ty);
+                    } else if proto.name == "Any" {
+                        is_match = true;
+                    } else if proto.name == "None" {
+                        is_match = false;
                     } else {
                         // User-defined protocol: check if type has all required methods
                         is_match = self.check_protocol_conformance(val_ty, proto);
@@ -3181,9 +3193,14 @@ impl Mono {
         val
     }
 
+    // Check if a type is a range (std::range::Range*, etc.)
+    fn is_range_ty(self: &Mono, ty: &IrTy) -> bool {
+        if ty.tag != IrTyTag::Struct { return false; }
+        let name = ty.struct_ref.name;
+        name == "Range" || name == "RangeInclusive" || name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
+    }
+
     // Check if a type is a slice
-
-
     fn is_slice_ty(self: &Mono, ty: &IrTy) -> bool {
         if ty.tag == IrTyTag::Slice { return true; }
         // Also detect tuples that look like slices (legacy representation)
