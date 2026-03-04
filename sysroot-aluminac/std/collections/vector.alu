@@ -1,12 +1,11 @@
-// Simplified Vector for self-hosted compiler bootstrap
-// Uses slice-based layout matching the real stdlib Vector
-
+/// Growable heap-allocated array.
 struct Vector<T> {
     _data: &mut [T],
     _length: usize,
 }
 
 impl Vector<T> {
+    /// Create an empty vector
     fn new() -> Vector<T> {
         Vector::<T> {
             _data: std::mem::slice_empty::<T>(),
@@ -14,28 +13,37 @@ impl Vector<T> {
         }
     }
 
-    fn len(self: &Vector<T>) -> usize {
-        self._length
-    }
-
-    fn is_empty(self: &Vector<T>) -> bool {
-        self._length == 0usize
-    }
-
-    fn push(self: &mut Vector<T>, value: T) {
-        self.reserve(1usize);
-        self._data[self._length] = value;
-        self._length = self._length + 1usize;
-    }
-
-    fn pop(self: &mut Vector<T>) -> std::option::Option<T> {
-        if self._length == 0usize {
-            return std::option::Option::none::<T>();
+    /// Create a vector from a raw slice and a length.
+    fn from_raw(data: &mut [T], length: usize) -> Vector<T> {
+        Vector::<T> {
+            _data: data,
+            _length: length,
         }
-        self._length = self._length - 1usize;
-        std::option::Option::some::<T>(self._data[self._length])
     }
 
+    /// Create a vector that can hold up to `capacity` elements without reallocating.
+    fn with_capacity(capacity: usize) -> Vector<T> {
+        Vector::<T> {
+            _data: if capacity == 0usize {
+                std::mem::slice_empty::<T>()
+            } else {
+                std::mem::slice_alloc::<T>(capacity)
+            },
+            _length: 0usize,
+        }
+    }
+
+    /// Create a vector from a slice, copying the elements.
+    fn from_slice(slice: &[T]) -> Vector<T> {
+        let vec = Vector::with_capacity::<T>(slice.len());
+        if slice.len() > 0usize {
+            slice.copy_to_nonoverlapping(&vec._data[0]);
+        }
+        vec._length = slice.len();
+        vec
+    }
+
+    /// Reserve capacity for at least `additional` elements.
     fn reserve(self: &mut Vector<T>, additional: usize) {
         let capacity = self._data.len();
         if self._length + additional > capacity {
@@ -51,36 +59,159 @@ impl Vector<T> {
         }
     }
 
-    fn clear(self: &mut Vector<T>) {
-        self._length = 0usize;
+    /// Extend the vector with the elements from a slice.
+    fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
+        if value.len() == 0usize {
+            return;
+        }
+        self.reserve(value.len());
+        value.copy_to_nonoverlapping(&self._data[self._length]);
+        self._length = self._length + value.len();
     }
 
-    fn as_slice(self: &Vector<T>) -> &[T] {
-        self._data[0usize..self._length]
+    /// Insert an element at the given index, shifting all elements after it.
+    fn insert(self: &mut Vector<T>, index: usize, value: T) {
+        self.reserve(1usize);
+        if index < self._length {
+            self._data[index..self._length].copy_to(&self._data[index + 1usize]);
+        }
+        self._data[index] = value;
+        self._length = self._length + 1usize;
     }
 
-    fn as_slice_mut(self: &mut Vector<T>) -> &mut [T] {
-        self._data[0usize..self._length]
+    /// Push an element to the end of the vector.
+    fn push(self: &mut Vector<T>, value: T) {
+        self.reserve(1usize);
+        self._data[self._length] = value;
+        self._length = self._length + 1usize;
     }
 
-    fn get(self: &Vector<T>, index: usize) -> T {
-        self._data[index]
+    /// Pop an element from the end of the vector.
+    fn pop(self: &mut Vector<T>) -> Option<T> {
+        if self._length == 0usize {
+            return Option::none();
+        }
+        self._length = self._length - 1usize;
+        Option::some(self._data[self._length])
     }
 
+    /// Remove an element at the given index, shifting all elements after it.
+    fn remove(self: &mut Vector<T>, index: usize) -> T {
+        let value = self._data[index];
+        self._data[index + 1usize..self._length].copy_to(&self._data[index]);
+        self._length = self._length - 1usize;
+        value
+    }
+
+    /// Get the element at the given index, or None if out of bounds.
+    fn get(self: &Vector<T>, index: usize) -> Option<T> {
+        if index < self._length {
+            Option::some(self._data[index])
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Get a reference to the element at the given index.
     fn get_ref(self: &Vector<T>, index: usize) -> &T {
         &self._data[index]
     }
 
+    /// Get a mutable reference to the element at the given index.
     fn get_mut(self: &mut Vector<T>, index: usize) -> &mut T {
         &self._data[index]
     }
 
+    /// Return the length of the vector.
+    fn len(self: &Vector<T>) -> usize {
+        self._length
+    }
+
+    /// Return the capacity of the underlying buffer.
+    fn capacity(self: &Vector<T>) -> usize {
+        self._data.len()
+    }
+
+    /// Returns `true` if the vector is empty, `false` otherwise.
+    fn is_empty(self: &Vector<T>) -> bool {
+        self._length == 0usize
+    }
+
+    /// Return a slice of the vector's contents.
+    fn as_slice(self: &Vector<T>) -> &[T] {
+        self._data[0usize..self._length]
+    }
+
+    /// Return a mutable slice of the vector's contents.
+    fn as_slice_mut(self: &mut Vector<T>) -> &mut [T] {
+        self._data[0usize..self._length]
+    }
+
+    /// Clear the vector, removing all elements.
+    fn clear(self: &mut Vector<T>) {
+        self._length = 0usize;
+    }
+
+    /// Truncate the vector, keeping only the first `new_size` elements.
+    fn truncate(self: &mut Vector<T>, new_size: usize) {
+        self._length = new_size;
+    }
+
+    /// Removes the elements not matching the given predicate.
+    fn retain<F: Fn(&T) -> bool>(self: &mut Vector<T>, func: F) {
+        let i = 0usize;
+        let off = 0usize;
+        while i + off < self._length {
+            if !func(&self._data[i + off]) {
+                off = off + 1usize;
+            } else {
+                self._data[i] = self._data[i + off];
+                i = i + 1usize;
+            }
+        }
+        self._length = self._length - off;
+    }
+
+    /// Shrink the underlying buffer to the length of the vector.
+    fn shrink_to_fit(self: &mut Vector<T>) {
+        if self._length == 0usize {
+            std::mem::slice_free::<T>(self._data);
+            self._data = std::mem::slice_empty::<T>();
+        } else {
+            self._data = std::mem::slice_realloc::<T>(self._data, self._length);
+        }
+    }
+
+    /// Returns a region of memory after the last element.
+    fn spare_capacity(self: &mut Vector<T>) -> &mut [T] {
+        self._data[self._length..]
+    }
+
+    /// Return a mutable slice (for iteration).
     fn iter_mut(self: &mut Vector<T>) -> &mut [T] {
         self._data[0usize..self._length]
     }
 
+    /// Move the vector's contents, leaving `self` empty.
+    fn move(self: &mut Vector<T>) -> Vector<T> {
+        let ret = *self;
+        self._data = std::mem::slice_empty::<T>();
+        self._length = 0usize;
+        ret
+    }
+
+    /// Clone the vector, copying all elements.
+    fn clone(self: &Vector<T>) -> Vector<T> {
+        let vec = Vector::new::<T>();
+        vec.extend_from_slice(self._data[0usize..self._length]);
+        vec
+    }
+
+    /// Free the vector's underlying buffer.
     fn free(self: &mut Vector<T>) {
-        std::mem::slice_free::<T>(self._data);
+        if self._data.len() > 0usize {
+            std::mem::slice_free::<T>(self._data);
+        }
         self._data = std::mem::slice_empty::<T>();
         self._length = 0usize;
     }
