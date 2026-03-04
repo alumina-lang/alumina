@@ -18,17 +18,89 @@ fn align_of<T>() -> usize {
     std::intrinsics::align_of::<T>()
 }
 
-// Returns true if T1 and T2 are the same type.
-fn is_same<T1, T2>() -> bool {
-    type_id::<T1>() == type_id::<T2>()
+/// Returns true if T1 matches bound T2.
+///
+/// T2 can be a protocol or a type (in which case the result indicates
+/// whether T1 and T2 refer to the same type).
+///
+/// Note: due to limitations in the current compiler, this only works
+/// when T2 is a concrete type, not a protocol passed through a generic
+/// parameter. Use the specific is_* functions for protocol checks.
+fn matches<T1, T2>() -> bool {
+    std::intrinsics::uninitialized::<T1>() is T2
 }
 
-// Returns true if a value of type T1 matches type T2.
-fn matches<T1, T2>() -> bool {
-    is_same::<T1, T2>()
+/// Returns true if T1 and T2 are the same type.
+fn is_same<T1, T2>() -> bool {
+    type_id::<T1>() == type_id::<T2>()
 }
 
 /// Returns the name of a type as a string slice.
 fn name_of<T>() -> &[u8] {
     type_name::<T>()
+}
+
+/// Returns `true` if T is void `()`.
+fn is_void<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is ()
+}
+
+/// Returns `true` if T is zero sized.
+fn is_zero_sized<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::ZeroSized
+}
+
+/// Returns `true` if T is a primitive type.
+fn is_primitive<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Primitive
+}
+
+/// Returns `true` if T is numeric (integer or floating point).
+fn is_numeric<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Numeric
+}
+
+/// Returns `true` if T is an integer type.
+fn is_integer<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Integer
+}
+
+/// Returns `true` if T is a floating point type.
+fn is_floating_point<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::FloatingPoint
+}
+
+/// Returns `true` if T is a signed type.
+fn is_signed<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Signed
+}
+
+/// Returns `true` if T is an unsigned type.
+fn is_unsigned<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Unsigned
+}
+
+/// Returns `true` if T is a pointer type.
+fn is_pointer<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Pointer
+}
+
+/// Returns `true` if T is an array type.
+fn is_array<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Array
+}
+
+/// Returns `true` if T is a tuple type.
+fn is_tuple<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Tuple
+}
+
+/// Returns `true` if T is a struct type.
+fn is_struct<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Struct
+}
+
+/// Returns `true` if T is an enum type.
+fn is_enum<T>() -> bool {
+    std::intrinsics::uninitialized::<T>() is std::builtins::Enum
 }
