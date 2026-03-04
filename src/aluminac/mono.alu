@@ -1494,7 +1494,31 @@ impl Mono {
             // Try type alias
             let ta = self.ctx.type_aliases.get(&defered.id._value);
             if ta.is_some() {
-                concrete_ty = self.resolve_type(ta.unwrap().target);
+                let alias = ta.unwrap();
+                // Save and clear the alias's generic params from type_map so resolve
+                // produces void slots for type inference. Without this, stale type_map
+                // entries from prior monomorphizations would pollute the resolution
+                // (e.g. Result<T> resolving T to usize instead of u8).
+                let saved_params = self.ctx.arena.alloc_slice::<&IrTy>(alias.generic_params.len());
+                let had_params = self.ctx.arena.alloc_slice::<bool>(alias.generic_params.len());
+                for gi in 0usize..alias.generic_params.len() {
+                    let gp_id = alias.generic_params[gi].id._value;
+                    let old = self.type_map.get(&gp_id);
+                    if old.is_some() {
+                        saved_params[gi] = old.unwrap();
+                        had_params[gi] = true;
+                        self.type_map.remove(&gp_id);
+                    } else {
+                        had_params[gi] = false;
+                    }
+                }
+                concrete_ty = self.resolve_type(alias.target);
+                // Restore saved type_map entries
+                for gi in 0usize..alias.generic_params.len() {
+                    if had_params[gi] {
+                        self.type_map.insert(alias.generic_params[gi].id._value, saved_params[gi]);
+                    }
+                }
             } else {
                 return Option::none();
             }
@@ -1525,13 +1549,44 @@ impl Mono {
             method_type_args = extra;
         }
 
+        // If any type args are void (unresolved from type alias generic params),
+        // use argument/return type inference to fill them in.
+        // This happens when calling e.g. Result::ok(val) where Result is a type alias
+        // `type Result<T> = std::result::Result<T, Error>` and T wasn't bound.
+        if def.generic_params.len() > 0 {
+            let has_unresolved = false;
+            for i in 0usize..method_type_args.len() {
+                if method_type_args[i].is_void() {
+                    has_unresolved = true;
+                }
+            }
+            if has_unresolved {
+                let inferred = self.infer_type_args(def, expr.args);
+                if inferred.len() == method_type_args.len() {
+                    let merged = self.ctx.arena.alloc_slice::<&IrTy>(method_type_args.len());
+                    for i in 0usize..method_type_args.len() {
+                        if method_type_args[i].is_void() && !inferred[i].is_void() {
+                            merged[i] = inferred[i];
+                        } else {
+                            merged[i] = method_type_args[i];
+                        }
+                    }
+                    method_type_args = merged;
+                }
+            }
+        }
+
         let fn_idx = self.mono_function(def, method_type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
 
-        // Lower call arguments
+        // Lower call arguments, coercing to parameter types
         let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
         for i in 0usize..expr.args.len() {
-            call_args[i] = self.lower_expr(expr.args[i]);
+            if i < ir_fn.params.len() {
+                call_args[i] = self.lower_expr_coerced(expr.args[i], ir_fn.params[i].ty);
+            } else {
+                call_args[i] = self.lower_expr(expr.args[i]);
+            }
         }
 
         let fn_ref = IrFnRef {
@@ -4743,6 +4798,31 @@ impl Mono {
             }
         } else if expr.tag == ExprTag::StructLit {
             let ir_ty = self.resolve_struct_lit_type(expr);
+
+            if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref.is_union {
+                // Union: only lower the single initialized field
+                if expr.field_inits.len() != 1 {
+                    self.ctx.diag.error(expr.span, "union literal must initialize exactly one field");
+                    return self.ctx.arena.alloc(IrExpr::void_expr(ir_ty));
+                }
+                let fi = &expr.field_inits[0];
+                // Find the field type in the struct def
+                let field_ty = self.ctx.void_ty;
+                for j in 0usize..ir_ty.struct_ref.fields.len() {
+                    if ir_ty.struct_ref.fields[j].name == fi.name {
+                        field_ty = ir_ty.struct_ref.fields[j].ty;
+                        break;
+                    }
+                }
+                let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(1);
+                ir_fields[0] = self.lower_expr_coerced(fi.value, field_ty);
+                let result = IrExpr::void_expr(ir_ty);
+                result.tag = IrTag::StructLit;
+                result.ir_ty = ir_ty;
+                result.items = ir_fields;
+                return self.ctx.arena.alloc(result);
+            }
+
             // Reorder field_inits to match struct definition order
             let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref.fields.len() } else { expr.field_inits.len() };
             let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);

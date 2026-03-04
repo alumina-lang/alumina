@@ -1816,16 +1816,22 @@ impl FnCodegen {
                 let pointee_ir_ty = FnCodegen::irty_inner(lhs_ir_ty);
                 let pointee_ty = self.ctx.llvm_type(pointee_ir_ty);
                 if LLVMGetTypeKind(pointee_ty) == LLVMTypeKind::Struct {
-                    // Load the pointer value, then GEP into the struct
                     let ptr_val = self.gen_expr(expr.lhs);
-                    let field_ptr = LLVMBuildStructGEP2(
-                        self.ctx.builder, pointee_ty, ptr_val, expr.field_idx,
-                        self.temp_cname()
-                    );
                     let result_ty = self.ctx.llvm_type(expr.ty);
                     if self.is_void_type(result_ty) {
                         return LLVMGetUndef(self.ctx.i8_type);
                     }
+                    // Union: bitcast pointer instead of GEP
+                    if pointee_ir_ty.tag == IrTyTag::Struct && pointee_ir_ty.struct_ref.is_union {
+                        let field_ptr_ty = LLVMPointerType(result_ty, 0);
+                        let field_ptr = LLVMBuildBitCast(self.ctx.builder, ptr_val, field_ptr_ty, self.temp_cname());
+                        return LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
+                    }
+                    // Load the pointer value, then GEP into the struct
+                    let field_ptr = LLVMBuildStructGEP2(
+                        self.ctx.builder, pointee_ty, ptr_val, expr.field_idx,
+                        self.temp_cname()
+                    );
                     return LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
                 }
                 // Fallback: non-struct pointee
@@ -1841,21 +1847,25 @@ impl FnCodegen {
                 return LLVMGetUndef(result_ty);
             }
             let obj_ptr = self.gen_lvalue(expr.lhs);
+            let result_ty = self.ctx.llvm_type(expr.ty);
+            if self.is_void_type(result_ty) {
+                return LLVMGetUndef(self.ctx.i8_type);
+            }
+            // Union: bitcast pointer instead of GEP
+            if lhs_ir_ty.tag == IrTyTag::Struct && lhs_ir_ty.struct_ref.is_union {
+                let field_ptr_ty = LLVMPointerType(result_ty, 0);
+                let field_ptr = LLVMBuildBitCast(self.ctx.builder, obj_ptr, field_ptr_ty, self.temp_cname());
+                return LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
+            }
             // Safety: ensure obj_ty has enough fields for the field_idx
             let num_fields = LLVMCountStructElementTypes(obj_ty);
             if expr.field_idx >= num_fields {
-                let result_ty = self.ctx.llvm_type(expr.ty);
                 return LLVMGetUndef(if self.is_void_type(result_ty) { self.ctx.i8_type } else { result_ty });
             }
             let field_ptr = LLVMBuildStructGEP2(
                 self.ctx.builder, obj_ty, obj_ptr, expr.field_idx,
                 self.temp_cname()
             );
-            let result_ty = self.ctx.llvm_type(expr.ty);
-            let rk = LLVMGetTypeKind(result_ty);
-            if self.is_void_type(result_ty) || rk as i32 == 0i32 {
-                return LLVMGetUndef(self.ctx.i8_type);
-            }
             let load_val = LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
             load_val
         }
@@ -2006,15 +2016,28 @@ impl FnCodegen {
             // Create an alloca, store fields, load result
             let alloca = LLVMBuildAlloca(self.ctx.builder, llvm_ty, self.temp_cname());
 
-            for i in 0usize..expr.items.len() {
-                let field_val = self.gen_expr(expr.items[i]);
-                let fv_ty = LLVMTypeOf(field_val);
-                if !self.is_void_type(fv_ty) {
-                    let field_ptr = LLVMBuildStructGEP2(
-                        self.ctx.builder, llvm_ty, alloca, i as u32,
-                        self.temp_cname()
-                    );
-                    self.safe_store(field_val, field_ptr);
+            if expr.ir_ty.tag == IrTyTag::Struct && expr.ir_ty.struct_ref.is_union {
+                // Union: store the single initialized field via bitcast
+                if expr.items.len() == 1 {
+                    let field_val = self.gen_expr(expr.items[0]);
+                    let fv_ty = LLVMTypeOf(field_val);
+                    if !self.is_void_type(fv_ty) {
+                        let field_ptr_ty = LLVMPointerType(fv_ty, 0);
+                        let field_ptr = LLVMBuildBitCast(self.ctx.builder, alloca, field_ptr_ty, self.temp_cname());
+                        self.safe_store(field_val, field_ptr);
+                    }
+                }
+            } else {
+                for i in 0usize..expr.items.len() {
+                    let field_val = self.gen_expr(expr.items[i]);
+                    let fv_ty = LLVMTypeOf(field_val);
+                    if !self.is_void_type(fv_ty) {
+                        let field_ptr = LLVMBuildStructGEP2(
+                            self.ctx.builder, llvm_ty, alloca, i as u32,
+                            self.temp_cname()
+                        );
+                        self.safe_store(field_val, field_ptr);
+                    }
                 }
             }
 
@@ -2315,6 +2338,12 @@ impl FnCodegen {
                 let pointee_ty = self.ctx.llvm_type(pointee_ir_ty);
                 if LLVMGetTypeKind(pointee_ty) == LLVMTypeKind::Struct {
                     let ptr_val = self.gen_expr(expr.lhs);
+                    // Union: bitcast pointer instead of GEP
+                    if pointee_ir_ty.tag == IrTyTag::Struct && pointee_ir_ty.struct_ref.is_union {
+                        let result_ty = self.ctx.llvm_type(expr.ty);
+                        let field_ptr_ty = LLVMPointerType(result_ty, 0);
+                        return LLVMBuildBitCast(self.ctx.builder, ptr_val, field_ptr_ty, self.temp_cname());
+                    }
                     return LLVMBuildStructGEP2(
                         self.ctx.builder, pointee_ty, ptr_val, expr.field_idx,
                         self.temp_cname()
@@ -2327,6 +2356,12 @@ impl FnCodegen {
                 return LLVMGetUndef(self.ctx.ptr_type);
             }
             let obj_ptr = self.gen_lvalue(expr.lhs);
+            // Union: bitcast pointer instead of GEP
+            if lhs_ir_ty.tag == IrTyTag::Struct && lhs_ir_ty.struct_ref.is_union {
+                let result_ty = self.ctx.llvm_type(expr.ty);
+                let field_ptr_ty = LLVMPointerType(result_ty, 0);
+                return LLVMBuildBitCast(self.ctx.builder, obj_ptr, field_ptr_ty, self.temp_cname());
+            }
             // Bitcast to correct pointer type for GEP
             let obj_ptr_ty = LLVMPointerType(obj_ty, 0);
             let typed_ptr = LLVMBuildBitCast(self.ctx.builder, obj_ptr, obj_ptr_ty, self.temp_cname());

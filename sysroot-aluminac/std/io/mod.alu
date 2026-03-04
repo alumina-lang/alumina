@@ -1,18 +1,560 @@
-// IO for self-hosted compiler bootstrap
+//! Streams and other byte I/O functionality.
 
-extern "C" fn write(fd: i32, buf: &void, count: usize) -> isize;
+/// Type alias for the result of I/O operations.
+type Result<T> = std::result::Result<T, Error>;
 
-fn _write_stderr(s: &[u8]) {
-    if s.len() > 0usize {
-        write(2i32, &s[0] as &void, s.len());
+/// Type of the I/O error.
+enum ErrorKind {
+    /// A read operation reached the end of a file before reading the specified number of bytes.
+    UnexpectedEof,
+    /// An error returned by the operating system.
+    Os,
+    /// A custom error.
+    UserDefined,
+}
+
+union _ErrorInner {
+    errno: libc::c_int,
+    message: &[u8],
+}
+
+/// Error type for I/O operations
+struct Error {
+    kind: ErrorKind,
+    inner: _ErrorInner,
+}
+
+impl Error {
+    /// Create `Error` from the last OS error (`errno`)
+    fn from_errno() -> Error {
+        Error {
+            kind: ErrorKind::Os,
+            inner: _ErrorInner { errno: *libc::errno_location() },
+        }
+    }
+
+    /// Create `Error` from a specific errno value
+    fn from_errno_custom(errno: libc::c_int) -> Error {
+        Error {
+            kind: ErrorKind::Os,
+            inner: _ErrorInner { errno: errno },
+        }
+    }
+
+    /// Create a custom Error.
+    fn custom(message: &[u8]) -> Error {
+        Error {
+            kind: ErrorKind::UserDefined,
+            inner: _ErrorInner { message: message },
+        }
+    }
+
+    /// Create an error signalling end-of-file.
+    fn eof() -> Error {
+        Error {
+            kind: ErrorKind::UnexpectedEof,
+            inner: std::mem::uninitialized::<_ErrorInner>(),
+        }
+    }
+
+    fn as_errno(self: &Error) -> Option<libc::c_int> {
+        if self.kind == ErrorKind::Os {
+            Option::some(self.inner.errno)
+        } else {
+            Option::none()
+        }
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &Error, f: &mut F) -> std::fmt::Result {
+        switch self.kind {
+            ErrorKind::UnexpectedEof => f.write_str("unexpected end of file"),
+            ErrorKind::UserDefined => f.write_str(self.inner.message),
+            ErrorKind::Os => {
+                let buf: [u8; 128];
+                if libc::strerror_r(self.inner.errno, &buf[0] as &mut libc::c_char, 128usize) < 0i32 {
+                    return f.write_str("os error: unknown");
+                }
+                let len = 0usize;
+                while len < 128usize && buf[len] != 0u8 {
+                    len = len + 1usize;
+                }
+                f.write_str("os error: ")?;
+                f.write_str(buf[0usize..len])
+            }
+            _ => f.write_str("unknown error"),
+        }
+    }
+
+    fn equals(self: &Error, other: &Error) -> bool {
+        if self.kind != other.kind {
+            return false;
+        }
+        switch self.kind {
+            ErrorKind::Os => self.inner.errno == other.inner.errno,
+            ErrorKind::UnexpectedEof => true,
+            ErrorKind::UserDefined => self.inner.message == other.inner.message,
+            _ => false,
+        }
     }
 }
 
-fn _write_stderr_ln(s: &[u8]) {
-    _write_stderr(s);
-    let nl: [u8; 1] = [10u8];
-    write(2i32, &nl[0] as &void, 1usize);
+macro errno_try($ret) {
+    {
+        let _ret = $ret;
+        if _ret == -1 {
+            return Result::err(Error::from_errno());
+        }
+        _ret
+    }
 }
+
+/// Types that are wrappers over a file descriptor.
+protocol AsFileDescriptor<Self> {
+    fn as_fd(self: &Self) -> FileDescriptor;
+}
+
+/// Types that implement readable stream semantics.
+protocol Readable<Self> {
+    /// Reads from the stream into a provided buffer.
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize>;
+
+    /// Fills the provided buffer by reading from the stream.
+    fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<()> {
+        while buf.len() > 0usize {
+            let read_bytes = self.read(buf)?;
+            if read_bytes == 0usize {
+                return Result::err(Error::eof());
+            }
+            buf = buf[read_bytes..];
+        }
+        Result::ok(())
+    }
+
+    /// Reads the entire stream into a `StringBuf`.
+    fn read_to_end(self: &mut Self, buf: &mut string::StringBuf) -> Result<usize> {
+        let start_len = buf.len();
+        loop {
+            if buf.capacity() == buf.len() {
+                buf.reserve(32usize);
+            }
+            let read = self.read(buf.spare_capacity())?;
+            if read == 0usize {
+                return Result::ok(buf.len() - start_len);
+            } else {
+                buf.truncate(buf.len() + read);
+            }
+        }
+    }
+}
+
+/// Types that implement writable stream semantics.
+protocol Writable<Self> {
+    /// Write the buffer to the stream.
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize>;
+
+    /// Writes all the bytes in the buffer to the stream.
+    fn write_all(self: &mut Self, buf: &[u8]) -> Result<()> {
+        while buf.len() > 0usize {
+            let written_bytes = self.write(buf)?;
+            if written_bytes == 0usize {
+                return Result::err(Error::eof());
+            }
+            buf = buf[written_bytes..];
+        }
+        Result::ok(())
+    }
+
+    /// Flush the stream.
+    fn flush(self: &mut Self) -> Result<()>;
+}
+
+/// Reference point for the seek operation.
+enum SeekFrom {
+    Beginning,
+    Current,
+    End,
+}
+
+/// Streams that can be fast-forwarded or rewound to an arbitrary offset.
+protocol Seekable<Self> {
+    /// Jump to a specified position in the stream.
+    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64>;
+
+    /// Rewind the stream to the beginning.
+    fn rewind(self: &mut Self) -> Result<()> {
+        self.seek(SeekFrom::Beginning, 0i64)?;
+        Result::ok(())
+    }
+
+    /// Returns the current position in the stream from the beginning.
+    fn position(self: &mut Self) -> Result<u64> {
+        self.seek(SeekFrom::Current, 0i64)
+    }
+}
+
+/// Platform specific file descriptor.
+struct FileDescriptor {
+    value: libc::c_int,
+}
+
+impl FileDescriptor {
+    /// Create a `FileDescriptor` object from a raw file descriptor.
+    fn new(value: libc::c_int) -> FileDescriptor {
+        FileDescriptor { value: value }
+    }
+
+    /// Close the file descriptor.
+    fn close(self: &mut FileDescriptor) -> Result<()> {
+        if self.value != -1i32 {
+            errno_try!(libc::close(self.value));
+        }
+        Result::ok(())
+    }
+
+    /// @ AsFileDescriptor::as_fd
+    fn as_fd(self: &FileDescriptor) -> FileDescriptor {
+        *self
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut FileDescriptor, buf: &mut [u8]) -> Result<usize> {
+        let ret = errno_try!(libc::read(self.value, &buf[0] as &mut libc::c_void, buf.len()) as i32);
+        Result::ok(ret as usize)
+    }
+
+    /// @ Writable::write
+    fn write(self: &mut FileDescriptor, buf: &[u8]) -> Result<usize> {
+        let ret = errno_try!(libc::write(self.value, &buf[0] as &libc::c_void, buf.len()) as i32);
+        Result::ok(ret as usize)
+    }
+
+    /// @ Writable::flush
+    fn flush(self: &mut FileDescriptor) -> Result<()> {
+        Result::ok(())
+    }
+
+    /// @ Seekable::seek
+    fn seek(self: &mut FileDescriptor, whence: SeekFrom, offset: i64) -> Result<u64> {
+        let w = switch whence {
+            SeekFrom::Beginning => 0i32,
+            SeekFrom::Current => 1i32,
+            SeekFrom::End => 2i32,
+            _ => 0i32,
+        };
+        let ret = libc::lseek(self.value, offset, w);
+        if ret == -1i64 {
+            return Result::err(Error::from_errno());
+        }
+        Result::ok(ret as u64)
+    }
+
+    mixin Readable<FileDescriptor>;
+    mixin Writable<FileDescriptor>;
+    mixin Seekable<FileDescriptor>;
+}
+
+/// Standard I/O stream.
+struct StdioStream {
+    fd: FileDescriptor,
+}
+
+impl StdioStream {
+    fn stdin() -> StdioStream {
+        StdioStream { fd: FileDescriptor::new(libc::STDIN_FILENO) }
+    }
+
+    fn stdout() -> StdioStream {
+        StdioStream { fd: FileDescriptor::new(libc::STDOUT_FILENO) }
+    }
+
+    fn stderr() -> StdioStream {
+        StdioStream { fd: FileDescriptor::new(libc::STDERR_FILENO) }
+    }
+
+    /// @ AsFileDescriptor::as_fd
+    fn as_fd(self: &StdioStream) -> FileDescriptor {
+        self.fd
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut StdioStream, buf: &mut [u8]) -> Result<usize> {
+        self.fd.read(buf)
+    }
+
+    /// @ Writable::write
+    fn write(self: &mut StdioStream, buf: &[u8]) -> Result<usize> {
+        self.fd.write(buf)
+    }
+
+    /// @ Writable::flush
+    fn flush(self: &mut StdioStream) -> Result<()> {
+        Result::ok(())
+    }
+
+    mixin Readable<StdioStream>;
+    mixin Writable<StdioStream>;
+}
+
+/// A null stream (similar to `/dev/null`).
+struct NullStream {}
+
+impl NullStream {
+    fn new() -> NullStream { NullStream {} }
+
+    /// @ Readable::read
+    fn read(self: &mut NullStream, _buf: &mut [u8]) -> Result<usize> {
+        Result::ok(0usize)
+    }
+
+    /// @ Readable::read_exact
+    fn read_exact(self: &mut NullStream, buf: &mut [u8]) -> Result<()> {
+        if buf.len() == 0usize { Result::ok(()) }
+        else { Result::err(Error::eof()) }
+    }
+
+    /// @ Readable::read_to_end
+    fn read_to_end(self: &mut NullStream, _buf: &mut string::StringBuf) -> Result<usize> {
+        Result::ok(0usize)
+    }
+
+    /// @ Writable::write
+    fn write(self: &mut NullStream, buf: &[u8]) -> Result<usize> {
+        Result::ok(buf.len())
+    }
+
+    /// @ Writable::write_all
+    fn write_all(self: &mut NullStream, _buf: &[u8]) -> Result<()> {
+        Result::ok(())
+    }
+
+    /// @ Writable::flush
+    fn flush(self: &mut NullStream) -> Result<()> {
+        Result::ok(())
+    }
+}
+
+/// A readable stream backed by an in-memory byte slice.
+struct SliceReader {
+    slice: &[u8],
+    pos: usize,
+}
+
+impl SliceReader {
+    fn new(slice: &[u8]) -> SliceReader {
+        SliceReader { slice: slice, pos: 0usize }
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize> {
+        let len = cmp::min(buf.len(), self.slice.len() - self.pos);
+        if len > 0usize {
+            self.slice[self.pos..self.pos + len].copy_to_nonoverlapping(&buf[0]);
+            self.pos = self.pos + len;
+        }
+        Result::ok(len)
+    }
+
+    /// @ Seekable::seek
+    fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64> {
+        let new_offset = switch whence {
+            SeekFrom::Beginning => offset,
+            SeekFrom::Current => self.pos as i64 + offset,
+            SeekFrom::End => self.slice.len() as i64 + offset,
+            _ => 0i64,
+        };
+        if new_offset < 0i64 || (new_offset as usize) > self.slice.len() {
+            Result::err(Error::eof())
+        } else {
+            self.pos = new_offset as usize;
+            Result::ok(new_offset as u64)
+        }
+    }
+
+    /// @ Seekable::position
+    fn position(self: &mut SliceReader) -> Result<u64> {
+        Result::ok(self.pos as u64)
+    }
+
+    mixin Readable<SliceReader>;
+    mixin Seekable<SliceReader>;
+}
+
+/// A writable stream backed by StringBuf.
+struct StringWriter {
+    string: &mut string::StringBuf,
+}
+
+impl StringWriter {
+    fn new(string: &mut string::StringBuf) -> StringWriter {
+        StringWriter { string: string }
+    }
+
+    /// @ Writable::write
+    fn write(self: &mut StringWriter, buf: &[u8]) -> Result<usize> {
+        self.string.extend_from_slice(buf);
+        Result::ok(buf.len())
+    }
+
+    /// @ Writable::flush
+    fn flush(self: &mut StringWriter) -> Result<()> {
+        Result::ok(())
+    }
+
+    mixin Writable<StringWriter>;
+}
+
+/// A buffered wrapper over an underlying readable stream.
+struct BufferedReader<R> {
+    inner: &mut R,
+    buf: &mut [u8],
+    pos: usize,
+    cap: usize,
+}
+
+impl BufferedReader<R> {
+    fn new(inner: &mut R, buf_size: usize) -> BufferedReader<R> {
+        from_slice(inner, std::mem::slice_alloc::<u8>(buf_size))
+    }
+
+    fn from_slice(inner: &mut R, buf: &mut [u8]) -> BufferedReader<R> {
+        BufferedReader { inner: inner, buf: buf, pos: 0usize, cap: 0usize }
+    }
+
+    fn fill_buffer(self: &mut BufferedReader<R>) -> Result<&[u8]> {
+        if self.pos == self.cap {
+            self.cap = self.inner.read(self.buf)?;
+            self.pos = 0usize;
+        }
+        Result::ok(self.buf[self.pos..self.cap] as &[u8])
+    }
+
+    fn consume(self: &mut BufferedReader<R>, amount: usize) {
+        self.pos = cmp::min(self.pos + amount, self.cap);
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize> {
+        let slice = self.fill_buffer()?;
+        let nread = cmp::min(buf.len(), slice.len());
+        if nread > 0usize {
+            slice[..nread].copy_to_nonoverlapping(&buf[0]);
+            self.consume(nread);
+        }
+        Result::ok(nread)
+    }
+
+    /// @ std::mem::Freeable::free
+    fn free(self: &mut BufferedReader<R>) {
+        self.buf.free();
+    }
+
+    mixin Readable<BufferedReader<R>>;
+}
+
+/// A buffered wrapper over an underlying writable stream.
+struct BufferedWriter<W> {
+    buf: &mut [u8],
+    pos: usize,
+    inner: &mut W,
+}
+
+impl BufferedWriter<W> {
+    fn new(inner: &mut W, buf_size: usize) -> BufferedWriter<W> {
+        from_slice(inner, std::mem::slice_alloc::<u8>(buf_size))
+    }
+
+    fn from_slice(inner: &mut W, buf: &mut [u8]) -> BufferedWriter<W> {
+        BufferedWriter { inner: inner, buf: buf, pos: 0usize }
+    }
+
+    /// @ Writable::write
+    fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
+        if buf.len() > self.buf.len() - self.pos {
+            self._flush_buffer()?;
+        }
+        if buf.len() >= self.buf.len() {
+            self.inner.write(buf)
+        } else {
+            self._write_to_buffer(buf);
+            Result::ok(buf.len())
+        }
+    }
+
+    /// @ Writable::write_all
+    fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
+        if buf.len() > self.buf.len() - self.pos {
+            self._flush_buffer()?;
+        }
+        if buf.len() >= self.buf.len() {
+            self.inner.write_all(buf)
+        } else {
+            self._write_to_buffer(buf);
+            Result::ok(())
+        }
+    }
+
+    /// @ Writable::flush
+    fn flush(self: &mut BufferedWriter<W>) -> Result<()> {
+        self._flush_buffer()?;
+        self.inner.flush()
+    }
+
+    fn _write_to_buffer(self: &mut BufferedWriter<W>, buf: &[u8]) {
+        if buf.len() == 0usize { return; }
+        buf.copy_to_nonoverlapping(&self.buf[self.pos]);
+        self.pos = self.pos + buf.len();
+    }
+
+    fn _flush_buffer(self: &mut BufferedWriter<W>) -> Result<()> {
+        self.inner.write_all(self.buf[..self.pos])?;
+        self.pos = 0usize;
+        Result::ok(())
+    }
+
+    /// @ std::mem::Freeable::free
+    fn free(self: &mut BufferedWriter<W>) {
+        self.buf.free();
+    }
+
+    /// @ std::fmt::Formatter::write_str
+    fn write_str(self: &mut BufferedWriter<W>, buf: &[u8]) -> std::fmt::Result {
+        self.write_all(buf).map_err(std::fmt::Error::from::<Error>)
+    }
+
+    mixin Writable<BufferedWriter<W>>;
+    mixin std::fmt::Formatter<BufferedWriter<W>>;
+}
+
+/// Default buffer size for I/O methods that allocate a buffer.
+const DEFAULT_BUFFER_SIZE: usize = 8192usize;
+
+/// Copy the entire stream `src` into `dst`.
+fn copy<S, D>(src: &mut S, dst: &mut D) -> Result<u64> {
+    let buf = std::mem::slice_alloc::<u8>(DEFAULT_BUFFER_SIZE);
+    defer buf.free();
+    copy_using(src, dst, buf)
+}
+
+/// Copy the entire stream `src` into `dst` using a provided buffer.
+fn copy_using<S, D>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> Result<u64> {
+    let read = 0u64;
+    loop {
+        let n = src.read(buffer)?;
+        read = read + n as u64;
+        if n == 0usize { break; }
+        dst.write_all(buffer[0usize..n])?;
+    }
+    Result::ok(read)
+}
+
+/// Reads a single byte from the stream.
+fn read_byte<R>(reader: &mut R) -> Result<u8> {
+    let buf: [u8; 1];
+    reader.read_exact(&buf)?;
+    Result::ok(buf[0])
+}
+
+// ------- Formatter that writes directly to a file descriptor -------
 
 /// Formatter that writes directly to a file descriptor
 struct FdFormatter {
@@ -24,18 +566,18 @@ impl FdFormatter {
         FdFormatter { fd: fd }
     }
 
-    /// @ fmt::Formatter::write_str
+    /// @ std::fmt::Formatter::write_str
     fn write_str(self: &mut FdFormatter, buf: &[u8]) -> std::fmt::Result {
         if buf.len() > 0usize {
-            write(self.fd, &buf[0] as &void, buf.len());
+            libc::write(self.fd, &buf[0] as &libc::c_void, buf.len());
         }
-        Result::ok(())
+        std::result::Result::ok(())
     }
 
-    /// @ fmt::Formatter::write_byte
+    /// @ std::fmt::Formatter::write_byte
     fn write_byte(self: &mut FdFormatter, byte: u8) -> std::fmt::Result {
-        write(self.fd, &byte as &void, 1usize);
-        Result::ok(())
+        libc::write(self.fd, &byte as &libc::c_void, 1usize);
+        std::result::Result::ok(())
     }
 }
 
@@ -61,7 +603,6 @@ macro print($fmt_str, $arg...) {
         let _ = write!(&_f, $fmt_str, $arg$...);
     }
 }
-
 
 macro println($fmt_str, $arg...) {
     {

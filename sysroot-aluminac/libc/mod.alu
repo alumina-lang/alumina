@@ -1,28 +1,53 @@
-// Minimal libc bindings for self-hosted compiler bootstrap
+//! FFI interfaces to libc.
 
 type c_char = u8;
 type c_void = void;
 type c_int = i32;
+type c_uint = u32;
 
+// Standard I/O file descriptor constants
+const STDIN_FILENO: c_int = 0i32;
+const STDOUT_FILENO: c_int = 1i32;
+const STDERR_FILENO: c_int = 2i32;
+
+// Memory management
 extern "C" fn malloc(size: usize) -> &mut void;
 extern "C" fn realloc(ptr: &mut void, size: usize) -> &mut void;
 extern "C" fn free(ptr: &mut void);
+
+// File I/O
 extern "C" fn open(path: &c_char, flags: i32) -> i32;
 extern "C" fn close(fd: i32) -> i32;
 extern "C" fn read(fd: i32, buf: &mut c_void, count: usize) -> isize;
 extern "C" fn write(fd: i32, buf: &c_void, count: usize) -> isize;
 extern "C" fn lseek(fd: i32, offset: i64, whence: i32) -> i64;
+extern "C" fn pipe(pipefd: &mut c_int) -> c_int;
+
+// Process
 extern "C" fn system(cmd: &c_char) -> i32;
 extern "C" fn unlink(path: &c_char) -> i32;
+extern "C" fn exit(status: c_int);
+extern "C" fn abort();
+extern "C" fn _exit(status: c_int);
+extern "C" fn getenv(name: &c_char) -> &mut c_char;
+
+// String / memory operations
 extern "C" fn strtod(str: &c_char, endptr: &mut &mut c_char) -> f64;
 extern "C" fn strlen(s: &c_char) -> usize;
 extern "C" fn memcmp(a: &c_void, b: &c_void, n: usize) -> c_int;
 extern "C" fn memcpy(dest: &mut void, src: &void, n: usize) -> &mut void;
+extern "C" fn memchr(s: &c_void, c: c_int, n: usize) -> &c_void;
+extern "C" fn memmem(haystack: &c_void, haystacklen: usize, needle: &c_void, needlelen: usize) -> &c_void;
+extern "C" fn memmove(dest: &mut c_void, src: &c_void, n: usize) -> &mut c_void;
 extern "C" fn snprintf(str: &mut c_char, size: usize, fmt: &c_char, ...) -> i32;
+extern "C" fn strerror_r(errnum: c_int, buf: &mut c_char, buflen: usize) -> c_int;
 
-extern "C" fn getenv(name: &c_char) -> &mut c_char;
-extern "C" fn fabs(x: f64) -> f64;
-extern "C" fn fabsf(x: f32) -> f32;
+// errno
+extern "C" fn __errno_location() -> &mut c_int;
+
+fn errno_location() -> &mut c_int {
+    __errno_location()
+}
 
 // FILE type (opaque)
 struct FILE {}
@@ -35,9 +60,96 @@ extern "C" fn ftell(stream: &mut FILE) -> i64;
 extern "C" fn fprintf(stream: &mut FILE, fmt: &c_char, ...) -> i32;
 extern "C" fn fflush(stream: &mut FILE) -> i32;
 
-extern "C" fn memmem(haystack: &c_void, haystacklen: usize, needle: &c_void, needlelen: usize) -> &c_void;
-extern "C" fn memchr(s: &c_void, c: c_int, n: usize) -> &c_void;
-extern "C" fn memmove(dest: &mut c_void, src: &c_void, n: usize) -> &mut c_void;
-
-extern "C" fn exit(status: c_int);
-extern "C" fn abort();
+// Math library (libm)
+extern "C" fn acos(x: f64) -> f64;
+extern "C" fn acosf(x: f32) -> f32;
+extern "C" fn acosh(x: f64) -> f64;
+extern "C" fn acoshf(x: f32) -> f32;
+extern "C" fn asin(x: f64) -> f64;
+extern "C" fn asinf(x: f32) -> f32;
+extern "C" fn asinh(x: f64) -> f64;
+extern "C" fn asinhf(x: f32) -> f32;
+extern "C" fn atan(x: f64) -> f64;
+extern "C" fn atan2(y: f64, x: f64) -> f64;
+extern "C" fn atan2f(y: f32, x: f32) -> f32;
+extern "C" fn atanf(x: f32) -> f32;
+extern "C" fn atanh(x: f64) -> f64;
+extern "C" fn atanhf(x: f32) -> f32;
+extern "C" fn cbrt(x: f64) -> f64;
+extern "C" fn cbrtf(x: f32) -> f32;
+extern "C" fn ceil(x: f64) -> f64;
+extern "C" fn ceilf(x: f32) -> f32;
+extern "C" fn copysign(x: f64, y: f64) -> f64;
+extern "C" fn copysignf(x: f32, y: f32) -> f32;
+extern "C" fn cos(x: f64) -> f64;
+extern "C" fn cosf(x: f32) -> f32;
+extern "C" fn cosh(x: f64) -> f64;
+extern "C" fn coshf(x: f32) -> f32;
+extern "C" fn erf(x: f64) -> f64;
+extern "C" fn erfc(x: f64) -> f64;
+extern "C" fn erff(x: f32) -> f32;
+extern "C" fn erfcf(x: f32) -> f32;
+extern "C" fn exp(x: f64) -> f64;
+extern "C" fn expf(x: f32) -> f32;
+extern "C" fn expm1(x: f64) -> f64;
+extern "C" fn expm1f(x: f32) -> f32;
+extern "C" fn fabs(x: f64) -> f64;
+extern "C" fn fabsf(x: f32) -> f32;
+extern "C" fn fdim(x: f64, y: f64) -> f64;
+extern "C" fn fdimf(x: f32, y: f32) -> f32;
+extern "C" fn floor(x: f64) -> f64;
+extern "C" fn floorf(x: f32) -> f32;
+extern "C" fn fma(x: f64, y: f64, z: f64) -> f64;
+extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32;
+extern "C" fn fmax(x: f64, y: f64) -> f64;
+extern "C" fn fmaxf(x: f32, y: f32) -> f32;
+extern "C" fn fmin(x: f64, y: f64) -> f64;
+extern "C" fn fminf(x: f32, y: f32) -> f32;
+extern "C" fn fmod(x: f64, y: f64) -> f64;
+extern "C" fn fmodf(x: f32, y: f32) -> f32;
+extern "C" fn frexp(x: f64, exp: &mut i32) -> f64;
+extern "C" fn frexpf(x: f32, exp: &mut i32) -> f32;
+extern "C" fn hypot(x: f64, y: f64) -> f64;
+extern "C" fn hypotf(x: f32, y: f32) -> f32;
+extern "C" fn ilogb(x: f64) -> i32;
+extern "C" fn ilogbf(x: f32) -> i32;
+extern "C" fn ldexp(x: f64, n: i32) -> f64;
+extern "C" fn ldexpf(x: f32, n: i32) -> f32;
+extern "C" fn lgamma(x: f64) -> f64;
+extern "C" fn lgammaf(x: f32) -> f32;
+extern "C" fn log(x: f64) -> f64;
+extern "C" fn log10(x: f64) -> f64;
+extern "C" fn log10f(x: f32) -> f32;
+extern "C" fn log1p(x: f64) -> f64;
+extern "C" fn log1pf(x: f32) -> f32;
+extern "C" fn log2(x: f64) -> f64;
+extern "C" fn log2f(x: f32) -> f32;
+extern "C" fn logf(x: f32) -> f32;
+extern "C" fn modf(x: f64, iptr: &mut f64) -> f64;
+extern "C" fn modff(x: f32, iptr: &mut f32) -> f32;
+extern "C" fn nextafter(x: f64, y: f64) -> f64;
+extern "C" fn nextafterf(x: f32, y: f32) -> f32;
+extern "C" fn pow(x: f64, y: f64) -> f64;
+extern "C" fn powf(x: f32, y: f32) -> f32;
+extern "C" fn remainder(x: f64, y: f64) -> f64;
+extern "C" fn remainderf(x: f32, y: f32) -> f32;
+extern "C" fn remquo(x: f64, y: f64, quo: &mut i32) -> f64;
+extern "C" fn remquof(x: f32, y: f32, quo: &mut i32) -> f32;
+extern "C" fn round(x: f64) -> f64;
+extern "C" fn roundf(x: f32) -> f32;
+extern "C" fn scalbn(x: f64, n: i32) -> f64;
+extern "C" fn scalbnf(x: f32, n: i32) -> f32;
+extern "C" fn sin(x: f64) -> f64;
+extern "C" fn sinf(x: f32) -> f32;
+extern "C" fn sinh(x: f64) -> f64;
+extern "C" fn sinhf(x: f32) -> f32;
+extern "C" fn sqrt(x: f64) -> f64;
+extern "C" fn sqrtf(x: f32) -> f32;
+extern "C" fn tan(x: f64) -> f64;
+extern "C" fn tanf(x: f32) -> f32;
+extern "C" fn tanh(x: f64) -> f64;
+extern "C" fn tanhf(x: f32) -> f32;
+extern "C" fn tgamma(x: f64) -> f64;
+extern "C" fn tgammaf(x: f32) -> f32;
+extern "C" fn trunc(x: f64) -> f64;
+extern "C" fn truncf(x: f32) -> f32;

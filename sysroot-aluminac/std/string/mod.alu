@@ -114,11 +114,16 @@ impl StringBuf {
         self._length = self._length + 1usize;
     }
 
-    /// Truncate the string to the first `len` bytes.
+    /// Set the string length. Can shrink or extend up to capacity.
     fn truncate(self: &mut StringBuf, len: usize) {
-        if len < self._length {
+        if len <= self._data.len() {
             self._length = len;
         }
+    }
+
+    /// Return a mutable slice of the spare capacity (between len and capacity).
+    fn spare_capacity(self: &mut StringBuf) -> &mut [u8] {
+        self._data[self._length..]
     }
 
     /// Clear the string, removing all bytes.

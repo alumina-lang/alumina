@@ -1,0 +1,170 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::io::{
+    Result, Error, ErrorKind, SeekFrom,
+    SliceReader, StringWriter, NullStream,
+    BufferedReader, BufferedWriter,
+    Readable, Writable, Seekable,
+};
+use std::string::StringBuf;
+
+fn test_slice_reader() -> i32 {
+    let r = SliceReader::new("Hello, world!");
+    let buf: [u8; 5];
+    let n = r.read(&buf).unwrap();
+    if n != 5usize { return 1i32; }
+    if buf[0] != 'H' as u8 { return 2i32; }
+    if buf[4] != 'o' as u8 { return 3i32; }
+    0i32
+}
+
+fn test_read_to_end() -> i32 {
+    let r = SliceReader::new("test data");
+    let s = StringBuf::new();
+    defer s.free();
+    let total = r.read_to_end(&s).unwrap();
+    if total != 9usize { return 10i32; }
+    if s.as_slice() != "test data" { return 11i32; }
+    0i32
+}
+
+fn test_string_writer() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+    let w = StringWriter::new(&s);
+    w.write("hello").unwrap();
+    w.write(" world").unwrap();
+    if s.as_slice() != "hello world" { return 20i32; }
+    0i32
+}
+
+fn test_error_types() -> i32 {
+    let e1 = Error::eof();
+    let e2 = Error::eof();
+    if !e1.equals(&e2) { return 30i32; }
+    let e3 = Error::custom("test error");
+    if e3.kind != ErrorKind::UserDefined { return 31i32; }
+    0i32
+}
+
+fn test_null_stream() -> i32 {
+    let ns = NullStream::new();
+    let nbuf: [u8; 10];
+    if ns.read(&nbuf).unwrap() != 0usize { return 40i32; }
+    if ns.write("hello").unwrap() != 5usize { return 41i32; }
+    0i32
+}
+
+fn test_seek() -> i32 {
+    let r = SliceReader::new("abcdefghij");
+    let sbuf: [u8; 3];
+    r.read(&sbuf).unwrap();
+    r.seek(SeekFrom::Beginning, 1i64).unwrap();
+    r.read(&sbuf).unwrap();
+    if sbuf[0] != 'b' as u8 { return 50i32; }
+    if sbuf[2] != 'd' as u8 { return 51i32; }
+    0i32
+}
+
+fn test_copy() -> i32 {
+    let src = SliceReader::new("copy test");
+    let dst_buf = StringBuf::new();
+    defer dst_buf.free();
+    let dst = StringWriter::new(&dst_buf);
+    std::io::copy(&src, &dst).unwrap();
+    if dst_buf.as_slice() != "copy test" { return 60i32; }
+    0i32
+}
+
+fn test_read_byte() -> i32 {
+    let r = SliceReader::new("XY");
+    let b = std::io::read_byte(&r).unwrap();
+    if b != 'X' as u8 { return 70i32; }
+    let b2 = std::io::read_byte(&r).unwrap();
+    if b2 != 'Y' as u8 { return 71i32; }
+    0i32
+}
+
+fn test_buffered_reader() -> i32 {
+    let r = SliceReader::new("buffered read test");
+    let br = BufferedReader::new(&r, 8usize);
+    defer br.free();
+    let bbuf: [u8; 4];
+    let n = br.read(&bbuf).unwrap();
+    if n != 4usize { return 80i32; }
+    if bbuf[0] != 'b' as u8 { return 81i32; }
+    if bbuf[3] != 'f' as u8 { return 82i32; }
+    0i32
+}
+
+fn test_buffered_writer() -> i32 {
+    let ws = StringBuf::new();
+    defer ws.free();
+    let wstream = StringWriter::new(&ws);
+    let bw = BufferedWriter::new(&wstream, 16usize);
+    defer bw.free();
+    bw.write("hello").unwrap();
+    bw.write(" world").unwrap();
+    bw.flush().unwrap();
+    if ws.as_slice() != "hello world" { return 90i32; }
+    0i32
+}
+
+fn test_buffered_writer_formatter() -> i32 {
+    let fs = StringBuf::new();
+    defer fs.free();
+    let fstream = StringWriter::new(&fs);
+    let fbw = BufferedWriter::new(&fstream, 32usize);
+    defer fbw.free();
+    let _ = write!(&fbw, "formatted: {}", 42i32);
+    fbw.flush().unwrap();
+    if fs.as_slice() != "formatted: 42" { return 100i32; }
+    0i32
+}
+
+fn test_read_exact() -> i32 {
+    let r = SliceReader::new("exact");
+    let ebuf: [u8; 5];
+    r.read_exact(&ebuf).unwrap();
+    if ebuf[0] != 'e' as u8 { return 110i32; }
+    if ebuf[4] != 't' as u8 { return 111i32; }
+    // read_exact past end returns error
+    let r2 = SliceReader::new("hi");
+    let ebuf2: [u8; 5];
+    let res = r2.read_exact(&ebuf2);
+    if res.is_ok() { return 120i32; }
+    0i32
+}
+
+fn test_write_all() -> i32 {
+    let ws = StringBuf::new();
+    defer ws.free();
+    let w = StringWriter::new(&ws);
+    w.write_all("complete write").unwrap();
+    if ws.as_slice() != "complete write" { return 130i32; }
+    0i32
+}
+
+fn test_error_fmt() -> i32 {
+    let err = Error::eof();
+    eprintln!("I/O error: {}", err);
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = 0i32;
+    r = test_slice_reader(); if r != 0i32 { return r; }
+    r = test_read_to_end(); if r != 0i32 { return r; }
+    r = test_string_writer(); if r != 0i32 { return r; }
+    r = test_error_types(); if r != 0i32 { return r; }
+    r = test_null_stream(); if r != 0i32 { return r; }
+    r = test_seek(); if r != 0i32 { return r; }
+    r = test_copy(); if r != 0i32 { return r; }
+    r = test_read_byte(); if r != 0i32 { return r; }
+    r = test_buffered_reader(); if r != 0i32 { return r; }
+    r = test_buffered_writer(); if r != 0i32 { return r; }
+    r = test_error_fmt(); if r != 0i32 { return r; }
+    r = test_buffered_writer_formatter(); if r != 0i32 { return r; }
+    r = test_read_exact(); if r != 0i32 { return r; }
+    r = test_write_all(); if r != 0i32 { return r; }
+    0i32
+}

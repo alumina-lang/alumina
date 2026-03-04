@@ -349,7 +349,13 @@ impl ScopeArena {
             if tag == NamedItemTag::Module || tag == NamedItemTag::Struct || tag == NamedItemTag::Enum || tag == NamedItemTag::Protocol || tag == NamedItemTag::UseAlias {
                 return found;
             }
-            // Found something but it's not a scope-bearing item; continue looking
+            // TypeAlias is not scope-bearing but should shadow parent scope items
+            // (e.g. `type Result<T> = std::result::Result<T, Error>` should shadow
+            // the prelude's Result). Return None to let the parser handle it via Defered.
+            if tag == NamedItemTag::TypeAlias {
+                return Option::none();
+            }
+            // Found something else (local var, etc.) but it's not a scope-bearing item; continue looking
         }
 
         // Check star imports
