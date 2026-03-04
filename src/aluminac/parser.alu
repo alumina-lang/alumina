@@ -53,8 +53,10 @@ struct ParseContext {
     pending_mixins: Vector<PendingMixin>,
     pending_macros: Vector<PendingMacro>,
 
-    // Macro definitions: name -> MacroEntry
-    macro_defs: HashMap<&[u8], MacroEntry>,
+    // Macro definitions: item_id -> MacroEntry
+    macro_defs: HashMap<usize, MacroEntry>,
+    // Reverse map: name -> item_id (for builtins and fallback)
+    macro_name_to_id: HashMap<&[u8], usize>,
 
     // Current macro expansion arguments (for $param substitution in old code paths)
     macro_args: HashMap<&[u8], &Expr>,
@@ -182,6 +184,7 @@ impl ParseContext {
             pending_mixins: Vector::new(),
             pending_macros: Vector::new(),
             macro_defs: HashMap::new(),
+            macro_name_to_id: HashMap::new(),
             macro_args: HashMap::new(),
             macro_variadic_name: "",
             macro_variadic_args: &[],
@@ -211,6 +214,34 @@ impl ParseContext {
 
     fn alloc_ty(self: &mut ParseContext, ty: Ty) -> &Ty {
         self.arena.alloc(ty) as &Ty
+    }
+
+    // Resolve a macro by name: first try scope resolution, then fall back to name-to-id map.
+    // Returns the MacroEntry if found.
+    fn resolve_macro(self: &mut ParseContext, scope_idx: u32, name: &[u8]) -> Option<MacroEntry> {
+        // Try scope-based resolution first (handles use aliases and shadowing)
+        let resolved = self.scopes.resolve(scope_idx, name);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NamedItemTag::Macro {
+                let id = item.kind.id._value;
+                let entry = self.macro_defs.get(&id);
+                if entry.is_some() {
+                    return entry;
+                }
+            }
+        }
+        // Fallback: use name-to-id map (for builtins or when scope doesn't have the entry)
+        let id = self.macro_name_to_id.get(&name);
+        if id.is_some() {
+            return self.macro_defs.get(&id.unwrap());
+        }
+        Option::none()
+    }
+
+    // Resolve a macro by item ID directly
+    fn resolve_macro_by_id(self: &mut ParseContext, id: usize) -> Option<MacroEntry> {
+        self.macro_defs.get(&id)
     }
 
     fn alloc_expr(self: &mut ParseContext, e: Expr) -> &Expr {
@@ -257,12 +288,13 @@ impl ParseContext {
         self.pending_mixins.free();
         self.pending_macros.free();
         self.macro_defs.free();
+        self.macro_name_to_id.free();
         self.macro_args.free();
         self.items.free();
     }
-    fn collect_macro_entries(self: &mut ParseContext, names: &mut Vector<&[u8]>, entries: &mut Vector<MacroEntry>) {
+    fn collect_macro_entries(self: &mut ParseContext, ids: &mut Vector<usize>, entries: &mut Vector<MacroEntry>) {
         for pair in self.macro_defs {
-            names.push(pair.0);
+            ids.push(pair.0);
             entries.push(pair.1);
         }
     }
@@ -1332,7 +1364,8 @@ impl Pass2 {
                     variadic_param_idx: variadic_idx,
                     scope_idx: pending.scope_idx,
                 };
-                self.ctx.macro_defs.insert(pending.name, entry);
+                self.ctx.macro_defs.insert(pending.id._value, entry);
+                self.ctx.macro_name_to_id.insert(pending.name, pending.id._value);
             }
         }
     }
@@ -2151,6 +2184,7 @@ impl Pass2 {
             methods: methods_slice,
             mixins: &[],
             scope_idx: pending.scope_idx,
+            attributes: pending.attributes,
         };
         self.ctx.items.push(item);
     }
@@ -3085,6 +3119,20 @@ impl ExprParser {
         let e = self.make_expr(ExprTag::FieldAccess, span);
         e.lhs = obj_expr;
         e.str_val = field_name;
+
+        // UFCS hint: try to resolve field_name as a free function in scope.
+        // If found, store its ID+1 in id2 so mono can try UFCS fallback.
+        // We store id+1 because id=0 is valid; id2._value==0 means "no hint".
+        if !self.ctx.in_macro_body {
+            let resolved = self.ctx.scopes.resolve(self.scope_idx, field_name);
+            if resolved.is_some() {
+                let item = resolved.unwrap();
+                if item.kind.tag == scope::NamedItemTag::Function {
+                    e.id2 = Id { _value: item.kind.id._value + 1usize };
+                }
+            }
+        }
+
         self.ctx.alloc_expr(e)
     }
 
@@ -3709,9 +3757,9 @@ impl ExprParser {
         let inner_expr = self.parse_expr(inner.unwrap());
 
         // Desugar expr? to try!(expr) macro invocation, matching alumina-boot.
-        // Look up the "try" macro in scope.
+        // Look up the "try" macro via scope resolution (respects use aliases and shadowing).
         let name = self.ctx.intern_str("try");
-        let macro_entry = self.ctx.macro_defs.get(&name);
+        let macro_entry = self.ctx.resolve_macro(self.scope_idx, name);
         if macro_entry.is_some() {
             let entry = macro_entry.unwrap();
 
@@ -3720,10 +3768,9 @@ impl ExprParser {
             return self.do_expand_macro(entry, try_args, span);
         }
 
-        // Fallback: no try macro in scope, use hardcoded IR lowering
-        let e = self.make_expr(ExprTag::Try, span);
-        e.lhs = inner_expr;
-        self.ctx.alloc_expr(e)
+        // No try macro found - emit error
+        self.ctx.diag.error(span, "no `try` macro in scope for `?` operator (import std::result::try or std::option::try)");
+        self.alloc_void(span)
     }
 
     fn parse_range(self: &ExprParser, node: Node, span: Span) -> &Expr {
@@ -3761,9 +3808,9 @@ impl ExprParser {
 
         // Resolve macro name - handle both simple identifiers and scoped paths
         let name = self.ctx.intern_str(self.ctx.node_text(macro_node));
+        let macro_item_id: usize = 0;
 
         // For scoped identifiers (e.g. std::io::errno_try), resolve through scope system
-        // to get the short name that macro_defs uses
         if macro_node_kind == NodeKind::ScopedIdentifier {
             let pass2 = Pass2 { ctx: self.ctx };
             let segments = pass2.collect_type_path_segments(macro_node);
@@ -3771,6 +3818,7 @@ impl ExprParser {
             if resolved.is_some() {
                 let item = resolved.unwrap();
                 if item.kind.tag == scope::NamedItemTag::Macro {
+                    macro_item_id = item.kind.id._value;
                     name = item.name;
                 }
             }
@@ -3792,8 +3840,12 @@ impl ExprParser {
             return self.ctx.alloc_expr(e);
         }
 
-        // Try to expand the macro
-        let macro_entry = self.ctx.macro_defs.get(&name);
+        // Try to expand the macro - use scope-resolved ID if available, otherwise resolve by name
+        let macro_entry: Option<MacroEntry> = if macro_item_id != 0 {
+            self.ctx.resolve_macro_by_id(macro_item_id)
+        } else {
+            self.ctx.resolve_macro(self.scope_idx, name)
+        };
         if macro_entry.is_some() {
             let entry = macro_entry.unwrap();
 
@@ -3994,7 +4046,7 @@ impl ExprParser {
                 }
                 call_args[prev_bound.len()] = accumulator;
                 call_args[prev_bound.len() + 1] = args[i];
-                let macro_entry = self.ctx.macro_defs.get(&macro_name);
+                let macro_entry = self.ctx.resolve_macro(self.scope_idx, macro_name);
                 if macro_entry.is_some() {
                     let entry = macro_entry.unwrap();
                     accumulator = self.do_expand_macro(entry, call_args, span);
@@ -4139,7 +4191,7 @@ impl ExprParser {
             }
 
             // Look up and expand the macro using pre-parsed body
-            let macro_entry = self.ctx.macro_defs.get(&wrapper_name);
+            let macro_entry = self.ctx.resolve_macro(self.scope_idx, wrapper_name);
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
                 return self.do_expand_macro(entry, all_args, span);
@@ -4177,7 +4229,7 @@ impl ExprParser {
         let args_slice = self.ctx.arena.alloc_slice_copy::<&Expr>(all_args.as_slice());
 
         // Try to expand the macro
-        let macro_entry = self.ctx.macro_defs.get(&name);
+        let macro_entry = self.ctx.resolve_macro(self.scope_idx, name);
         if macro_entry.is_some() {
             let entry = macro_entry.unwrap();
 
@@ -4339,8 +4391,8 @@ impl ExprParser {
             let expanded_args = self.expand_macro_args_list(
                 expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
             );
-            // Look up the macro
-            let macro_entry = self.ctx.macro_defs.get(&expr.str_val);
+            // Look up the macro via scope resolution
+            let macro_entry = self.ctx.resolve_macro(self.scope_idx, expr.str_val);
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
                 if entry.is_builtin {
@@ -4735,22 +4787,36 @@ fn collect_macros(ctx: &mut ParseContext, root: Node) {
 }
 
 fn share_macros(contexts: &mut [ParseContext]) {
-    // Collect all macro names+entries from all contexts
-    let all_names: Vector<&[u8]> = Vector::new();
+    // Collect all macro ids+entries from all contexts
+    let all_ids: Vector<usize> = Vector::new();
     let all_entries: Vector<MacroEntry> = Vector::new();
-    defer all_names.free();
+    defer all_ids.free();
     defer all_entries.free();
 
+    // Also collect name->id mappings for fallback
+    let all_names: Vector<&[u8]> = Vector::new();
+    let all_name_ids: Vector<usize> = Vector::new();
+    defer all_names.free();
+    defer all_name_ids.free();
+
     for i in 0usize..contexts.len() {
-        contexts[i].collect_macro_entries(&all_names, &all_entries);
+        contexts[i].collect_macro_entries(&all_ids, &all_entries);
+        for pair in contexts[i].macro_name_to_id {
+            all_names.push(pair.0);
+            all_name_ids.push(pair.1);
+        }
     }
-    // Note: &all_names and &all_entries auto-coerce to &mut since they're local vars
 
     // Inject all macros into every context
     for i in 0usize..contexts.len() {
+        for j in 0usize..all_ids.len() {
+            if contexts[i].macro_defs.get(&all_ids[j]).is_none() {
+                contexts[i].macro_defs.insert(all_ids[j], all_entries[j]);
+            }
+        }
         for j in 0usize..all_names.len() {
-            if contexts[i].macro_defs.get(&all_names[j]).is_none() {
-                contexts[i].macro_defs.insert(all_names[j], all_entries[j]);
+            if contexts[i].macro_name_to_id.get(&all_names[j]).is_none() {
+                contexts[i].macro_name_to_id.insert(all_names[j], all_name_ids[j]);
             }
         }
     }

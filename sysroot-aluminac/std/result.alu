@@ -1,7 +1,18 @@
 //! Type for operations that can fail.
 //!
-//! The `?` operator on Result types is handled by the compiler's hardcoded
-//! ExprTag::Try lowering (no try macro needed).
+//! The `?` operator on Result types desugars to the `try` macro below.
+
+/// Try macro for Result: desugars `expr?` to early-return on error.
+macro try($result) {
+    {
+        let _result = $result;
+        if _result._is_ok {
+            _result._ok
+        } else {
+            return Result::err(_result._err)
+        }
+    }
+}
 
 /// Either a success value or an error value.
 struct Result<T, E> {

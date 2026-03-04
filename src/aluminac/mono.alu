@@ -198,6 +198,12 @@ impl MonoCtx {
                 self.type_aliases.insert(self.items[i].type_alias.id._value, &self.items[i].type_alias);
             } else if self.items[i].tag == ItemTag::Protocol {
                 self.protocol_defs.insert(self.items[i].protocol_def.id._value, &self.items[i].protocol_def);
+                for attr in self.items[i].protocol_def.attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val);
+                        self.lang_items.insert(hash, self.items[i].protocol_def.id._value);
+                    }
+                }
                 // Register protocol methods in fn_defs with protocol generic_params prepended
                 let proto_def = &self.items[i].protocol_def;
                 let self_gp_id: usize = 0usize;
@@ -254,6 +260,12 @@ impl MonoCtx {
         } else {
             Option::none()
         }
+    }
+
+    // Check if a given item ID matches a specific lang item name
+    fn is_lang_item(self: &MonoCtx, id: usize, name: &[u8]) -> bool {
+        let lang_id = self.get_lang_item(name);
+        lang_id.is_some() && lang_id.unwrap() == id
     }
 
     fn mangle_name(self: &mut MonoCtx, base: &[u8]) -> &[u8] {
@@ -1165,7 +1177,6 @@ impl Mono {
                     self.ctx.arena.alloc(result)
                 }
             }
-            ExprTag::Try => self.lower_try(expr),
             ExprTag::StaticFor => self.lower_static_for(expr),
             _ => {
                 let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -2474,156 +2485,6 @@ impl Mono {
         }
     }
 
-    // Lower try/? operator: desugar to check + early return
-    // For Result<T,E>: { let _r = expr; if _r._is_ok { _r._ok } else { return Result::err(_r._err) } }
-    // For Option<T>:   { let _r = expr; if _r._is_some != 0 { _r._inner } else { return Option::none() } }
-    fn lower_try(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let inner = self.lower_expr(expr.lhs);
-        let inner_ty = inner.ty;
-
-        // Store inner to a local so we only evaluate once
-        let tmp_id = self.ctx.id_gen.next_id();
-        self.local_types.insert(tmp_id._value, inner_ty);
-        self.local_defs.push(IrLocalDef { id: tmp_id, ty: inner_ty, name: "", span: Span::empty() });
-
-        let ir_let_ref = self.mk_let(tmp_id, inner_ty, inner);
-
-        // Detect if this is a Result (has _is_ok field) or Option (has _is_some field)
-        if inner_ty.tag == IrTyTag::Struct {
-            let fields = inner_ty.struct_ref.fields;
-            // Check for Result pattern: _is_ok, _ok, _err
-            let is_result = false;
-            let is_option = false;
-            let ok_field_idx: u32 = 0;
-            let err_field_idx: u32 = 0;
-            let flag_field_idx: u32 = 0;
-            let ok_ty = self.ctx.void_ty;
-            let err_ty = self.ctx.void_ty;
-
-            for i in 0usize..fields.len() {
-                if fields[i].name == "_is_ok" {
-                    is_result = true;
-                    flag_field_idx = i as u32;
-                } else if fields[i].name == "_ok" {
-                    ok_field_idx = i as u32;
-                    ok_ty = fields[i].ty;
-                } else if fields[i].name == "_err" {
-                    err_field_idx = i as u32;
-                    err_ty = fields[i].ty;
-                } else if fields[i].name == "_is_some" {
-                    is_option = true;
-                    flag_field_idx = i as u32;
-                } else if fields[i].name == "_inner" {
-                    ok_field_idx = i as u32;
-                    ok_ty = fields[i].ty;
-                }
-            }
-
-            if is_result {
-                // condition: tmp._is_ok
-                let ir_cond = self.mk_field(self.mk_local(tmp_id, inner_ty), flag_field_idx, self.ctx.bool_ty);
-
-                // then: tmp._ok
-                let ir_then = self.mk_field(self.mk_local(tmp_id, inner_ty), ok_field_idx, ok_ty);
-
-                // else: return Result::err(tmp._err)
-                let ir_err_val = self.mk_field(self.mk_local(tmp_id, inner_ty), err_field_idx, err_ty);
-
-                // Build the return Result struct
-                let ret_result = self.build_result_err(self.return_type, ir_err_val, err_ty);
-
-                let ir_return = IrExpr::void_expr(self.ctx.never_ty);
-                ir_return.tag = IrTag::Return;
-                ir_return.opt_expr = Option::some(ret_result);
-                let ir_return_ref: &IrExpr = self.ctx.arena.alloc(ir_return) as &IrExpr;
-
-                // Build if expression
-                let ir_if = IrExpr::void_expr(ok_ty);
-                ir_if.tag = IrTag::If;
-                ir_if.cond = ir_cond;
-                ir_if.lhs = ir_then;
-                ir_if.opt_expr = Option::some(ir_return_ref);
-                let ir_if_ref = self.ctx.arena.alloc(ir_if);
-
-                // Block: { let _r = expr; if ... }
-                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                stmts[0] = ir_let_ref;
-                stmts[1] = ir_if_ref;
-                return self.mk_block(stmts);
-            } else if is_option {
-                // condition: tmp._is_some (bool) or tmp._is_some != 0 (integer)
-                let flag_ty = fields[flag_field_idx as usize].ty;
-                let ir_flag = self.mk_field(self.mk_local(tmp_id, inner_ty), flag_field_idx, flag_ty);
-
-                let ir_cond: &IrExpr = if flag_ty == self.ctx.bool_ty {
-                    // Bool field: use directly as condition
-                    ir_flag
-                } else {
-                    // Integer field: compare != 0
-                    self.mk_binary(BinOp::Ne, ir_flag, self.mk_int_lit(flag_ty, 0u64), self.ctx.bool_ty)
-                };
-
-                // then: tmp._inner
-                let ir_then = self.mk_field(self.mk_local(tmp_id, inner_ty), ok_field_idx, ok_ty);
-
-                // else: return Option::none() (zeroed)
-                let ret_none = IrExpr::void_expr(self.return_type);
-                ret_none.tag = IrTag::Zeroed;
-                let ir_none: &IrExpr = self.ctx.arena.alloc(ret_none) as &IrExpr;
-
-                let ir_return = IrExpr::void_expr(self.ctx.never_ty);
-                ir_return.tag = IrTag::Return;
-                ir_return.opt_expr = Option::some(ir_none);
-                let ir_return_ref: &IrExpr = self.ctx.arena.alloc(ir_return) as &IrExpr;
-
-                // Build if expression
-                let ir_if = IrExpr::void_expr(ok_ty);
-                ir_if.tag = IrTag::If;
-                ir_if.cond = ir_cond;
-                ir_if.lhs = ir_then;
-                ir_if.opt_expr = Option::some(ir_return_ref);
-                let ir_if_ref = self.ctx.arena.alloc(ir_if);
-
-                // Block: { let _r = expr; if ... }
-                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                stmts[0] = ir_let_ref;
-                stmts[1] = ir_if_ref;
-                return self.mk_block(stmts);
-            }
-        }
-        // Fallback: just return inner (shouldn't happen)
-        inner
-    }
-
-    // Build a Result::err(err_val) struct literal
-    fn build_result_err(self: &mut Mono, result_ty: &IrTy, err_val: &IrExpr, err_ty: &IrTy) -> &IrExpr {
-        // Build a zeroed struct, then set _is_ok=false and _err=err_val
-        if result_ty.tag == IrTyTag::Struct {
-            let fields = result_ty.struct_ref.fields;
-            let field_vals = self.ctx.arena.alloc_slice::<&IrExpr>(fields.len());
-            for i in 0usize..fields.len() {
-                if fields[i].name == "_is_ok" {
-                    field_vals[i] = self.mk_bool_lit(false);
-                } else if fields[i].name == "_err" {
-                    field_vals[i] = err_val;
-                } else {
-                    let f = IrExpr::void_expr(fields[i].ty);
-                    f.tag = IrTag::Zeroed;
-                    field_vals[i] = self.ctx.arena.alloc(f);
-                }
-            }
-            let lit = IrExpr::void_expr(result_ty);
-            lit.tag = IrTag::StructLit;
-            lit.items = field_vals;
-            self.ctx.arena.alloc(lit)
-        } else {
-            // Fallback: zeroed
-            let z = IrExpr::void_expr(result_ty);
-            z.tag = IrTag::Zeroed;
-            self.ctx.arena.alloc(z)
-        }
-    }
-
     // Lower static_for: compile-time loop unrolling over tuple elements
     // static for v in tuple { body }
     fn lower_static_for(self: &mut Mono, expr: &Expr) -> &IrExpr {
@@ -3085,47 +2946,51 @@ impl Mono {
                 let protocol = self.ctx.protocol_defs.get(&proto_id_value);
                 if protocol.is_some() {
                     let proto = protocol.unwrap();
-                    if proto.name == "ZeroSized" {
+                    if self.ctx.is_lang_item(proto_id_value, "proto_zero_sized") {
                         is_match = val_ty.is_zero_sized();
-                    } else if proto.name == "Pointer" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer") {
                         is_match = val_ty.tag == IrTyTag::Pointer;
-                    } else if proto.name == "Primitive" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_primitive") {
                         is_match = val_ty.tag == IrTyTag::Builtin;
-                    } else if proto.name == "Numeric" || proto.name == "Integer" || proto.name == "FloatingPoint" || proto.name == "Signed" || proto.name == "Unsigned" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_numeric") {
                         if val_ty.tag == IrTyTag::Builtin {
-                            if proto.name == "Numeric" {
-                                is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void;
-                            } else if proto.name == "Integer" {
-                                is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void && val_ty.builtin != BuiltinType::F32 && val_ty.builtin != BuiltinType::F64;
-                            } else if proto.name == "FloatingPoint" {
-                                is_match = val_ty.builtin == BuiltinType::F32 || val_ty.builtin == BuiltinType::F64;
-                            } else if proto.name == "Signed" {
-                                is_match = val_ty.builtin == BuiltinType::I8 || val_ty.builtin == BuiltinType::I16 || val_ty.builtin == BuiltinType::I32 || val_ty.builtin == BuiltinType::I64 || val_ty.builtin == BuiltinType::I128 || val_ty.builtin == BuiltinType::ISize;
-                            } else if proto.name == "Unsigned" {
-                                is_match = val_ty.builtin == BuiltinType::U8 || val_ty.builtin == BuiltinType::U16 || val_ty.builtin == BuiltinType::U32 || val_ty.builtin == BuiltinType::U64 || val_ty.builtin == BuiltinType::U128 || val_ty.builtin == BuiltinType::USize;
-                            }
-                        } else if proto.name == "Numeric" || proto.name == "FloatingPoint" {
-                            is_match = false;
+                            is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void;
                         }
-                    } else if proto.name == "Struct" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_integer") {
+                        if val_ty.tag == IrTyTag::Builtin {
+                            is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void && val_ty.builtin != BuiltinType::F32 && val_ty.builtin != BuiltinType::F64;
+                        }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_floating_point") {
+                        if val_ty.tag == IrTyTag::Builtin {
+                            is_match = val_ty.builtin == BuiltinType::F32 || val_ty.builtin == BuiltinType::F64;
+                        }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_signed") {
+                        if val_ty.tag == IrTyTag::Builtin {
+                            is_match = val_ty.builtin == BuiltinType::I8 || val_ty.builtin == BuiltinType::I16 || val_ty.builtin == BuiltinType::I32 || val_ty.builtin == BuiltinType::I64 || val_ty.builtin == BuiltinType::I128 || val_ty.builtin == BuiltinType::ISize;
+                        }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_unsigned") {
+                        if val_ty.tag == IrTyTag::Builtin {
+                            is_match = val_ty.builtin == BuiltinType::U8 || val_ty.builtin == BuiltinType::U16 || val_ty.builtin == BuiltinType::U32 || val_ty.builtin == BuiltinType::U64 || val_ty.builtin == BuiltinType::U128 || val_ty.builtin == BuiltinType::USize;
+                        }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_struct") {
                         is_match = val_ty.tag == IrTyTag::Struct && !val_ty.struct_ref.is_union;
-                    } else if proto.name == "Union" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_union") {
                         is_match = val_ty.tag == IrTyTag::Struct && val_ty.struct_ref.is_union;
-                    } else if proto.name == "Enum" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_enum") {
                         is_match = val_ty.tag == IrTyTag::Enum;
-                    } else if proto.name == "Array" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_array") {
                         is_match = val_ty.tag == IrTyTag::Array;
-                    } else if proto.name == "Tuple" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_tuple") {
                         is_match = val_ty.tag == IrTyTag::Tuple;
-                    } else if proto.name == "Closure" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_closure") {
                         is_match = val_ty.tag == IrTyTag::Closure;
-                    } else if proto.name == "FunctionPointer" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_function_pointer") {
                         is_match = val_ty.tag == IrTyTag::FnPointer;
-                    } else if proto.name == "Range" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_range") {
                         is_match = self.is_range_ty(val_ty);
-                    } else if proto.name == "Any" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_any") {
                         is_match = true;
-                    } else if proto.name == "None" {
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_none") {
                         is_match = false;
                     } else {
                         // User-defined protocol: check if type has all required methods
@@ -3196,8 +3061,12 @@ impl Mono {
     // Check if a type is a range (std::range::Range*, etc.)
     fn is_range_ty(self: &Mono, ty: &IrTy) -> bool {
         if ty.tag != IrTyTag::Struct { return false; }
-        let name = ty.struct_ref.name;
-        name == "Range" || name == "RangeInclusive" || name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
+        let id = ty.struct_ref.id._value;
+        self.ctx.is_lang_item(id, "range") || self.ctx.is_lang_item(id, "range_inclusive") || {
+            // Fallback to name-based check for range types not yet lang-item'd
+            let name = ty.struct_ref.name;
+            name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
+        }
     }
 
     // Check if a type is a slice
@@ -3619,6 +3488,59 @@ impl Mono {
         }
     }
 
+    // UFCS fallback: try calling a free function with the object as first argument.
+    // obj.func(args) -> func(obj, args) or func(&obj, args)
+    fn try_ufcs_call(self: &mut Mono, expr: &Expr, ir_obj: &IrExpr, fn_id: Id) -> Option<&IrExpr> {
+        let fn_def = self.ctx.fn_defs.get(&fn_id._value);
+        if fn_def.is_none() {
+            return Option::none();
+        }
+        let def = fn_def.unwrap();
+
+        let total_args = 1usize + expr.args.len();
+
+        // Resolve type args from explicit turbofish
+        let type_args: &[&IrTy] = &[];
+        if expr.type_args.len() > 0 {
+            let resolved = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args.len());
+            for i in 0usize..expr.type_args.len() {
+                resolved[i] = self.resolve_type(expr.type_args[i]);
+            }
+            type_args = resolved;
+        }
+
+        // Infer type args if needed using AST-level args
+        if def.generic_params.len() > 0 && type_args.len() == 0 {
+            let ast_args = self.ctx.arena.alloc_slice::<&Expr>(total_args);
+            ast_args[0] = expr.lhs.lhs;  // Original object expression from FieldAccess
+            for i in 0usize..expr.args.len() {
+                ast_args[1 + i] = expr.args[i];
+            }
+            type_args = self.infer_type_args(def, ast_args);
+        }
+
+        // Build IR args: use already-lowered ir_obj, lower remaining args
+        let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(total_args);
+
+        // Check if the function expects a reference for the first param
+        if def.params.len() > 0 && def.params[0].ty.tag == TyTag::Pointer {
+            ir_args[0] = self.mk_ref(ir_obj, false);
+        } else {
+            ir_args[0] = ir_obj;
+        }
+
+        for i in 0usize..expr.args.len() {
+            ir_args[1 + i] = self.lower_expr(expr.args[i]);
+        }
+
+        // Monomorphize and call
+        let fn_idx = self.mono_function(def, type_args);
+        let ir_fn = &self.ctx.ir_functions[fn_idx];
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        let ret_ty = self.resolve_type(def.return_type);
+        Option::some(self.mk_call(fn_ref, ir_args, ret_ty))
+    }
+
     // Try to resolve a method call: obj.method(args) -> Type::method(&obj, args)
     fn try_lower_method_call(self: &mut Mono, expr: &Expr) -> Option<&IrExpr> {
         // expr is ExprTag::Call, expr.lhs is ExprTag::FieldAccess
@@ -3803,6 +3725,9 @@ impl Mono {
                 }
             }
             if scope_idx == 0 {
+                if field_expr.id2._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2._value - 1usize });
+                }
                 return Option::none();
             }
         } else if resolved_ty.tag == IrTyTag::Builtin {
@@ -3818,18 +3743,31 @@ impl Mono {
                 }
             }
             if scope_idx == 0 {
+                if field_expr.id2._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2._value - 1usize });
+                }
                 return Option::none();
             }
         } else {
+            if field_expr.id2._value != 0 {
+                return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2._value - 1usize });
+            }
             return Option::none();
         }
         if scope_idx == 0 {
+            if field_expr.id2._value != 0 {
+                return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2._value - 1usize });
+            }
             return Option::none();
         }
 
         // Look up method in type's scope
         let method_item = self.ctx.scopes.get(scope_idx).items.get(&method_name);
         if method_item.is_none() {
+            // UFCS fallback: if the FieldAccess has a hint (id2), try calling as free function
+            if field_expr.id2._value != 0 {
+                return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2._value - 1usize });
+            }
             return Option::none();
         }
         let item = method_item.unwrap();

@@ -1,7 +1,20 @@
 //! Optional values
 //!
-//! The `?` operator on Option types is handled by the compiler's hardcoded
-//! ExprTag::Try lowering (no try macro needed).
+//! The `?` operator on Option types desugars to the `try` macro below.
+//! To use `?` on Option values, add `use std::option::try;` to shadow
+//! the default Result try macro from the prelude.
+
+/// Try macro for Option: desugars `expr?` to early-return on none.
+macro try($opt) {
+    {
+        let _opt = $opt;
+        if _opt._is_some {
+            _opt._inner
+        } else {
+            return Option::none()
+        }
+    }
+}
 
 /// Optional value
 ///
