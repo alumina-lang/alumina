@@ -335,9 +335,10 @@ impl CodegenCtx {
         self.struct_type_cache.insert(key, struct_ty);
 
         if s.is_union {
-            // Union: find the largest field, use that as the single element
+            // Union: represent as [N x i64] to avoid LLVM optimizing away
+            // "padding" bytes that are meaningful for other variants.
+            // Using i64 array ensures 8-byte alignment and no internal padding holes.
             let max_size: u64 = 0;
-            let max_ty = self.i8_type;
             for i in 0usize..s.fields.len() {
                 let field_ty = self.llvm_type(s.fields[i].ty);
                 if LLVMGetTypeKind(field_ty) == LLVMTypeKind::Void {
@@ -346,12 +347,12 @@ impl CodegenCtx {
                     let size = LLVMABISizeOfType(self.target_data, field_ty);
                     if size > max_size {
                         max_size = size;
-                        max_ty = field_ty;
                     }
                 }
             }
+            let n_i64s = (max_size + 7u64) / 8u64;
             let elems = self.arena.alloc_slice::<LLVMTypeRef>(1);
-            elems[0] = max_ty;
+            elems[0] = LLVMArrayType(self.i64_type, n_i64s as u32);
             LLVMStructSetBody(struct_ty, &elems[0], 1, 0i32);
         } else {
             // Normal struct
@@ -797,14 +798,14 @@ impl CodegenCtx {
         switch expr.tag {
         IrTag::IntLit => {
             let ty = self.llvm_type(expr.ty);
-            LLVMConstInt(ty, expr.int_val, 1i32)
+            LLVMConstInt(ty, expr.int_val(), 1i32)
         }
         IrTag::FloatLit => {
             let ty = self.llvm_type(expr.ty);
-            LLVMConstReal(ty, expr.float_val)
+            LLVMConstReal(ty, expr.float_val())
         }
         IrTag::BoolLit => {
-            LLVMConstInt(self.i1_type, if expr.bool_val { 1u64 } else { 0u64 }, 0i32)
+            LLVMConstInt(self.i1_type, if expr.bool_val() { 1u64 } else { 0u64 }, 0i32)
         }
         IrTag::NullLit => {
             let ty = self.llvm_type(expr.ty);
@@ -819,7 +820,7 @@ impl CodegenCtx {
             LLVMGetUndef(ty)
         }
         IrTag::SizeOf => {
-            let measured_ty = self.llvm_type(expr.ir_ty);
+            let measured_ty = self.llvm_type(expr.ir_ty());
             if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
                 LLVMConstInt(LLVMInt64TypeInContext(self.context), 0u64, 0i32)
             } else {
@@ -827,7 +828,7 @@ impl CodegenCtx {
             }
         }
         IrTag::AlignOf => {
-            let measured_ty = self.llvm_type(expr.ir_ty);
+            let measured_ty = self.llvm_type(expr.ir_ty());
             if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
                 LLVMConstInt(LLVMInt64TypeInContext(self.context), 1u64, 0i32)
             } else {
@@ -835,10 +836,10 @@ impl CodegenCtx {
             }
         }
         IrTag::StringLit => {
-            self.get_or_create_string(expr.str_val)
+            self.get_or_create_string(expr.str_val())
         }
         IrTag::Cast => {
-            let inner = self.gen_const_init(expr.lhs);
+            let inner = self.gen_const_init(expr.lhs());
             if (inner as usize) == 0 { return std::mem::zeroed::<LLVMValueRef>(); }
             let target_ty = self.llvm_type(expr.ty);
             let src_kind = LLVMGetTypeKind(LLVMTypeOf(inner));
@@ -864,28 +865,28 @@ impl CodegenCtx {
             }
         }
         IrTag::Binary => {
-            let lhs = self.gen_const_init(expr.lhs);
-            let rhs = self.gen_const_init(expr.rhs);
+            let lhs = self.gen_const_init(expr.lhs());
+            let rhs = self.gen_const_init(expr.rhs());
             if (lhs as usize) == 0 || (rhs as usize) == 0 {
                 return std::mem::zeroed::<LLVMValueRef>();
             }
-            if expr.bin_op == BinOp::Add { LLVMConstAdd(lhs, rhs) }
-            else if expr.bin_op == BinOp::Sub { LLVMConstSub(lhs, rhs) }
-            else if expr.bin_op == BinOp::Mul { LLVMConstMul(lhs, rhs) }
-            else if expr.bin_op == BinOp::BitAnd { LLVMConstAnd(lhs, rhs) }
-            else if expr.bin_op == BinOp::BitOr { LLVMConstOr(lhs, rhs) }
-            else if expr.bin_op == BinOp::BitXor { LLVMConstXor(lhs, rhs) }
+            if expr.bin_op() == BinOp::Add { LLVMConstAdd(lhs, rhs) }
+            else if expr.bin_op() == BinOp::Sub { LLVMConstSub(lhs, rhs) }
+            else if expr.bin_op() == BinOp::Mul { LLVMConstMul(lhs, rhs) }
+            else if expr.bin_op() == BinOp::BitAnd { LLVMConstAnd(lhs, rhs) }
+            else if expr.bin_op() == BinOp::BitOr { LLVMConstOr(lhs, rhs) }
+            else if expr.bin_op() == BinOp::BitXor { LLVMConstXor(lhs, rhs) }
             else { std::mem::zeroed::<LLVMValueRef>() }
         }
         IrTag::StructLit => {
-            let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items.len());
-            for i in 0usize..expr.items.len() {
-                fields[i] = self.gen_const_init(expr.items[i]);
+            let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
+            for i in 0usize..expr.items().len() {
+                fields[i] = self.gen_const_init(expr.items()[i]);
                 if (fields[i] as usize) == 0 {
                     return std::mem::zeroed::<LLVMValueRef>();
                 }
             }
-            LLVMConstStructInContext(self.context, &fields[0], expr.items.len() as u32, 0i32)
+            LLVMConstStructInContext(self.context, &fields[0], expr.items().len() as u32, 0i32)
         }
         _ => {
             // Cannot evaluate as constant - return null pointer as sentinel

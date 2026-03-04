@@ -876,59 +876,135 @@ struct IrSwitchArm {
     is_default: bool,
 }
 
+// IrExpr sub-structs for union variants
+struct _IrLitData { int_val: u64, float_val: f64, bool_val: bool, str_val: &[u8] }
+struct _IrVarData { id: Id, param_idx: u32 }
+struct _IrBinData { bin_op: BinOp, lhs: &IrExpr, rhs: &IrExpr }
+struct _IrUnData { un_op: UnOp, lhs: &IrExpr }
+struct _IrAssignData { lhs: &IrExpr, rhs: &IrExpr }
+struct _IrCallData { call_target: IrCallTarget, items: &[&IrExpr] }
+struct _IrFieldAccessData { lhs: &IrExpr, field_idx: u32 }
+struct _IrSingleData { lhs: &IrExpr }
+struct _IrCastData { lhs: &IrExpr, ir_ty: &IrTy }
+struct _IrIfData { cond: &IrExpr, lhs: &IrExpr, opt_expr: Option<&IrExpr> }
+struct _IrSwitchData { lhs: &IrExpr, switch_arms: &[IrSwitchArm] }
+struct _IrRetData { opt_expr: Option<&IrExpr> }
+struct _IrBlockData { items: &[&IrExpr] }
+struct _IrLetData { id: Id, ir_ty: &IrTy, opt_expr: Option<&IrExpr> }
+struct _IrStructLitData { items: &[&IrExpr], ir_ty: &IrTy }
+struct _IrMemcpyData { lhs: &IrExpr, rhs: &IrExpr, cond: &IrExpr, ir_ty: &IrTy }
+struct _IrTypeOpData { ir_ty: &IrTy }
+struct _IrCodegenData { str_val: &[u8], items: &[&IrExpr] }
+struct _IrIdxData { lhs: &IrExpr, rhs: &IrExpr }
+
+union _IrExprData {
+    lit: _IrLitData,
+    var: _IrVarData,
+    bin: _IrBinData,
+    un: _IrUnData,
+    assign: _IrAssignData,
+    call: _IrCallData,
+    field: _IrFieldAccessData,
+    single: _IrSingleData,
+    cast: _IrCastData,
+    if_data: _IrIfData,
+    switch_data: _IrSwitchData,
+    ret: _IrRetData,
+    block: _IrBlockData,
+    let_data: _IrLetData,
+    struct_lit: _IrStructLitData,
+    memcpy: _IrMemcpyData,
+    type_op: _IrTypeOpData,
+    codegen: _IrCodegenData,
+    idx: _IrIdxData,
+    fn_ref: IrFnRef,
+    global_ref: IrGlobalRef,
+}
+
 struct IrExpr {
     tag: IrTag,
     ty: &IrTy,
-    // Numeric data
-    int_val: u64,
-    float_val: f64,
-    bool_val: bool,
-    str_val: &[u8],
-    // Id
-    id: Id,
-    // Operator
-    bin_op: BinOp,
-    un_op: UnOp,
-    // Sub-expressions
-    lhs: &IrExpr,
-    rhs: &IrExpr,
-    cond: &IrExpr,
-    // Expression array
-    items: &[&IrExpr],
-    // Call target
-    call_target: IrCallTarget,
-    // Field index
-    field_idx: u32,
-    // IR type for casts and lets
-    ir_ty: &IrTy,
-    // Optional expression
-    opt_expr: Option<&IrExpr>,
-    // Switch arms
-    switch_arms: &[IrSwitchArm],
-    // Param index
-    param_idx: u32,
-    // Fn/Global ref
-    fn_ref: IrFnRef,
-    global_ref: IrGlobalRef,
-    // Source location
     span: Span,
+    _data: _IrExprData,
 }
 
 impl IrExpr {
     fn void_expr(void_ty: &IrTy) -> IrExpr {
-        IrExpr {
-            tag: IrTag::Void, ty: void_ty,
-            int_val: 0, float_val: 0.0, bool_val: false, str_val: "",
-            id: Id { _value: 0 },
-            bin_op: BinOp::Add, un_op: UnOp::Neg,
-            lhs: std::mem::zeroed::<&IrExpr>(), rhs: std::mem::zeroed::<&IrExpr>(),
-            cond: std::mem::zeroed::<&IrExpr>(),
-            items: &[], call_target: IrCallTarget { tag: CallKind::Direct, fn_ref: IrFnRef::empty(), callee: std::mem::zeroed::<&IrExpr>() },
-            field_idx: 0, ir_ty: void_ty, opt_expr: Option::none(),
-            switch_arms: &[], param_idx: 0,
-            fn_ref: IrFnRef::empty(), global_ref: IrGlobalRef::empty(),
-            span: Span::empty(),
-        }
+        let r = std::mem::zeroed::<IrExpr>();
+        r.tag = IrTag::Void;
+        r.ty = void_ty;
+        r.span = Span::empty();
+        r
+    }
+
+    // Simple single-variant accessors
+    fn int_val(self: &IrExpr) -> u64 { self._data.lit.int_val }
+    fn float_val(self: &IrExpr) -> f64 { self._data.lit.float_val }
+    fn bool_val(self: &IrExpr) -> bool { self._data.lit.bool_val }
+    fn bin_op(self: &IrExpr) -> BinOp { self._data.bin.bin_op }
+    fn un_op(self: &IrExpr) -> UnOp { self._data.un.un_op }
+    fn call_target(self: &IrExpr) -> &IrCallTarget { &self._data.call.call_target }
+    fn field_idx(self: &IrExpr) -> u32 { self._data.field.field_idx }
+    fn switch_arms(self: &IrExpr) -> &[IrSwitchArm] { self._data.switch_data.switch_arms }
+    fn param_idx(self: &IrExpr) -> u32 { self._data.var.param_idx }
+    fn fn_ref(self: &IrExpr) -> &IrFnRef { &self._data.fn_ref }
+    fn global_ref(self: &IrExpr) -> &IrGlobalRef { &self._data.global_ref }
+
+    // Dispatch-based accessors for shared fields
+    fn lhs(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::Binary { self._data.bin.lhs }
+        else if self.tag == IrTag::Unary { self._data.un.lhs }
+        else if self.tag == IrTag::Assign { self._data.assign.lhs }
+        else if self.tag == IrTag::FieldAccess { self._data.field.lhs }
+        else if self.tag == IrTag::Index { self._data.idx.lhs }
+        else if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.lhs }
+        else if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.lhs }
+        else if self.tag == IrTag::Switch { self._data.switch_data.lhs }
+        else if self.tag == IrTag::Memcpy { self._data.memcpy.lhs }
+        else { self._data.single.lhs }  // Ref, Deref, Defer, Loop
+    }
+
+    fn rhs(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::Binary { self._data.bin.rhs }
+        else if self.tag == IrTag::Assign { self._data.assign.rhs }
+        else if self.tag == IrTag::Index { self._data.idx.rhs }
+        else { self._data.memcpy.rhs }  // Memcpy
+    }
+
+    fn cond(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.cond }
+        else { self._data.memcpy.cond }  // Memcpy
+    }
+
+    fn items(self: &IrExpr) -> &[&IrExpr] {
+        if self.tag == IrTag::Call { self._data.call.items }
+        else if self.tag == IrTag::StructLit { self._data.struct_lit.items }
+        else if self.tag == IrTag::CodegenFunc { self._data.codegen.items }
+        else { self._data.block.items }  // Block, TupleLit, ArrayLit
+    }
+
+    fn ir_ty(self: &IrExpr) -> &IrTy {
+        if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.ir_ty }
+        else if self.tag == IrTag::Let { self._data.let_data.ir_ty }
+        else if self.tag == IrTag::StructLit { self._data.struct_lit.ir_ty }
+        else if self.tag == IrTag::Memcpy { self._data.memcpy.ir_ty }
+        else { self._data.type_op.ir_ty }  // SizeOf, AlignOf, Zeroed
+    }
+
+    fn opt_expr(self: &IrExpr) -> Option<&IrExpr> {
+        if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.opt_expr }
+        else if self.tag == IrTag::Let { self._data.let_data.opt_expr }
+        else { self._data.ret.opt_expr }  // Return, Break
+    }
+
+    fn str_val(self: &IrExpr) -> &[u8] {
+        if self.tag == IrTag::CodegenFunc { self._data.codegen.str_val }
+        else { self._data.lit.str_val }  // StringLit
+    }
+
+    fn id(self: &IrExpr) -> Id {
+        if self.tag == IrTag::Let { self._data.let_data.id }
+        else { self._data.var.id }  // Local, Param
     }
 }
 

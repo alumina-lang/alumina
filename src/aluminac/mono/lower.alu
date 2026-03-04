@@ -66,46 +66,46 @@ impl Mono {
     fn mk_int_lit(self: &mut Mono, ty: &IrTy, val: u64) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::IntLit;
-        e.int_val = val;
+        e._data.lit.int_val = val;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_bool_lit(self: &mut Mono, val: bool) -> &IrExpr {
         let e = IrExpr::void_expr(self.ctx.bool_ty);
         e.tag = IrTag::BoolLit;
-        e.bool_val = val;
+        e._data.lit.bool_val = val;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_local(self: &mut Mono, id: Id, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Local;
-        e.id = id;
+        e._data.var.id = id;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_field(self: &mut Mono, obj: &IrExpr, idx: u32, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::FieldAccess;
-        e.lhs = obj;
-        e.field_idx = idx;
+        e._data.field.lhs = obj;
+        e._data.field.field_idx = idx;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_let(self: &mut Mono, id: Id, ty: &IrTy, init: &IrExpr) -> &IrExpr {
         let e = IrExpr::void_expr(self.ctx.void_ty);
         e.tag = IrTag::Let;
-        e.id = id;
-        e.ir_ty = ty;
-        e.opt_expr = Option::some(init);
+        e._data.let_data.id = id;
+        e._data.let_data.ir_ty = ty;
+        e._data.let_data.opt_expr = Option::some(init);
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_let_uninit(self: &mut Mono, id: Id, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(self.ctx.void_ty);
         e.tag = IrTag::Let;
-        e.id = id;
-        e.ir_ty = ty;
+        e._data.let_data.id = id;
+        e._data.let_data.ir_ty = ty;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
@@ -113,14 +113,14 @@ impl Mono {
         let ty = if stmts.len() > 0 { stmts[stmts.len() - 1].ty } else { self.ctx.void_ty };
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Block;
-        e.items = stmts;
+        e._data.block.items = stmts;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_block_void(self: &mut Mono, stmts: &[&IrExpr]) -> &IrExpr {
         let e = IrExpr::void_expr(self.ctx.void_ty);
         e.tag = IrTag::Block;
-        e.items = stmts;
+        e._data.block.items = stmts;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
@@ -128,63 +128,64 @@ impl Mono {
         let ptr_ty = self.ctx.make_ptr_ty(inner.ty, is_const);
         let e = IrExpr::void_expr(ptr_ty);
         e.tag = IrTag::Ref;
-        e.lhs = inner;
+        e._data.single.lhs = inner;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_deref(self: &mut Mono, ptr: &IrExpr, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Deref;
-        e.lhs = ptr;
+        e._data.single.lhs = ptr;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_assign(self: &mut Mono, lhs: &IrExpr, rhs: &IrExpr) -> &IrExpr {
         let e = IrExpr::void_expr(self.ctx.void_ty);
         e.tag = IrTag::Assign;
-        e.lhs = lhs;
-        e.rhs = rhs;
+        e._data.assign.lhs = lhs;
+        e._data.assign.rhs = rhs;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_binary(self: &mut Mono, op: BinOp, lhs: &IrExpr, rhs: &IrExpr, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Binary;
-        e.bin_op = op;
-        e.lhs = lhs;
-        e.rhs = rhs;
+        e._data.bin.bin_op = op;
+        e._data.bin.lhs = lhs;
+        e._data.bin.rhs = rhs;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_cast(self: &mut Mono, expr: &IrExpr, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Cast;
-        e.lhs = expr;
+        e._data.cast.lhs = expr;
+        e._data.cast.ir_ty = ty;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_call(self: &mut Mono, fn_ref: IrFnRef, args: &[&IrExpr], ret_ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ret_ty);
         e.tag = IrTag::Call;
-        e.call_target = IrCallTarget { tag: CallKind::Direct, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
-        e.items = args;
+        e._data.call.call_target = IrCallTarget { tag: CallKind::Direct, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+        e._data.call.items = args;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_if(self: &mut Mono, cond: &IrExpr, then_br: &IrExpr, else_br: Option<&IrExpr>) -> &IrExpr {
         let e = IrExpr::void_expr(then_br.ty);
         e.tag = IrTag::If;
-        e.cond = cond;
-        e.lhs = then_br;
-        e.opt_expr = else_br;
+        e._data.if_data.cond = cond;
+        e._data.if_data.lhs = then_br;
+        e._data.if_data.opt_expr = else_br;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_index(self: &mut Mono, base: &IrExpr, idx: &IrExpr, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Index;
-        e.lhs = base;
-        e.rhs = idx;
+        e._data.idx.lhs = base;
+        e._data.idx.rhs = idx;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
@@ -755,7 +756,7 @@ impl Mono {
                 let tuple_ty = self.ctx.make_tuple_ty(elem_types);
                 let result = IrExpr::void_expr(tuple_ty);
                 result.tag = IrTag::TupleLit;
-                result.items = ir_elems;
+                result._data.block.items = ir_elems;
                 self.ctx.arena.alloc(result)
             }
             ExprTag::ArrayLit => {
@@ -768,7 +769,7 @@ impl Mono {
                 let arr_ty = self.ctx.make_array_ty(elem_ty, expr.args.len());
                 let result = IrExpr::void_expr(arr_ty);
                 result.tag = IrTag::ArrayLit;
-                result.items = ir_elems;
+                result._data.block.items = ir_elems;
                 self.ctx.arena.alloc(result)
             }
             ExprTag::Lambda => self.lower_lambda(expr),
@@ -854,7 +855,7 @@ impl Mono {
             };
             let result = IrExpr::void_expr(ty);
             result.tag = IrTag::FloatLit;
-            result.float_val = expr.float_val;
+            result._data.lit.float_val = expr.float_val;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::BoolLit {
             self.mk_bool_lit(expr.bool_val)
@@ -864,7 +865,7 @@ impl Mono {
             let slice_ty = self.ctx.make_slice_ty(u8_ty, true);
             let result = IrExpr::void_expr(slice_ty);
             result.tag = IrTag::StringLit;
-            result.str_val = expr.str_val;
+            result._data.lit.str_val = expr.str_val;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::NullLit {
             let void_ty = self.ctx.void_ty;
@@ -920,7 +921,7 @@ impl Mono {
 
                 let result = IrExpr::void_expr(fn_ty);
                 result.tag = IrTag::FnRef;
-                result.fn_ref = IrFnRef {
+                result._data.fn_ref = IrFnRef {
                     id: ir_fn.id,
                     mangled_name: ir_fn.mangled_name,
                 };
@@ -980,7 +981,7 @@ impl Mono {
 
                     let result = IrExpr::void_expr(ty);
                     result.tag = IrTag::GlobalRef;
-                    result.global_ref = IrGlobalRef {
+                    result._data.global_ref = IrGlobalRef {
                         id: def.id,
                         mangled_name: def.name,
                     };
@@ -1297,8 +1298,8 @@ impl Mono {
                 // Negate: !equals(lhs, rhs)
                 let not_expr = IrExpr::void_expr(self.ctx.bool_ty);
                 not_expr.tag = IrTag::Unary;
-                not_expr.un_op = UnOp::Not;
-                not_expr.lhs = eq_result;
+                not_expr._data.un.un_op = UnOp::Not;
+                not_expr._data.un.lhs = eq_result;
                 return Option::some(self.ctx.arena.alloc(not_expr) as &IrExpr);
             }
         }
@@ -1473,8 +1474,8 @@ impl Mono {
             };
             let result = IrExpr::void_expr(result_ty);
             result.tag = IrTag::Unary;
-            result.un_op = expr.un_op;
-            result.lhs = ir_operand;
+            result._data.un.un_op = expr.un_op;
+            result._data.un.lhs = ir_operand;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Assign {
             let ir_lhs = self.lower_expr(expr.lhs);
@@ -1546,23 +1547,23 @@ impl Mono {
             };
             let result = IrExpr::void_expr(result_ty);
             result.tag = IrTag::If;
-            result.cond = ir_cond;
-            result.lhs = ir_then;
-            result.opt_expr = ir_else;
+            result._data.if_data.cond = ir_cond;
+            result._data.if_data.lhs = ir_then;
+            result._data.if_data.opt_expr = ir_else;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::While {
             let ir_cond = self.lower_expr(expr.cond);
             let ir_body = self.lower_expr(expr.lhs);
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::While;
-            result.cond = ir_cond;
-            result.lhs = ir_body;
+            result._data.if_data.cond = ir_cond;
+            result._data.if_data.lhs = ir_body;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Loop {
             let ir_body = self.lower_expr(expr.lhs);
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::Loop;
-            result.lhs = ir_body;
+            result._data.single.lhs = ir_body;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::For {
             // Desugar: for i in start..end { body }
@@ -1617,9 +1618,9 @@ impl Mono {
             // while i < _end { body } with continue -> increment
             let while_expr = IrExpr::void_expr(self.ctx.void_ty);
             while_expr.tag = IrTag::While;
-            while_expr.cond = ir_cond;
-            while_expr.lhs = ir_body;
-            while_expr.opt_expr = Option::some(ir_incr);
+            while_expr._data.if_data.cond = ir_cond;
+            while_expr._data.if_data.lhs = ir_body;
+            while_expr._data.if_data.opt_expr = Option::some(ir_incr);
             let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
 
             // Full block: { let i = start; let _end = end; while ... }
@@ -1643,9 +1644,9 @@ impl Mono {
                     for j in 0usize..expr.switch_arms[i].pattern.len() {
                         let pat_expr = self.lower_expr(expr.switch_arms[i].pattern[j]);
                         if pat_expr.tag == IrTag::IntLit {
-                            values[j] = pat_expr.int_val;
-                        } else if pat_expr.tag == IrTag::Cast && pat_expr.lhs.tag == IrTag::IntLit {
-                            values[j] = pat_expr.lhs.int_val;
+                            values[j] = pat_expr.int_val();
+                        } else if pat_expr.tag == IrTag::Cast && pat_expr.lhs().tag == IrTag::IntLit {
+                            values[j] = pat_expr.lhs().int_val();
                         } else {
                             values[j] = 0;
                         }
@@ -1659,8 +1660,8 @@ impl Mono {
                 let result_ty = if expr.switch_arms.len() > 0 { ir_arms[0].body.ty } else { self.ctx.void_ty };
                 let result = IrExpr::void_expr(result_ty);
                 result.tag = IrTag::Switch;
-                result.lhs = ir_value;
-                result.switch_arms = ir_arms;
+                result._data.switch_data.lhs = ir_value;
+                result._data.switch_data.switch_arms = ir_arms;
                 self.ctx.arena.alloc(result)
             } else {
                 // Non-integer types: desugar to if-else chain with == comparisons
@@ -1674,7 +1675,7 @@ impl Mono {
             };
             let result = IrExpr::void_expr(self.ctx.never_ty);
             result.tag = IrTag::Break;
-            result.opt_expr = ir_val;
+            result._data.ret.opt_expr = ir_val;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Continue {
             let result = IrExpr::void_expr(self.ctx.never_ty);
@@ -1685,7 +1686,7 @@ impl Mono {
                 let ir_val = self.lower_expr_coerced(expr.opt_expr.unwrap(), self.return_type);
                 let result = IrExpr::void_expr(self.ctx.never_ty);
                 result.tag = IrTag::Return;
-                result.opt_expr = Option::some(ir_val);
+                result._data.ret.opt_expr = Option::some(ir_val);
                 self.ctx.arena.alloc(result)
             } else {
                 let result = IrExpr::void_expr(self.ctx.never_ty);
@@ -1820,8 +1821,8 @@ impl Mono {
             let field0_val = self.mk_field(self.mk_local(opt_var_id, opt_ty), 0u32, bool_ty);
             let not_expr = IrExpr::void_expr(bool_ty);
             not_expr.tag = IrTag::Unary;
-            not_expr.un_op = UnOp::Not;
-            not_expr.lhs = field0_val;
+            not_expr._data.un.un_op = UnOp::Not;
+            not_expr._data.un.lhs = field0_val;
             self.ctx.arena.alloc(not_expr) as &IrExpr
         };
 
@@ -1833,10 +1834,8 @@ impl Mono {
         // if _opt.is_none() { break; }
         let if_break = IrExpr::void_expr(self.ctx.void_ty);
         if_break.tag = IrTag::If;
-        if_break.cond = ir_is_none;
-        if_break.lhs = ir_break_val;
-        let void_else = IrExpr::void_expr(self.ctx.void_ty);
-        if_break.rhs = self.ctx.arena.alloc(void_else) as &IrExpr;
+        if_break._data.if_data.cond = ir_is_none;
+        if_break._data.if_data.lhs = ir_break_val;
         let ir_if_break = self.ctx.arena.alloc(if_break) as &IrExpr;
 
         // _opt.unwrap() - get the inner value (field 1 of Option)
@@ -1867,7 +1866,7 @@ impl Mono {
         // loop { ... }
         let loop_expr = IrExpr::void_expr(self.ctx.void_ty);
         loop_expr.tag = IrTag::Loop;
-        loop_expr.lhs = ir_loop_body;
+        loop_expr._data.single.lhs = ir_loop_body;
         let ir_loop = self.ctx.arena.alloc(loop_expr) as &IrExpr;
 
         // Full block: { [let _iterable = ...;] let _iter = ...; loop { ... } }
@@ -2322,8 +2321,8 @@ impl Mono {
         // while condition { ... }
         let while_expr = IrExpr::void_expr(self.ctx.void_ty);
         while_expr.tag = IrTag::While;
-        while_expr.cond = ir_cond;
-        while_expr.lhs = ir_while_body;
+        while_expr._data.if_data.cond = ir_cond;
+        while_expr._data.if_data.lhs = ir_while_body;
         let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
 
         // Full block: { preamble...; while ... }
@@ -2647,7 +2646,7 @@ impl Mono {
             items[1] = len_ref;
             let tuple_result = IrExpr::void_expr(target_ty);
             tuple_result.tag = IrTag::TupleLit;
-            tuple_result.items = items;
+            tuple_result._data.block.items = items;
             return self.ctx.arena.alloc(tuple_result);
         }
         // Coerce &mut T -> &T (mutable pointer to const pointer)
@@ -2745,7 +2744,7 @@ impl Mono {
         items[1] = ir_new_len;
         let result = IrExpr::void_expr(slice_ty);
         result.tag = IrTag::TupleLit;
-        result.items = items;
+        result._data.block.items = items;
         self.ctx.arena.alloc(result)
     }
 
@@ -2800,7 +2799,7 @@ impl Mono {
             items[1] = ir_new_len;
             let result = IrExpr::void_expr(slice_ty);
             result.tag = IrTag::TupleLit;
-            result.items = items;
+            result._data.block.items = items;
             return self.ctx.arena.alloc(result);
         }
 
@@ -2862,7 +2861,7 @@ impl Mono {
         elems[1] = ir_new_len;
         let result = IrExpr::void_expr(base.ty);
         result.tag = IrTag::TupleLit;
-        result.items = elems;
+        result._data.block.items = elems;
         self.ctx.arena.alloc(result)
     }
 
@@ -3204,10 +3203,10 @@ impl Mono {
                     let void_ty = self.ctx.void_ty;
                     let result = IrExpr::void_expr(void_ty);
                     result.tag = IrTag::Memcpy;
-                    result.lhs = dest_arg;       // dest ptr
-                    result.rhs = src_ptr;        // src ptr
-                    result.cond = len_val;       // length in elements
-                    result.ir_ty = elem_ty;      // elem type for size calc
+                    result._data.memcpy.lhs = dest_arg;       // dest ptr
+                    result._data.memcpy.rhs = src_ptr;        // src ptr
+                    result._data.memcpy.cond = len_val;       // length in elements
+                    result._data.memcpy.ir_ty = elem_ty;      // elem type for size calc
                     return Option::some(self.ctx.arena.alloc(result) as &IrExpr);
                 }
             } else if method_name == "is_empty" {
@@ -3245,7 +3244,7 @@ impl Mono {
                 // Compute byte size: size_of<T>() * new_len
                 let size_of_elem = IrExpr::void_expr(usize_ty);
                 size_of_elem.tag = IrTag::SizeOf;
-                size_of_elem.ir_ty = elem_ty;
+                size_of_elem._data.type_op.ir_ty = elem_ty;
                 let size_of_val = self.ctx.arena.alloc(size_of_elem);
 
                 let byte_size_val = self.mk_binary(BinOp::Mul, size_of_val, new_len, usize_ty);
@@ -3267,7 +3266,7 @@ impl Mono {
                 items[1] = new_len;
                 let new_slice = IrExpr::void_expr(slice_ty);
                 new_slice.tag = IrTag::TupleLit;
-                new_slice.items = items;
+                new_slice._data.block.items = items;
                 return Option::some(self.ctx.arena.alloc(new_slice) as &IrExpr);
             } else if method_name == "free" {
                 // slice.free() -> libc::free(ptr)
@@ -3752,15 +3751,15 @@ impl Mono {
             let items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(bound_values);
             let result = IrExpr::void_expr(closure_ty);
             result.tag = IrTag::StructLit;
-            result.ir_ty = closure_ty;
-            result.items = items;
+            result._data.struct_lit.ir_ty = closure_ty;
+            result._data.struct_lit.items = items;
             self.ctx.arena.alloc(result)
         } else {
             // No captures: return function pointer as before
             let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ret_ty);
             let result = IrExpr::void_expr(fn_ty);
             result.tag = IrTag::FnRef;
-            result.fn_ref = IrFnRef {
+            result._data.fn_ref = IrFnRef {
                 id: lambda_id,
                 mangled_name: mangled,
             };
@@ -3882,7 +3881,7 @@ impl Mono {
             };
             let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
             result.tag = IrTag::SizeOf;
-            result.ir_ty = measured_ty;
+            result._data.type_op.ir_ty = measured_ty;
             return self.ctx.arena.alloc(result);
         } else if name == "align_of" {
             let measured_ty = if ir_type_args.len() > 0 {
@@ -3892,7 +3891,7 @@ impl Mono {
             };
             let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
             result.tag = IrTag::AlignOf;
-            result.ir_ty = measured_ty;
+            result._data.type_op.ir_ty = measured_ty;
             return self.ctx.arena.alloc(result);
         } else if name == "unreachable" {
             let result = IrExpr::void_expr(self.ctx.void_ty);
@@ -3933,7 +3932,7 @@ impl Mono {
                 // emit align_of on pointee
                 let align_val = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
                 align_val.tag = IrTag::AlignOf;
-                align_val.ir_ty = ret_ty.inner();
+                align_val._data.type_op.ir_ty = ret_ty.inner();
                 self.ctx.arena.alloc(align_val) as &IrExpr
             } else {
                 self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::USize), 1u64)
@@ -3956,7 +3955,7 @@ impl Mono {
             };
             let result = IrExpr::void_expr(ret_ty);
             result.tag = IrTag::Transmute;
-            result.lhs = ir_val;
+            result._data.cast.lhs = ir_val;
             return self.ctx.arena.alloc(result);
         } else if name == "codegen_func" {
             // codegen_func<RetTy>(name, args...) -> RetTy
@@ -3980,8 +3979,8 @@ impl Mono {
             }
             let result = IrExpr::void_expr(ret_ty);
             result.tag = IrTag::CodegenFunc;
-            result.str_val = fn_name;
-            result.items = ir_args;
+            result._data.codegen.str_val = fn_name;
+            result._data.codegen.items = ir_args;
             return self.ctx.arena.alloc(result);
         } else if name == "const_alloc" || name == "const_free" || name == "const_panic"
                 || name == "const_note" || name == "const_warning" || name == "const_bake" {
@@ -4033,7 +4032,7 @@ impl Mono {
             }
             let result = IrExpr::void_expr(slice_ty);
             result.tag = IrTag::StringLit;
-            result.str_val = type_str;
+            result._data.lit.str_val = type_str;
             return self.ctx.arena.alloc(result);
         } else if name == "length_of" {
             // length_of<T>() -> usize - array/tuple length
@@ -4052,8 +4051,8 @@ impl Mono {
             if expr.args.len() > 0 && expr.args[0].tag == ExprTag::StringLit {
                 let result = IrExpr::void_expr(self.ctx.void_ty);
                 result.tag = IrTag::CodegenFunc;
-                result.str_val = expr.args[0].str_val;
-                result.items = &[];
+                result._data.codegen.str_val = expr.args[0].str_val;
+                result._data.codegen.items = &[];
                 return self.ctx.arena.alloc(result);
             }
             let result = IrExpr::void_expr(self.ctx.void_ty);
@@ -4154,7 +4153,7 @@ impl Mono {
 
                         let result = IrExpr::void_expr(slice_ty);
                         result.tag = IrTag::TupleLit;
-                        result.items = items;
+                        result._data.block.items = items;
                         return self.ctx.arena.alloc(result);
                     }
 
@@ -4195,7 +4194,7 @@ impl Mono {
                         let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ir_fn.return_type);
                         let result = IrExpr::void_expr(fn_ty);
                         result.tag = IrTag::FnRef;
-                        result.fn_ref = IrFnRef {
+                        result._data.fn_ref = IrFnRef {
                             id: ir_fn.id,
                             mangled_name: ir_fn.mangled_name,
                         };
@@ -4248,7 +4247,7 @@ impl Mono {
                             items[1] = ir_len;
                             let result = IrExpr::void_expr(slice_ty);
                             result.tag = IrTag::TupleLit;
-                            result.items = items;
+                            result._data.block.items = items;
                             return self.ctx.arena.alloc(result);
                         }
 
@@ -4337,8 +4336,8 @@ impl Mono {
                 let ret_ty = ir_callee.ty.ret_ty();
                 let result = IrExpr::void_expr(ret_ty);
                 result.tag = IrTag::Call;
-                result.call_target = IrCallTarget { tag: CallKind::Indirect, fn_ref: IrFnRef::empty(), callee: ir_callee };
-                result.items = ir_args;
+                result._data.call.call_target = IrCallTarget { tag: CallKind::Indirect, fn_ref: IrFnRef::empty(), callee: ir_callee };
+                result._data.call.items = ir_args;
                 self.ctx.arena.alloc(result)
             } else if ir_callee.ty.tag == IrTyTag::Closure {
                 // Closure call: take &callee, get fn from closure type, prepend self arg
@@ -4397,8 +4396,8 @@ impl Mono {
                 ir_fields[0] = self.lower_expr_coerced(fi.value, field_ty);
                 let result = IrExpr::void_expr(ir_ty);
                 result.tag = IrTag::StructLit;
-                result.ir_ty = ir_ty;
-                result.items = ir_fields;
+                result._data.struct_lit.ir_ty = ir_ty;
+                result._data.struct_lit.items = ir_fields;
                 return self.ctx.arena.alloc(result);
             }
 
@@ -4427,8 +4426,8 @@ impl Mono {
             }
             let result = IrExpr::void_expr(ir_ty);
             result.tag = IrTag::StructLit;
-            result.ir_ty = ir_ty;
-            result.items = ir_fields;
+            result._data.struct_lit.ir_ty = ir_ty;
+            result._data.struct_lit.items = ir_fields;
             self.ctx.arena.alloc(result)
         } else {
             let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -4482,7 +4481,7 @@ impl Mono {
             let ir_inner = self.lower_expr(expr.lhs);
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::Defer;
-            result.lhs = ir_inner;
+            result._data.single.lhs = ir_inner;
             self.ctx.arena.alloc(result)
         } else {
             let r = IrExpr::void_expr(self.ctx.void_ty);
