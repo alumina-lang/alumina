@@ -295,18 +295,18 @@ impl Mono {
         let ir_ty = self.resolve_type(expr.ty);
 
         // Only apply hints when the type is a struct with generic params but no type args
-        if ir_ty.tag != IrTyTag::Struct || ir_ty.struct_ref.type_args.len() > 0 {
+        if ir_ty.tag != IrTyTag::Struct || ir_ty.struct_ref().type_args.len() > 0 {
             return ir_ty;
         }
-        let sd = self.ctx.struct_defs.get(&ir_ty.struct_ref.id._value);
+        let sd = self.ctx.struct_defs.get(&ir_ty.struct_ref().id._value);
         if sd.is_none() || sd.unwrap().generic_params.len() == 0 {
             return ir_ty;
         }
 
         // Hint 1: function return type matches the same struct
         if self.return_type.tag == IrTyTag::Struct {
-            if self.return_type.struct_ref.id._value == ir_ty.struct_ref.id._value
-                && self.return_type.struct_ref.type_args.len() > 0 {
+            if self.return_type.struct_ref().id._value == ir_ty.struct_ref().id._value
+                && self.return_type.struct_ref().type_args.len() > 0 {
                 return self.return_type;
             }
         }
@@ -330,7 +330,7 @@ impl Mono {
                     // Try to match field type against value type to infer generic params
                     // Handle &mut T pattern: field is Pointer(Placeholder), value is Pointer(concrete)
                     if field_ast_ty.tag == TyTag::Pointer && field_ast_ty.inner.tag == TyTag::Placeholder {
-                        let target_ty = if value_ty.tag == IrTyTag::Pointer { value_ty.inner } else { value_ty };
+                        let target_ty = if value_ty.tag == IrTyTag::Pointer { value_ty.inner() } else { value_ty };
                         for gi in 0usize..struct_def.generic_params.len() {
                             if struct_def.generic_params[gi].id._value == field_ast_ty.inner.id._value {
                                 inferred[gi] = target_ty;
@@ -485,8 +485,8 @@ impl Mono {
         // Update both the ir_structs entry AND the cached IrTy in-place
         self.ctx.ir_structs[idx].fields = fields;
         self.ctx.ir_structs[idx].is_zero_sized = is_zst;
-        result.struct_ref.fields = fields;
-        result.struct_ref.is_zero_sized = is_zst;
+        result._data.struct_ref.fields = fields;
+        result._data.struct_ref.is_zero_sized = is_zst;
         result
     }
 
@@ -1001,12 +1001,12 @@ impl Mono {
                 for i in 0usize..def.variants.len() {
                     if def.variants[i].id._value == expr.id2._value {
                         // Use the monomorphized variant value from IrEnumRef
-                        variant_val = enum_ty.enum_ref.variants[i].value;
+                        variant_val = enum_ty.enum_ref().variants[i].value;
                         break;
                     }
                 }
                 // Use the underlying type for the literal
-                let underlying = enum_ty.enum_ref.underlying;
+                let underlying = enum_ty.enum_ref().underlying;
                 self.mk_int_lit(enum_ty, variant_val)
             } else {
                 let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -1095,9 +1095,9 @@ impl Mono {
     fn find_method_in_scope(self: &mut Mono, ty: &IrTy, method_name: &[u8]) -> Option<&FnDef> {
         let scope_idx: u32 = 0u32;
         if ty.tag == IrTyTag::Struct {
-            scope_idx = ty.struct_ref.scope_idx;
+            scope_idx = ty.struct_ref().scope_idx;
         } else if ty.tag == IrTyTag::Enum {
-            scope_idx = ty.enum_ref.scope_idx;
+            scope_idx = ty.enum_ref().scope_idx;
         }
         if scope_idx == 0u32 {
             return Option::none();
@@ -1126,8 +1126,8 @@ impl Mono {
         // the full type. This correctly maps to the method's generic params,
         // whether the method is in a generic impl (impl Option<T>) or a
         // non-generic impl (impl Option { fn equals<T>(...) }).
-        let type_args: &[&IrTy] = if ty.tag == IrTyTag::Struct && ty.struct_ref.type_args.len() > 0 && def.generic_params.len() == ty.struct_ref.type_args.len() {
-            ty.struct_ref.type_args
+        let type_args: &[&IrTy] = if ty.tag == IrTyTag::Struct && ty.struct_ref().type_args.len() > 0 && def.generic_params.len() == ty.struct_ref().type_args.len() {
+            ty.struct_ref().type_args
         } else {
             // Fallback for non-generic structs, enums, etc: pass the whole type
             let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
@@ -1204,8 +1204,8 @@ impl Mono {
         // of the struct (e.g. `impl Option { fn transpose<T, E>(...) }`).
         let method_type_args: &[&IrTy] = &[];
         if concrete_ty.tag == IrTyTag::Struct
-            && concrete_ty.struct_ref.type_args.len() == def.generic_params.len() {
-            method_type_args = concrete_ty.struct_ref.type_args;
+            && concrete_ty.struct_ref().type_args.len() == def.generic_params.len() {
+            method_type_args = concrete_ty.struct_ref().type_args;
         }
 
         // Handle turbofish type args on the call itself (e.g. T::method::<U>(args))
@@ -1533,7 +1533,7 @@ impl Mono {
                     // Prefer the type with the same or larger struct
                     // Both should be the same generic type, but may differ if
                     // one is a degenerate case (e.g., Option::none() vs Option::some(T))
-                    if else_ty.struct_ref.fields.len() >= then_ty.struct_ref.fields.len() {
+                    if else_ty.struct_ref().fields.len() >= then_ty.struct_ref().fields.len() {
                         else_ty
                     } else {
                         then_ty
@@ -1632,7 +1632,7 @@ impl Mono {
             let ir_value = self.lower_expr(expr.lhs);
 
             // Check if the discriminant type supports LLVM switch (integer types only)
-            let is_int_switch = (ir_value.ty.tag == IrTyTag::Builtin && (ir_value.ty.builtin.is_integer() || ir_value.ty.builtin == BuiltinType::Bool))
+            let is_int_switch = (ir_value.ty.tag == IrTyTag::Builtin && (ir_value.ty.builtin().is_integer() || ir_value.ty.builtin() == BuiltinType::Bool))
                 || ir_value.ty.tag == IrTyTag::Enum;
 
             if is_int_switch {
@@ -1841,8 +1841,8 @@ impl Mono {
 
         // _opt.unwrap() - get the inner value (field 1 of Option)
         // Since Option<T> = { _is_some: bool, _inner: T }, just access field 1
-        let elem_ty = if opt_ty.tag == IrTyTag::Struct && opt_ty.struct_ref.fields.len() > 1 {
-            opt_ty.struct_ref.fields[1].ty
+        let elem_ty = if opt_ty.tag == IrTyTag::Struct && opt_ty.struct_ref().fields.len() > 1 {
+            opt_ty.struct_ref().fields[1].ty
         } else {
             self.ctx.void_ty
         };
@@ -1921,9 +1921,9 @@ impl Mono {
 
         // Find the scope for the concrete type
         if self_ty.tag == IrTyTag::Struct {
-            scope_idx = self_ty.struct_ref.scope_idx;
+            scope_idx = self_ty.struct_ref().scope_idx;
         } else if self_ty.tag == IrTyTag::Enum {
-            scope_idx = self_ty.enum_ref.scope_idx;
+            scope_idx = self_ty.enum_ref().scope_idx;
         }
 
         if scope_idx == 0u32 {
@@ -1968,9 +1968,9 @@ impl Mono {
         // Get the scope for the type (where its methods live)
         let scope_idx: u32 = 0u32;
         if ty.tag == IrTyTag::Struct {
-            scope_idx = ty.struct_ref.scope_idx;
+            scope_idx = ty.struct_ref().scope_idx;
         } else if ty.tag == IrTyTag::Enum {
-            scope_idx = ty.enum_ref.scope_idx;
+            scope_idx = ty.enum_ref().scope_idx;
         }
         if scope_idx == 0u32 {
             // No scope means no methods - can't conform unless protocol has no methods
@@ -2000,7 +2000,7 @@ impl Mono {
     // Convert an IR type to a human-readable name string
     fn ir_type_name(self: &mut Mono, ty: &IrTy) -> &[u8] {
         if ty.tag == IrTyTag::Builtin {
-            switch ty.builtin {
+            switch ty.builtin() {
                 BuiltinType::Void => "()",
                 BuiltinType::Never => "!",
                 BuiltinType::Bool => "bool",
@@ -2021,8 +2021,8 @@ impl Mono {
                 _ => "<unknown>",
             }
         } else if ty.tag == IrTyTag::Pointer {
-            let inner_name = self.ir_type_name(ty.inner);
-            let is_const = ty.is_const;
+            let inner_name = self.ir_type_name(ty.inner());
+            let is_const = ty.is_const();
             let prefix: &[u8] = if is_const { "&" } else { "&mut " };
             let total = prefix.len() + inner_name.len();
             let buf = self.ctx.arena.alloc_slice::<u8>(total);
@@ -2030,8 +2030,8 @@ impl Mono {
             inner_name.copy_to_nonoverlapping(&buf[prefix.len()]);
             buf as &[u8]
         } else if ty.tag == IrTyTag::Slice {
-            let elem_ty = if ty.elems.len() > 0 && ty.elems[0].tag == IrTyTag::Pointer {
-                ty.elems[0].inner
+            let elem_ty = if ty.elems().len() > 0 && ty.elems()[0].tag == IrTyTag::Pointer {
+                ty.elems()[0].inner()
             } else { self.ctx.void_ty };
             let inner_name = self.ir_type_name(elem_ty);
             let prefix = "&[";
@@ -2043,8 +2043,8 @@ impl Mono {
             suffix.copy_to_nonoverlapping(&buf[prefix.len() + inner_name.len()]);
             buf as &[u8]
         } else if ty.tag == IrTyTag::Array {
-            let inner_name = self.ir_type_name(ty.inner);
-            let size_str = format_usize(ty.array_size, self.ctx.arena);
+            let inner_name = self.ir_type_name(ty.inner());
+            let size_str = format_usize(ty.array_size(), self.ctx.arena);
             // "[T; N]"
             let total = 1usize + inner_name.len() + 2usize + size_str.len() + 1usize;
             let buf = self.ctx.arena.alloc_slice::<u8>(total);
@@ -2056,9 +2056,9 @@ impl Mono {
             buf[3 + inner_name.len() + size_str.len()] = ']' as u8;
             buf as &[u8]
         } else if ty.tag == IrTyTag::Struct {
-            ty.struct_ref.name
+            ty.struct_ref().name
         } else if ty.tag == IrTyTag::Enum {
-            ty.enum_ref.name
+            ty.enum_ref().name
         } else if ty.tag == IrTyTag::Tuple {
             // Just return "(...)"; full tuple formatting is complex
             "(...)"
@@ -2106,9 +2106,9 @@ impl Mono {
         // Get element count from tuple/array type
         let count: usize = 0;
         if iter_ty.tag == IrTyTag::Tuple {
-            count = iter_ty.elems.len();
+            count = iter_ty.elems().len();
         } else if iter_ty.tag == IrTyTag::Array {
-            count = iter_ty.array_size;
+            count = iter_ty.array_size();
         }
 
         if count == 0 {
@@ -2130,9 +2130,9 @@ impl Mono {
 
         for i in 0usize..count {
             let elem_ty = if iter_ty.tag == IrTyTag::Tuple {
-                iter_ty.elems[i]
+                iter_ty.elems()[i]
             } else {
-                iter_ty.inner // array element type
+                iter_ty.inner() // array element type
             };
 
             // Access element: iter_local.i (tuple index)
@@ -2188,10 +2188,10 @@ impl Mono {
             let elem_id = elem_arg.id;
 
             // Get the tuple element type
-            let field_ty = if elem_ty.tag == IrTyTag::Tuple && i < elem_ty.elems.len() {
-                elem_ty.elems[i]
-            } else if elem_ty.tag == IrTyTag::Struct && i < elem_ty.struct_ref.fields.len() {
-                elem_ty.struct_ref.fields[i].ty
+            let field_ty = if elem_ty.tag == IrTyTag::Tuple && i < elem_ty.elems().len() {
+                elem_ty.elems()[i]
+            } else if elem_ty.tag == IrTyTag::Struct && i < elem_ty.struct_ref().fields.len() {
+                elem_ty.struct_ref().fields[i].ty
             } else {
                 self.ctx.void_ty
             };
@@ -2218,10 +2218,10 @@ impl Mono {
 
         // Get element type from slice
         let elem_ty = if slice_ty.tag == IrTyTag::Slice {
-            slice_ty.inner
+            slice_ty.inner()
         } else {
             // TUPLE representation: {&T, usize}
-            slice_ty.elems[0].inner
+            slice_ty.elems()[0].inner()
         };
 
         // let _s = slice
@@ -2246,7 +2246,7 @@ impl Mono {
         let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(idx_var_id, usize_ty), self.mk_local(end_var_id, usize_ty), bool_ty);
 
         // _s[_i] - slice indexing: get data pointer, then index
-        let ptr_ty = self.ctx.make_ptr_ty(elem_ty, slice_ty.is_const);
+        let ptr_ty = self.ctx.make_ptr_ty(elem_ty, slice_ty.is_const());
         let ir_data_ptr = self.mk_field(self.mk_local(slice_var_id, slice_ty), SLICE_DATA_FIELD, ptr_ty);
         let ir_element = self.mk_index(ir_data_ptr, self.mk_local(idx_var_id, usize_ty), elem_ty);
 
@@ -2268,7 +2268,7 @@ impl Mono {
     fn lower_for_array(self: &mut Mono, expr: &Expr, arr_ir: &IrExpr, arr_ty: &IrTy) -> &IrExpr {
         let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
         let bool_ty = self.ctx.intern_builtin_ty(BuiltinType::Bool);
-        let elem_ty = arr_ty.inner;
+        let elem_ty = arr_ty.inner();
 
         // let _a = arr; let _i = 0usize
         let arr_var_id = self.ctx.id_gen.next_id();
@@ -2282,7 +2282,7 @@ impl Mono {
         let ir_let_i = self.mk_let(idx_var_id, usize_ty, self.mk_int_lit(usize_ty, 0));
 
         // _i < N
-        let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(idx_var_id, usize_ty), self.mk_int_lit(usize_ty, arr_ty.array_size as u64), bool_ty);
+        let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(idx_var_id, usize_ty), self.mk_int_lit(usize_ty, arr_ty.array_size() as u64), bool_ty);
 
         // _a[_i] - direct array indexing
         let ir_element = self.mk_index(self.mk_local(arr_var_id, arr_ty), self.mk_local(idx_var_id, usize_ty), elem_ty);
@@ -2339,15 +2339,15 @@ impl Mono {
     fn resolve_method_call_on_type(self: &mut Mono, ty: &IrTy, method_name: &[u8], self_arg: &IrExpr, args: &[&IrExpr]) -> Option<&IrExpr> {
         let resolved_ty = ty;
         if resolved_ty.tag == IrTyTag::Pointer {
-            resolved_ty = resolved_ty.inner;
+            resolved_ty = resolved_ty.inner();
         }
         let scope_idx: u32 = 0u32;
         let method_type_args: &[&IrTy] = &[];
         if resolved_ty.tag == IrTyTag::Struct {
-            scope_idx = resolved_ty.struct_ref.scope_idx;
-            method_type_args = resolved_ty.struct_ref.type_args;
+            scope_idx = resolved_ty.struct_ref().scope_idx;
+            method_type_args = resolved_ty.struct_ref().type_args;
         } else if resolved_ty.tag == IrTyTag::Enum {
-            scope_idx = resolved_ty.enum_ref.scope_idx;
+            scope_idx = resolved_ty.enum_ref().scope_idx;
         }
         if scope_idx == 0u32 {
             return Option::none();
@@ -2382,9 +2382,9 @@ impl Mono {
             let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, fn_id._value);
             if impl_gp_ids.is_some() && resolved_ty.tag == IrTyTag::Struct {
                 let ids = impl_gp_ids.unwrap();
-                let n_gp = std::cmp::min(ids.len(), resolved_ty.struct_ref.type_args.len());
+                let n_gp = std::cmp::min(ids.len(), resolved_ty.struct_ref().type_args.len());
                 for gi in 0usize..n_gp {
-                    self.type_map.insert(ids[gi]._value, resolved_ty.struct_ref.type_args[gi]);
+                    self.type_map.insert(ids[gi]._value, resolved_ty.struct_ref().type_args[gi]);
                 }
             }
             let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
@@ -2428,7 +2428,7 @@ impl Mono {
         } else if expr.tag == ExprTag::Deref {
             let ir_inner = self.lower_expr(expr.lhs);
             let pointee_ty = if ir_inner.ty.tag == IrTyTag::Pointer {
-                ir_inner.ty.inner
+                ir_inner.ty.inner()
             } else {
                 self.ctx.void_ty
             };
@@ -2441,7 +2441,7 @@ impl Mono {
                 if actual_obj.ty.tag != IrTyTag::Pointer {
                     break;
                 }
-                actual_obj = self.mk_deref(actual_obj, actual_obj.ty.inner);
+                actual_obj = self.mk_deref(actual_obj, actual_obj.ty.inner());
             }
             // Find field index on the dereferenced struct type
             let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val);
@@ -2461,11 +2461,11 @@ impl Mono {
                 expr.index_val
             };
             let elem_ty = if ir_obj.ty.tag == IrTyTag::Tuple {
-                if idx < ir_obj.ty.elems.len() { ir_obj.ty.elems[idx] } else { self.ctx.void_ty }
-            } else if ir_obj.ty.tag == IrTyTag::Struct && !ir_obj.ty.struct_ref.is_zero_sized {
+                if idx < ir_obj.ty.elems().len() { ir_obj.ty.elems()[idx] } else { self.ctx.void_ty }
+            } else if ir_obj.ty.tag == IrTyTag::Struct && !ir_obj.ty.struct_ref().is_zero_sized {
                 // Tuples of non-trivial types may be lowered as anonymous structs
-                if idx < ir_obj.ty.struct_ref.fields.len() {
-                    ir_obj.ty.struct_ref.fields[idx].ty
+                if idx < ir_obj.ty.struct_ref().fields.len() {
+                    ir_obj.ty.struct_ref().fields[idx].ty
                 } else {
                     self.ctx.void_ty
                 }
@@ -2492,7 +2492,7 @@ impl Mono {
                     self.ctx.make_ptr_ty(elem_ty, false)
                 } else {
                     // IrTyTag::Tuple {&T, usize}: element 0 is the pointer
-                    ir_base.ty.elems[0]
+                    ir_base.ty.elems()[0]
                 };
                 let data_ptr_ref = self.mk_field(ir_base, SLICE_DATA_FIELD, data_ptr_ty);
                 // Index into the data pointer
@@ -2502,7 +2502,7 @@ impl Mono {
             // For struct types (e.g. Vector), try to find a slice-typed field
             // and index through it (similar to auto-borrow/slicify in alumina-boot)
             if ir_base.ty.tag == IrTyTag::Struct {
-                let sr = ir_base.ty.struct_ref;
+                let sr = ir_base.ty.struct_ref();
                 for fi in 0usize..sr.fields.len() {
                     if self.is_slice_ty(sr.fields[fi].ty) {
                         // Extract the slice field
@@ -2512,7 +2512,7 @@ impl Mono {
                         let sf_data_ptr_ty = if sr.fields[fi].ty.tag == IrTyTag::Slice {
                             self.ctx.make_ptr_ty(sf_elem_ty, false)
                         } else {
-                            sr.fields[fi].ty.elems[0]
+                            sr.fields[fi].ty.elems()[0]
                         };
                         let sf_data_ptr_ref = self.mk_field(slice_ref, SLICE_DATA_FIELD, sf_data_ptr_ty);
                         return self.mk_index(sf_data_ptr_ref, ir_index, sf_elem_ty);
@@ -2521,9 +2521,9 @@ impl Mono {
             }
 
             let elem_ty = if ir_base.ty.tag == IrTyTag::Array {
-                ir_base.ty.inner
+                ir_base.ty.inner()
             } else if ir_base.ty.tag == IrTyTag::Pointer {
-                ir_base.ty.inner
+                ir_base.ty.inner()
             } else {
                 self.ctx.void_ty
             };
@@ -2566,28 +2566,28 @@ impl Mono {
                         is_match = val_ty.tag == IrTyTag::Builtin;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_numeric") {
                         if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void;
+                            is_match = val_ty.builtin() != BuiltinType::Bool && val_ty.builtin() != BuiltinType::Void;
                         }
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_integer") {
                         if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin != BuiltinType::Bool && val_ty.builtin != BuiltinType::Void && val_ty.builtin != BuiltinType::F32 && val_ty.builtin != BuiltinType::F64;
+                            is_match = val_ty.builtin() != BuiltinType::Bool && val_ty.builtin() != BuiltinType::Void && val_ty.builtin() != BuiltinType::F32 && val_ty.builtin() != BuiltinType::F64;
                         }
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_floating_point") {
                         if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin == BuiltinType::F32 || val_ty.builtin == BuiltinType::F64;
+                            is_match = val_ty.builtin() == BuiltinType::F32 || val_ty.builtin() == BuiltinType::F64;
                         }
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_signed") {
                         if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin == BuiltinType::I8 || val_ty.builtin == BuiltinType::I16 || val_ty.builtin == BuiltinType::I32 || val_ty.builtin == BuiltinType::I64 || val_ty.builtin == BuiltinType::I128 || val_ty.builtin == BuiltinType::ISize;
+                            is_match = val_ty.builtin() == BuiltinType::I8 || val_ty.builtin() == BuiltinType::I16 || val_ty.builtin() == BuiltinType::I32 || val_ty.builtin() == BuiltinType::I64 || val_ty.builtin() == BuiltinType::I128 || val_ty.builtin() == BuiltinType::ISize;
                         }
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_unsigned") {
                         if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin == BuiltinType::U8 || val_ty.builtin == BuiltinType::U16 || val_ty.builtin == BuiltinType::U32 || val_ty.builtin == BuiltinType::U64 || val_ty.builtin == BuiltinType::U128 || val_ty.builtin == BuiltinType::USize;
+                            is_match = val_ty.builtin() == BuiltinType::U8 || val_ty.builtin() == BuiltinType::U16 || val_ty.builtin() == BuiltinType::U32 || val_ty.builtin() == BuiltinType::U64 || val_ty.builtin() == BuiltinType::U128 || val_ty.builtin() == BuiltinType::USize;
                         }
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_struct") {
-                        is_match = val_ty.tag == IrTyTag::Struct && !val_ty.struct_ref.is_union;
+                        is_match = val_ty.tag == IrTyTag::Struct && !val_ty.struct_ref().is_union;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_union") {
-                        is_match = val_ty.tag == IrTyTag::Struct && val_ty.struct_ref.is_union;
+                        is_match = val_ty.tag == IrTyTag::Struct && val_ty.struct_ref().is_union;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_enum") {
                         is_match = val_ty.tag == IrTyTag::Enum;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_array") {
@@ -2629,9 +2629,9 @@ impl Mono {
     // Coerce a value to a target type (e.g., pointer-to-array → slice)
     fn coerce_to_type(self: &mut Mono, val: &IrExpr, target_ty: &IrTy) -> &IrExpr {
         // Coerce &[T; N] to &[T] (pointer to array → slice fat pointer)
-        if self.is_slice_ty(target_ty) && val.ty.tag == IrTyTag::Pointer && val.ty.inner.tag == IrTyTag::Array {
-            let array_ty = val.ty.inner;
-            let elem_ty = array_ty.inner;
+        if self.is_slice_ty(target_ty) && val.ty.tag == IrTyTag::Pointer && val.ty.inner().tag == IrTyTag::Array {
+            let array_ty = val.ty.inner();
+            let elem_ty = array_ty.inner();
             let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
 
             // Data pointer: cast the array pointer to element pointer
@@ -2639,7 +2639,7 @@ impl Mono {
             let data_ptr_ref = self.mk_cast(val, data_ptr_ty);
 
             // Length: array size as usize literal
-            let len_ref = self.mk_int_lit(usize_ty, array_ty.array_size as u64);
+            let len_ref = self.mk_int_lit(usize_ty, array_ty.array_size() as u64);
 
             // Build tuple {data_ptr, len}
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
@@ -2652,8 +2652,8 @@ impl Mono {
         }
         // Coerce &mut T -> &T (mutable pointer to const pointer)
         if target_ty.tag == IrTyTag::Pointer && val.ty.tag == IrTyTag::Pointer
-            && target_ty.is_const && !val.ty.is_const
-            && target_ty.inner == val.ty.inner {
+            && target_ty.is_const() && !val.ty.is_const()
+            && target_ty.inner() == val.ty.inner() {
             return self.mk_cast(val, target_ty);
         }
 
@@ -2673,10 +2673,10 @@ impl Mono {
     // Check if a type is a range (std::range::Range*, etc.)
     fn is_range_ty(self: &Mono, ty: &IrTy) -> bool {
         if ty.tag != IrTyTag::Struct { return false; }
-        let id = ty.struct_ref.id._value;
+        let id = ty.struct_ref().id._value;
         self.ctx.is_lang_item(id, "range") || self.ctx.is_lang_item(id, "range_inclusive") || {
             // Fallback to name-based check for range types not yet lang-item'd
-            let name = ty.struct_ref.name;
+            let name = ty.struct_ref().name;
             name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
         }
     }
@@ -2685,8 +2685,8 @@ impl Mono {
     fn is_slice_ty(self: &Mono, ty: &IrTy) -> bool {
         if ty.tag == IrTyTag::Slice { return true; }
         // Also detect tuples that look like slices (legacy representation)
-        if ty.tag == IrTyTag::Tuple && ty.elems.len() == 2 {
-            return ty.elems[0].tag == IrTyTag::Pointer;
+        if ty.tag == IrTyTag::Tuple && ty.elems().len() == 2 {
+            return ty.elems()[0].tag == IrTyTag::Pointer;
         }
         false
     }
@@ -2695,10 +2695,10 @@ impl Mono {
     fn slice_elem_ty(self: &Mono, ty: &IrTy) -> &IrTy {
         if ty.tag == IrTyTag::Slice {
             // IrTyTag::Slice stores element type in inner directly
-            ty.inner
+            ty.inner()
         } else {
             // IrTyTag::Tuple representation: {&T, usize}, elem type is pointer's inner type
-            ty.elems[0].inner
+            ty.elems()[0].inner()
         }
     }
 
@@ -2706,13 +2706,13 @@ impl Mono {
     // Lower ptr[a..b] on a raw pointer - creates a new slice {ptr+a, b-a}
     fn lower_ptr_subslice(self: &mut Mono, base: &IrExpr, range_expr: &Expr) -> &IrExpr {
         let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-        let elem_ty = base.ty.inner;
-        let slice_ty = self.ctx.make_slice_ty(elem_ty, base.ty.is_const);
+        let elem_ty = base.ty.inner();
+        let slice_ty = self.ctx.make_slice_ty(elem_ty, base.ty.is_const());
 
         // Start offset (default 0)
         let ir_start = if range_expr.lhs as usize != 0 {
             let raw = self.lower_expr(range_expr.lhs);
-            if raw.ty.tag != usize_ty.tag || raw.ty.builtin != usize_ty.builtin {
+            if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
                 self.mk_cast(raw, usize_ty)
             } else { raw }
         } else {
@@ -2722,7 +2722,7 @@ impl Mono {
         // End offset
         let ir_end = if range_expr.rhs as usize != 0 {
             let raw = self.lower_expr(range_expr.rhs);
-            if raw.ty.tag != usize_ty.tag || raw.ty.builtin != usize_ty.builtin {
+            if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
                 self.mk_cast(raw, usize_ty)
             } else { raw }
         } else {
@@ -2732,9 +2732,9 @@ impl Mono {
         };
 
         // new_ptr = base + start (via index then ref, same pattern as lower_subslice)
-        let ir_new_ptr_idx = self.mk_index(base, ir_start, base.ty.inner);
+        let ir_new_ptr_idx = self.mk_index(base, ir_start, base.ty.inner());
         // Take reference to get pointer
-        let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, base.ty.is_const);
+        let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, base.ty.is_const());
 
         // new_len = end - start
         let ir_new_len = self.mk_binary(BinOp::Sub, ir_end, ir_start, usize_ty);
@@ -2758,7 +2758,7 @@ impl Mono {
         // Handle array subslicing: arr[a..b] -> take ref to array, cast to elem ptr, then subslice
         if base.ty.tag == IrTyTag::Array {
             let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-            let elem_ty = base.ty.inner;
+            let elem_ty = base.ty.inner();
             let elem_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
             let slice_ty = self.ctx.make_slice_ty(elem_ty, false);
 
@@ -2770,7 +2770,7 @@ impl Mono {
             // Start offset (default 0)
             let ir_start = if range_expr.lhs as usize != 0 {
                 let raw = self.lower_expr(range_expr.lhs);
-                if raw.ty.tag != usize_ty.tag || raw.ty.builtin != usize_ty.builtin {
+                if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
                     self.mk_cast(raw, usize_ty)
                 } else { raw }
             } else {
@@ -2780,11 +2780,11 @@ impl Mono {
             // End offset (default: array length)
             let ir_end = if range_expr.rhs as usize != 0 {
                 let raw = self.lower_expr(range_expr.rhs);
-                if raw.ty.tag != usize_ty.tag || raw.ty.builtin != usize_ty.builtin {
+                if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
                     self.mk_cast(raw, usize_ty)
                 } else { raw }
             } else {
-                self.mk_int_lit(usize_ty, base.ty.array_size as u64)
+                self.mk_int_lit(usize_ty, base.ty.array_size() as u64)
             };
 
             // new_ptr = elem_ptr + start
@@ -2816,7 +2816,7 @@ impl Mono {
         let data_ptr_ty = if base.ty.tag == IrTyTag::Slice {
             self.ctx.make_ptr_ty(elem_ty_, false)
         } else {
-            base.ty.elems[0]
+            base.ty.elems()[0]
         };
         let ir_data_ptr = self.mk_field(base, SLICE_DATA_FIELD, data_ptr_ty);
         let ir_base_len = self.mk_field(base, SLICE_LEN_FIELD, usize_ty);
@@ -2836,22 +2836,22 @@ impl Mono {
         };
 
         // Cast start/end to usize if needed (e.g. literal 0 might be i32)
-        let ir_start = if ir_start_raw.ty.tag != usize_ty.tag || ir_start_raw.ty.builtin != usize_ty.builtin {
+        let ir_start = if ir_start_raw.ty.tag != usize_ty.tag || ir_start_raw.ty.builtin() != usize_ty.builtin() {
             self.mk_cast(ir_start_raw, usize_ty)
         } else {
             ir_start_raw
         };
 
-        let ir_end = if ir_end_raw.ty.tag != usize_ty.tag || ir_end_raw.ty.builtin != usize_ty.builtin {
+        let ir_end = if ir_end_raw.ty.tag != usize_ty.tag || ir_end_raw.ty.builtin() != usize_ty.builtin() {
             self.mk_cast(ir_end_raw, usize_ty)
         } else {
             ir_end_raw
         };
 
         // new_ptr = data_ptr + start (pointer arithmetic via index)
-        let ir_new_ptr_idx = self.mk_index(ir_data_ptr, ir_start, data_ptr_ty.inner);
+        let ir_new_ptr_idx = self.mk_index(ir_data_ptr, ir_start, data_ptr_ty.inner());
         // Take reference to get pointer
-        let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, data_ptr_ty.is_const);
+        let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, data_ptr_ty.is_const());
 
         // new_len = end - start
         let ir_new_len = self.mk_binary(BinOp::Sub, ir_end, ir_start, usize_ty);
@@ -2871,7 +2871,7 @@ impl Mono {
         if ty.tag == IrTyTag::Struct {
             Option::some(ty)
         } else if ty.tag == IrTyTag::Pointer {
-            self.get_struct_ty(ty.inner)
+            self.get_struct_ty(ty.inner())
         } else {
             Option::none()
         }
@@ -2897,24 +2897,24 @@ impl Mono {
             }
         } else if param_ty.tag == TyTag::Pointer {
             if arg_ty.tag == IrTyTag::Pointer {
-                self.unify_type_for_inference(param_ty.inner, arg_ty.inner, inferred, found, generic_params);
+                self.unify_type_for_inference(param_ty.inner, arg_ty.inner(), inferred, found, generic_params);
             }
         } else if param_ty.tag == TyTag::Slice {
-            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems.len() == 2 && arg_ty.elems[0].tag == IrTyTag::Pointer {
-                self.unify_type_for_inference(param_ty.inner, arg_ty.elems[0].inner, inferred, found, generic_params);
+            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() == 2 && arg_ty.elems()[0].tag == IrTyTag::Pointer {
+                self.unify_type_for_inference(param_ty.inner, arg_ty.elems()[0].inner(), inferred, found, generic_params);
             } else if arg_ty.tag == IrTyTag::Slice {
-                self.unify_type_for_inference(param_ty.inner, arg_ty.inner, inferred, found, generic_params);
+                self.unify_type_for_inference(param_ty.inner, arg_ty.inner(), inferred, found, generic_params);
             }
         } else if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
-            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref.type_args.len() >= param_ty.elems.len() {
+            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref().type_args.len() >= param_ty.elems.len() {
                 for i in 0usize..param_ty.elems.len() {
-                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.struct_ref.type_args[i], inferred, found, generic_params);
+                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.struct_ref().type_args[i], inferred, found, generic_params);
                 }
             }
         } else if param_ty.tag == TyTag::Tuple && param_ty.elems.len() > 0 {
-            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems.len() >= param_ty.elems.len() {
+            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() >= param_ty.elems.len() {
                 for i in 0usize..param_ty.elems.len() {
-                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.elems[i], inferred, found, generic_params);
+                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.elems()[i], inferred, found, generic_params);
                 }
             }
         }
@@ -2990,8 +2990,8 @@ impl Mono {
                                 if bound.ret_ty.elems[re].tag == TyTag::Placeholder && bound.ret_ty.elems[re].id._value == def.generic_params[g].id._value {
                                     if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
                                         let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
-                                        if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref.type_args.len() > re {
-                                            inferred[g] = ret_ty.struct_ref.type_args[re];
+                                        if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref().type_args.len() > re {
+                                            inferred[g] = ret_ty.struct_ref().type_args[re];
                                             found[g] = true;
                                         }
                                     }
@@ -3035,10 +3035,10 @@ impl Mono {
                 self.return_type
             };
             // Match: fn returns GenericType<T> (TyTag::Generic) and hint is a struct with type_args
-            if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Struct && hint_ty.struct_ref.type_args.len() > 0 {
+            if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Struct && hint_ty.struct_ref().type_args.len() > 0 {
                 // TyTag::Generic has inner (base type) and elems (type args as AST types)
                 let ret_type_args = ret_ty_ast.elems;
-                let hint_type_args = hint_ty.struct_ref.type_args;
+                let hint_type_args = hint_ty.struct_ref().type_args;
                 let min_len = if ret_type_args.len() < hint_type_args.len() { ret_type_args.len() } else { hint_type_args.len() };
                 for ta in 0usize..min_len {
                     if ret_type_args[ta].tag == TyTag::Placeholder {
@@ -3055,14 +3055,14 @@ impl Mono {
             // Match: fn returns GenericType<T> (TyTag::Generic) and hint is a tuple
             // This handles cases like slice<Ptr> where slice is a struct but the hint
             // is the tuple representation {Ptr, usize}
-            if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Tuple && hint_ty.elems.len() > 0 {
+            if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Tuple && hint_ty.elems().len() > 0 {
                 let ret_type_args = ret_ty_ast.elems;
-                let min_len = if ret_type_args.len() < hint_ty.elems.len() { ret_type_args.len() } else { hint_ty.elems.len() };
+                let min_len = if ret_type_args.len() < hint_ty.elems().len() { ret_type_args.len() } else { hint_ty.elems().len() };
                 for ta in 0usize..min_len {
                     if ret_type_args[ta].tag == TyTag::Placeholder {
                         for g in 0usize..num_generics {
                             if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id._value {
-                                inferred[g] = hint_ty.elems[ta];
+                                inferred[g] = hint_ty.elems()[ta];
                                 found[g] = true;
                                 break;
                             }
@@ -3163,8 +3163,8 @@ impl Mono {
         // Handle slice built-in methods
         let slice_ty = ir_obj.ty;
         let is_ptr_to_slice = false;
-        if slice_ty.tag == IrTyTag::Pointer && self.is_slice_ty(slice_ty.inner) {
-            slice_ty = slice_ty.inner;
+        if slice_ty.tag == IrTyTag::Pointer && self.is_slice_ty(slice_ty.inner()) {
+            slice_ty = slice_ty.inner();
             is_ptr_to_slice = true;
         }
         if self.is_slice_ty(slice_ty) {
@@ -3196,7 +3196,7 @@ impl Mono {
                     let data_ptr_ty = if slice_ty.tag == IrTyTag::Slice {
                         self.ctx.make_ptr_ty(elem_ty, false)
                     } else {
-                        slice_ty.elems[0]
+                        slice_ty.elems()[0]
                     };
                     let src_ptr = self.mk_field(slice_val, SLICE_DATA_FIELD, data_ptr_ty);
                     let len_val = self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty);
@@ -3296,7 +3296,7 @@ impl Mono {
                 let ptr_ty = if slice_ty.tag == IrTyTag::Slice {
                     self.ctx.make_ptr_ty(self.slice_elem_ty(slice_ty), false)
                 } else {
-                    slice_ty.elems[0]
+                    slice_ty.elems()[0]
                 };
                 let slice_val = if is_ptr_to_slice {
                     self.mk_deref(ir_obj, slice_ty)
@@ -3313,13 +3313,13 @@ impl Mono {
         let method_type_args: &[&IrTy] = &[];
         let resolved_ty = ir_obj.ty;
         if resolved_ty.tag == IrTyTag::Pointer {
-            resolved_ty = resolved_ty.inner;
+            resolved_ty = resolved_ty.inner();
         }
         if resolved_ty.tag == IrTyTag::Struct {
-            scope_idx = resolved_ty.struct_ref.scope_idx;
-            method_type_args = resolved_ty.struct_ref.type_args;
+            scope_idx = resolved_ty.struct_ref().scope_idx;
+            method_type_args = resolved_ty.struct_ref().type_args;
         } else if resolved_ty.tag == IrTyTag::Enum {
-            scope_idx = resolved_ty.enum_ref.scope_idx;
+            scope_idx = resolved_ty.enum_ref().scope_idx;
         } else if self.is_slice_ty(resolved_ty) {
             // Look up #[lang(slice)] struct for methods on slice types
             // slice<Ptr> where Ptr is the pointer-to-element type
@@ -3344,7 +3344,7 @@ impl Mono {
             }
         } else if resolved_ty.tag == IrTyTag::Builtin {
             // Look up #[lang(builtin_X)] struct to find methods on builtin types
-            let lang_name = Mono::builtin_lang_name(resolved_ty.builtin);
+            let lang_name = Mono::builtin_lang_name(resolved_ty.builtin());
             if lang_name.len() > 0 {
                 let lang_id = self.ctx.get_lang_item(lang_name);
                 if lang_id.is_some() {
@@ -3410,9 +3410,9 @@ impl Mono {
             let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, fn_id._value);
             if impl_gp_ids.is_some() && resolved_ty.tag == IrTyTag::Struct {
                 let ids = impl_gp_ids.unwrap();
-                let n_gp = std::cmp::min(ids.len(), resolved_ty.struct_ref.type_args.len());
+                let n_gp = std::cmp::min(ids.len(), resolved_ty.struct_ref().type_args.len());
                 for gi in 0usize..n_gp {
-                    self.type_map.insert(ids[gi]._value, resolved_ty.struct_ref.type_args[gi]);
+                    self.type_map.insert(ids[gi]._value, resolved_ty.struct_ref().type_args[gi]);
                 }
             }
             let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
@@ -3469,7 +3469,7 @@ impl Mono {
                 if self_param_ty.tag == TyTag::Pointer {
                     self_param_ty = self_param_ty.inner;
                     if self_arg_ty.tag == IrTyTag::Pointer {
-                        self_arg_ty = self_arg_ty.inner;
+                        self_arg_ty = self_arg_ty.inner();
                     }
                 }
                 self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, def.generic_params);
@@ -3529,7 +3529,7 @@ impl Mono {
                                 // General case: lower the arg and check if it's a function pointer
                                 let arg_ir = self.lower_expr(arg_expr);
                                 if arg_ir.ty.tag == IrTyTag::FnPointer {
-                                    inferred[g] = arg_ir.ty.ret_ty;
+                                    inferred[g] = arg_ir.ty.ret_ty();
                                     found_count = found_count + 1usize;
                                 }
                             }
@@ -3552,11 +3552,11 @@ impl Mono {
                                     } else {
                                         let arg_ir2 = self.lower_expr(arg_expr);
                                         if arg_ir2.ty.tag == IrTyTag::FnPointer {
-                                            resolved_ret = arg_ir2.ty.ret_ty;
+                                            resolved_ret = arg_ir2.ty.ret_ty();
                                         }
                                     }
-                                    if resolved_ret.tag == IrTyTag::Struct && resolved_ret.struct_ref.type_args.len() > re {
-                                        inferred[g] = resolved_ret.struct_ref.type_args[re];
+                                    if resolved_ret.tag == IrTyTag::Struct && resolved_ret.struct_ref().type_args.len() > re {
+                                        inferred[g] = resolved_ret.struct_ref().type_args[re];
                                         found_count = found_count + 1usize;
                                     }
                                 }
@@ -3786,7 +3786,7 @@ impl Mono {
 
         // Dereference: self_ptr_ty is &ClosureStruct, get the struct type
         let closure_ty = if self_ptr_ty.tag == IrTyTag::Pointer {
-            self_ptr_ty.inner
+            self_ptr_ty.inner()
         } else {
             self_ptr_ty
         };
@@ -3797,7 +3797,7 @@ impl Mono {
         }
 
         // Find the field by name
-        let fields = closure_ty.struct_ref.fields;
+        let fields = closure_ty.struct_ref().fields;
         let field_idx = 0u32;
         let field_ty = self.ctx.void_ty;
         let found = false;
@@ -3822,7 +3822,7 @@ impl Mono {
         if expr.flag {
             // By reference: the field is a pointer, dereference it
             let inner_ty = if field_ty.tag == IrTyTag::Pointer {
-                field_ty.inner
+                field_ty.inner()
             } else {
                 field_ty
             };
@@ -3933,7 +3933,7 @@ impl Mono {
                 // emit align_of on pointee
                 let align_val = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
                 align_val.tag = IrTag::AlignOf;
-                align_val.ir_ty = ret_ty.inner;
+                align_val.ir_ty = ret_ty.inner();
                 self.ctx.arena.alloc(align_val) as &IrExpr
             } else {
                 self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::USize), 1u64)
@@ -4017,9 +4017,9 @@ impl Mono {
             if name == "named_type_name" {
                 // Return the short name for named types, void for anonymous
                 if measured_ty.tag == IrTyTag::Struct {
-                    type_str = measured_ty.struct_ref.name;
+                    type_str = measured_ty.struct_ref().name;
                 } else if measured_ty.tag == IrTyTag::Enum {
-                    type_str = measured_ty.enum_ref.name;
+                    type_str = measured_ty.enum_ref().name;
                 }
                 // For non-named types, return void instead of empty string
                 if type_str.len() == 0 {
@@ -4041,9 +4041,9 @@ impl Mono {
             let measured_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { self.ctx.void_ty };
             let length: u64 = 0;
             if measured_ty.tag == IrTyTag::Array {
-                length = measured_ty.array_size as u64;
+                length = measured_ty.array_size() as u64;
             } else if measured_ty.tag == IrTyTag::Tuple {
-                length = measured_ty.elems.len() as u64;
+                length = measured_ty.elems().len() as u64;
             }
             return self.mk_int_lit(usize_ty, length);
         } else if name == "asm" {
@@ -4141,11 +4141,11 @@ impl Mono {
 
                         // Build proper IrTyTag::Slice type from the pointer's element type
                         let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
-                            ir_ptr.ty.inner
+                            ir_ptr.ty.inner()
                         } else {
                             self.ctx.intern_builtin_ty(BuiltinType::U8)
                         };
-                        let is_const = ir_ptr.ty.is_const;
+                        let is_const = ir_ptr.ty.is_const();
                         let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
 
                         let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
@@ -4237,11 +4237,11 @@ impl Mono {
                             let ir_ptr = self.lower_expr(expr.args[0]);
                             let ir_len = self.lower_expr(expr.args[1]);
                             let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
-                                ir_ptr.ty.inner
+                                ir_ptr.ty.inner()
                             } else {
                                 self.ctx.intern_builtin_ty(BuiltinType::U8)
                             };
-                            let is_const = ir_ptr.ty.is_const;
+                            let is_const = ir_ptr.ty.is_const();
                             let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
                             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
                             items[0] = ir_ptr;
@@ -4259,14 +4259,14 @@ impl Mono {
                         let call_ta = inferred;
                         if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
                             // Try to extract type args from expected_type (e.g. Option<usize>)
-                            if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref.type_args.len() == def.generic_params.len() {
-                                call_ta = self.expected_type.struct_ref.type_args;
+                            if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref().type_args.len() == def.generic_params.len() {
+                                call_ta = self.expected_type.struct_ref().type_args;
                             } else if self.expected_type.tag == IrTyTag::Struct && def.generic_params.len() == 1usize {
                                 // For single-generic functions returning a wrapper struct,
                                 // the expected type's first type arg is probably the generic param
-                                if self.expected_type.struct_ref.type_args.len() > 0usize {
+                                if self.expected_type.struct_ref().type_args.len() > 0usize {
                                     let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
-                                    ctx_ta[0] = self.expected_type.struct_ref.type_args[0];
+                                    ctx_ta[0] = self.expected_type.struct_ref().type_args[0];
                                     call_ta = ctx_ta;
                                 }
                             }
@@ -4297,7 +4297,7 @@ impl Mono {
                         if self_param_opt.is_some() && expr.args.len() > 0 {
                             let first_arg_ir = self.lower_expr(expr.args[0]);
                             let self_ty = if first_arg_ir.ty.tag == IrTyTag::Pointer {
-                                first_arg_ir.ty.inner
+                                first_arg_ir.ty.inner()
                             } else {
                                 first_arg_ir.ty
                             };
@@ -4334,7 +4334,7 @@ impl Mono {
             // Determine return type from callee
             if ir_callee.ty.tag == IrTyTag::FnPointer {
                 // Indirect call through function pointer
-                let ret_ty = ir_callee.ty.ret_ty;
+                let ret_ty = ir_callee.ty.ret_ty();
                 let result = IrExpr::void_expr(ret_ty);
                 result.tag = IrTag::Call;
                 result.call_target = IrCallTarget { tag: CallKind::Indirect, fn_ref: IrFnRef::empty(), callee: ir_callee };
@@ -4343,7 +4343,7 @@ impl Mono {
             } else if ir_callee.ty.tag == IrTyTag::Closure {
                 // Closure call: take &callee, get fn from closure type, prepend self arg
                 let closure_ty = ir_callee.ty;
-                let fn_ref = closure_ty.closure_fn;
+                let fn_ref = closure_ty.closure_fn();
 
                 // Look up the function to get its return type
                 let ret_ty = self.ctx.void_ty;
@@ -4378,7 +4378,7 @@ impl Mono {
         } else if expr.tag == ExprTag::StructLit {
             let ir_ty = self.resolve_struct_lit_type(expr);
 
-            if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref.is_union {
+            if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref().is_union {
                 // Union: only lower the single initialized field
                 if expr.field_inits.len() != 1 {
                     self.ctx.diag.error(expr.span, "union literal must initialize exactly one field");
@@ -4387,9 +4387,9 @@ impl Mono {
                 let fi = &expr.field_inits[0];
                 // Find the field type in the struct def
                 let field_ty = self.ctx.void_ty;
-                for j in 0usize..ir_ty.struct_ref.fields.len() {
-                    if ir_ty.struct_ref.fields[j].name == fi.name {
-                        field_ty = ir_ty.struct_ref.fields[j].ty;
+                for j in 0usize..ir_ty.struct_ref().fields.len() {
+                    if ir_ty.struct_ref().fields[j].name == fi.name {
+                        field_ty = ir_ty.struct_ref().fields[j].ty;
                         break;
                     }
                 }
@@ -4403,13 +4403,13 @@ impl Mono {
             }
 
             // Reorder field_inits to match struct definition order
-            let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref.fields.len() } else { expr.field_inits.len() };
+            let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref().fields.len() } else { expr.field_inits.len() };
             let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);
             for i in 0usize..num_fields {
                 if ir_ty.tag == IrTyTag::Struct {
                     // Find the field_init matching this struct field by name
-                    let def_name = ir_ty.struct_ref.fields[i].name;
-                    let field_ty = ir_ty.struct_ref.fields[i].ty;
+                    let def_name = ir_ty.struct_ref().fields[i].name;
+                    let field_ty = ir_ty.struct_ref().fields[i].ty;
                     let found = false;
                     for j in 0usize..expr.field_inits.len() {
                         if expr.field_inits[j].name == def_name {
@@ -4493,27 +4493,27 @@ impl Mono {
     // Returns (field_idx, field_ty, found)
     fn resolve_field(self: &mut Mono, ty: &IrTy, field_name: &[u8]) -> (u32, &IrTy, bool) {
         if ty.tag == IrTyTag::Struct {
-            let nf = ty.struct_ref.fields.len();
+            let nf = ty.struct_ref().fields.len();
             for i in 0usize..nf {
-                let fname = ty.struct_ref.fields[i].name;
+                let fname = ty.struct_ref().fields[i].name;
                 if fname.len() == field_name.len() {
                     if fname.len() == 0usize || libc::memcmp(&fname[0] as &libc::c_void, &field_name[0] as &libc::c_void, fname.len()) == 0i32 {
-                        return (i as u32, ty.struct_ref.fields[i].ty, true);
+                        return (i as u32, ty.struct_ref().fields[i].ty, true);
                     }
                 }
             }
             (0u32, self.ctx.void_ty, false)
         } else if ty.tag == IrTyTag::Pointer {
             // Auto-deref
-            self.resolve_field(ty.inner, field_name)
+            self.resolve_field(ty.inner(), field_name)
         } else if self.is_slice_ty(ty) {
             // Slice fields: _ptr (field 0), _len (field 1)
             if field_name == "_ptr" {
                 let ptr_ty = if ty.tag == IrTyTag::Slice {
-                    self.ctx.make_ptr_ty(ty.inner, false)
+                    self.ctx.make_ptr_ty(ty.inner(), false)
                 } else {
                     // IrTyTag::Tuple representation
-                    ty.elems[0]
+                    ty.elems()[0]
                 };
                 (0u32, ptr_ty, true)
             } else if field_name == "_len" {
@@ -4534,14 +4534,14 @@ impl Mono {
         let a_ty = expr.ty;
         while a_ty.tag == IrTyTag::Pointer {
             a = a + 1;
-            a_ty = a_ty.inner;
+            a_ty = a_ty.inner();
         }
         // Count pointer depth of target type
         let b: i32 = 0;
         let b_ty = target_ty;
         while b_ty.tag == IrTyTag::Pointer {
             b = b + 1;
-            b_ty = b_ty.inner;
+            b_ty = b_ty.inner();
         }
         let diff = a - b;
         if diff == 0 {
@@ -4559,7 +4559,7 @@ impl Mono {
             // Need to deref
             let i = 0;
             while i < diff {
-                result = self.mk_deref(result, result.ty.inner);
+                result = self.mk_deref(result, result.ty.inner());
                 i = i + 1;
             }
         }

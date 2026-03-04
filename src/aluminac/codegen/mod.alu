@@ -227,13 +227,13 @@ impl CodegenCtx {
 
     fn llvm_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
         if ty.tag == IrTyTag::Builtin {
-            self.builtin_to_llvm(ty.builtin)
+            self.builtin_to_llvm(ty.builtin())
         } else if ty.tag == IrTyTag::Pointer {
-            let inner_ptr = ty.inner as &void as usize;
+            let inner_ptr = ty.inner() as &void as usize;
             if inner_ptr == 0 || inner_ptr < 4096usize {
                 return self.ptr_type;
             }
-            let inner_ty = self.llvm_type(ty.inner);
+            let inner_ty = self.llvm_type(ty.inner());
             // LLVM doesn't support void*, use i8* instead
             if LLVMGetTypeKind(inner_ty) == LLVMTypeKind::Void {
                 self.ptr_type
@@ -242,20 +242,20 @@ impl CodegenCtx {
             }
         } else if ty.tag == IrTyTag::Array {
             // For zero-length arrays, use [0 x i8] to avoid issues with recursive element types
-            if ty.array_size == 0 {
+            if ty.array_size() == 0 {
                 return LLVMArrayType(self.i8_type, 0);
             }
-            let elem_ty = self.llvm_type(ty.inner);
+            let elem_ty = self.llvm_type(ty.inner());
             // Can't have void element in arrays
             let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.i8_type } else { elem_ty };
-            LLVMArrayType(safe_elem, ty.array_size as u32)
+            LLVMArrayType(safe_elem, ty.array_size() as u32)
         } else if ty.tag == IrTyTag::Tuple {
-            if ty.elems.len() == 0 {
+            if ty.elems().len() == 0 {
                 return self.void_type;
             }
-            let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(ty.elems.len());
-            for i in 0usize..ty.elems.len() {
-                let elem_ty = self.llvm_type(ty.elems[i]);
+            let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(ty.elems().len());
+            for i in 0usize..ty.elems().len() {
+                let elem_ty = self.llvm_type(ty.elems()[i]);
                 // LLVM doesn't allow void as struct/tuple member
                 if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
                     llvm_elems[i] = self.i8_type;
@@ -266,13 +266,13 @@ impl CodegenCtx {
             LLVMStructTypeInContext(
                 self.context,
                 &llvm_elems[0],
-                ty.elems.len() as u32,
+                ty.elems().len() as u32,
                 0i32 // not packed
             )
         } else if ty.tag == IrTyTag::Slice {
             // Slice fat pointer: { data_ptr, usize }
             let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
-            let inner_llvm = self.llvm_type(ty.inner);
+            let inner_llvm = self.llvm_type(ty.inner());
             let safe_inner = if LLVMGetTypeKind(inner_llvm) == LLVMTypeKind::Void { self.i8_type } else { inner_llvm };
             llvm_elems[0] = LLVMPointerType(safe_inner, 0);
             llvm_elems[1] = self.builtin_to_llvm(BuiltinType::USize);
@@ -286,9 +286,10 @@ impl CodegenCtx {
             // Function pointers are just i8* in LLVM
             self.ptr_type
         } else if ty.tag == IrTyTag::Struct || ty.tag == IrTyTag::Closure {
-            self.llvm_struct_type(&ty.struct_ref)
+            let sr = ty.struct_ref();
+            self.llvm_struct_type(&sr)
         } else if ty.tag == IrTyTag::Enum {
-            self.llvm_type(ty.enum_ref.underlying)
+            self.llvm_type(ty.enum_ref().underlying)
         } else if ty.tag == IrTyTag::Void {
             self.void_type
         } else if ty.tag == IrTyTag::Never {
@@ -544,7 +545,7 @@ impl CodegenCtx {
         }
 
         if ty.tag == IrTyTag::Builtin {
-            let bt = ty.builtin;
+            let bt = ty.builtin();
             let name: &[u8];
             let encoding: u32;
             let size_bits: u64;
@@ -584,7 +585,7 @@ impl CodegenCtx {
         }
 
         if ty.tag == IrTyTag::Pointer {
-            let pointee_di = self.get_or_create_di_type(ty.inner);
+            let pointee_di = self.get_or_create_di_type(ty.inner());
             return LLVMDIBuilderCreatePointerType(
                 self.di_builder,
                 pointee_di,
@@ -1180,7 +1181,7 @@ impl CodegenCtx {
         };
 
         // Return the user main's return value (or 0 if void)
-        if ir_fn.return_type.tag == IrTyTag::Builtin && ir_fn.return_type.builtin == BuiltinType::I32 {
+        if ir_fn.return_type.tag == IrTyTag::Builtin && ir_fn.return_type.builtin() == BuiltinType::I32 {
             LLVMBuildRet(self.builder, result);
         } else {
             LLVMBuildRet(self.builder, LLVMConstInt(i32_ty, 0u64, 0i32));

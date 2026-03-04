@@ -624,87 +624,130 @@ enum IrTyTag {
 const SLICE_DATA_FIELD: u32 = 0u32;
 const SLICE_LEN_FIELD: u32 = 1u32;
 
+struct _IrTyPointerData {
+    inner: &IrTy,
+    is_const: bool,
+}
+
+struct _IrTyArrayData {
+    inner: &IrTy,
+    array_size: usize,
+}
+
+struct _IrTyFnPtrData {
+    elems: &[&IrTy],
+    ret_ty: &IrTy,
+}
+
+struct _IrTySliceData {
+    inner: &IrTy,
+    is_const: bool,
+    elems: &[&IrTy],               // fat pointer tuple {ptr, len}
+}
+
+struct _IrTyClosureData {
+    struct_ref: IrStructRef,
+    closure_fn: IrFnRef,
+}
+
+union _IrTyData {
+    builtin: BuiltinType,           // Builtin, Never
+    pointer: _IrTyPointerData,      // Pointer
+    array: _IrTyArrayData,          // Array
+    elems: &[&IrTy],               // Tuple
+    fn_ptr: _IrTyFnPtrData,        // FnPointer
+    struct_ref: IrStructRef,        // Struct
+    enum_ref: IrEnumRef,            // Enum
+    closure: _IrTyClosureData,      // Closure
+    slice: _IrTySliceData,          // Slice
+}
+
 struct IrTy {
     tag: IrTyTag,
-    builtin: BuiltinType,
-    inner: &IrTy,              // pointer pointee, array elem
-    is_const: bool,             // pointer
-    array_size: usize,          // array
-    elems: &[&IrTy],           // tuple, fn pointer params
-    ret_ty: &IrTy,             // fn pointer return
-    struct_ref: IrStructRef,    // struct, also used for closure data layout
-    enum_ref: IrEnumRef,        // enum
-    closure_fn: IrFnRef,        // closure: the associated function
+    _data: _IrTyData,
 }
 
 impl IrTy {
-    /// Returns a zeroed IrTy with empty slices and refs. Callers set tag + relevant fields.
-    fn default() -> IrTy {
-        let ty: IrTy = std::mem::zeroed::<IrTy>();
-        ty.elems = &[];
-        ty.struct_ref = IrStructRef::empty();
-        ty.enum_ref = IrEnumRef::empty();
-        ty.closure_fn = IrFnRef::empty();
-        ty
+    // Accessors
+    fn builtin(self: &IrTy) -> BuiltinType { self._data.builtin }
+    fn inner(self: &IrTy) -> &IrTy {
+        if self.tag == IrTyTag::Slice { self._data.slice.inner }
+        else if self.tag == IrTyTag::Array { self._data.array.inner }
+        else { self._data.pointer.inner }
     }
+    fn is_const(self: &IrTy) -> bool {
+        if self.tag == IrTyTag::Slice { self._data.slice.is_const }
+        else { self._data.pointer.is_const }
+    }
+    fn array_size(self: &IrTy) -> usize { self._data.array.array_size }
+    fn elems(self: &IrTy) -> &[&IrTy] {
+        if self.tag == IrTyTag::Slice { self._data.slice.elems }
+        else if self.tag == IrTyTag::FnPointer { self._data.fn_ptr.elems }
+        else { self._data.elems }
+    }
+    fn ret_ty(self: &IrTy) -> &IrTy { self._data.fn_ptr.ret_ty }
+    fn struct_ref(self: &IrTy) -> IrStructRef { self._data.struct_ref }
+    fn enum_ref(self: &IrTy) -> IrEnumRef { self._data.enum_ref }
+    fn closure_fn(self: &IrTy) -> IrFnRef { self._data.closure.closure_fn }
+    // closure also needs struct_ref, accessed via _data.closure.struct_ref
 
     fn mk_builtin(bt: BuiltinType) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Builtin; ty.builtin = bt; ty
+        IrTy { tag: IrTyTag::Builtin, _data: _IrTyData { builtin: bt } }
     }
     fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Pointer; ty.inner = pointee; ty.is_const = is_const; ty
+        IrTy { tag: IrTyTag::Pointer, _data: _IrTyData { pointer: _IrTyPointerData { inner: pointee, is_const: is_const } } }
     }
     fn mk_array(elem: &IrTy, size: usize) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Array; ty.inner = elem; ty.array_size = size; ty
+        IrTy { tag: IrTyTag::Array, _data: _IrTyData { array: _IrTyArrayData { inner: elem, array_size: size } } }
     }
     fn mk_tuple(elems: &[&IrTy]) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Tuple; ty.elems = elems; ty
+        IrTy { tag: IrTyTag::Tuple, _data: _IrTyData { elems: elems } }
     }
     fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::FnPointer; ty.elems = params; ty.ret_ty = ret; ty
+        IrTy { tag: IrTyTag::FnPointer, _data: _IrTyData { fn_ptr: _IrTyFnPtrData { elems: params, ret_ty: ret } } }
     }
     fn mk_struct(s: IrStructRef) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Struct; ty.struct_ref = s; ty
+        IrTy { tag: IrTyTag::Struct, _data: _IrTyData { struct_ref: s } }
     }
     fn mk_closure(s: IrStructRef, fn_ref: IrFnRef) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Closure; ty.struct_ref = s; ty.closure_fn = fn_ref; ty
+        IrTy { tag: IrTyTag::Closure, _data: _IrTyData { closure: _IrTyClosureData { struct_ref: s, closure_fn: fn_ref } } }
     }
     fn mk_enum(e: IrEnumRef) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Enum; ty.enum_ref = e; ty
+        IrTy { tag: IrTyTag::Enum, _data: _IrTyData { enum_ref: e } }
     }
     fn mk_void() -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Void; ty
+        IrTy { tag: IrTyTag::Void, _data: _IrTyData { builtin: BuiltinType::Void } }
     }
     fn mk_never() -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Never; ty.builtin = BuiltinType::Never; ty
+        IrTy { tag: IrTyTag::Never, _data: _IrTyData { builtin: BuiltinType::Never } }
     }
     fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
-        let ty = IrTy::default(); ty.tag = IrTyTag::Slice; ty.inner = elem; ty.is_const = is_const; ty
+        IrTy { tag: IrTyTag::Slice, _data: _IrTyData { slice: _IrTySliceData { inner: elem, is_const: is_const, elems: &[] } } }
     }
 
     fn is_void(self: &IrTy) -> bool {
-        self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin == BuiltinType::Void)
+        self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void)
     }
     fn is_never(self: &IrTy) -> bool {
-        self.tag == IrTyTag::Never || (self.tag == IrTyTag::Builtin && self.builtin == BuiltinType::Never)
+        self.tag == IrTyTag::Never || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Never)
     }
     fn is_zero_sized(self: &IrTy) -> bool {
         if self.tag == IrTyTag::Void { return true; }
-        if self.tag == IrTyTag::Builtin && self.builtin == BuiltinType::Void { return true; }
+        if self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void { return true; }
         if self.tag == IrTyTag::Tuple {
-            for i in 0usize..self.elems.len() {
-                if !self.elems[i].is_zero_sized() { return false; }
+            for i in 0usize..self.elems().len() {
+                if !self.elems()[i].is_zero_sized() { return false; }
             }
             return true;
         }
         if self.tag == IrTyTag::Array {
-            return self.array_size == 0 || self.inner.is_zero_sized();
+            return self.array_size() == 0 || self.inner().is_zero_sized();
         }
         if self.tag == IrTyTag::Struct {
-            return self.struct_ref.is_zero_sized;
+            return self.struct_ref().is_zero_sized;
         }
         if self.tag == IrTyTag::Closure {
-            return self.struct_ref.is_zero_sized;
+            return self._data.closure.struct_ref.is_zero_sized;
         }
         false
     }

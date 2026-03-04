@@ -362,7 +362,7 @@ impl FnCodegen {
     }
 
     fn irty_inner(ty: &IrTy) -> &IrTy {
-        ty.inner
+        ty.inner()
     }
 
     fn call_target_name(t: &IrCallTarget) -> &[u8] {
@@ -515,7 +515,7 @@ impl FnCodegen {
                         return LLVMGetUndef(self.ctx.i8_type);
                     }
                     // Union: bitcast pointer instead of GEP
-                    if pointee_ir_ty.tag == IrTyTag::Struct && pointee_ir_ty.struct_ref.is_union {
+                    if pointee_ir_ty.tag == IrTyTag::Struct && pointee_ir_ty.struct_ref().is_union {
                         let field_ptr_ty = LLVMPointerType(result_ty, 0);
                         let field_ptr = LLVMBuildBitCast(self.ctx.builder, ptr_val, field_ptr_ty, self.temp_cname());
                         return LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
@@ -545,7 +545,7 @@ impl FnCodegen {
                 return LLVMGetUndef(self.ctx.i8_type);
             }
             // Union: bitcast pointer instead of GEP
-            if lhs_ir_ty.tag == IrTyTag::Struct && lhs_ir_ty.struct_ref.is_union {
+            if lhs_ir_ty.tag == IrTyTag::Struct && lhs_ir_ty.struct_ref().is_union {
                 let field_ptr_ty = LLVMPointerType(result_ty, 0);
                 let field_ptr = LLVMBuildBitCast(self.ctx.builder, obj_ptr, field_ptr_ty, self.temp_cname());
                 return LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname());
@@ -711,7 +711,7 @@ impl FnCodegen {
             // Create an alloca, store fields, load result
             let alloca = LLVMBuildAlloca(self.ctx.builder, llvm_ty, self.temp_cname());
 
-            if expr.ir_ty.tag == IrTyTag::Struct && expr.ir_ty.struct_ref.is_union {
+            if expr.ir_ty.tag == IrTyTag::Struct && expr.ir_ty.struct_ref().is_union {
                 // Union: store the single initialized field via bitcast
                 if expr.items.len() == 1 {
                     let field_val = self.gen_expr(expr.items[0]);
@@ -1040,7 +1040,7 @@ impl FnCodegen {
                 if LLVMGetTypeKind(pointee_ty) == LLVMTypeKind::Struct {
                     let ptr_val = self.gen_expr(expr.lhs);
                     // Union: bitcast pointer instead of GEP
-                    if pointee_ir_ty.tag == IrTyTag::Struct && pointee_ir_ty.struct_ref.is_union {
+                    if pointee_ir_ty.tag == IrTyTag::Struct && pointee_ir_ty.struct_ref().is_union {
                         let result_ty = self.ctx.llvm_type(expr.ty);
                         let field_ptr_ty = LLVMPointerType(result_ty, 0);
                         return LLVMBuildBitCast(self.ctx.builder, ptr_val, field_ptr_ty, self.temp_cname());
@@ -1058,7 +1058,7 @@ impl FnCodegen {
             }
             let obj_ptr = self.gen_lvalue(expr.lhs);
             // Union: bitcast pointer instead of GEP
-            if lhs_ir_ty.tag == IrTyTag::Struct && lhs_ir_ty.struct_ref.is_union {
+            if lhs_ir_ty.tag == IrTyTag::Struct && lhs_ir_ty.struct_ref().is_union {
                 let result_ty = self.ctx.llvm_type(expr.ty);
                 let field_ptr_ty = LLVMPointerType(result_ty, 0);
                 return LLVMBuildBitCast(self.ctx.builder, obj_ptr, field_ptr_ty, self.temp_cname());
@@ -1185,13 +1185,13 @@ impl FnCodegen {
         }
 
         let is_float = if lhs.ty.tag == IrTyTag::Builtin {
-            lhs.ty.builtin.is_float()
+            lhs.ty.builtin().is_float()
         } else {
             false
         };
 
         let is_signed = if lhs.ty.tag == IrTyTag::Builtin {
-            lhs.ty.builtin.is_signed()
+            lhs.ty.builtin().is_signed()
         } else {
             false
         };
@@ -1233,7 +1233,7 @@ impl FnCodegen {
             },
             BinOp::Eq => {
                 let is_slice = lhs.ty.tag == IrTyTag::Slice ||
-                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IrTyTag::Pointer);
+                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems().len() == 2usize && lhs.ty.elems()[0].tag == IrTyTag::Pointer);
                 if is_slice {
                     self.gen_slice_eq(lhs_val, rhs_val, lhs.ty)
                 } else if LLVMGetTypeKind(LLVMTypeOf(lhs_val)) == LLVMTypeKind::Struct {
@@ -1244,7 +1244,7 @@ impl FnCodegen {
             },
             BinOp::Ne => {
                 let is_slice = lhs.ty.tag == IrTyTag::Slice ||
-                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IrTyTag::Pointer);
+                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems().len() == 2usize && lhs.ty.elems()[0].tag == IrTyTag::Pointer);
                 if is_slice {
                     let eq = self.gen_slice_eq(lhs_val, rhs_val, lhs.ty);
                     LLVMBuildNot(self.ctx.builder, eq, n)
@@ -1497,7 +1497,7 @@ impl FnCodegen {
         }
 
         let is_float = if operand.ty.tag == IrTyTag::Builtin {
-            operand.ty.builtin.is_float()
+            operand.ty.builtin().is_float()
         } else {
             false
         };
@@ -1730,33 +1730,33 @@ impl FnCodegen {
         let src_ty = inner.ty;
         let dst_llvm = self.ctx.llvm_type(target_ty);
         let src_is_int = if src_ty.tag == IrTyTag::Builtin {
-            src_ty.builtin.is_integer() || src_ty.builtin == BuiltinType::Bool
+            src_ty.builtin().is_integer() || src_ty.builtin() == BuiltinType::Bool
         } else if src_ty.tag == IrTyTag::Enum {
             true
         } else {
             false
         };
         let src_is_float = if src_ty.tag == IrTyTag::Builtin {
-            src_ty.builtin.is_float()
+            src_ty.builtin().is_float()
         } else {
             false
         };
         let src_is_ptr = src_ty.tag == IrTyTag::Pointer || src_ty.tag == IrTyTag::FnPointer;
         let src_is_signed = if src_ty.tag == IrTyTag::Builtin {
-            src_ty.builtin.is_signed()
+            src_ty.builtin().is_signed()
         } else {
             false
         };
 
         let dst_is_int = if target_ty.tag == IrTyTag::Builtin {
-            target_ty.builtin.is_integer() || target_ty.builtin == BuiltinType::Bool
+            target_ty.builtin().is_integer() || target_ty.builtin() == BuiltinType::Bool
         } else if target_ty.tag == IrTyTag::Enum {
             true
         } else {
             false
         };
         let dst_is_float = if target_ty.tag == IrTyTag::Builtin {
-            target_ty.builtin.is_float()
+            target_ty.builtin().is_float()
         } else {
             false
         };
