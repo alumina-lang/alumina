@@ -102,12 +102,12 @@ impl Pass2 {
             let has_proto_id = false;
             let mixin_ty_args: &[&Ty] = &[];
             if proto_ty.tag == TyTag::Named {
-                proto_id_val = proto_ty.id._value;
+                proto_id_val = proto_ty.id()._value;
                 has_proto_id = true;
-            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner.tag == TyTag::Named {
-                proto_id_val = proto_ty.inner.id._value;
+            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner().tag == TyTag::Named {
+                proto_id_val = proto_ty.inner().id()._value;
                 has_proto_id = true;
-                mixin_ty_args = proto_ty.elems;
+                mixin_ty_args = proto_ty.elems();
             }
             if !has_proto_id {
                 continue;
@@ -549,11 +549,7 @@ impl Pass2 {
                     // Parse size as expression for const evaluation
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let size_expr = expr_parser.parse_expr(size_node.unwrap());
-                    let ty = Ty::default();
-                    ty.tag = TyTag::Array;
-                    ty.inner = inner_ty;
-                    ty.typeof_expr = size_expr;
-                    return self.ctx.alloc_ty(ty);
+                    return self.ctx.alloc_ty(Ty::array_ty_with_expr(inner_ty, size_expr));
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
@@ -644,10 +640,7 @@ impl Pass2 {
                 if !inner.is_none() {
                     let expr_parser = ExprParser::new(self.ctx, scope_idx);
                     let expr = expr_parser.parse_expr(inner.unwrap());
-                    let ty = Ty::default();
-                    ty.tag = TyTag::Typeof;
-                    ty.typeof_expr = expr;
-                    return self.ctx.alloc_ty(ty);
+                    return self.ctx.alloc_ty(Ty::typeof_ty(expr));
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
@@ -689,10 +682,7 @@ impl Pass2 {
                         param_expr.str_val = name;
                         param_expr.int_val = param_idx as u64;
                         param_expr.flag = (param_idx == self.ctx.macro_variadic_param_idx);
-                        let ty = Ty::default();
-                        ty.tag = TyTag::Typeof;
-                        ty.typeof_expr = self.ctx.alloc_expr(param_expr);
-                        return self.ctx.alloc_ty(ty);
+                        return self.ctx.alloc_ty(Ty::typeof_ty(self.ctx.alloc_expr(param_expr)));
                     }
                     return self.ctx.alloc_ty(Ty::unresolved());
                 }
@@ -1058,12 +1048,12 @@ impl Pass2 {
             let has_proto_id = false;
             let mixin_ty_args: &[&Ty] = &[];
             if proto_ty.tag == TyTag::Named {
-                proto_id_val = proto_ty.id._value;
+                proto_id_val = proto_ty.id()._value;
                 has_proto_id = true;
-            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner.tag == TyTag::Named {
-                proto_id_val = proto_ty.inner.id._value;
+            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner().tag == TyTag::Named {
+                proto_id_val = proto_ty.inner().id()._value;
                 has_proto_id = true;
-                mixin_ty_args = proto_ty.elems;  // e.g. [Counter, i32] from mixin IteratorExt<Counter, i32>
+                mixin_ty_args = proto_ty.elems();  // e.g. [Counter, i32] from mixin IteratorExt<Counter, i32>
             }
 
             if !has_proto_id {

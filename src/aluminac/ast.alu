@@ -140,63 +140,97 @@ enum TyTag {
     When = 12i32,
 }
 
+struct _TyPointerData { inner: &Ty, is_const: bool }
+struct _TyArrayData { inner: &Ty, array_size: usize }
+struct _TyFnPtrData { elems: &[&Ty], ret_ty: &Ty }
+struct _TyGenericData { inner: &Ty, elems: &[&Ty] }
+struct _TyWhenData { inner: &Ty, ret_ty: &Ty, typeof_expr: &Expr }
+
+union _TyData {
+    builtin: BuiltinType,        // Builtin, Never
+    id: Id,                       // Placeholder, Named
+    pointer: _TyPointerData,     // Pointer, Slice
+    array: _TyArrayData,         // Array
+    elems: &[&Ty],              // Tuple
+    fn_ptr: _TyFnPtrData,       // FnPointer
+    generic: _TyGenericData,     // Generic
+    typeof_expr: &Expr,          // Typeof
+    when: _TyWhenData,           // When
+}
+
 struct Ty {
     tag: TyTag,
-    // Data fields reused depending on tag:
-    builtin: BuiltinType,      // TyTag::Builtin
-    id: Id,                     // TyTag::Placeholder, TyTag::Named
-    inner: &Ty,                 // TyTag::Pointer, TyTag::Slice, TyTag::Array, TyTag::Generic base
-    is_const: bool,             // TyTag::Pointer, TyTag::Slice
-    array_size: usize,          // TyTag::Array
-    elems: &[&Ty],              // TyTag::Tuple, TyTag::FnPointer params, TyTag::Generic args
-    ret_ty: &Ty,                // TyTag::FnPointer return type
-    typeof_expr: &Expr,         // TyTag::Typeof
+    _data: _TyData,
 }
 
 impl Ty {
-    /// Returns a zeroed Ty with empty slices. Callers set tag + relevant fields.
-    fn default() -> Ty {
-        let ty: Ty = std::mem::zeroed::<Ty>();
-        ty.elems = &[];
-        ty
+    // Accessors
+    fn builtin(self: &Ty) -> BuiltinType { self._data.builtin }
+    fn id(self: &Ty) -> Id { self._data.id }
+    fn inner(self: &Ty) -> &Ty {
+        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice { self._data.pointer.inner }
+        else if self.tag == TyTag::Array { self._data.array.inner }
+        else if self.tag == TyTag::Generic { self._data.generic.inner }
+        else { self._data.when.inner } // When
+    }
+    fn is_const(self: &Ty) -> bool { self._data.pointer.is_const }
+    fn array_size(self: &Ty) -> usize { self._data.array.array_size }
+    fn elems(self: &Ty) -> &[&Ty] {
+        if self.tag == TyTag::Tuple { self._data.elems }
+        else if self.tag == TyTag::FnPointer { self._data.fn_ptr.elems }
+        else { self._data.generic.elems } // Generic
+    }
+    fn ret_ty(self: &Ty) -> &Ty {
+        if self.tag == TyTag::FnPointer { self._data.fn_ptr.ret_ty }
+        else { self._data.when.ret_ty } // When
+    }
+    fn typeof_expr(self: &Ty) -> &Expr {
+        if self.tag == TyTag::Typeof { self._data.typeof_expr }
+        else { self._data.when.typeof_expr } // When, Array (size expr via array_ty_with_expr)
     }
 
+    // Constructors
     fn placeholder(id: Id) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Placeholder; ty.id = id; ty
+        Ty { tag: TyTag::Placeholder, _data: _TyData { id: id } }
     }
     fn named(id: Id) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Named; ty.id = id; ty
+        Ty { tag: TyTag::Named, _data: _TyData { id: id } }
     }
     fn builtin_ty(bt: BuiltinType) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Builtin; ty.builtin = bt; ty
+        Ty { tag: TyTag::Builtin, _data: _TyData { builtin: bt } }
     }
     fn pointer_ty(pointee: &Ty, is_const: bool) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Pointer; ty.inner = pointee; ty.is_const = is_const; ty
+        Ty { tag: TyTag::Pointer, _data: _TyData { pointer: _TyPointerData { inner: pointee, is_const: is_const } } }
     }
     fn slice_ty(elem: &Ty, is_const: bool) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Slice; ty.inner = elem; ty.is_const = is_const; ty
+        Ty { tag: TyTag::Slice, _data: _TyData { pointer: _TyPointerData { inner: elem, is_const: is_const } } }
     }
     fn array_ty(elem: &Ty, size: usize) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Array; ty.inner = elem; ty.array_size = size; ty
+        Ty { tag: TyTag::Array, _data: _TyData { array: _TyArrayData { inner: elem, array_size: size } } }
+    }
+    fn array_ty_with_expr(elem: &Ty, size_expr: &Expr) -> Ty {
+        Ty { tag: TyTag::Array, _data: _TyData { when: _TyWhenData { inner: elem, ret_ty: std::mem::zeroed::<&Ty>(), typeof_expr: size_expr } } }
     }
     fn tuple_ty(elems: &[&Ty]) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Tuple; ty.elems = elems; ty
+        Ty { tag: TyTag::Tuple, _data: _TyData { elems: elems } }
     }
     fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::FnPointer; ty.elems = params; ty.ret_ty = ret; ty
+        Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret } } }
     }
     fn generic_ty(base: &Ty, args: &[&Ty]) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Generic; ty.inner = base; ty.elems = args; ty
+        Ty { tag: TyTag::Generic, _data: _TyData { generic: _TyGenericData { inner: base, elems: args } } }
     }
     fn never_ty() -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Never; ty.builtin = BuiltinType::Never; ty
+        Ty { tag: TyTag::Never, _data: _TyData { builtin: BuiltinType::Never } }
     }
-    // TyTag::When: condition in typeof_expr, consequence in inner, alternative in ret_ty
     fn when_ty(condition: &Expr, consequence: &Ty, alternative: &Ty) -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::When; ty.inner = consequence; ty.ret_ty = alternative; ty.typeof_expr = condition; ty
+        Ty { tag: TyTag::When, _data: _TyData { when: _TyWhenData { inner: consequence, ret_ty: alternative, typeof_expr: condition } } }
+    }
+    fn typeof_ty(expr: &Expr) -> Ty {
+        Ty { tag: TyTag::Typeof, _data: _TyData { typeof_expr: expr } }
     }
     fn unresolved() -> Ty {
-        let ty = Ty::default(); ty.tag = TyTag::Unresolved; ty
+        Ty { tag: TyTag::Unresolved, _data: _TyData { builtin: BuiltinType::Void } }
     }
     fn void_ty() -> Ty {
         Ty::builtin_ty(BuiltinType::Void)

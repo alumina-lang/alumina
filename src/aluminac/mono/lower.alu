@@ -191,9 +191,9 @@ impl Mono {
     // Resolve an AST type to a concrete IR type
     fn resolve_type(self: &mut Mono, ty: &Ty) -> &IrTy {
         switch ty.tag {
-            TyTag::Builtin => self.ctx.intern_builtin_ty(ty.builtin),
+            TyTag::Builtin => self.ctx.intern_builtin_ty(ty.builtin()),
             TyTag::Placeholder => {
-                let resolved = self.type_map.get(&ty.id._value);
+                let resolved = self.type_map.get(&ty.id()._value);
                 if resolved.is_some() {
                     resolved.unwrap()
                 } else {
@@ -203,21 +203,21 @@ impl Mono {
             }
             TyTag::Pointer => {
                 // Special case: &[T] and &mut [T] are fat pointers (not pointer-to-slice)
-                if ty.inner.tag == TyTag::Slice {
-                    let elem_ty = self.resolve_type(ty.inner.inner);
-                    let data_ty = self.ctx.make_ptr_ty(elem_ty, ty.is_const);
+                if ty.inner().tag == TyTag::Slice {
+                    let elem_ty = self.resolve_type(ty.inner().inner());
+                    let data_ty = self.ctx.make_ptr_ty(elem_ty, ty.is_const());
                     let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
                     let fields = self.ctx.arena.alloc_slice::<&IrTy>(2);
                     fields[0] = data_ty;
                     fields[1] = usize_ty;
                     return self.ctx.make_tuple_ty(fields);
                 }
-                let inner_ty = self.resolve_type(ty.inner);
-                self.ctx.make_ptr_ty(inner_ty, ty.is_const)
+                let inner_ty = self.resolve_type(ty.inner());
+                self.ctx.make_ptr_ty(inner_ty, ty.is_const())
             }
             TyTag::Slice => {
-                let inner_ty = self.resolve_type(ty.inner);
-                let data_ty = self.ctx.make_ptr_ty(inner_ty, ty.is_const);
+                let inner_ty = self.resolve_type(ty.inner());
+                let data_ty = self.ctx.make_ptr_ty(inner_ty, ty.is_const());
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
                 let fields = self.ctx.arena.alloc_slice::<&IrTy>(2);
                 fields[0] = data_ty;
@@ -225,59 +225,59 @@ impl Mono {
                 self.ctx.make_tuple_ty(fields)
             }
             TyTag::Array => {
-                let inner_ty = self.resolve_type(ty.inner);
-                let size: usize = if ty.typeof_expr as &void as usize != 0 {
-                    let ir_size = self.lower_expr(ty.typeof_expr);
+                let inner_ty = self.resolve_type(ty.inner());
+                let size: usize = if ty.typeof_expr() as &void as usize != 0 {
+                    let ir_size = self.lower_expr(ty.typeof_expr());
                     let val = self.try_const_eval_u64(ir_size);
-                    if val.is_some() { val.unwrap() as usize } else { ty.array_size }
+                    if val.is_some() { val.unwrap() as usize } else { ty.array_size() }
                 } else {
-                    ty.array_size
+                    ty.array_size()
                 };
                 self.ctx.make_array_ty(inner_ty, size)
             }
             TyTag::Tuple => {
-                let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
-                for i in 0usize..ty.elems.len() {
-                    resolved[i] = self.resolve_type(ty.elems[i]);
+                let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems().len());
+                for i in 0usize..ty.elems().len() {
+                    resolved[i] = self.resolve_type(ty.elems()[i]);
                 }
                 self.ctx.make_tuple_ty(resolved)
             }
             TyTag::FnPointer => {
-                let resolved_params = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
-                for i in 0usize..ty.elems.len() {
-                    resolved_params[i] = self.resolve_type(ty.elems[i]);
+                let resolved_params = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems().len());
+                for i in 0usize..ty.elems().len() {
+                    resolved_params[i] = self.resolve_type(ty.elems()[i]);
                 }
-                let resolved_ret = self.resolve_type(ty.ret_ty);
+                let resolved_ret = self.resolve_type(ty.ret_ty());
                 self.ctx.make_fn_ptr_ty(resolved_params, resolved_ret)
             }
             TyTag::Named => {
-                let item_ref = ItemRef { id: ty.id };
+                let item_ref = ItemRef { id: ty.id() };
                 self.resolve_named_type(item_ref, &[])
             }
             TyTag::Generic => {
-                let resolved_args = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
-                for i in 0usize..ty.elems.len() {
-                    resolved_args[i] = self.resolve_type(ty.elems[i]);
+                let resolved_args = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems().len());
+                for i in 0usize..ty.elems().len() {
+                    resolved_args[i] = self.resolve_type(ty.elems()[i]);
                 }
-                if ty.inner.tag == TyTag::Named {
-                    let item_ref = ItemRef { id: ty.inner.id };
+                if ty.inner().tag == TyTag::Named {
+                    let item_ref = ItemRef { id: ty.inner().id() };
                     self.resolve_named_type(item_ref, resolved_args)
                 } else {
-                    self.resolve_type(ty.inner)
+                    self.resolve_type(ty.inner())
                 }
             }
             TyTag::Never => self.ctx.never_ty,
             TyTag::Typeof => {
-                let result = self.lower_expr(ty.typeof_expr);
+                let result = self.lower_expr(ty.typeof_expr());
                 result.ty
             }
             TyTag::When => {
-                let cond_ir = self.lower_expr(ty.typeof_expr);
+                let cond_ir = self.lower_expr(ty.typeof_expr());
                 let cond_val = self.try_const_eval_bool(cond_ir);
                 if cond_val.is_some() && cond_val.unwrap() {
-                    self.resolve_type(ty.inner)
+                    self.resolve_type(ty.inner())
                 } else {
-                    self.resolve_type(ty.ret_ty)
+                    self.resolve_type(ty.ret_ty())
                 }
             }
             TyTag::Unresolved => {
@@ -329,10 +329,10 @@ impl Mono {
                     let value_ty = value_ir.ty;
                     // Try to match field type against value type to infer generic params
                     // Handle &mut T pattern: field is Pointer(Placeholder), value is Pointer(concrete)
-                    if field_ast_ty.tag == TyTag::Pointer && field_ast_ty.inner.tag == TyTag::Placeholder {
+                    if field_ast_ty.tag == TyTag::Pointer && field_ast_ty.inner().tag == TyTag::Placeholder {
                         let target_ty = if value_ty.tag == IrTyTag::Pointer { value_ty.inner() } else { value_ty };
                         for gi in 0usize..struct_def.generic_params.len() {
-                            if struct_def.generic_params[gi].id._value == field_ast_ty.inner.id._value {
+                            if struct_def.generic_params[gi].id._value == field_ast_ty.inner().id()._value {
                                 inferred[gi] = target_ty;
                                 inferred_count = inferred_count + 1usize;
                                 break;
@@ -342,7 +342,7 @@ impl Mono {
                     // Handle direct Placeholder: field is Placeholder, value is concrete
                     if field_ast_ty.tag == TyTag::Placeholder {
                         for gi in 0usize..struct_def.generic_params.len() {
-                            if struct_def.generic_params[gi].id._value == field_ast_ty.id._value {
+                            if struct_def.generic_params[gi].id._value == field_ast_ty.id()._value {
                                 inferred[gi] = value_ty;
                                 inferred_count = inferred_count + 1usize;
                                 break;
@@ -2548,10 +2548,10 @@ impl Mono {
             let proto_id_value: usize = 0usize;
             let has_proto_id = false;
             if check_ty.tag == TyTag::Named {
-                proto_id_value = check_ty.id._value;
+                proto_id_value = check_ty.id()._value;
                 has_proto_id = true;
-            } else if check_ty.tag == TyTag::Generic && check_ty.inner.tag == TyTag::Named {
-                proto_id_value = check_ty.inner.id._value;
+            } else if check_ty.tag == TyTag::Generic && check_ty.inner().tag == TyTag::Named {
+                proto_id_value = check_ty.inner().id()._value;
                 has_proto_id = true;
             }
             if has_proto_id {
@@ -2889,7 +2889,7 @@ impl Mono {
     ) {
         if param_ty.tag == TyTag::Placeholder {
             for g in 0usize..generic_params.len() {
-                if generic_params[g].id._value == param_ty.id._value && !found[g] {
+                if generic_params[g].id._value == param_ty.id()._value && !found[g] {
                     inferred[g] = arg_ty;
                     found[g] = true;
                     break;
@@ -2897,24 +2897,24 @@ impl Mono {
             }
         } else if param_ty.tag == TyTag::Pointer {
             if arg_ty.tag == IrTyTag::Pointer {
-                self.unify_type_for_inference(param_ty.inner, arg_ty.inner(), inferred, found, generic_params);
+                self.unify_type_for_inference(param_ty.inner(), arg_ty.inner(), inferred, found, generic_params);
             }
         } else if param_ty.tag == TyTag::Slice {
             if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() == 2 && arg_ty.elems()[0].tag == IrTyTag::Pointer {
-                self.unify_type_for_inference(param_ty.inner, arg_ty.elems()[0].inner(), inferred, found, generic_params);
+                self.unify_type_for_inference(param_ty.inner(), arg_ty.elems()[0].inner(), inferred, found, generic_params);
             } else if arg_ty.tag == IrTyTag::Slice {
-                self.unify_type_for_inference(param_ty.inner, arg_ty.inner(), inferred, found, generic_params);
+                self.unify_type_for_inference(param_ty.inner(), arg_ty.inner(), inferred, found, generic_params);
             }
-        } else if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
-            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref().type_args.len() >= param_ty.elems.len() {
-                for i in 0usize..param_ty.elems.len() {
-                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.struct_ref().type_args[i], inferred, found, generic_params);
+        } else if param_ty.tag == TyTag::Generic && param_ty.elems().len() > 0 {
+            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref().type_args.len() >= param_ty.elems().len() {
+                for i in 0usize..param_ty.elems().len() {
+                    self.unify_type_for_inference(param_ty.elems()[i], arg_ty.struct_ref().type_args[i], inferred, found, generic_params);
                 }
             }
-        } else if param_ty.tag == TyTag::Tuple && param_ty.elems.len() > 0 {
-            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() >= param_ty.elems.len() {
-                for i in 0usize..param_ty.elems.len() {
-                    self.unify_type_for_inference(param_ty.elems[i], arg_ty.elems()[i], inferred, found, generic_params);
+        } else if param_ty.tag == TyTag::Tuple && param_ty.elems().len() > 0 {
+            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() >= param_ty.elems().len() {
+                for i in 0usize..param_ty.elems().len() {
+                    self.unify_type_for_inference(param_ty.elems()[i], arg_ty.elems()[i], inferred, found, generic_params);
                 }
             }
         }
@@ -2957,7 +2957,7 @@ impl Mono {
                         // Find which parameter position corresponds to generic h
                         let param_idx: i32 = -1i32;
                         for pp in 0usize..num_params {
-                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id._value == def.generic_params[h].id._value {
+                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id()._value == def.generic_params[h].id._value {
                                 param_idx = pp as i32;
                                 break;
                             }
@@ -2966,7 +2966,7 @@ impl Mono {
                         let arg_expr = args[param_idx as usize];
 
                         // Check if ret_ty is a placeholder matching our target generic
-                        if bound.ret_ty.tag == TyTag::Placeholder && bound.ret_ty.id._value == def.generic_params[g].id._value {
+                        if bound.ret_ty().tag == TyTag::Placeholder && bound.ret_ty().id()._value == def.generic_params[g].id._value {
                             // Extract return type from the lambda/fn's AST return type
                             if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
                                 let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
@@ -2984,10 +2984,10 @@ impl Mono {
                         }
                         // Check if Fn bound return type is Generic containing our placeholder
                         // e.g. F: Fn(T) -> Option<Tm>
-                        if !found[g] && bound.ret_ty.tag == TyTag::Generic && bound.ret_ty.elems.len() > 0 {
-                            for re in 0usize..bound.ret_ty.elems.len() {
+                        if !found[g] && bound.ret_ty().tag == TyTag::Generic && bound.ret_ty().elems().len() > 0 {
+                            for re in 0usize..bound.ret_ty().elems().len() {
                                 if found[g] { break; }
-                                if bound.ret_ty.elems[re].tag == TyTag::Placeholder && bound.ret_ty.elems[re].id._value == def.generic_params[g].id._value {
+                                if bound.ret_ty().elems()[re].tag == TyTag::Placeholder && bound.ret_ty().elems()[re].id()._value == def.generic_params[g].id._value {
                                     if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
                                         let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
                                         if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref().type_args.len() > re {
@@ -2999,9 +2999,9 @@ impl Mono {
                             }
                         }
                         // Also check Fn bound params for placeholder matches
-                        for bp in 0usize..bound.elems.len() {
+                        for bp in 0usize..bound.elems().len() {
                             if found[g] { break; }
-                            if bound.elems[bp].tag == TyTag::Placeholder && bound.elems[bp].id._value == def.generic_params[g].id._value {
+                            if bound.elems()[bp].tag == TyTag::Placeholder && bound.elems()[bp].id()._value == def.generic_params[g].id._value {
                                 if arg_expr.tag == ExprTag::Lambda && bp < arg_expr.lambda_params.len() {
                                     // Get the lambda parameter type
                                     let lp_ty = arg_expr.lambda_params[bp].ty;
@@ -3037,13 +3037,13 @@ impl Mono {
             // Match: fn returns GenericType<T> (TyTag::Generic) and hint is a struct with type_args
             if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Struct && hint_ty.struct_ref().type_args.len() > 0 {
                 // TyTag::Generic has inner (base type) and elems (type args as AST types)
-                let ret_type_args = ret_ty_ast.elems;
+                let ret_type_args = ret_ty_ast.elems();
                 let hint_type_args = hint_ty.struct_ref().type_args;
                 let min_len = if ret_type_args.len() < hint_type_args.len() { ret_type_args.len() } else { hint_type_args.len() };
                 for ta in 0usize..min_len {
                     if ret_type_args[ta].tag == TyTag::Placeholder {
                         for g in 0usize..num_generics {
-                            if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id._value {
+                            if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id()._value {
                                 inferred[g] = hint_type_args[ta];
                                 found[g] = true;
                                 break;
@@ -3056,12 +3056,12 @@ impl Mono {
             // This handles cases like slice<Ptr> where slice is a struct but the hint
             // is the tuple representation {Ptr, usize}
             if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Tuple && hint_ty.elems().len() > 0 {
-                let ret_type_args = ret_ty_ast.elems;
+                let ret_type_args = ret_ty_ast.elems();
                 let min_len = if ret_type_args.len() < hint_ty.elems().len() { ret_type_args.len() } else { hint_ty.elems().len() };
                 for ta in 0usize..min_len {
                     if ret_type_args[ta].tag == TyTag::Placeholder {
                         for g in 0usize..num_generics {
-                            if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id._value {
+                            if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id()._value {
                                 inferred[g] = hint_ty.elems()[ta];
                                 found[g] = true;
                                 break;
@@ -3073,7 +3073,7 @@ impl Mono {
             // Direct placeholder in return type: fn foo<T>() -> T
             if ret_ty_ast.tag == TyTag::Placeholder && !hint_ty.is_void() {
                 for g in 0usize..num_generics {
-                    if !found[g] && def.generic_params[g].id._value == ret_ty_ast.id._value {
+                    if !found[g] && def.generic_params[g].id._value == ret_ty_ast.id()._value {
                         inferred[g] = hint_ty;
                         found[g] = true;
                         break;
@@ -3467,7 +3467,7 @@ impl Mono {
                 let self_arg_ty = ir_obj.ty;
                 // Unwrap pointer for &self / &mut self
                 if self_param_ty.tag == TyTag::Pointer {
-                    self_param_ty = self_param_ty.inner;
+                    self_param_ty = self_param_ty.inner();
                     if self_arg_ty.tag == IrTyTag::Pointer {
                         self_arg_ty = self_arg_ty.inner();
                     }
@@ -3504,7 +3504,7 @@ impl Mono {
                         // Find which explicit parameter (skipping self) corresponds to generic h
                         let param_idx: i32 = -1i32;
                         for pp in 1usize..def.params.len() {
-                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id._value == def.generic_params[h].id._value {
+                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id()._value == def.generic_params[h].id._value {
                                 param_idx = (pp - 1) as i32;  // index into expr.args (0-based, skip self)
                                 break;
                             }
@@ -3512,7 +3512,7 @@ impl Mono {
                         if param_idx < 0i32 || param_idx as usize >= expr.args.len() { continue; }
                         let arg_expr = expr.args[param_idx as usize];
                         // Check if Fn bound return type is a placeholder matching our target generic
-                        if bound.ret_ty.tag == TyTag::Placeholder && bound.ret_ty.id._value == def.generic_params[g].id._value {
+                        if bound.ret_ty().tag == TyTag::Placeholder && bound.ret_ty().id()._value == def.generic_params[g].id._value {
                             if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
                                 let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
                                 inferred[g] = ret_ty;
@@ -3536,10 +3536,10 @@ impl Mono {
                         }
                         // Check if Fn bound return type is a Generic containing our placeholder
                         // e.g. F: Fn(T) -> Option<Tm> where Tm is what we're inferring
-                        if bound.ret_ty.tag == TyTag::Generic && bound.ret_ty.elems.len() > 0 {
-                            for re in 0usize..bound.ret_ty.elems.len() {
+                        if bound.ret_ty().tag == TyTag::Generic && bound.ret_ty().elems().len() > 0 {
+                            for re in 0usize..bound.ret_ty().elems().len() {
                                 if !inferred[g].is_void() { break; }
-                                if bound.ret_ty.elems[re].tag == TyTag::Placeholder && bound.ret_ty.elems[re].id._value == def.generic_params[g].id._value {
+                                if bound.ret_ty().elems()[re].tag == TyTag::Placeholder && bound.ret_ty().elems()[re].id()._value == def.generic_params[g].id._value {
                                     // Resolve the callable's return type and extract the type arg
                                     let resolved_ret: &IrTy = self.ctx.void_ty;
                                     if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
@@ -3563,9 +3563,9 @@ impl Mono {
                             }
                         }
                         // Check Fn bound params for placeholder matches
-                        for bp in 0usize..bound.elems.len() {
+                        for bp in 0usize..bound.elems().len() {
                             if !inferred[g].is_void() { break; }
-                            if bound.elems[bp].tag == TyTag::Placeholder && bound.elems[bp].id._value == def.generic_params[g].id._value {
+                            if bound.elems()[bp].tag == TyTag::Placeholder && bound.elems()[bp].id()._value == def.generic_params[g].id._value {
                                 if arg_expr.tag == ExprTag::Lambda && bp < arg_expr.lambda_params.len() {
                                     let lp_ty = arg_expr.lambda_params[bp].ty;
                                     if lp_ty.is_some() {
