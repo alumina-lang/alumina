@@ -1,0 +1,146 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn test_ordering() -> i32 {
+    let less = std::cmp::Ordering::Less;
+    let equal = std::cmp::Ordering::Equal;
+    let greater = std::cmp::Ordering::Greater;
+
+    if less == equal { return 1i32; }
+    if less == greater { return 2i32; }
+    if equal == greater { return 3i32; }
+    if less != less { return 4i32; }
+
+    0i32
+}
+
+fn test_compare() -> i32 {
+    let a = 3i32;
+    let b = 5i32;
+    let c = 3i32;
+
+    if std::cmp::compare::<i32>(&a, &b) != std::cmp::Ordering::Less { return 10i32; }
+    if std::cmp::compare::<i32>(&b, &a) != std::cmp::Ordering::Greater { return 11i32; }
+    if std::cmp::compare::<i32>(&a, &c) != std::cmp::Ordering::Equal { return 12i32; }
+
+    0i32
+}
+
+fn test_min_max() -> i32 {
+    if std::cmp::max(3i32, 5i32) != 5 { return 20i32; }
+    if std::cmp::min(3i32, 5i32) != 3 { return 21i32; }
+    if std::cmp::max(10i32, 10i32) != 10 { return 22i32; }
+    if std::cmp::min(10i32, 10i32) != 10 { return 23i32; }
+    0i32
+}
+
+fn test_is_sorted() -> i32 {
+    let sorted = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let unsorted = [5i32, 3i32, 1i32, 4i32, 2i32];
+
+    if !std::cmp::is_sorted::<i32>(sorted[..]) { return 30i32; }
+    if std::cmp::is_sorted::<i32>(unsorted[..]) { return 31i32; }
+
+    let single = [42i32];
+    if !std::cmp::is_sorted::<i32>(single[..]) { return 33i32; }
+
+    0i32
+}
+
+fn test_sort() -> i32 {
+    let arr = [4i32, 8i32, 2i32, 9i32, 7i32, 10i32, 3i32, 1i32, 6i32, 5i32];
+    std::cmp::sort::<i32>(arr[..]);
+    if arr[0] != 1 { return 40i32; }
+    if arr[1] != 2 { return 41i32; }
+    if arr[2] != 3 { return 42i32; }
+    if arr[9] != 10 { return 43i32; }
+    if !std::cmp::is_sorted::<i32>(arr[..]) { return 44i32; }
+
+    0i32
+}
+
+fn test_sort_by() -> i32 {
+    let arr = [4i32, 8i32, 2i32, 9i32, 7i32, 10i32, 3i32, 1i32, 6i32, 5i32];
+    std::cmp::sort_by::<i32>(arr[..], std::cmp::reversed::<i32>);
+    if arr[0] != 10 { return 50i32; }
+    if arr[9] != 1 { return 51i32; }
+
+    0i32
+}
+
+fn test_insertion_sort() -> i32 {
+    let arr = [3i32, 1i32, 2i32];
+    std::cmp::sort::<i32>(arr[..]);
+    if arr[0] != 1 { return 60i32; }
+    if arr[1] != 2 { return 61i32; }
+    if arr[2] != 3 { return 62i32; }
+
+    0i32
+}
+
+fn test_stable_sort() -> i32 {
+    let arr = [4i32, 8i32, 2i32, 9i32, 7i32, 10i32, 3i32, 1i32, 6i32, 5i32,
+               15i32, 20i32, 12i32, 18i32, 14i32, 11i32, 17i32, 19i32, 13i32, 16i32,
+               25i32, 30i32, 22i32, 28i32, 24i32, 21i32, 27i32, 29i32, 23i32, 26i32,
+               35i32, 40i32, 32i32, 38i32, 34i32, 31i32, 37i32, 39i32, 33i32, 36i32];
+    let s = arr[..];
+    std::cmp::stable_sort::<i32>(s);
+    for i in 0usize..s.len() - 1 {
+        if s[i] > s[i + 1] { return 70i32; }
+    }
+    if s[0] != 1 { return 71i32; }
+    if s[s.len() - 1] != 40 { return 72i32; }
+
+    0i32
+}
+
+fn test_binary_search() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32, 5i32, 6i32, 7i32, 8i32, 9i32, 10i32];
+
+    let r1 = std::cmp::binary_search::<i32>(arr[..], &5i32);
+    if !r1.is_ok() { return 80i32; }
+    if r1.unwrap() != 4usize { return 81i32; }
+
+    let r2 = std::cmp::binary_search::<i32>(arr[..], &11i32);
+    if r2.is_ok() { return 82i32; }
+
+    let r3 = std::cmp::binary_search::<i32>(arr[..], &1i32);
+    if !r3.is_ok() { return 83i32; }
+    if r3.unwrap() != 0usize { return 84i32; }
+
+    let r4 = std::cmp::binary_search::<i32>(arr[..], &10i32);
+    if !r4.is_ok() { return 85i32; }
+    if r4.unwrap() != 9usize { return 86i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_ordering();
+    if r != 0 { return r; }
+
+    let r = test_compare();
+    if r != 0 { return r; }
+
+    let r = test_min_max();
+    if r != 0 { return r; }
+
+    let r = test_is_sorted();
+    if r != 0 { return r; }
+
+    let r = test_sort();
+    if r != 0 { return r; }
+
+    let r = test_sort_by();
+    if r != 0 { return r; }
+
+    let r = test_insertion_sort();
+    if r != 0 { return r; }
+
+    let r = test_stable_sort();
+    if r != 0 { return r; }
+
+    let r = test_binary_search();
+    if r != 0 { return r; }
+
+    0i32
+}

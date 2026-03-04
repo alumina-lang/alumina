@@ -2392,6 +2392,10 @@ impl ExprParser {
                 }
                 self.alloc_void(span)
             },
+            NodeKind::Turbofish, NodeKind::GenericTypeWithTurbofish => {
+                // Turbofish as standalone expression: func::<T> used as a value (e.g. fn pointer)
+                self.parse_turbofish_value(node, span)
+            },
             NodeKind::StaticForExpression => self.parse_static_for(node, span),
             NodeKind::EtCeteraExpression => self.parse_et_cetera(node, span),
             NodeKind::EmptyStatement => self.alloc_void(span),
@@ -2868,6 +2872,38 @@ impl ExprParser {
         }
 
         Expr::void_expr()
+    }
+
+    fn parse_turbofish_value(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Handle func::<T> as a standalone value (function pointer reference)
+        // We emit this as a Call expression with 0 args but with type_args set,
+        // so that lower_call handles the turbofish resolution.
+        let path_node = child_by!(node, FieldKind::Function);
+        let path_node2 = if path_node.is_none() { child_by!(node, FieldKind::Type) } else { path_node };
+        let type_args_node = child_by!(node, FieldKind::TypeArguments);
+
+        if path_node2.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Resolve the function
+        let callee = self.parse_expr(path_node2.unwrap());
+
+        // Parse type arguments
+        let pass2 = Pass2 { ctx: self.ctx };
+        let type_args = if !type_args_node.is_none() {
+            pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
+        } else {
+            let empty: &[&Ty] = &[];
+            empty
+        };
+
+        // Use TurbofishValue tag to distinguish from a real Call with 0 args.
+        let e = self.make_expr(ExprTag::TurbofishValue, span);
+        e.lhs = callee;
+        e.args = &[];
+        e.type_args = type_args;
+        self.ctx.alloc_expr(e)
     }
 
     fn parse_turbofish_call(self: &ExprParser, call_node: Node, func_node: Node, span: Span) -> Expr {

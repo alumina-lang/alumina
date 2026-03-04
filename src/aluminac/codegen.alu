@@ -2096,8 +2096,9 @@ impl FnCodegen {
             // Declare or get memcpy
             let memcpy_fn = self.get_or_declare_memcpy();
             let args = self.ctx.arena.alloc_slice::<LLVMValueRef>(3);
-            args[0] = dest_val;
-            args[1] = src_val;
+            // Cast dest and src to i8* for memcpy signature compatibility
+            args[0] = LLVMBuildBitCast(self.ctx.builder, dest_val, self.ctx.ptr_type, self.temp_cname());
+            args[1] = LLVMBuildBitCast(self.ctx.builder, src_val, self.ctx.ptr_type, self.temp_cname());
             args[2] = byte_len;
             let memcpy_fn_ty = self.ctx.memcpy_fn_type;
             if memcpy_fn_ty as usize != 0 {

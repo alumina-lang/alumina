@@ -1,0 +1,41 @@
+// Test basic math module functionality
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn main(args: &[&[u8]]) -> i32 {
+    // abs for signed integers
+    if std::math::abs::<i32>(-5i32) != 5i32 { return 1i32; }
+    if std::math::abs::<i32>(0i32) != 0i32 { return 2i32; }
+    if std::math::abs::<i32>(5i32) != 5i32 { return 3i32; }
+
+    // abs for unsigned integers (identity)
+    if std::math::abs::<u32>(5u32) != 5u32 { return 4i32; }
+    if std::math::abs::<u32>(0u32) != 0u32 { return 5i32; }
+
+    // abs for f64
+    if std::math::abs::<f64>(-3.14f64) != 3.14f64 { return 6i32; }
+    if std::math::abs::<f64>(3.14f64) != 3.14f64 { return 7i32; }
+
+    // abs for f32
+    if std::math::abs::<f32>(-2.5f32) != 2.5f32 { return 8i32; }
+
+    // widening_abs
+    if std::math::widening_abs::<i32>(-5i32) != 5u32 { return 9i32; }
+    if std::math::widening_abs::<u32>(5u32) != 5u32 { return 10i32; }
+
+    // div_floor for positive numbers (same as truncating division)
+    let (q, r) = std::math::div_floor::<i32>(7i32, 2i32);
+    if q != 3i32 { return 11i32; }
+    if r != 1i32 { return 12i32; }
+
+    // div_floor for negative dividend (rounds toward negative infinity)
+    let (q2, r2) = std::math::div_floor::<i32>(-3i32, 2i32);
+    if q2 != -2i32 { return 13i32; }
+    if r2 != 1i32 { return 14i32; }
+
+    // div_floor for unsigned (same as regular division)
+    let (q3, r3) = std::math::div_floor::<u32>(7u32, 2u32);
+    if q3 != 3u32 { return 15i32; }
+    if r3 != 1u32 { return 16i32; }
+
+    0i32
+}
