@@ -107,7 +107,7 @@ impl Compiler {
         // Read file from disk
         let fd = libc::open(&path_nt[0] as &libc::c_char, 0i32 /* O_RDONLY */);
         if fd < 0i32 {
-            DiagnosticContext::_write_stderr("error: cannot open file\n");
+            eprintln!("error: cannot open file");
             return false;
         }
 
@@ -125,7 +125,7 @@ impl Compiler {
         libc::close(fd);
 
         if read_bytes < 0isize {
-            DiagnosticContext::_write_stderr("error: cannot read file\n");
+            eprintln!("error: cannot read file");
             return false;
         }
 
@@ -160,7 +160,7 @@ impl Compiler {
 
             let dir_iter_result = read_directory(dir_path.as_path());
             if dir_iter_result.is_err() {
-                DiagnosticContext::_write_stderr("error: cannot open sysroot directory\n");
+                eprintln!("error: cannot open sysroot directory");
                 dir_path.free();
                 mod_prefix.free();
                 return false;
@@ -237,7 +237,7 @@ impl Compiler {
                     let file_path_slice = file_path.inner.as_slice();
                     let read_result = std::fs::File::read_to_string(file_path.as_path());
                     if read_result.is_err() {
-                        DiagnosticContext::_write_stderr("error: cannot read sysroot file\n");
+                        eprintln!("error: cannot read sysroot file");
                         file_path.free();
                         module_path.free();
                         continue;
@@ -291,7 +291,7 @@ impl Compiler {
 
     fn compile(self: &mut Compiler) -> bool {
         if self.source_files.len() == 0 {
-            DiagnosticContext::_write_stderr("error: no source files\n");
+            eprintln!("error: no source files");
             return false;
         }
 
@@ -431,7 +431,7 @@ impl Compiler {
 
         if self.options.verify_ir {
             if !ctx.verify() {
-                DiagnosticContext::_write_stderr("error: LLVM IR verification failed\n");
+                eprintln!("error: LLVM IR verification failed");
                 if !self.options.dump_ir {
                     ctx.dump();
                 }
@@ -458,7 +458,7 @@ impl Compiler {
                 // Emit object file, then link
                 let obj_file = ".aluminac_temp.o";
                 if !ctx.emit_to_object(obj_file) {
-                    DiagnosticContext::_write_stderr("error: failed to emit object file\n");
+                    eprintln!("error: failed to emit object file");
                     ctx.free();
                     return false;
                 }
@@ -469,7 +469,7 @@ impl Compiler {
         };
 
         if !success {
-            DiagnosticContext::_write_stderr("error: failed to write output file\n");
+            eprintln!("error: failed to write output file");
         }
 
         ctx.free();
@@ -706,7 +706,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
                 });
             }
         } else {
-            DiagnosticContext::_write_stderr("unknown option\n");
+            eprintln!("unknown option");
         }
 
         i = i + 1;
@@ -716,7 +716,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
 }
 
 fn print_usage() {
-    DiagnosticContext::_write_stderr("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help\n");
+    eprintln!("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help");
 }
 
 fn main(args: &[&[u8]]) -> i32 {
