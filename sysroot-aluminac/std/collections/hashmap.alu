@@ -382,6 +382,39 @@ impl HashMap<K, V> {
         }
     }
 
+    /// Return an iterator over the map's keys.
+    fn keys(self: &HashMap<K, V>) -> HashMapKeyIterator<K, V> {
+        HashMapKeyIterator::<K, V> {
+            _map: self,
+            _index: 0usize,
+        }
+    }
+
+    /// Return an iterator over the map's values.
+    fn values(self: &HashMap<K, V>) -> HashMapValueIterator<K, V> {
+        HashMapValueIterator::<K, V> {
+            _map: self,
+            _index: 0usize,
+        }
+    }
+
+    /// Get the value for a key, inserting a default value if the key doesn't exist.
+    fn get_or_insert(self: &mut HashMap<K, V>, key: K, default: V) -> &mut V {
+        // Grow if needed
+        if self._capacity == 0usize || (self._length + 1usize) * 4usize > self._capacity * 3usize {
+            self._grow();
+        }
+
+        let slot = self._find_slot_for_insert(&key);
+        if self._states[slot] != 1u8 {
+            self._keys[slot] = key;
+            self._values[slot] = default;
+            self._states[slot] = 1u8;
+            self._length = self._length + 1usize;
+        }
+        &self._values[slot]
+    }
+
     /// Move the map's contents, leaving `self` empty.
     fn move(self: &mut HashMap<K, V>) -> HashMap<K, V> {
         let ret = *self;
@@ -434,6 +467,44 @@ impl HashMapIterator<K, V> {
                 let v = self._map._values[self._index];
                 self._index = self._index + 1usize;
                 return Option::some((k, v));
+            }
+            self._index = self._index + 1usize;
+        }
+        Option::none()
+    }
+}
+
+struct HashMapKeyIterator<K, V> {
+    _map: &HashMap<K, V>,
+    _index: usize,
+}
+
+impl HashMapKeyIterator<K, V> {
+    fn next(self: &mut HashMapKeyIterator<K, V>) -> Option<K> {
+        while self._index < self._map._capacity {
+            if self._map._states[self._index] == 1u8 {
+                let k = self._map._keys[self._index];
+                self._index = self._index + 1usize;
+                return Option::some(k);
+            }
+            self._index = self._index + 1usize;
+        }
+        Option::none()
+    }
+}
+
+struct HashMapValueIterator<K, V> {
+    _map: &HashMap<K, V>,
+    _index: usize,
+}
+
+impl HashMapValueIterator<K, V> {
+    fn next(self: &mut HashMapValueIterator<K, V>) -> Option<V> {
+        while self._index < self._map._capacity {
+            if self._map._states[self._index] == 1u8 {
+                let v = self._map._values[self._index];
+                self._index = self._index + 1usize;
+                return Option::some(v);
             }
             self._index = self._index + 1usize;
         }
