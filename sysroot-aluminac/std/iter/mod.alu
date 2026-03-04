@@ -293,6 +293,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
     }
 
+    /// Sum all elements, starting from zero.
+    fn sum(iter: &mut Self) -> T {
+        iter.reduce::<T>(0 as T, _iter_plus::<T>)
+    }
+
     /// Collect the iterator into a Vector.
     fn to_vector(self: &mut Self) -> std::collections::Vector<T> {
         let v: std::collections::Vector<T> = std::collections::Vector::new();
@@ -360,6 +365,9 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         (a, b)
     }
 }
+
+// Internal helpers
+fn _iter_plus<T>(a: T, b: T) -> T { a + b }
 
 // === Adapter structs ===
 
