@@ -33,6 +33,13 @@ same module (e.g. `trim_prefix` calling `self.starts_with(prefix)`).
 methods through protocol bounds on generic type parameters. Need to implement protocol
 constraint satisfaction during method resolution.
 
+### Static method calls on generic type parameters
+`H::new()` where `H: Hasher<H>` fails with "expression is not callable". Calling static
+methods (associated functions) through generic type parameters is not supported. Instance
+method calls on generic types (`h.write(...)`) work fine.
+
+**Workaround**: Use concrete types directly instead of going through generics for static calls.
+
 ### Protocol mixin annotations
 The `/// @ cmp::Equatable::equals` doc comment annotation for registering protocol
 implementations needs proper support.

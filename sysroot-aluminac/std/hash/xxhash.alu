@@ -1,0 +1,153 @@
+/// xxHash (XXH64) implementation for non-cryptographic hashing.
+
+const CHUNK_SIZE: usize = 32usize;
+const PRIME_1: u64 = 0x9E3779B185EBCA87u64;
+const PRIME_2: u64 = 0xC2B2AE3D27D4EB4Fu64;
+const PRIME_3: u64 = 0x165667B19E3779F9u64;
+const PRIME_4: u64 = 0x85EBCA77C2B2AE63u64;
+const PRIME_5: u64 = 0x27D4EB2F165667C5u64;
+
+fn round(acc: u64, input: u64) -> u64 {
+    ((acc + (input * PRIME_2)).rotate_left(31usize)) * PRIME_1
+}
+
+fn read_u64_at(input: &[u8], offset: usize) -> u64 {
+    *(&input[offset] as &u64)
+}
+
+fn read_u32_at(input: &[u8], offset: usize) -> u32 {
+    *(&input[offset] as &u32)
+}
+
+fn copy_to_mem(mem: &mut [u64; 4], mem_size: usize, input: &[u8]) {
+    let dst = (&mem[0] as usize + mem_size) as &mut u8;
+    input.copy_to_nonoverlapping(dst);
+}
+
+fn merge_round(acc: u64, val: u64) -> u64 {
+    let acc = acc ^ round(0u64, val);
+    acc * PRIME_1 + PRIME_4
+}
+
+fn avalanche(input: u64) -> u64 {
+    let input = input ^ (input >> 33u64);
+    input = input * PRIME_2;
+    input = input ^ (input >> 29u64);
+    input = input * PRIME_3;
+    input = input ^ (input >> 32u64);
+    input
+}
+
+/// 64-bit version of xxHash (XXH64).
+struct Xxh64 {
+    total_len: usize,
+    v1: u64,
+    v2: u64,
+    v3: u64,
+    v4: u64,
+    mem: [u64; 4],
+    mem_size: usize,
+}
+
+impl Xxh64 {
+    fn new() -> Xxh64 {
+        with_seed(0xdeadb33fu64)
+    }
+
+    fn with_seed(seed: u64) -> Xxh64 {
+        Xxh64 {
+            total_len: 0usize,
+            v1: seed + PRIME_1 + PRIME_2,
+            v2: seed + PRIME_2,
+            v3: seed,
+            v4: seed - PRIME_1,
+            mem: [0u64, 0u64, 0u64, 0u64],
+            mem_size: 0usize,
+        }
+    }
+
+    fn write(self: &mut Xxh64, input: &[u8]) {
+        self.total_len = self.total_len + input.len();
+
+        if (self.mem_size + input.len()) < CHUNK_SIZE {
+            copy_to_mem(&self.mem, self.mem_size, input);
+            self.mem_size = self.mem_size + input.len();
+            return;
+        }
+
+        if self.mem_size > 0usize {
+            let fill_len = CHUNK_SIZE - self.mem_size;
+            copy_to_mem(&self.mem, self.mem_size, input[0usize..fill_len]);
+
+            self.v1 = round(self.v1, self.mem[0]);
+            self.v2 = round(self.v2, self.mem[1]);
+            self.v3 = round(self.v3, self.mem[2]);
+            self.v4 = round(self.v4, self.mem[3]);
+
+            input = input[fill_len..];
+            self.mem_size = 0usize;
+        }
+
+        if input.len() >= CHUNK_SIZE {
+            loop {
+                self.v1 = round(self.v1, read_u64_at(input, 0usize));
+                self.v2 = round(self.v2, read_u64_at(input, 8usize));
+                self.v3 = round(self.v3, read_u64_at(input, 16usize));
+                self.v4 = round(self.v4, read_u64_at(input, 24usize));
+                input = input[32usize..];
+
+                if input.len() < CHUNK_SIZE {
+                    break;
+                }
+            }
+        }
+
+        if input.len() > 0usize {
+            copy_to_mem(&self.mem, 0usize, input);
+            self.mem_size = input.len();
+        }
+    }
+
+    fn finish(self: &mut Xxh64) -> u64 {
+        let result: u64;
+
+        if self.total_len >= CHUNK_SIZE {
+            result = (self.v1.rotate_left(1usize)) +
+                (self.v2.rotate_left(7usize)) +
+                (self.v3.rotate_left(12usize)) +
+                (self.v4.rotate_left(18usize));
+
+            result = merge_round(result, self.v1);
+            result = merge_round(result, self.v2);
+            result = merge_round(result, self.v3);
+            result = merge_round(result, self.v4);
+        } else {
+            result = self.v3 + PRIME_5;
+        }
+
+        result = result + (self.total_len as u64);
+
+        let remainder = std::mem::slice_from_raw_const::<u8>(&self.mem[0] as &u8, self.mem_size);
+        let offset = 0usize;
+
+        while (remainder.len() - offset) >= 8usize {
+            result = result ^ round(0u64, read_u64_at(remainder, offset));
+            offset = offset + 8usize;
+            result = (result.rotate_left(27usize)) * PRIME_1 + PRIME_4;
+        }
+
+        if (remainder.len() - offset) >= 4usize {
+            result = result ^ ((read_u32_at(remainder, offset) as u64) * PRIME_1);
+            offset = offset + 4usize;
+            result = (result.rotate_left(23usize)) * PRIME_2 + PRIME_3;
+        }
+
+        while offset < remainder.len() {
+            result = result ^ ((remainder[offset] as u64) * PRIME_5);
+            result = (result.rotate_left(11usize)) * PRIME_1;
+            offset = offset + 1usize;
+        }
+
+        avalanche(result)
+    }
+}

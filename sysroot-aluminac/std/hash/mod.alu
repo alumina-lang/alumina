@@ -1,0 +1,34 @@
+/// Hashing algorithms.
+///
+/// Hasher is a visitor that is accepted by a hashable type through the hash method.
+/// Each hasher is a disposable object that is used to hash a single value.
+protocol Hasher<Self> {
+    /// Create a new hasher.
+    fn new() -> Self;
+    /// Write a byte slice into a hasher.
+    fn write(self: &mut Self, val: &[u8]);
+    /// Finalize the hashing and return the hash value.
+    fn finish(self: &mut Self) -> u64;
+}
+
+/// Types that can be hashed.
+protocol Hashable<Self, H: Hasher<H>> {
+    fn hash(a: &Self, hasher: &mut H);
+}
+
+/// The default hashing algorithm used for hash-based collections.
+type DefaultHash = xxhash::Xxh64;
+
+/// Calculate the hash of a value using a fresh Xxh64 hasher.
+fn hash_of<T>(val: &T) -> u64 {
+    let hasher = xxhash::Xxh64::new();
+    val.hash::<xxhash::Xxh64>(&hasher);
+    hasher.finish()
+}
+
+/// Calculate the hash of a value using a fresh Xxh64 hasher with custom seed.
+fn hash_of_with_seed<T>(val: &T, seed: u64) -> u64 {
+    let hasher = xxhash::Xxh64::with_seed(seed);
+    val.hash::<xxhash::Xxh64>(&hasher);
+    hasher.finish()
+}
