@@ -2678,6 +2678,21 @@ impl ExprParser {
                 return self.ctx.alloc_expr(e);
             }
         } else {
+            // Check if the first segment resolves to a GenericParam or TypeAlias.
+            // If so, create a Defered expression to resolve at monomorphization time.
+            if segments.len() >= 2 {
+                let first_resolved = self.ctx.scopes.resolve(self.scope_idx, segments[0]);
+                if first_resolved.is_some() {
+                    let first_item = first_resolved.unwrap();
+                    if first_item.kind.tag == scope::NamedItemTag::GenericParam
+                        || first_item.kind.tag == scope::NamedItemTag::TypeAlias {
+                        let e = self.make_expr(ExprTag::Defered, span);
+                        e.id = first_item.kind.id;
+                        e.str_val = segments[segments.len() - 1];
+                        return self.ctx.alloc_expr(e);
+                    }
+                }
+            }
             let e = self.make_expr(ExprTag::Local, span);
             e.id = Id { _value: 0 };
             self.ctx.alloc_expr(e)

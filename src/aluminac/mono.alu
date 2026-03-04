@@ -1396,6 +1396,68 @@ impl Mono {
         self.mk_call(fn_ref, args, ret_ty)
     }
 
+    // Lower a deferred call: T::method(args) where T was a generic type param or type alias.
+    // At mono time, T has been resolved to a concrete type via type_map or type_aliases.
+    fn lower_defered_call(self: &mut Mono, expr: &Expr) -> Option<&IrExpr> {
+        let defered = expr.lhs;
+        let method_name = defered.str_val;
+
+        // Look up the concrete type: first try generic type params, then type aliases
+        let concrete_ty: &IrTy = self.ctx.void_ty;
+        let resolved = self.type_map.get(&defered.id._value);
+        if resolved.is_some() {
+            concrete_ty = resolved.unwrap();
+        } else {
+            // Try type alias
+            let ta = self.ctx.type_aliases.get(&defered.id._value);
+            if ta.is_some() {
+                concrete_ty = self.resolve_type(ta.unwrap().target);
+            } else {
+                return Option::none();
+            }
+        }
+
+        // Find the method on the concrete type
+        let method_def = self.find_method_in_scope(concrete_ty, method_name);
+        if method_def.is_none() {
+            return Option::none();
+        }
+        let def = method_def.unwrap();
+
+        // Build type args from the concrete type's struct type args
+        let method_type_args: &[&IrTy] = &[];
+        if concrete_ty.tag == IrTyTag::Struct {
+            method_type_args = concrete_ty.struct_ref.type_args;
+        }
+
+        // Handle turbofish type args on the call itself (e.g. T::method::<U>(args))
+        if expr.type_args.len() > 0 {
+            let extra = self.ctx.arena.alloc_slice::<&IrTy>(method_type_args.len() + expr.type_args.len());
+            for i in 0usize..method_type_args.len() {
+                extra[i] = method_type_args[i];
+            }
+            for i in 0usize..expr.type_args.len() {
+                extra[method_type_args.len() + i] = self.resolve_type(expr.type_args[i]);
+            }
+            method_type_args = extra;
+        }
+
+        let fn_idx = self.mono_function(def, method_type_args);
+        let ir_fn = &self.ctx.ir_functions[fn_idx];
+
+        // Lower call arguments
+        let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
+        for i in 0usize..expr.args.len() {
+            call_args[i] = self.lower_expr(expr.args[i]);
+        }
+
+        let fn_ref = IrFnRef {
+            id: ir_fn.id,
+            mangled_name: ir_fn.mangled_name,
+        };
+        Option::some(self.mk_call(fn_ref, call_args, ir_fn.return_type))
+    }
+
     fn try_operator_overload(self: &mut Mono, op: BinOp, ir_lhs: &IrExpr, ir_rhs: &IrExpr) -> Option<&IrExpr> {
         // Try direct method lookup first (e.g. equals, compare on the type's scope)
         let method_name = Mono::binop_method_name(op);
@@ -4231,6 +4293,14 @@ impl Mono {
                         }
                         return self.lower_intrinsic(def.name, expr.type_args, ir_type_args, expr);
                     }
+                }
+            }
+
+            // Check for deferred call: T::method(args) where T is a generic type param
+            if expr.lhs.tag == ExprTag::Defered {
+                let defered_result = self.lower_defered_call(expr);
+                if defered_result.is_some() {
+                    return defered_result.unwrap();
                 }
             }
 
