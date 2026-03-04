@@ -27,6 +27,29 @@ same module (e.g. `trim_prefix` calling `self.starts_with(prefix)`).
 
 **Workaround**: Use regular parameter names and call as `std::string::starts_with(s, prefix)`.
 
+### Multiple impl blocks with different generic bounds
+Adding a second impl block for the same struct with different generic bounds
+(e.g. `impl FusedIterator<It: DoubleEndedIterator<It, T>, T>` alongside the
+existing `impl FusedIterator<It: Iterator<It, T>, T>`) causes the first impl
+block to malfunction when the type is used with a non-DoubleEndedIterator.
+**Workaround**: Only use a single impl block per struct. Conditional protocol
+implementations must wait for compiler support.
+
+### Parameterized mixins on slice type fail
+`mixin<Ptr> std::cmp::Comparable<slice<Ptr>>` generates invalid LLVM IR
+(attempts `icmp ugt` on fat pointer struct types). The compiler does not
+properly route comparison operators through the mixin's compare method.
+**Workaround**: Comparison operators on slices (`<`, `>`) are not available.
+Use `==` which works through the existing `equals` mechanism, and call
+`slice::compare()` directly for ordering.
+
+### Protocol-through-generic-parameter in `is` operator
+When `is T2` appears inside a generic function and T2 is a protocol passed
+through a generic parameter (Placeholder), the TypeCheck handler can't find
+the protocol because it only resolves Named types, not Placeholders.
+**Workaround**: Use `is` directly with concrete protocol types (e.g.
+`std::intrinsics::uninitialized::<T>() is std::builtins::Signed`).
+
 ## Features to Port
 
 ### Protocol mixin annotations

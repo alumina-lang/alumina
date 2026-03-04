@@ -10,6 +10,15 @@ impl Error {
     fn new() -> Error { Error {} }
 
     fn from<T>(_: T) -> Error { Error {} }
+
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result {
+        f.write_str("error occurred during formatting")
+    }
+}
+
+/// Types that can be formatted.
+protocol Formattable<Self, F: Formatter<F>> {
+    fn fmt(self: &Self, f: &mut F) -> Result;
 }
 
 /// A sink for string formatting operations
@@ -56,6 +65,18 @@ impl SliceFormatter {
     }
 }
 
+/// Formatter that discards all output.
+struct NullFormatter {}
+
+impl NullFormatter {
+    fn write_str(self: &mut NullFormatter, _buf: &[u8]) -> Result {
+        Result::ok(())
+    }
+    fn write_byte(self: &mut NullFormatter, _byte: u8) -> Result {
+        Result::ok(())
+    }
+}
+
 // Formatting macros
 
 macro _fold_result($left, $right) {
@@ -90,8 +111,46 @@ macro writeln($fmt, $fmt_str, $arg...) {
     write!($fmt, concat!($fmt_str, "\n"), $arg$...)
 }
 
+/// Format a string into a StringBuf.
+macro format($fmt_str, $arg...) {
+    {
+        let _fmt_buf = std::string::StringBuf::with_capacity($fmt_str.len());
+        let _fmt_ret = write!(&_fmt_buf, $fmt_str, $arg$...);
+        std::fmt::_finish_format(&_fmt_buf, _fmt_ret)
+    }
+}
+
+/// Format a string into a preallocated buffer. Returns the formatted slice.
+macro format_in($buf, $fmt_str, $arg...) {
+    {
+        let _fmt_sf = SliceFormatter::new($buf);
+        let _fmt_ret = write!(&_fmt_sf, $fmt_str, $arg$...);
+        std::fmt::_finish_format_in(&_fmt_sf, _fmt_ret)
+    }
+}
+
+/// Finish a format! macro.
+fn _finish_format(buf: &std::string::StringBuf, ret: Result) -> std::result::Result<std::string::StringBuf, Error> {
+    if ret.is_ok() {
+        std::result::Result::ok::<std::string::StringBuf, Error>(*buf)
+    } else {
+        let p = buf as &mut std::string::StringBuf;
+        p.free();
+        std::result::Result::err::<std::string::StringBuf, Error>(Error::new())
+    }
+}
+
+/// Finish a format_in! macro.
+fn _finish_format_in(sf: &SliceFormatter, ret: Result) -> std::result::Result<&[u8], Error> {
+    if ret.is_ok() {
+        std::result::Result::ok::<&[u8], Error>(sf.get())
+    } else {
+        std::result::Result::err::<&[u8], Error>(Error::new())
+    }
+}
+
 mod internal {
-    /// Integer formatting helper
+    /// Integer formatting helper (unsigned, decimal)
     fn format_integer_unsigned<F: Formatter<F>>(val: u64, fmt: &mut F) -> Result {
         let buf: [u8; 20]; // max digits for u64
         let i: usize = 0;
@@ -107,6 +166,7 @@ mod internal {
         fmt.write_str(buf[20usize - i .. 20usize])
     }
 
+    /// Integer formatting helper (signed, decimal)
     fn format_integer_signed<F: Formatter<F>>(val: i64, fmt: &mut F) -> Result {
         if val < 0i64 {
             fmt.write_byte('-' as u8)?;
@@ -119,4 +179,178 @@ mod internal {
             format_integer_unsigned::<F>(val as u64, fmt)
         }
     }
+
+    /// Integer formatting helper (unsigned, arbitrary radix)
+    fn format_integer_radix<F: Formatter<F>>(val: u64, radix: u64, fmt: &mut F) -> Result {
+        let digits = "0123456789abcdef0123456789ABCDEF";
+        let buf: [u8; 64];
+        let i: usize = 0;
+        let v = val;
+        if v == 0u64 {
+            return fmt.write_byte('0' as u8);
+        }
+        while v > 0u64 {
+            buf[63usize - i] = digits[(v % radix) as usize];
+            v = v / radix;
+            i = i + 1usize;
+        }
+        fmt.write_str(buf[64usize - i .. 64usize])
+    }
+
+    /// Float formatting using snprintf
+    fn format_float_f64<F: Formatter<F>>(val: f64, fmt: &mut F) -> Result {
+        // Handle special cases
+        if val != val { return fmt.write_str("NaN"); } // NaN
+        if val == 1.0f64 / 0.0f64 { return fmt.write_str("inf"); }
+        if val == -1.0f64 / 0.0f64 { return fmt.write_str("-inf"); }
+
+        let buf: [u8; 64];
+        let n = libc::snprintf(
+            &buf[0] as &mut libc::c_char,
+            64usize,
+            &"%g\0"[0] as &libc::c_char,
+            val
+        );
+        if n > 0i32 && (n as usize) < 64usize {
+            fmt.write_str(buf[0usize..n as usize])
+        } else {
+            fmt.write_str("?float?")
+        }
+    }
+
+    fn format_float_f32<F: Formatter<F>>(val: f32, fmt: &mut F) -> Result {
+        format_float_f64::<F>(val as f64, fmt)
+    }
+
+    /// Bool formatting
+    fn format_bool<F: Formatter<F>>(val: bool, fmt: &mut F) -> Result {
+        if val {
+            fmt.write_str("true")
+        } else {
+            fmt.write_str("false")
+        }
+    }
+}
+
+/// Adapter for formatting integers in hexadecimal.
+struct HexAdapter {
+    _value: u64,
+}
+
+impl HexAdapter {
+    fn fmt<F: Formatter<F>>(self: &HexAdapter, f: &mut F) -> Result {
+        internal::format_integer_radix::<F>(self._value, 16u64, f)
+    }
+}
+
+/// Format an integer value in hexadecimal.
+fn hex(val: u64) -> HexAdapter {
+    HexAdapter { _value: val }
+}
+
+/// Adapter for formatting integers in octal.
+struct OctAdapter {
+    _value: u64,
+}
+
+impl OctAdapter {
+    fn fmt<F: Formatter<F>>(self: &OctAdapter, f: &mut F) -> Result {
+        internal::format_integer_radix::<F>(self._value, 8u64, f)
+    }
+}
+
+/// Format an integer value in octal.
+fn oct(val: u64) -> OctAdapter {
+    OctAdapter { _value: val }
+}
+
+/// Adapter for formatting integers in binary.
+struct BinAdapter {
+    _value: u64,
+}
+
+impl BinAdapter {
+    fn fmt<F: Formatter<F>>(self: &BinAdapter, f: &mut F) -> Result {
+        internal::format_integer_radix::<F>(self._value, 2u64, f)
+    }
+}
+
+/// Format an integer value in binary.
+fn bin(val: u64) -> BinAdapter {
+    BinAdapter { _value: val }
+}
+
+/// Adapter for repeating a string n times in formatting.
+struct RepeatAdapter {
+    _inner: &[u8],
+    _times: usize,
+}
+
+impl RepeatAdapter {
+    fn fmt<F: Formatter<F>>(self: &RepeatAdapter, f: &mut F) -> Result {
+        for _i in 0usize..self._times {
+            f.write_str(self._inner)?;
+        }
+        Result::ok(())
+    }
+}
+
+/// Returns an adapter that repeats a string n times during formatting.
+fn repeat(s: &[u8], n: usize) -> RepeatAdapter {
+    RepeatAdapter { _inner: s, _times: n }
+}
+
+/// Adapter for zero-padding an integer.
+struct ZeroPadAdapter {
+    _value: u64,
+    _width: usize,
+    _signed: bool,
+    _negative: bool,
+}
+
+impl ZeroPadAdapter {
+    fn fmt<F: Formatter<F>>(self: &ZeroPadAdapter, f: &mut F) -> Result {
+        if self._negative {
+            f.write_byte('-' as u8)?;
+        }
+
+        // Count digits
+        let digits = 0usize;
+        let v = self._value;
+        if v == 0u64 {
+            digits = 1usize;
+        } else {
+            while v > 0u64 {
+                digits = digits + 1usize;
+                v = v / 10u64;
+            }
+        }
+
+        // Pad
+        let pad = if self._width > digits { self._width - digits } else { 0usize };
+        for _i in 0usize..pad {
+            f.write_byte('0' as u8)?;
+        }
+
+        internal::format_integer_unsigned::<F>(self._value, f)
+    }
+}
+
+/// Format a signed integer with zero-padding to a minimum width.
+fn zero_pad(val: i64, width: usize) -> ZeroPadAdapter {
+    if val < 0i64 {
+        let abs_val = if val == -9223372036854775808i64 {
+            9223372036854775808u64
+        } else {
+            (0i64 - val) as u64
+        };
+        ZeroPadAdapter { _value: abs_val, _width: width, _signed: true, _negative: true }
+    } else {
+        ZeroPadAdapter { _value: val as u64, _width: width, _signed: true, _negative: false }
+    }
+}
+
+/// Format an unsigned integer with zero-padding to a minimum width.
+fn zero_pad_unsigned(val: u64, width: usize) -> ZeroPadAdapter {
+    ZeroPadAdapter { _value: val, _width: width, _signed: false, _negative: false }
 }
