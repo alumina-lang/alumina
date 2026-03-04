@@ -38,6 +38,16 @@ protocol AsSliceMut<Self: AsSlice<Self, T>, T> {
     fn as_mut_slice(self: &mut Self) -> &mut [T];
 }
 
+/// Types that can provide a borrowed view.
+protocol Borrowable<Self, C> {
+    fn borrow(self: &Self) -> C;
+}
+
+/// Types that can provide a mutable borrowed view.
+protocol BorrowableMut<Self, M> {
+    fn borrow_mut(self: &mut Self) -> M;
+}
+
 /// Return a zero-initialized value of type T.
 fn zeroed<T>() -> T {
     let val: T;
@@ -50,10 +60,12 @@ fn uninitialized<T>() -> T {
     val
 }
 
+/// Memory size of a given type in bytes.
 fn size_of<T>() -> usize {
     std::intrinsics::size_of::<T>()
 }
 
+/// Minimum alignment for a given type in bytes.
 fn align_of<T>() -> usize {
     std::intrinsics::align_of::<T>()
 }
@@ -93,17 +105,53 @@ fn slice_free<T>(data: &mut [T]) {
     }
 }
 
-extern "C" fn calloc(nmemb: usize, size: usize) -> &mut void;
-
 /// Allocate a zero-initialized slice.
 fn slice_alloc_zeroed<T>(len: usize) -> &mut [T] {
-    let ptr = calloc(len, size_of::<T>()) as &mut T;
+    let ptr = libc::calloc(len, size_of::<T>()) as &mut T;
     slice_from_raw::<T>(ptr, len)
 }
 
-/// Copy memory with potential overlap (uses memmove).
+/// Allocates a single object on the heap.
+///
+/// The value is not initialized.
+fn alloc<T>() -> &mut T {
+    malloc(size_of::<T>()) as &mut T
+}
+
+/// Allocates a single object on the heap, zero-initialized.
+fn alloc_zeroed<T>() -> &mut T {
+    libc::calloc(1usize, size_of::<T>()) as &mut T
+}
+
+/// Frees a heap-allocated object.
+fn free_obj<T>(a: &mut T) {
+    free(a as &mut void);
+}
+
+/// Copies a region of memory from `src` to `dst`.
+///
+/// The memory ranges must not overlap. Use [copy] if they may be overlapping.
+fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
+    memcpy(dst as &mut void, src as &void, count * size_of::<T>());
+}
+
+/// Copies a region of memory from `src` to `dst`.
+///
+/// The ranges may overlap.
 fn copy<T>(src: &T, dst: &mut T, count: usize) {
     libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
+}
+
+/// Performs an unaligned read from a memory location.
+fn read_unaligned<T>(ptr: &T) -> T {
+    let ret: T;
+    memcpy(&ret as &mut void, ptr as &void, size_of::<T>());
+    ret
+}
+
+/// Performs an unaligned write to a memory location.
+fn write_unaligned<T>(ptr: &mut T, val: T) {
+    memcpy(ptr as &mut void, &val as &void, size_of::<T>());
 }
 
 /// Swap the values at two mutable references.
@@ -145,7 +193,33 @@ impl slice {
         self._len == 0usize
     }
 
-    /// Element-wise equality comparison for slices of primitive types.
+    /// Returns the element at the given index, or `Option::none()` if out of bounds.
+    fn get<T>(self: &[T], index: usize) -> std::option::Option<T> {
+        if index < self.len() {
+            std::option::Option::some(self[index])
+        } else {
+            std::option::Option::none()
+        }
+    }
+
+    /// Copies elements from `src` slice to `dst` pointer. Regions must not overlap.
+    fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
+        copy_nonoverlapping(&src[0], dst, src.len());
+    }
+
+    /// Copies elements from `src` slice to `dst` pointer. Regions may overlap.
+    fn copy_to<T>(src: &[T], dst: &mut T) {
+        copy(&src[0], dst, src.len());
+    }
+
+    /// Fill a mutable slice with a value.
+    fn fill<T>(s: &mut [T], value: T) {
+        for i in 0usize..s.len() {
+            s[i] = value;
+        }
+    }
+
+    /// Element-wise equality comparison for slices.
     fn equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
         if lhs._len != rhs._len { return false; }
         for i in 0usize..lhs._len {
@@ -154,8 +228,48 @@ impl slice {
         true
     }
 
+    /// Lexicographic comparison for slices.
+    fn compare<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> std::cmp::Ordering {
+        let len = lhs._len;
+        if rhs._len < len { len = rhs._len; }
+        for i in 0usize..len {
+            if lhs._ptr[i] < rhs._ptr[i] { return std::cmp::Ordering::Less; }
+            if lhs._ptr[i] > rhs._ptr[i] { return std::cmp::Ordering::Greater; }
+        }
+        if lhs._len < rhs._len { std::cmp::Ordering::Less }
+        else if lhs._len > rhs._len { std::cmp::Ordering::Greater }
+        else { std::cmp::Ordering::Equal }
+    }
+
+    /// Hash a slice by hashing each element.
+    fn hash<T, H: std::hash::Hasher<H>>(self: &[T], hasher: &mut H) {
+        // For byte slices, hash directly
+        hasher.write(*self);
+    }
+
     /// Write byte slice as string. Used by format_args! for string literal pieces.
     fn fmt<Ptr, F: std::fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) -> std::fmt::Result {
         f.write_str(*self)
     }
+
+    /// Allocate a heap-allocated slice.
+    fn alloc<T>(len: usize) -> &mut [T] {
+        slice_alloc::<T>(len)
+    }
+
+    /// Allocate a zero-initialized heap slice.
+    fn alloc_zeroed<T>(len: usize) -> &mut [T] {
+        slice_alloc_zeroed::<T>(len)
+    }
+
+    /// Resize a heap-allocated slice.
+    fn realloc<T>(data: &mut [T], new_len: usize) -> &mut [T] {
+        slice_realloc::<T>(data, new_len)
+    }
+
+    /// Free a heap-allocated slice.
+    fn free<T>(data: &mut [T]) {
+        slice_free::<T>(data);
+    }
+
 }
