@@ -1,0 +1,149 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn test_parse_i32_decimal() -> i32 {
+    let r = std::string::parse_i32("42", 10u32);
+    if r.unwrap() != 42i32 { return 1i32; }
+
+    let r = std::string::parse_i32("0", 10u32);
+    if r.unwrap() != 0i32 { return 2i32; }
+
+    let r = std::string::parse_i32("-123", 10u32);
+    if r.unwrap() != -123i32 { return 3i32; }
+
+    let r = std::string::parse_i32("+456", 10u32);
+    if r.unwrap() != 456i32 { return 4i32; }
+
+    let r = std::string::parse_i32("2147483647", 10u32);
+    if r.unwrap() != 2147483647i32 { return 5i32; }
+
+    let r = std::string::parse_i32("-2147483648", 10u32);
+    if r.unwrap() != -2147483648i32 { return 6i32; }
+
+    0i32
+}
+
+fn test_parse_i32_hex() -> i32 {
+    let r = std::string::parse_i32("ff", 16u32);
+    if r.unwrap() != 255i32 { return 10i32; }
+
+    let r = std::string::parse_i32("FF", 16u32);
+    if r.unwrap() != 255i32 { return 11i32; }
+
+    let r = std::string::parse_i32("0", 16u32);
+    if r.unwrap() != 0i32 { return 12i32; }
+
+    let r = std::string::parse_i32("1a", 16u32);
+    if r.unwrap() != 26i32 { return 13i32; }
+
+    0i32
+}
+
+fn test_parse_i32_binary() -> i32 {
+    let r = std::string::parse_i32("1010", 2u32);
+    if r.unwrap() != 10i32 { return 20i32; }
+
+    let r = std::string::parse_i32("0", 2u32);
+    if r.unwrap() != 0i32 { return 21i32; }
+
+    let r = std::string::parse_i32("11111111", 2u32);
+    if r.unwrap() != 255i32 { return 22i32; }
+
+    0i32
+}
+
+fn test_parse_i32_invalid() -> i32 {
+    if std::string::parse_i32("", 10u32).is_some() { return 30i32; }
+    if std::string::parse_i32("abc", 10u32).is_some() { return 31i32; }
+    if std::string::parse_i32("-", 10u32).is_some() { return 32i32; }
+    if std::string::parse_i32("+", 10u32).is_some() { return 33i32; }
+    if std::string::parse_i32("12g", 16u32).is_some() { return 34i32; }
+    if std::string::parse_i32("2", 2u32).is_some() { return 35i32; }
+
+    // Overflow
+    if std::string::parse_i32("2147483648", 10u32).is_some() { return 36i32; }
+    if std::string::parse_i32("-2147483649", 10u32).is_some() { return 37i32; }
+
+    0i32
+}
+
+fn test_parse_i64() -> i32 {
+    let r = std::string::parse_i64("9999999999", 10u32);
+    if r.unwrap() != 9999999999i64 { return 40i32; }
+
+    let r = std::string::parse_i64("-9999999999", 10u32);
+    if r.unwrap() != -9999999999i64 { return 41i32; }
+
+    let r = std::string::parse_i64("0", 10u32);
+    if r.unwrap() != 0i64 { return 42i32; }
+
+    0i32
+}
+
+fn test_parse_usize() -> i32 {
+    let r = std::string::parse_usize("12345", 10u32);
+    if r.unwrap() != 12345usize { return 50i32; }
+
+    let r = std::string::parse_usize("0", 10u32);
+    if r.unwrap() != 0usize { return 51i32; }
+
+    let r = std::string::parse_usize("ff", 16u32);
+    if r.unwrap() != 255usize { return 52i32; }
+
+    // Invalid
+    if std::string::parse_usize("", 10u32).is_some() { return 53i32; }
+    if std::string::parse_usize("xyz", 10u32).is_some() { return 54i32; }
+
+    0i32
+}
+
+fn test_string_utils() -> i32 {
+    // SplitIterator
+    let iter = std::string::split("a,b,c", ",");
+    let part = iter.next();
+    if part.unwrap() != "a" { return 60i32; }
+    let part = iter.next();
+    if part.unwrap() != "b" { return 61i32; }
+    let part = iter.next();
+    if part.unwrap() != "c" { return 62i32; }
+    if iter.next().is_some() { return 63i32; }
+
+    // Trim
+    if std::string::trim("  hello  ") != "hello" { return 64i32; }
+    if std::string::trim_start("  hello") != "hello" { return 65i32; }
+    if std::string::trim_end("hello  ") != "hello" { return 66i32; }
+
+    // find
+    let r = std::string::find("hello world", "world");
+    if r.unwrap() != 6usize { return 67i32; }
+    if std::string::find("hello", "xyz").is_some() { return 68i32; }
+
+    // contains
+    if !std::string::contains("hello world", "world") { return 69i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_parse_i32_decimal();
+    if r != 0i32 { return r; }
+
+    let r = test_parse_i32_hex();
+    if r != 0i32 { return r; }
+
+    let r = test_parse_i32_binary();
+    if r != 0i32 { return r; }
+
+    let r = test_parse_i32_invalid();
+    if r != 0i32 { return r; }
+
+    let r = test_parse_i64();
+    if r != 0i32 { return r; }
+
+    let r = test_parse_usize();
+    if r != 0i32 { return r; }
+
+    let r = test_string_utils();
+    if r != 0i32 { return r; }
+
+    0i32
+}
