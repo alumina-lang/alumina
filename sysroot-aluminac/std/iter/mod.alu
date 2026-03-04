@@ -278,6 +278,60 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
         v
     }
+
+    /// Flatten nested iterators into a single iterator.
+    fn flatten<Inner: Iterator<Inner, U>, U>(iter: &mut Self) -> FlattenIterator<Self, Inner, T, U> {
+        FlattenIterator { _outer: iter, _inner: Option::none() }
+    }
+
+    /// Returns the minimum element using a custom comparison.
+    fn min_by<F: Fn(&T, &T) -> std::cmp::Ordering>(iter: &mut Self, cmp: F) -> Option<T> {
+        let result: Option<T> = Option::none();
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                return result;
+            }
+            let val = next.unwrap();
+            if result.is_none() || cmp(&val, &result.unwrap()) == std::cmp::Ordering::Less {
+                result = Option::some(val);
+            }
+        }
+    }
+
+    /// Returns the maximum element using a custom comparison.
+    fn max_by<F: Fn(&T, &T) -> std::cmp::Ordering>(iter: &mut Self, cmp: F) -> Option<T> {
+        let result: Option<T> = Option::none();
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                return result;
+            }
+            let val = next.unwrap();
+            if result.is_none() || cmp(&val, &result.unwrap()) == std::cmp::Ordering::Greater {
+                result = Option::some(val);
+            }
+        }
+    }
+
+    /// Partition elements into two vectors based on a predicate.
+    fn partition<F: Fn(T) -> bool>(iter: &mut Self, pred: F) -> (std::collections::Vector<T>, std::collections::Vector<T>) {
+        let a: std::collections::Vector<T> = std::collections::Vector::new();
+        let b: std::collections::Vector<T> = std::collections::Vector::new();
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                break;
+            }
+            let val = next.unwrap();
+            if pred(val) {
+                a.push(val);
+            } else {
+                b.push(val);
+            }
+        }
+        (a, b)
+    }
 }
 
 // === Adapter structs ===
@@ -586,6 +640,33 @@ impl InspectIterator<It: Iterator<It, T>, F: Fn(T), T> {
     mixin IteratorExt<InspectIterator<It, F, T>, T>;
 }
 
+/// Flatten iterator. See [IteratorExt::flatten].
+struct FlattenIterator<Outer: Iterator<Outer, Inner>, Inner: Iterator<Inner, T>, InnerT, T> {
+    _outer: &mut Outer,
+    _inner: Option<Inner>,
+}
+
+impl FlattenIterator<Outer: Iterator<Outer, Inner>, Inner: Iterator<Inner, T>, InnerT, T> {
+    fn next(self: &mut FlattenIterator<Outer, Inner, InnerT, T>) -> Option<T> {
+        loop {
+            if self._inner.is_some() {
+                let val = self._inner.unwrap().next();
+                if val.is_some() {
+                    return val;
+                }
+                self._inner = Option::none();
+            }
+            let next_inner = self._outer.next();
+            if next_inner.is_none() {
+                return Option::none();
+            }
+            self._inner = Option::some(next_inner.unwrap());
+        }
+    }
+    mixin Iterator<FlattenIterator<Outer, Inner, InnerT, T>, T>;
+    mixin IteratorExt<FlattenIterator<Outer, Inner, InnerT, T>, T>;
+}
+
 // === Factory iterators ===
 
 /// An empty iterator. See [empty].
@@ -668,6 +749,33 @@ impl FromFnIterator<F: Fn() -> Option<T>, T> {
 /// Returns an iterator that calls a function to produce each element.
 fn from_fn<T, F: Fn() -> Option<T>>(fun: F) -> FromFnIterator<F, T> {
     FromFnIterator { _fun: fun }
+}
+
+/// An iterator over elements of a slice. See [slice_iter].
+struct SliceIterator<T> {
+    _slice: &[T],
+    _idx: usize,
+}
+
+impl SliceIterator<T> {
+    fn next(self: &mut SliceIterator<T>) -> Option<T> {
+        if self._idx >= self._slice.len() {
+            return Option::none();
+        }
+        let v = self._slice[self._idx];
+        self._idx = self._idx + 1usize;
+        Option::some(v)
+    }
+    fn size_hint(self: &SliceIterator<T>) -> Option<usize> {
+        Option::some(self._slice.len() - self._idx)
+    }
+    mixin Iterator<SliceIterator<T>, T>;
+    mixin IteratorExt<SliceIterator<T>, T>;
+}
+
+/// Returns an iterator over the elements of a slice.
+fn slice_iter<T>(slice: &[T]) -> SliceIterator<T> {
+    SliceIterator::<T> { _slice: slice, _idx: 0usize }
 }
 
 /// A countdown iterator. See [countdown].

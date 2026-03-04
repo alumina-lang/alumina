@@ -216,6 +216,56 @@ impl Deque<T> {
         cloned
     }
 
+    /// Get the element at index, or none.
+    fn get(self: &Deque<T>, index: usize) -> Option<T> {
+        if index >= self.len() {
+            Option::none()
+        } else {
+            Option::some(self._data[self._offset(index)])
+        }
+    }
+
+    /// Get a reference to the element at index.
+    fn get_ref(self: &Deque<T>, index: usize) -> &T {
+        &self._data[self._offset(index)]
+    }
+
+    /// Get a mutable reference to the element at index.
+    fn get_mut(self: &mut Deque<T>, index: usize) -> &mut T {
+        let off = self._offset(index);
+        &self._data[off]
+    }
+
+    /// Get the front element without removing it.
+    fn front(self: &Deque<T>) -> Option<T> {
+        if self.is_empty() {
+            Option::none()
+        } else {
+            Option::some(self._data[self._head])
+        }
+    }
+
+    /// Get the back element without removing it.
+    fn back(self: &Deque<T>) -> Option<T> {
+        if self.is_empty() {
+            Option::none()
+        } else {
+            let idx = if self._tail == 0usize { self._data.len() - 1usize } else { self._tail - 1usize };
+            Option::some(self._data[idx])
+        }
+    }
+
+    /// Extend the deque with elements from an iterator.
+    fn extend<It: std::iter::Iterator<It, T>>(self: &mut Deque<T>, iter: &mut It) {
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                break;
+            }
+            self.push(next.unwrap());
+        }
+    }
+
     /// Free the deque's underlying buffer.
     fn free(self: &mut Deque<T>) {
         if self._data.len() > 0usize {
@@ -224,6 +274,15 @@ impl Deque<T> {
         self._data = std::mem::slice_empty::<T>();
         self._head = 0usize;
         self._tail = 0usize;
+    }
+}
+
+impl Deque {
+    /// Create a deque from a slice.
+    fn from_slice<T>(slice: &[T]) -> Deque<T> {
+        let d: Deque<T> = Deque::with_capacity(slice.len());
+        d.extend_from_slice(slice);
+        d
     }
 }
 

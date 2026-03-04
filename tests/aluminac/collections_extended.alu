@@ -1,0 +1,196 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::collections::{Vector, HashSet, Deque, BinaryHeap};
+use std::iter::slice_iter;
+
+fn test_vector_to_vector() -> i32 {
+    // Test to_vector from IteratorExt (map then collect)
+    let arr: [i32; 4] = [10i32, 20i32, 30i32, 40i32];
+    let v = Vector::from_slice(arr[..]);
+    defer v.free();
+
+    // Use slice_iter to get a proper iterator, then map and collect
+    let doubled = slice_iter(v.as_slice())
+        .map(|x: i32| -> i32 { x * 2i32 })
+        .to_vector();
+    defer doubled.free();
+    if doubled.len() != 4usize { return 1i32; }
+    if doubled.as_slice()[0] != 20i32 { return 2i32; }
+    if doubled.as_slice()[3] != 80i32 { return 3i32; }
+
+    // Test reduce
+    let sum = slice_iter(v.as_slice())
+        .reduce(0i32, |acc: i32, x: i32| -> i32 { acc + x });
+    if sum != 100i32 { return 4i32; }
+
+    0i32
+}
+
+fn test_hashset_extended() -> i32 {
+    let s: HashSet<i32> = HashSet::new();
+    defer s.free();
+
+    s.insert(1i32);
+    s.insert(2i32);
+    s.insert(3i32);
+    s.insert(2i32);  // duplicate
+    if s.len() != 3usize { return 10i32; }
+
+    // Test iterator
+    let count = 0usize;
+    for _key in s.iter() {
+        count = count + 1usize;
+    }
+    if count != 3usize { return 14i32; }
+
+    // Test from_slice
+    let arr: [i32; 5] = [10i32, 20i32, 30i32, 20i32, 10i32];
+    let s2: HashSet<i32> = HashSet::from_slice(arr[..]);
+    defer s2.free();
+    if s2.len() != 3usize { return 15i32; }
+
+    // Test extend_from_slice
+    let s3: HashSet<i32> = HashSet::new();
+    defer s3.free();
+    let ext: [i32; 3] = [100i32, 200i32, 300i32];
+    s3.extend_from_slice(ext[..]);
+    if s3.len() != 3usize { return 16i32; }
+
+    0i32
+}
+
+fn test_deque_extended() -> i32 {
+    // Test from_slice
+    let arr: [i32; 4] = [1i32, 2i32, 3i32, 4i32];
+    let d: Deque<i32> = Deque::from_slice(arr[..]);
+    defer d.free();
+    if d.len() != 4usize { return 20i32; }
+
+    // Test get
+    let v = d.get(0usize);
+    if !v.is_some() { return 21i32; }
+    if v.unwrap() != 1i32 { return 22i32; }
+    let v2 = d.get(3usize);
+    if v2.unwrap() != 4i32 { return 23i32; }
+    let v3 = d.get(10usize);
+    if v3.is_some() { return 24i32; }
+
+    // Test front/back
+    let f = d.front();
+    if f.unwrap() != 1i32 { return 25i32; }
+    let b = d.back();
+    if b.unwrap() != 4i32 { return 26i32; }
+
+    0i32
+}
+
+fn test_heap_extended() -> i32 {
+    // Test from_slice
+    let arr: [i32; 5] = [3i32, 1i32, 4i32, 1i32, 5i32];
+    let h: BinaryHeap<i32> = BinaryHeap::from_slice(arr[..]);
+    defer h.free();
+    if h.len() != 5usize { return 30i32; }
+
+    // Pop should give largest first
+    let v1 = h.pop();
+    if v1.unwrap() != 5i32 { return 31i32; }
+    let v2 = h.pop();
+    if v2.unwrap() != 4i32 { return 32i32; }
+    let v3 = h.pop();
+    if v3.unwrap() != 3i32 { return 33i32; }
+
+    // Test push_pop
+    let h2: BinaryHeap<i32> = BinaryHeap::new();
+    defer h2.free();
+    h2.push(10i32);
+    h2.push(20i32);
+    h2.push(5i32);
+    let r = h2.push_pop(15i32);
+    if r != 20i32 { return 34i32; }
+    let r2 = h2.push_pop(100i32);
+    if r2 != 100i32 { return 35i32; }
+
+    // Test drain
+    let h3: BinaryHeap<i32> = BinaryHeap::from_slice(arr[..]);
+    defer h3.free();
+    let sum = 0i32;
+    for v in h3.drain() {
+        sum = sum + v;
+    }
+    if sum != 14i32 { return 36i32; }  // 3+1+4+1+5 = 14
+    if h3.len() != 0usize { return 37i32; }
+
+    0i32
+}
+
+fn test_iter_partition() -> i32 {
+    let arr: [i32; 6] = [1i32, 2i32, 3i32, 4i32, 5i32, 6i32];
+    let (evens, odds) = slice_iter(arr[..])
+        .partition(|x: i32| -> bool { x % 2i32 == 0i32 });
+    defer evens.free();
+    defer odds.free();
+    if evens.len() != 3usize { return 40i32; }
+    if odds.len() != 3usize { return 41i32; }
+    0i32
+}
+
+fn test_iter_min_max_by() -> i32 {
+    let arr: [i32; 4] = [3i32, 1i32, 4i32, 2i32];
+
+    let m = slice_iter(arr[..]).min_by(|a: &i32, b: &i32| -> std::cmp::Ordering { a.compare(b) });
+    if m.unwrap() != 1i32 { return 50i32; }
+
+    let m2 = slice_iter(arr[..]).max_by(|a: &i32, b: &i32| -> std::cmp::Ordering { a.compare(b) });
+    if m2.unwrap() != 4i32 { return 51i32; }
+
+    0i32
+}
+
+fn test_slice_iter() -> i32 {
+    // Test basic slice_iter
+    let arr: [i32; 5] = [10i32, 20i32, 30i32, 40i32, 50i32];
+    let sum = slice_iter(arr[..])
+        .reduce(0i32, |acc: i32, x: i32| -> i32 { acc + x });
+    if sum != 150i32 { return 60i32; }
+
+    // Test slice_iter with filter
+    let evens = slice_iter(arr[..])
+        .filter(|x: i32| -> bool { x % 20i32 == 0i32 })
+        .to_vector();
+    defer evens.free();
+    if evens.len() != 2usize { return 61i32; }
+    if evens.as_slice()[0] != 20i32 { return 62i32; }
+    if evens.as_slice()[1] != 40i32 { return 63i32; }
+
+    // Test size_hint
+    let it = slice_iter(arr[..]);
+    let hint = it.size_hint();
+    if !hint.is_some() { return 64i32; }
+    if hint.unwrap() != 5usize { return 65i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_vector_to_vector();
+    if r != 0i32 { return r; }
+
+    let r = test_hashset_extended();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_extended();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_extended();
+    if r != 0i32 { return r; }
+
+    let r = test_iter_partition();
+    if r != 0i32 { return r; }
+
+    let r = test_iter_min_max_by();
+    if r != 0i32 { return r; }
+
+    let r = test_slice_iter();
+    if r != 0i32 { return r; }
+
+    0i32
+}

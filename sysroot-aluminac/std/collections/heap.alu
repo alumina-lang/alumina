@@ -119,6 +119,41 @@ impl BinaryHeap<T> {
         }
     }
 
+    /// Return a reference to the underlying data as a slice.
+    fn as_slice(self: &BinaryHeap<T>) -> &[T] {
+        self._data.as_slice()
+    }
+
+    /// Push a value and pop the largest.
+    fn push_pop(self: &mut BinaryHeap<T>, value: T) -> T {
+        if self._data.len() > 0usize && self._data.as_slice()[0] > value {
+            let slice = self._data.as_slice_mut();
+            let result = slice[0];
+            slice[0] = value;
+            self._sift_down(0usize);
+            result
+        } else {
+            value
+        }
+    }
+
+    /// Reserve capacity for at least `additional` more elements.
+    fn reserve(self: &mut BinaryHeap<T>, additional: usize) {
+        self._data.reserve(additional);
+    }
+
+    /// Extend the heap with elements from a slice.
+    fn extend_from_slice(self: &mut BinaryHeap<T>, slice: &[T]) {
+        for i in 0usize..slice.len() {
+            self.push(slice[i]);
+        }
+    }
+
+    /// Return a drain iterator that pops elements in order.
+    fn drain(self: &mut BinaryHeap<T>) -> HeapDrainIterator<T> {
+        HeapDrainIterator::<T> { _heap: self }
+    }
+
     /// Move the heap's contents, leaving `self` empty.
     fn move(self: &mut BinaryHeap<T>) -> BinaryHeap<T> {
         BinaryHeap::<T> {
@@ -130,4 +165,25 @@ impl BinaryHeap<T> {
     fn free(self: &mut BinaryHeap<T>) {
         self._data.free();
     }
+}
+
+impl BinaryHeap {
+    /// Create a heap from a slice.
+    fn from_slice<T>(slice: &[T]) -> BinaryHeap<T> {
+        let h: BinaryHeap<T> = BinaryHeap::with_capacity(slice.len());
+        h.extend_from_slice(slice);
+        h
+    }
+}
+
+/// Drain iterator for BinaryHeap - pops elements in order.
+struct HeapDrainIterator<T> {
+    _heap: &mut BinaryHeap<T>,
+}
+
+impl HeapDrainIterator<T> {
+    fn next(self: &mut HeapDrainIterator<T>) -> Option<T> {
+        self._heap.pop()
+    }
+    mixin std::iter::Iterator<HeapDrainIterator<T>, T>;
 }

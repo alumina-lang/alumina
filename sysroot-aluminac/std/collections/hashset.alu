@@ -54,8 +54,46 @@ impl HashSet<K> {
         self._inner.reserve(additional);
     }
 
+    /// Iterate over the keys in the set.
+    fn iter(self: &HashSet<K>) -> HashSetIterator<K> {
+        HashSetIterator::<K> {
+            _it: self._inner.keys(),
+        }
+    }
+
+    /// Extend the set with elements from a slice.
+    fn extend_from_slice(self: &mut HashSet<K>, slice: &[K]) {
+        for i in 0usize..slice.len() {
+            self.insert(slice[i]);
+        }
+    }
+
     /// Free the set's underlying storage.
     fn free(self: &mut HashSet<K>) {
         self._inner.free();
     }
+}
+
+/// Iterator over keys in a HashSet.
+struct HashSetIterator<K> {
+    _it: std::collections::hashmap::HashMapKeyIterator<K, bool>,
+}
+
+impl HashSetIterator<K> {
+    fn next(self: &mut HashSetIterator<K>) -> Option<K> {
+        self._it.next()
+    }
+    mixin std::iter::Iterator<HashSetIterator<K>, K>;
+}
+
+impl HashSet {
+    /// Create a hash set from a slice.
+    fn from_slice<K>(slice: &[K]) -> HashSet<K> {
+        let s: HashSet<K> = HashSet::with_capacity(slice.len());
+        for i in 0usize..slice.len() {
+            s.insert(slice[i]);
+        }
+        s
+    }
+
 }
