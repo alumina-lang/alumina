@@ -3,10 +3,9 @@
 
 extern "C" fn abort() -> !;
 
-macro panic($reason) {
+macro panic($reason, $args...) {
     {
-        std::io::_write_stderr("panic: ");
-        std::io::_write_stderr_ln($reason);
+        eprintln!(concat!("panic: ", $reason), $args$...);
         abort();
     }
 }
@@ -17,6 +16,36 @@ macro assert($cond) {
     }
 }
 
+macro assert_eq($a, $b) {
+    {
+        let _a = $a;
+        let _b = $b;
+        if _a != _b {
+            eprintln!("assertion failed: {} != {}", _a, _b);
+            abort();
+        }
+    }
+}
+
+macro assert_ne($a, $b) {
+    {
+        let _a = $a;
+        let _b = $b;
+        if _a == _b {
+            eprintln!("assertion failed: {} == {}", _a, _b);
+            abort();
+        }
+    }
+}
+
 macro debug_assert($cond) {
     // no-op in release mode
+}
+
+macro unreachable() {
+    panic!("entered unreachable code")
+}
+
+macro todo() {
+    panic!("not yet implemented")
 }
