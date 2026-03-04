@@ -26,13 +26,94 @@ extern "C" fn write(fd: i32, buf: &c_void, count: usize) -> isize;
 extern "C" fn lseek(fd: i32, offset: i64, whence: i32) -> i64;
 extern "C" fn pipe(pipefd: &mut c_int) -> c_int;
 
-// Process
+// File open flags
+const O_RDONLY: c_int = 0i32;
+const O_WRONLY: c_int = 1i32;
+const O_RDWR: c_int = 2i32;
+const O_CREAT: c_int = 64i32;
+const O_TRUNC: c_int = 512i32;
+const O_APPEND: c_int = 1024i32;
+const O_CLOEXEC: c_int = 524288i32;
+const O_NONBLOCK: c_int = 2048i32;
+
+// fcntl commands
+const F_GETFD: c_int = 1i32;
+const F_SETFD: c_int = 2i32;
+const F_GETFL: c_int = 3i32;
+const F_SETFL: c_int = 4i32;
+const FD_CLOEXEC: c_int = 1i32;
+
+// ioctl constants (Linux)
+const FIONBIO: c_int = 21537i32;
+const FIOCLEX: c_int = 21585i32;
+
+// Pipe
+extern "C" fn pipe2(fds: &mut c_int, flags: c_int) -> c_int;
+
+// Process types
+type pid_t = i32;
+type c_short = i16;
+type nfds_t = c_ulong;
+type ssize_t = isize;
+type size_t = usize;
+
+// Process management
 extern "C" fn system(cmd: &c_char) -> i32;
 extern "C" fn unlink(path: &c_char) -> i32;
-extern "C" fn exit(status: c_int);
-extern "C" fn abort();
-extern "C" fn _exit(status: c_int);
+extern "C" fn exit(status: c_int) -> !;
+extern "C" fn abort() -> !;
+extern "C" fn _exit(status: c_int) -> !;
 extern "C" fn getenv(name: &c_char) -> &mut c_char;
+extern "C" fn fork() -> pid_t;
+extern "C" fn waitpid(pid: pid_t, status: &mut c_int, options: c_int) -> pid_t;
+extern "C" fn dup2(src: c_int, dst: c_int) -> c_int;
+extern "C" fn execv(prog: &c_char, argv: &&mut c_char) -> c_int;
+extern "C" fn execve(prog: &c_char, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
+extern "C" fn kill(pid: pid_t, sig: c_int) -> c_int;
+extern "C" fn getcwd(buf: &mut c_char, size: usize) -> &mut c_char;
+extern "C" fn chdir(dir: &c_char) -> c_int;
+extern "C" fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+extern "C" fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+extern "C" fn getrandom(buf: &mut c_void, buflen: usize, flags: c_uint) -> isize;
+
+// Signals
+const SIGKILL: c_int = 9i32;
+
+// errno values
+const EAGAIN: c_int = 11i32;
+const EWOULDBLOCK: c_int = 11i32;
+const ERANGE: c_int = 34i32;
+const ENOENT: c_int = 2i32;
+
+// poll
+struct pollfd {
+    fd: c_int,
+    events: c_short,
+    revents: c_short,
+}
+const POLLIN: c_short = 1i16;
+extern "C" fn poll(fds: &mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
+
+// Wait status macros (Linux)
+fn WIFEXITED(status: c_int) -> bool {
+    (status & 127i32) == 0i32
+}
+
+fn WEXITSTATUS(status: c_int) -> c_int {
+    (status >> 8i32) & 255i32
+}
+
+fn WIFSIGNALED(status: c_int) -> bool {
+    (((status & 127i32) + 1i32) as i8) >= 2i8
+}
+
+fn WTERMSIG(status: c_int) -> c_int {
+    status & 127i32
+}
+
+fn WCOREDUMP(status: c_int) -> bool {
+    (status & 128i32) != 0i32
+}
 
 // String / memory operations
 extern "C" fn strtod(str: &c_char, endptr: &mut &mut c_char) -> f64;

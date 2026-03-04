@@ -1971,19 +1971,21 @@ impl FnCodegen {
             LLVMGetUndef(self.ctx.void_type)
         }
         IrTag::Return => {
-            // Generate deferred expressions before returning
-            self.gen_defers();
+            // Evaluate return expression BEFORE running defers, so deferred
+            // cleanup (e.g. buf.free()) doesn't clobber the return value.
             let fn_ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(self.llvm_fn));
             let fn_ret_is_void = LLVMGetTypeKind(fn_ret_ty) == LLVMTypeKind::Void;
             if expr.opt_expr.is_some() && !fn_ret_is_void {
                 let ret_val = self.gen_expr(expr.opt_expr.unwrap());
                 let coerced = self.coerce_value(ret_val, fn_ret_ty);
+                self.gen_defers();
                 LLVMBuildRet(self.ctx.builder, coerced);
             } else {
                 if expr.opt_expr.is_some() {
                     // Generate for side effects but discard result (void function)
                     self.gen_expr(expr.opt_expr.unwrap());
                 }
+                self.gen_defers();
                 LLVMBuildRetVoid(self.ctx.builder);
             }
             LLVMGetUndef(self.ctx.void_type)

@@ -1,6 +1,6 @@
-/// Process management utilities.
+//! A module for working with processes.
 
-/// Terminates the current process with the given exit code.
+/// Exits the process with a given return code.
 fn exit(code: i32) -> ! {
     libc::exit(code as libc::c_int)
 }
@@ -15,5 +15,689 @@ fn getenv(key: &[u8]) -> Option<&[u8]> {
     } else {
         let len = libc::strlen(val);
         Option::some(std::mem::slice_from_raw_const::<u8>(val as &u8, len))
+    }
+}
+
+/// Standard I/O stream redirection type
+enum Stdio {
+    /// A new pipe should be arranged to connect the parent and child processes.
+    Piped,
+    /// Null stream (child receives EOF on stdin, output is discarded).
+    Null,
+    /// This stream should be inherited from the parent.
+    Inherit,
+}
+
+/// Iterator over the environment variables.
+struct EnvVars {
+    ptr: &&libc::c_char,
+}
+
+impl EnvVars {
+    /// Gets the value of the environment variable with the given name.
+    /// The iterator is consumed.
+    fn get(self: &mut EnvVars, name: &[u8]) -> Option<&[u8]> {
+        loop {
+            let pair = self.next();
+            if pair.is_none() {
+                return Option::none();
+            }
+            let kv = pair.unwrap();
+            if kv.0 == name {
+                return Option::some(kv.1);
+            }
+        }
+    }
+
+    /// @ std::iter::Iterator::next
+    fn next(self: &mut EnvVars) -> Option<(&[u8], &[u8])> {
+        loop {
+            if *self.ptr == null {
+                break Option::none();
+            }
+
+            let env_str = std::ffi::CString::from_raw(*self.ptr)[..];
+            self.ptr = self.ptr + 1usize;
+
+            if env_str.len() == 0usize {
+                continue;
+            }
+
+            // Empty environment variable name is considered not valid, so allow
+            // it to start with '='
+            let sep = std::string::find_char(env_str[1usize..], '=');
+            if sep.is_none() {
+                continue;
+            }
+
+            break Option::some((env_str[0usize..sep.unwrap() + 1usize], env_str[sep.unwrap() + 2usize..]));
+        }
+    }
+
+    mixin iter::Iterator<EnvVars, (&[u8], &[u8])>;
+}
+
+/// Return environment variables of the current process.
+fn env() -> EnvVars {
+    EnvVars {
+        ptr: internal::environ,
+    }
+}
+
+/// Describes the result of a process after it has terminated.
+struct ExitStatus {
+    _wait_status: libc::c_int,
+}
+
+impl ExitStatus {
+    /// Create `ExitStatus` from a wait status (not exit code).
+    fn from_wait_status(wait_status: libc::c_int) -> ExitStatus {
+        ExitStatus { _wait_status: wait_status }
+    }
+
+    /// Returns the raw wait status of the process.
+    fn wait_status(self: &ExitStatus) -> i32 {
+        self._wait_status
+    }
+
+    /// Returns true if process completed successfully.
+    fn success(self: &ExitStatus) -> bool {
+        self._wait_status == 0i32
+    }
+
+    /// Returns true if process dumped core when terminated by a signal.
+    fn core_dumped(self: &ExitStatus) -> bool {
+        libc::WCOREDUMP(self._wait_status)
+    }
+
+    /// Returns exit code of a process, if present.
+    fn code(self: &ExitStatus) -> Option<i32> {
+        if libc::WIFEXITED(self._wait_status) {
+            Option::some(libc::WEXITSTATUS(self._wait_status))
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Returns the signal number the process was terminated by.
+    fn signal(self: &ExitStatus) -> Option<i32> {
+        if libc::WIFSIGNALED(self._wait_status) {
+            Option::some(libc::WTERMSIG(self._wait_status))
+        } else {
+            Option::none()
+        }
+    }
+
+    fn equals(self: &ExitStatus, other: &ExitStatus) -> bool {
+        self._wait_status == other._wait_status
+    }
+}
+
+/// Captured output of a child process.
+struct Output {
+    /// Exit status of the child process.
+    status: ExitStatus,
+    /// Standard output of the child process.
+    stdout: string::StringBuf,
+    /// Standard error of the child process.
+    stderr: string::StringBuf,
+}
+
+impl Output {
+    /// @ mem::Movable::move
+    fn move(self: &mut Output) -> Output {
+        Output {
+            status: self.status,
+            stdout: self.stdout.move(),
+            stderr: self.stderr.move(),
+        }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Output) {
+        self.stdout.free();
+        self.stderr.free();
+    }
+}
+
+/// Child process
+struct Child {
+    pid: libc::pid_t,
+    stdin: Option<io::FileDescriptor>,
+    stdout: Option<io::FileDescriptor>,
+    stderr: Option<io::FileDescriptor>,
+}
+
+impl Child {
+    /// Construct `Child` from a given process id.
+    fn from_pid(pid: libc::pid_t) -> Child {
+        Child {
+            pid: pid,
+            stdin: Option::none(),
+            stdout: Option::none(),
+            stderr: Option::none(),
+        }
+    }
+
+    /// Wait for child to exit, reading stdout and stderr if I/O redirection is requested.
+    fn wait_with_output(self: &mut Child) -> io::Result<Output> {
+        // Close stdin so the child knows we're done writing
+        if self.stdin.is_some() {
+            let fd = self.stdin.unwrap();
+            self.stdin = Option::none();
+            fd.close()?;
+        }
+
+        let stdout_buf = string::StringBuf::new();
+        defer stdout_buf.free();
+
+        let stderr_buf = string::StringBuf::new();
+        defer stderr_buf.free();
+
+        if self.stdout.is_some() && self.stderr.is_some() {
+            internal::read_to_end_2(
+                &self.stdout.unwrap(),
+                &stdout_buf,
+                &self.stderr.unwrap(),
+                &stderr_buf,
+            )?;
+        } else if self.stdout.is_some() {
+            self.stdout.unwrap().read_to_end(&stdout_buf)?;
+        } else if self.stderr.is_some() {
+            self.stderr.unwrap().read_to_end(&stderr_buf)?;
+        }
+
+        // Close all remaining pipes
+        self.close()?;
+
+        let status: libc::c_int = 0i32;
+        io::errno_try!(libc::waitpid(self.pid, &status, 0i32));
+
+        let res = Output {
+            status: ExitStatus::from_wait_status(status),
+            stdout: stdout_buf.move(),
+            stderr: stderr_buf.move(),
+        };
+
+        Result::ok(res)
+    }
+
+    /// Wait for child to exit, returning the exit status.
+    fn wait(self: &mut Child) -> io::Result<ExitStatus> {
+        // Close stdin
+        if self.stdin.is_some() {
+            let fd = self.stdin.unwrap();
+            self.stdin = Option::none();
+            fd.close()?;
+        }
+
+        let status: libc::c_int = 0i32;
+        io::errno_try!(libc::waitpid(self.pid, &status, 0i32));
+
+        Result::ok(ExitStatus::from_wait_status(status))
+    }
+
+    /// Kill the child process.
+    fn kill(self: &mut Child) -> io::Result<()> {
+        io::errno_try!(libc::kill(self.pid, libc::SIGKILL));
+        Result::ok(())
+    }
+
+    /// Close all pipes.
+    fn close(self: &mut Child) -> io::Result<()> {
+        if self.stdin.is_some() {
+            let fd = self.stdin.unwrap();
+            self.stdin = Option::none();
+            fd.close()?;
+        }
+        if self.stdout.is_some() {
+            let fd = self.stdout.unwrap();
+            self.stdout = Option::none();
+            fd.close()?;
+        }
+        if self.stderr.is_some() {
+            let fd = self.stderr.unwrap();
+            self.stderr = Option::none();
+            fd.close()?;
+        }
+        Result::ok(())
+    }
+}
+
+/// Builder for creating a forked process.
+struct Forked {
+    _stdin: Stdio,
+    _stdout: Stdio,
+    _stderr: Stdio,
+}
+
+impl Forked {
+    fn new() -> Forked {
+        Forked {
+            _stdin: Stdio::Inherit,
+            _stdout: Stdio::Inherit,
+            _stderr: Stdio::Inherit,
+        }
+    }
+
+    /// Set the stdin redirection type
+    fn stdin(self: &mut Forked, stdin: Stdio) -> &mut Forked {
+        self._stdin = stdin;
+        self
+    }
+
+    /// Set the stdout redirection type
+    fn stdout(self: &mut Forked, stdout: Stdio) -> &mut Forked {
+        self._stdout = stdout;
+        self
+    }
+
+    /// Set the stderr redirection type
+    fn stderr(self: &mut Forked, stderr: Stdio) -> &mut Forked {
+        self._stderr = stderr;
+        self
+    }
+
+    /// Fork the process.
+    ///
+    /// Returns Option::none() in the child and a `Child` value in the parent.
+    fn spawn(self: &Forked) -> io::Result<Option<Child>> {
+        let stdin = internal::ChildStdio::new(true, self._stdin)?;
+        defer stdin.close();
+
+        let stdout = internal::ChildStdio::new(false, self._stdout)?;
+        defer stdout.close();
+
+        let stderr = internal::ChildStdio::new(false, self._stderr)?;
+        defer stderr.close();
+
+        let fork_ret = libc::fork();
+        if fork_ret == -1i32 {
+            return Result::err(io::Error::from_errno());
+        }
+        if fork_ret == 0i32 {
+            // In child - reset panic hook
+            std::panicking::internal::PANIC_HOOK = std::mem::zeroed::<Option<std::panicking::internal::PanicHook>>();
+
+            // Install redirected file descriptors
+            stdin.install(libc::STDIN_FILENO).unwrap();
+            stdout.install(libc::STDOUT_FILENO).unwrap();
+            stderr.install(libc::STDERR_FILENO).unwrap();
+
+            // We have forked
+            Result::ok(Option::none())
+        } else {
+            let child_stdin = stdin.into_inner();
+            let child_stdout = stdout.into_inner();
+            let child_stderr = stderr.into_inner();
+            Result::ok(Option::some(Child {
+                pid: fork_ret,
+                stdin: child_stdin,
+                stdout: child_stdout,
+                stderr: child_stderr,
+            }))
+        }
+    }
+}
+
+/// Builder for creating a process.
+struct Command {
+    _path: &[u8],
+    _args: &[&[u8]],
+    _environ: Option<&[(&[u8], &[u8])]>,
+    _stdin: Stdio,
+    _stdout: Stdio,
+    _stderr: Stdio,
+}
+
+impl Command {
+    fn new(path: &[u8]) -> Command {
+        Command {
+            _path: path,
+            _args: std::mem::slice_empty::<&[u8]>(),
+            _environ: Option::none(),
+            _stdin: Stdio::Inherit,
+            _stdout: Stdio::Inherit,
+            _stderr: Stdio::Inherit,
+        }
+    }
+
+    /// Set command line arguments.
+    fn args(self: &mut Command, args: &[&[u8]]) -> &mut Command {
+        self._args = args;
+        self
+    }
+
+    /// Set environment variables.
+    fn env(self: &mut Command, environ: &[(&[u8], &[u8])]) -> &mut Command {
+        self._environ = Option::some(environ);
+        self
+    }
+
+    /// Set the stdin redirection type
+    fn stdin(self: &mut Command, stdin: Stdio) -> &mut Command {
+        self._stdin = stdin;
+        self
+    }
+
+    /// Set the stdout redirection type
+    fn stdout(self: &mut Command, stdout: Stdio) -> &mut Command {
+        self._stdout = stdout;
+        self
+    }
+
+    /// Set the stderr redirection type
+    fn stderr(self: &mut Command, stderr: Stdio) -> &mut Command {
+        self._stderr = stderr;
+        self
+    }
+
+    /// Spawn a process.
+    fn spawn(self: &Command) -> io::Result<Child> {
+        let exec_params = internal::ExecParams::new(self);
+        defer exec_params.free();
+
+        let stdin = internal::ChildStdio::new(true, self._stdin)?;
+        defer stdin.close();
+
+        let stdout = internal::ChildStdio::new(false, self._stdout)?;
+        defer stdout.close();
+
+        let stderr = internal::ChildStdio::new(false, self._stderr)?;
+        defer stderr.close();
+
+        let fail_pair = io::Pipe::anonymous()?;
+        let fail_rx = fail_pair.0;
+        let fail_tx = fail_pair.1;
+        defer fail_rx.close();
+
+        let pid = io::errno_try!(libc::fork());
+        if pid == 0i32 {
+            std::panicking::internal::PANIC_HOOK = std::mem::zeroed::<Option<std::panicking::internal::PanicHook>>();
+
+            stdin.install(libc::STDIN_FILENO).unwrap();
+            stdout.install(libc::STDOUT_FILENO).unwrap();
+            stderr.install(libc::STDERR_FILENO).unwrap();
+
+            if self._environ.is_none() {
+                libc::execv(exec_params.name(), exec_params.argv());
+            } else {
+                libc::execve(exec_params.name(), exec_params.argv(), exec_params.envp());
+            }
+
+            // If we are here, exec failed. Send the error back to the parent
+            // over the pipe and exit.
+            let error = io::Error::from_errno();
+            let msg = std::mem::slice_from_raw(&error as &mut u8, std::mem::size_of::<io::Error>());
+            fail_tx.write_all(msg).unwrap();
+            libc::_exit(1i32);
+        } else {
+            fail_tx.close().unwrap();
+
+            let exec_err: io::Error;
+            if fail_rx.read_exact(
+                std::mem::slice_from_raw(&exec_err as &mut u8, std::mem::size_of::<io::Error>())
+            ).is_ok() {
+                return Result::err(exec_err);
+            }
+
+            Result::ok(Child {
+                pid: pid,
+                stdin: stdin.into_inner(),
+                stdout: stdout.into_inner(),
+                stderr: stderr.into_inner(),
+            })
+        }
+    }
+}
+
+/// Returns the current working directory.
+fn current_dir() -> io::Result<string::StringBuf> {
+    let buf = string::StringBuf::with_capacity(512usize);
+    defer buf.free();
+
+    loop {
+        let spare = buf.spare_capacity();
+        let ret = libc::getcwd(
+            &spare[0] as &mut libc::c_char,
+            spare.len(),
+        );
+
+        if ret == null {
+            let error = io::Error::from_errno();
+            let as_errno = error.as_errno();
+
+            if as_errno.is_some() && as_errno.unwrap() == libc::ERANGE {
+                buf.reserve(buf.capacity() + 1usize);
+                continue;
+            }
+
+            return Result::err(error);
+        }
+
+        let cstr = std::ffi::CString::from_raw(ret);
+        buf.truncate(cstr.len());
+        return Result::ok(buf.move());
+    }
+}
+
+/// Change the current working directory to the specified path.
+fn set_current_dir(path: &[u8]) -> io::Result<()> {
+    let cpath = std::ffi::CString::from_slice(path);
+    defer cpath.free();
+
+    io::errno_try!(libc::chdir(cpath.ptr as &libc::c_char));
+
+    Result::ok(())
+}
+
+mod internal {
+    extern "C" static environ: &&libc::c_char;
+
+    fn maybe_read_to_end(src: &mut io::FileDescriptor, dst: &mut string::StringBuf) -> io::Result<bool> {
+        let maybe_n = src.read_to_end(dst);
+        if maybe_n.is_ok() {
+            Result::ok(true)
+        } else {
+            let error = maybe_n.unwrap_err();
+            let as_errno = error.as_errno();
+
+            if as_errno.is_some() && (as_errno.unwrap() == libc::EWOULDBLOCK || as_errno.unwrap() == libc::EAGAIN) {
+                Result::ok(false)
+            } else {
+                Result::err(error)
+            }
+        }
+    }
+
+    /// Reads two pipes into respective buffers at the same time using poll.
+    fn read_to_end_2(
+        src1: &mut io::FileDescriptor,
+        dst1: &mut string::StringBuf,
+        src2: &mut io::FileDescriptor,
+        dst2: &mut string::StringBuf,
+    ) -> io::Result<()> {
+        src1.set_nonblocking(true)?;
+        src2.set_nonblocking(true)?;
+
+        let fds: [libc::pollfd; 2] = std::mem::zeroed::<[libc::pollfd; 2]>();
+        fds[0].fd = src1.value;
+        fds[0].events = libc::POLLIN;
+        fds[1].fd = src2.value;
+        fds[1].events = libc::POLLIN;
+
+        loop {
+            io::errno_try!(libc::poll(&fds[0], 2u64, -1i32));
+
+            if fds[0].revents != 0i16 {
+                if maybe_read_to_end(src1, dst1)? {
+                    src2.set_nonblocking(false)?;
+                    src2.read_to_end(dst2)?;
+                    return Result::ok(());
+                }
+            }
+
+            if fds[1].revents != 0i16 {
+                if maybe_read_to_end(src2, dst2)? {
+                    src1.set_nonblocking(false)?;
+                    src1.read_to_end(dst1)?;
+                    return Result::ok(());
+                }
+            }
+        }
+    }
+
+    struct ChildStdio {
+        ours: Option<io::FileDescriptor>,
+        theirs: Option<io::FileDescriptor>,
+    }
+
+    impl ChildStdio {
+        fn new(is_stdin: bool, kind: Stdio) -> io::Result<ChildStdio> {
+            switch kind {
+                Stdio::Piped => {
+                    let pair = io::Pipe::anonymous()?;
+                    let rx = pair.0;
+                    let tx = pair.1;
+                    if is_stdin {
+                        Result::ok(ChildStdio {
+                            ours: Option::some(tx.fd),
+                            theirs: Option::some(rx.fd),
+                        })
+                    } else {
+                        Result::ok(ChildStdio {
+                            ours: Option::some(rx.fd),
+                            theirs: Option::some(tx.fd),
+                        })
+                    }
+                }
+                Stdio::Inherit => {
+                    Result::ok(ChildStdio {
+                        ours: Option::none(),
+                        theirs: Option::none(),
+                    })
+                }
+                Stdio::Null => {
+                    let flags = if is_stdin { libc::O_RDONLY } else { libc::O_WRONLY };
+                    let fd = libc::open(&"/dev/null\0"[0] as &libc::c_char, flags);
+                    if fd == -1i32 {
+                        return Result::err(io::Error::from_errno());
+                    }
+                    Result::ok(ChildStdio {
+                        ours: Option::none(),
+                        theirs: Option::some(io::FileDescriptor::new(fd)),
+                    })
+                }
+                _ => {
+                    Result::err(io::Error::custom("invalid Stdio value"))
+                }
+            }
+        }
+
+        fn close(self: &mut ChildStdio) -> io::Result<()> {
+            if self.ours.is_some() {
+                let fd = self.ours.unwrap();
+                self.ours = Option::none();
+                fd.close()?;
+            }
+            if self.theirs.is_some() {
+                let fd = self.theirs.unwrap();
+                self.theirs = Option::none();
+                fd.close()?;
+            }
+            Result::ok(())
+        }
+
+        fn install(self: &mut ChildStdio, target_fd: libc::c_int) -> io::Result<()> {
+            if self.theirs.is_some() {
+                io::errno_try!(libc::dup2(self.theirs.unwrap().value, target_fd));
+            }
+            Result::ok(())
+        }
+
+        fn into_inner(self: &mut ChildStdio) -> Option<io::FileDescriptor> {
+            if self.ours.is_some() {
+                let fd = self.ours.unwrap();
+                self.ours = Option::none();
+                Option::some(fd)
+            } else {
+                Option::none()
+            }
+        }
+    }
+
+    /// Holder for `execve` args converted to C-strings.
+    struct ExecParams {
+        _chars: string::StringBuf,
+        _ptrs: collections::Vector<&u8>,
+        _argc: usize,
+    }
+
+    impl ExecParams {
+        fn new(command: &Command) -> ExecParams {
+            let storage = string::StringBuf::new();
+            defer storage.free();
+            let args_idxs: collections::Vector<usize> = collections::Vector::new();
+            defer args_idxs.free();
+            let env_idxs: collections::Vector<usize> = collections::Vector::new();
+            defer env_idxs.free();
+
+            args_idxs.push(0usize);
+            storage.extend_from_slice(command._path);
+            storage.push('\0');
+            for arg in command._args {
+                args_idxs.push(storage.len());
+                storage.extend_from_slice(arg);
+                storage.push('\0');
+            }
+
+            if command._environ.is_some() {
+                for kv in command._environ.unwrap() {
+                    env_idxs.push(storage.len());
+                    storage.extend_from_slice(kv.0);
+                    storage.push('=');
+                    storage.extend_from_slice(kv.1);
+                    storage.push('\0');
+                }
+            }
+
+            let base_ptr = &storage[0];
+            let ptrs: collections::Vector<&u8> = collections::Vector::new();
+
+            // argv pointers
+            for i in 0usize..args_idxs.len() {
+                ptrs.push(base_ptr + args_idxs[i]);
+            }
+            ptrs.push(null as &u8); // NULL terminator
+
+            // envp pointers (if any)
+            for i in 0usize..env_idxs.len() {
+                ptrs.push(base_ptr + env_idxs[i]);
+            }
+            ptrs.push(null as &u8); // NULL terminator
+
+            ExecParams {
+                _chars: storage.move(),
+                _ptrs: ptrs,
+                _argc: args_idxs.len(),
+            }
+        }
+
+        fn name(self: &ExecParams) -> &libc::c_char {
+            &self._chars[0] as &libc::c_char
+        }
+
+        fn argv(self: &ExecParams) -> &&mut libc::c_char {
+            &self._ptrs[0] as &&mut libc::c_char
+        }
+
+        fn envp(self: &ExecParams) -> &&mut libc::c_char {
+            &self._ptrs[self._argc + 1usize] as &&mut libc::c_char
+        }
+
+        fn free(self: &mut ExecParams) {
+            self._chars.free();
+            self._ptrs.free();
+        }
     }
 }

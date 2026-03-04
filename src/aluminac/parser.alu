@@ -3756,7 +3756,26 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+        let macro_node = name_node.unwrap();
+        let macro_node_kind = NODE_KINDS[macro_node.symbol() as usize];
+
+        // Resolve macro name - handle both simple identifiers and scoped paths
+        let name = self.ctx.intern_str(self.ctx.node_text(macro_node));
+
+        // For scoped identifiers (e.g. std::io::errno_try), resolve through scope system
+        // to get the short name that macro_defs uses
+        if macro_node_kind == NodeKind::ScopedIdentifier {
+            let pass2 = Pass2 { ctx: self.ctx };
+            let segments = pass2.collect_type_path_segments(macro_node);
+            let resolved = self.ctx.scopes.resolve_path(self.scope_idx, segments);
+            if resolved.is_some() {
+                let item = resolved.unwrap();
+                if item.kind.tag == scope::NamedItemTag::Macro {
+                    name = item.name;
+                }
+            }
+        }
+
         let args = if !args_node.is_none() {
             self.parse_arg_list(args_node.unwrap())
         } else {

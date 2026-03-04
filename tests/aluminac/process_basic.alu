@@ -1,0 +1,162 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: read_to_end on a SliceReader
+    {
+        let data = "hello world";
+        let reader = std::io::SliceReader::new(data);
+        let buf = std::string::StringBuf::new();
+        defer buf.free();
+        let result = reader.read_to_end(&buf);
+        if result.is_err() {
+            eprintln!("FAIL test 1: read_to_end returned error");
+            return 1i32;
+        }
+        if buf.len() != 11usize {
+            eprintln!("FAIL test 1: expected 11 bytes, got {}", buf.len());
+            return 1i32;
+        }
+        if buf.as_slice() != "hello world" {
+            eprintln!("FAIL test 1: content mismatch, got '{}'", buf.as_slice());
+            return 1i32;
+        }
+        eprintln!("PASS test 1: read_to_end on SliceReader");
+    }
+
+    // Test 2: Pipe - write and read
+    {
+        let pair = std::io::Pipe::anonymous().unwrap();
+        let rx = pair.0;
+        let tx = pair.1;
+
+        tx.fd.write("from pipe").unwrap();
+        tx.close().unwrap();
+
+        let buf = std::string::StringBuf::new();
+        defer buf.free();
+        let result = rx.fd.read_to_end(&buf);
+        rx.close().unwrap();
+
+        if result.is_err() {
+            eprintln!("FAIL test 2: read_to_end returned error");
+            return 1i32;
+        }
+        let n = result.unwrap();
+        if n != 9usize {
+            eprintln!("FAIL test 2: expected 9 bytes, got {}", n);
+            return 1i32;
+        }
+        if buf.as_slice() != "from pipe" {
+            eprintln!("FAIL test 2: content mismatch, len={} slice='{}'", buf.len(), buf.as_slice());
+            return 1i32;
+        }
+        eprintln!("PASS test 2: pipe write/read_to_end");
+    }
+
+    // Test 3: fork with piped stdout
+    {
+        let forked = std::process::Forked::new();
+        forked.stdout(std::process::Stdio::Piped);
+        let result = forked.spawn();
+        if result.is_err() {
+            eprintln!("FAIL test 3: fork failed");
+            return 1i32;
+        }
+        let maybe_child = result.unwrap();
+        if maybe_child.is_none() {
+            // Child
+            print!("child output");
+            libc::_exit(0i32);
+        }
+        // Parent
+        let child = maybe_child.unwrap();
+        let output = child.wait_with_output();
+        if output.is_err() {
+            eprintln!("FAIL test 3: wait_with_output failed");
+            return 1i32;
+        }
+        let out = output.unwrap();
+        defer out.free();
+        if out.stdout.as_slice() != "child output" {
+            eprintln!("FAIL test 3: expected 'child output', got '{}' (len={})", out.stdout.as_slice(), out.stdout.len());
+            return 1i32;
+        }
+        if !out.status.success() {
+            eprintln!("FAIL test 3: child exited with non-zero status");
+            return 1i32;
+        }
+        eprintln!("PASS test 3: fork with piped stdout");
+    }
+
+    // Test 4: Command with piped stdout
+    {
+        let cmd = std::process::Command::new("/bin/echo");
+        cmd.args(&["hello", "world"]);
+        cmd.stdout(std::process::Stdio::Piped);
+        let result = cmd.spawn();
+        if result.is_err() {
+            eprintln!("FAIL test 4: spawn failed");
+            return 1i32;
+        }
+        let child = result.unwrap();
+        let output = child.wait_with_output();
+        if output.is_err() {
+            eprintln!("FAIL test 4: wait_with_output failed");
+            return 1i32;
+        }
+        let out = output.unwrap();
+        defer out.free();
+        // echo adds a newline
+        if out.stdout.as_slice() != "hello world\n" {
+            eprintln!("FAIL test 4: expected 'hello world\\n', got '{}' (len={})", out.stdout.as_slice(), out.stdout.len());
+            return 1i32;
+        }
+        eprintln!("PASS test 4: Command with piped stdout");
+    }
+
+    // Test 5: ExitStatus
+    {
+        let cmd = std::process::Command::new("/bin/sh");
+        cmd.args(&["-c", "exit 42"]);
+        let child = cmd.spawn().unwrap();
+        let status = child.wait().unwrap();
+        if status.success() {
+            eprintln!("FAIL test 5: expected non-zero exit");
+            return 1i32;
+        }
+        let code = status.code();
+        if code.is_none() || code.unwrap() != 42i32 {
+            eprintln!("FAIL test 5: expected exit code 42");
+            return 1i32;
+        }
+        eprintln!("PASS test 5: ExitStatus");
+    }
+
+    // Test 6: current_dir
+    {
+        let dir = std::process::current_dir();
+        if dir.is_err() {
+            eprintln!("FAIL test 6: current_dir failed");
+            return 1i32;
+        }
+        let d = dir.unwrap();
+        defer d.free();
+        if d.len() == 0usize {
+            eprintln!("FAIL test 6: empty current dir");
+            return 1i32;
+        }
+        eprintln!("PASS test 6: current_dir = '{}'", d.as_slice());
+    }
+
+    // Test 7: getenv
+    {
+        let path = std::process::getenv("PATH");
+        if path.is_none() {
+            eprintln!("FAIL test 7: PATH not set");
+            return 1i32;
+        }
+        eprintln!("PASS test 7: getenv PATH exists");
+    }
+
+    eprintln!("All process tests passed");
+    0i32
+}
