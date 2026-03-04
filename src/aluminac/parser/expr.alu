@@ -345,45 +345,45 @@ impl ExprParser {
         if resolved.is_some() {
             let item = resolved.unwrap();
             if item.kind.tag == scope::NamedItemTag::Local {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::Local, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Param {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::Param, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Function {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Method {
-                let fn_id = item.kind.id2;
+                let fn_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = fn_id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Static {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Const {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::BoundValue {
                 let e = self.make_expr(ExprTag::BoundValue, span);
-                e.id = item.kind.id;       // binding id
-                e.id2 = item.kind.id2;     // self_param id
+                e.id = item.kind.id();       // binding id
+                e.id2 = item.kind.id2();     // self_param id
                 e.str_val = item.name;     // binding name (for field lookup)
                 e.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
-                let enum_id = item.kind.id;
-                let variant_id = item.kind.id2;
+                let enum_id = item.kind.id();
+                let variant_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::EnumRef, span);
                 e.id = enum_id;
                 e.id2 = variant_id;
@@ -414,28 +414,28 @@ impl ExprParser {
         if resolved.is_some() {
             let item = resolved.unwrap();
             if item.kind.tag == scope::NamedItemTag::Function {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Method {
-                let fn_id = item.kind.id2;
+                let fn_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::FnRef, span);
                 e.id = fn_id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Static {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Const {
-                let id = item.kind.id;
+                let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
                 e.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
-                let enum_id = item.kind.id;
-                let variant_id = item.kind.id2;
+                let enum_id = item.kind.id();
+                let variant_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::EnumRef, span);
                 e.id = enum_id;
                 e.id2 = variant_id;
@@ -461,7 +461,7 @@ impl ExprParser {
                     if first_item.kind.tag == scope::NamedItemTag::GenericParam
                         || first_item.kind.tag == scope::NamedItemTag::TypeAlias {
                         let e = self.make_expr(ExprTag::Defered, span);
-                        e.id = first_item.kind.id;
+                        e.id = first_item.kind.id();
                         e.str_val = segments[segments.len() - 1];
                         return self.ctx.alloc_expr(e);
                     }
@@ -820,7 +820,7 @@ impl ExprParser {
             if resolved.is_some() {
                 let item = resolved.unwrap();
                 if item.kind.tag == scope::NamedItemTag::Function {
-                    e.id2 = Id { _value: item.kind.id._value + 1usize };
+                    e.id2 = Id { _value: item.kind.id()._value + 1usize };
                 }
             }
         }
@@ -1337,17 +1337,17 @@ impl ExprParser {
                                 let item = resolved.unwrap();
                                 if item.kind.tag == scope::NamedItemTag::Local {
                                     let ve = self.make_expr(ExprTag::Local, span);
-                                    ve.id = item.kind.id;
+                                    ve.id = item.kind.id();
                                     self.ctx.alloc_expr(ve)
                                 } else if item.kind.tag == scope::NamedItemTag::Param {
                                     let ve = self.make_expr(ExprTag::Param, span);
-                                    ve.id = item.kind.id;
+                                    ve.id = item.kind.id();
                                     self.ctx.alloc_expr(ve)
                                 } else if item.kind.tag == scope::NamedItemTag::BoundValue {
                                     // Nested closure: capture from enclosing closure
                                     let ve = self.make_expr(ExprTag::BoundValue, span);
-                                    ve.id = item.kind.id;
-                                    ve.id2 = item.kind.id2;
+                                    ve.id = item.kind.id();
+                                    ve.id2 = item.kind.id2();
                                     ve.str_val = item.name;
                                     ve.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                                     self.ctx.alloc_expr(ve)
@@ -1514,7 +1514,7 @@ impl ExprParser {
             if resolved.is_some() {
                 let item = resolved.unwrap();
                 if item.kind.tag == scope::NamedItemTag::Macro {
-                    macro_item_id = item.kind.id._value;
+                    macro_item_id = item.kind.id()._value;
                     name = item.name;
                 }
             }

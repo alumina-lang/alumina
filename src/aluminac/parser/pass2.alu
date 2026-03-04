@@ -123,11 +123,11 @@ impl Pass2 {
                         if existing.is_none() {
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
-                                kind: NamedItemKind::function(item.kind.id),
+                                kind: NamedItemKind::function(item.kind.id()),
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
                             if mixin_ty_args.len() > 0 {
-                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id()._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
                             }
                         }
                     }
@@ -370,7 +370,7 @@ impl Pass2 {
                     // Reuse the ID from Pass1's scope registration
                     let resolved = self.ctx.scopes.resolve(scope_idx, name);
                     let id = if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
-                        resolved.unwrap().kind.id
+                        resolved.unwrap().kind.id()
                     } else {
                         self.ctx.next_id()
                     };
@@ -451,7 +451,7 @@ impl Pass2 {
             // Look up the param ID from scope (registered in Pass1)
             let scope_item = self.ctx.scopes.resolve(scope_idx, name);
             let param_id = if scope_item.is_some() {
-                scope_item.unwrap().kind.id
+                scope_item.unwrap().kind.id()
             } else {
                 self.ctx.next_id()
             };
@@ -502,22 +502,22 @@ impl Pass2 {
                 if resolved.is_some() {
                     let item = resolved.unwrap();
                     if item.kind.tag == scope::NamedItemTag::Struct {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::Enum {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::Protocol {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::GenericParam {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::placeholder(id));
                     } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
-                        let bt = item.kind.builtin;
+                        let bt = item.kind.builtin();
                         return self.ctx.alloc_ty(Ty::builtin_ty(bt));
                     }
                 }
@@ -612,16 +612,16 @@ impl Pass2 {
                 if resolved.is_some() {
                     let item = resolved.unwrap();
                     if item.kind.tag == scope::NamedItemTag::Struct {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::Enum {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::Protocol {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
-                        let id = item.kind.id;
+                        let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     }
                 }
@@ -719,15 +719,15 @@ impl Pass2 {
                 if resolved.is_some() {
                     let item = resolved.unwrap();
                     if item.kind.tag == scope::NamedItemTag::Struct {
-                        return self.ctx.alloc_ty(Ty::named(item.kind.id));
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id()));
                     } else if item.kind.tag == scope::NamedItemTag::Enum {
-                        return self.ctx.alloc_ty(Ty::named(item.kind.id));
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id()));
                     } else if item.kind.tag == scope::NamedItemTag::GenericParam {
-                        return self.ctx.alloc_ty(Ty::placeholder(item.kind.id));
+                        return self.ctx.alloc_ty(Ty::placeholder(item.kind.id()));
                     } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
-                        return self.ctx.alloc_ty(Ty::builtin_ty(item.kind.builtin));
+                        return self.ctx.alloc_ty(Ty::builtin_ty(item.kind.builtin()));
                     } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
-                        return self.ctx.alloc_ty(Ty::named(item.kind.id));
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id()));
                     }
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
@@ -905,7 +905,7 @@ impl Pass2 {
                 // Look up the variant ID from scope (registered in pass1)
                 let scope_item = self.ctx.scopes.resolve(pending.scope_idx, name);
                 let variant_id = if scope_item.is_some() && scope_item.unwrap().kind.tag == scope::NamedItemTag::EnumVariant {
-                    scope_item.unwrap().kind.id2
+                    scope_item.unwrap().kind.id2()
                 } else {
                     self.ctx.next_id()
                 };
@@ -961,7 +961,7 @@ impl Pass2 {
                 // Look up the fn ID from the protocol's scope
                 let scope_item = self.ctx.scopes.resolve(pending.scope_idx, fn_name);
                 let fn_id = if scope_item.is_some() {
-                    scope_item.unwrap().kind.id
+                    scope_item.unwrap().kind.id()
                 } else {
                     self.ctx.next_id()
                 };
@@ -1084,12 +1084,12 @@ impl Pass2 {
                         if existing.is_none() {
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
-                                kind: NamedItemKind::function(item.kind.id),
+                                kind: NamedItemKind::function(item.kind.id()),
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
                             // Store mixin type args so mono can substitute protocol generics
                             if mixin_ty_args.len() > 0 {
-                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id()._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
                             }
                         }
                     }

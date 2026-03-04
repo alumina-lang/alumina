@@ -27,98 +27,95 @@ enum NamedItemTag {
     BuiltinType = 16i32,
 }
 
+struct _NIKIdPair {
+    id: Id,
+    id2: Id,
+}
+
+struct _NIKUseAliasData {
+    path_segments: &[&[u8]],
+}
+
+union _NamedItemData {
+    id: Id,                        // Function, Struct, Enum, Protocol, TypeAlias, Static, Const, Macro, Local, Param, GenericParam
+    id_pair: _NIKIdPair,           // Method, EnumVariant, BoundValue
+    use_alias: _NIKUseAliasData,   // UseAlias
+    builtin: BuiltinType,          // BuiltinType
+}
+
 struct NamedItemKind {
     tag: NamedItemTag,
-    // Data fields reused depending on tag:
-    id: Id,                 // NamedItemTag::Function, NamedItemTag::Struct, NamedItemTag::Enum, NamedItemTag::Protocol, NamedItemTag::TypeAlias,
-                            // NamedItemTag::Static, NamedItemTag::Const, NamedItemTag::Macro, NamedItemTag::Local, NamedItemTag::Param,
-                            // NamedItemTag::BoundValue, NamedItemTag::GenericParam
-    id2: Id,                // NamedItemTag::Method (fn_id), NamedItemTag::EnumVariant (variant_id)
-    scope_idx: u32,         // NamedItemTag::Module, NamedItemTag::UseAlias
-    path_segments: &[&[u8]], // NamedItemTag::UseAlias
-    builtin: BuiltinType,  // NamedItemTag::BuiltinType
+    scope_idx: u32,         // cross-cutting: Module, UseAlias, Struct/Enum/Protocol/BuiltinType with scope, BoundValue (as BoundType)
+    _data: _NamedItemData,
 }
 
 impl NamedItemKind {
+    fn id(self: &NamedItemKind) -> Id { self._data.id }
+    fn id2(self: &NamedItemKind) -> Id { self._data.id_pair.id2 }
+    fn path_segments(self: &NamedItemKind) -> &[&[u8]] { self._data.use_alias.path_segments }
+    fn builtin(self: &NamedItemKind) -> BuiltinType { self._data.builtin }
+
+    fn _no_data() -> _NamedItemData { _NamedItemData { id: Id { _value: 0 } } }
+
     fn function(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Function, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Function, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn method(type_id: Id, fn_id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Method, id: type_id, id2: fn_id,
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Method, scope_idx: 0, _data: _NamedItemData { id_pair: _NIKIdPair { id: type_id, id2: fn_id } } }
     }
     fn struct_kind(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Struct, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Struct, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn struct_kind_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Struct, id: id, id2: Id { _value: 0 },
-                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Struct, scope_idx: scope_idx, _data: _NamedItemData { id: id } }
     }
     fn enum_kind(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Enum, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Enum, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn enum_kind_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Enum, id: id, id2: Id { _value: 0 },
-                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Enum, scope_idx: scope_idx, _data: _NamedItemData { id: id } }
     }
     fn enum_variant(enum_id: Id, variant_id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::EnumVariant, id: enum_id, id2: variant_id,
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::EnumVariant, scope_idx: 0, _data: _NamedItemData { id_pair: _NIKIdPair { id: enum_id, id2: variant_id } } }
     }
     fn protocol(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Protocol, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Protocol, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn protocol_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Protocol, id: id, id2: Id { _value: 0 },
-                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Protocol, scope_idx: scope_idx, _data: _NamedItemData { id: id } }
     }
     fn type_alias(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::TypeAlias, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::TypeAlias, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn static_kind(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Static, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Static, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn const_kind(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Const, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Const, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn macro_kind(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Macro, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Macro, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn module(scope_idx: u32) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Module, id: Id { _value: 0 }, id2: Id { _value: 0 },
-                        scope_idx: scope_idx, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Module, scope_idx: scope_idx, _data: NamedItemKind::_no_data() }
     }
     fn local(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Local, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Local, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn param(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::Param, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::Param, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn use_alias(scope_idx: u32, segments: &[&[u8]]) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::UseAlias, id: Id { _value: 0 }, id2: Id { _value: 0 },
-                        scope_idx: scope_idx, path_segments: segments, builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::UseAlias, scope_idx: scope_idx, _data: _NamedItemData { use_alias: _NIKUseAliasData { path_segments: segments } } }
     }
     fn bound_value(id: Id, self_param_id: Id, bound_type: BoundType) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::BoundValue, id: id, id2: self_param_id,
-                        scope_idx: bound_type as u32, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::BoundValue, scope_idx: bound_type as u32, _data: _NamedItemData { id_pair: _NIKIdPair { id: id, id2: self_param_id } } }
     }
     fn generic_param(id: Id) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::GenericParam, id: id, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: BuiltinType::Void }
+        NamedItemKind { tag: NamedItemTag::GenericParam, scope_idx: 0, _data: _NamedItemData { id: id } }
     }
     fn builtin_type(bt: BuiltinType) -> NamedItemKind {
-        NamedItemKind { tag: NamedItemTag::BuiltinType, id: Id { _value: 0 }, id2: Id { _value: 0 },
-                        scope_idx: 0, path_segments: &[], builtin: bt }
+        NamedItemKind { tag: NamedItemTag::BuiltinType, scope_idx: 0, _data: _NamedItemData { builtin: bt } }
     }
 }
 
@@ -230,7 +227,7 @@ impl ScopeArena {
         for i in 0usize..self.scopes.len() {
             let scope = &self.scopes[i];
             for pair in scope.items {
-                if pair.1.kind.tag == NamedItemTag::Protocol && pair.1.kind.id._value == proto_id {
+                if pair.1.kind.tag == NamedItemTag::Protocol && pair.1.kind.id()._value == proto_id {
                     return Option::some(pair.1.kind.scope_idx);
                 }
             }
@@ -268,7 +265,7 @@ impl ScopeArena {
             let item = found.unwrap();
             // Follow use aliases
             if item.kind.tag == NamedItemTag::UseAlias {
-                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
             }
             return found;
         }
@@ -345,7 +342,7 @@ impl ScopeArena {
             let item = found.unwrap();
             // Follow use aliases
             if item.kind.tag == NamedItemTag::UseAlias {
-                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
             }
             return found;
         }
@@ -403,7 +400,7 @@ impl ScopeArena {
     // Follow use aliases to their target
     fn follow_use_alias(self: &ScopeArena, item: NamedItem) -> Option<NamedItem> {
         if item.kind.tag == NamedItemTag::UseAlias {
-            return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+            return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
         }
         Option::some(item)
     }
@@ -425,7 +422,7 @@ impl ScopeArena {
                         // Follow use aliases before returning
                         let imp_item = imp_found.unwrap();
                         if imp_item.kind.tag == NamedItemTag::UseAlias {
-                            return self.resolve_path(imp_item.kind.scope_idx, imp_item.kind.path_segments);
+                            return self.resolve_path(imp_item.kind.scope_idx, imp_item.kind.path_segments());
                         }
                         return imp_found;
                     }
@@ -444,7 +441,7 @@ impl ScopeArena {
             // Follow use aliases before returning
             let item = found.unwrap();
             if item.kind.tag == NamedItemTag::UseAlias {
-                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
             }
             return found;
         }
