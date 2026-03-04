@@ -15,9 +15,36 @@ protocol Iterator<Self, T> {
     }
 }
 
+/// Iterators that can be consumed from both ends.
+///
+/// Types implementing this protocol can be iterated from both front and back.
+/// `next` and `next_back` "meet in the middle" so each element is visited once.
+protocol DoubleEndedIterator<Self: Iterator<Self, T>, T> {
+    /// Returns the next item from the back, if any.
+    fn next_back(self: &mut Self) -> Option<T>;
+}
+
+/// Extension mixin for DoubleEndedIterator types.
+protocol DoubleEndedIteratorExt<Self: DoubleEndedIterator<Self, T>, T> {
+    /// Reverse the direction of iteration.
+    fn rev(self: &mut Self) -> RevIterator<Self, T> {
+        RevIterator { _it: self }
+    }
+}
+
 /// Types that can produce an iterator.
 protocol Iterable<Self, It: Iterator<It, T>, T> {
     fn iter(self: &Self) -> It;
+}
+
+/// Types that can produce an iterator over pointers to their elements.
+protocol IterableRef<Self, It: Iterator<It, &T>, T> {
+    fn iter_ref(self: &Self) -> It;
+}
+
+/// Types that can produce an iterator over mutable pointers to their elements.
+protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
+    fn iter_mut(self: &mut Self) -> It;
 }
 
 /// Extension methods for iterators.
@@ -336,6 +363,27 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
 
 // === Adapter structs ===
 
+/// Reverse iterator. See [DoubleEndedIteratorExt::rev].
+struct RevIterator<It: DoubleEndedIterator<It, T>, T> {
+    _it: &mut It,
+}
+
+impl RevIterator<It: DoubleEndedIterator<It, T>, T> {
+    fn next(self: &mut RevIterator<It, T>) -> Option<T> {
+        self._it.next_back()
+    }
+    fn next_back(self: &mut RevIterator<It, T>) -> Option<T> {
+        self._it.next()
+    }
+    fn size_hint(self: &RevIterator<It, T>) -> Option<usize> {
+        self._it.size_hint()
+    }
+    mixin Iterator<RevIterator<It, T>, T>;
+    mixin IteratorExt<RevIterator<It, T>, T>;
+    mixin DoubleEndedIterator<RevIterator<It, T>, T>;
+    mixin DoubleEndedIteratorExt<RevIterator<It, T>, T>;
+}
+
 /// Map iterator. See [IteratorExt::map].
 struct MapIterator<It: Iterator<It, T>, F: Fn(T) -> U, T, U> {
     _it: &mut It,
@@ -352,6 +400,10 @@ impl MapIterator<It: Iterator<It, T>, F: Fn(T) -> U, T, U> {
     mixin Iterator<MapIterator<It, F, T, U>, U>;
     mixin IteratorExt<MapIterator<It, F, T, U>, U>;
 }
+
+// Note: DoubleEndedIterator for MapIterator is omitted because
+// aluminac does not yet support multiple impl blocks for the same type
+// with different generic bounds.
 
 /// Filter iterator. See [IteratorExt::filter].
 struct FilterIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
@@ -374,6 +426,10 @@ impl FilterIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     mixin Iterator<FilterIterator<It, F, T>, T>;
     mixin IteratorExt<FilterIterator<It, F, T>, T>;
 }
+
+// Note: DoubleEndedIterator for FilterIterator is omitted because
+// aluminac does not yet support multiple impl blocks for the same type
+// with different generic bounds.
 
 /// Filter-map iterator. See [IteratorExt::filter_map].
 struct FilterMapIterator<It: Iterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
@@ -559,6 +615,10 @@ impl FusedIterator<It: Iterator<It, T>, T> {
     mixin IteratorExt<FusedIterator<It, T>, T>;
 }
 
+// Note: DoubleEndedIterator for FusedIterator is omitted because
+// aluminac does not yet support multiple impl blocks for the same type
+// with different generic bounds.
+
 /// Chain iterator. See [IteratorExt::chain].
 struct ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
     _it1: FusedIterator<It1, T>,
@@ -585,6 +645,10 @@ impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
     mixin Iterator<ChainIterator<It1, It2, T>, T>;
     mixin IteratorExt<ChainIterator<It1, It2, T>, T>;
 }
+
+// Note: DoubleEndedIterator for ChainIterator is omitted because
+// aluminac does not yet support multiple impl blocks for the same type
+// with different generic bounds.
 
 /// Zip iterator. See [IteratorExt::zip].
 struct ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
@@ -766,11 +830,22 @@ impl SliceIterator<T> {
         self._idx = self._idx + 1usize;
         Option::some(v)
     }
+    fn next_back(self: &mut SliceIterator<T>) -> Option<T> {
+        if self._slice.len() == 0usize || self._idx >= self._slice.len() {
+            return Option::none();
+        }
+        let new_len = self._slice.len() - 1usize;
+        let v = self._slice[new_len];
+        self._slice = self._slice[0usize..new_len];
+        Option::some(v)
+    }
     fn size_hint(self: &SliceIterator<T>) -> Option<usize> {
         Option::some(self._slice.len() - self._idx)
     }
     mixin Iterator<SliceIterator<T>, T>;
     mixin IteratorExt<SliceIterator<T>, T>;
+    mixin DoubleEndedIterator<SliceIterator<T>, T>;
+    mixin DoubleEndedIteratorExt<SliceIterator<T>, T>;
 }
 
 /// Returns an iterator over the elements of a slice.
