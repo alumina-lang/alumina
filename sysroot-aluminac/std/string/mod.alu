@@ -592,3 +592,107 @@ fn parse_usize(s: &[u8], radix: u32) -> Option<usize> {
     }
     Option::some(result as usize)
 }
+
+/// Generic integer parser supporting all integer types and radix 2-36.
+///
+/// Handles signed/unsigned dispatch at compile time using `when` expressions.
+/// Overflow is detected using checked arithmetic.
+fn parse_integer<T: std::builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
+    if s.len() == 0usize { return Option::none(); }
+
+    let input = s;
+    let negative = when std::typing::is_signed::<T>() {
+        if input[0] == '-' as u8 {
+            input = input[1usize..];
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if input.len() == 0usize { return Option::none(); }
+
+    let result: std::builtins::unsigned_of<T> = 0;
+    let radix_val = radix as std::builtins::unsigned_of<T>;
+    let i = 0usize;
+    while i < input.len() {
+        let digit = _RADIX_LOOKUP[input[i] as usize];
+        if digit as u16 >= radix {
+            return Option::none();
+        }
+        let mul = result.checked_mul(radix_val);
+        if mul.is_none() { return Option::none(); }
+        let add = mul.unwrap().checked_add(digit as std::builtins::unsigned_of<T>);
+        if add.is_none() { return Option::none(); }
+        result = add.unwrap();
+        i = i + 1usize;
+    }
+
+    when std::typing::is_signed::<T>() {
+        // For signed types, compute max positive value as unsigned:
+        // max_value of signed T is (2^(bits-1) - 1), so as unsigned_of<T>
+        // we can get it by casting max signed value.
+        // But we can't call T::max_value() on generic T.
+        // Instead: shift right by 1 from all-ones unsigned = max signed as unsigned.
+        let all_ones: std::builtins::unsigned_of<T> = 0;
+        all_ones = ~all_ones; // all bits set
+        let max_positive = all_ones >> 1; // max signed value as unsigned
+        if negative {
+            if result > max_positive + 1 {
+                Option::none()
+            } else {
+                Option::some(-(result as T))
+            }
+        } else {
+            if result > max_positive {
+                Option::none()
+            } else {
+                Option::some(result as T)
+            }
+        }
+    } else {
+        Option::some(result)
+    }
+}
+
+/// Parse a floating-point number from a string.
+///
+/// Uses libc's strtod for parsing. Returns None for invalid input.
+fn parse_float(s: &[u8]) -> Option<f64> {
+    if s.len() == 0usize { return Option::none(); }
+
+    // Reject leading whitespace (strtod accepts it but we don't want that)
+    if s[0] == ' ' as u8 || s[0] == '\t' as u8 || s[0] == '\n' as u8 || s[0] == '\r' as u8 {
+        return Option::none();
+    }
+
+    // Special cases
+    if s == "inf" || s == "Inf" || s == "INF" {
+        return Option::some(1.0f64 / 0.0f64);
+    }
+    if s == "-inf" || s == "-Inf" || s == "-INF" {
+        return Option::some(-1.0f64 / 0.0f64);
+    }
+    if s == "nan" || s == "NaN" || s == "NAN" {
+        return Option::some(0.0f64 / 0.0f64);
+    }
+
+    // Copy to null-terminated buffer for strtod
+    let buf: [u8; 128];
+    if s.len() >= 127usize { return Option::none(); }
+    s.copy_to_nonoverlapping(&buf[0]);
+    buf[s.len()] = 0u8;
+
+    let endptr: &mut libc::c_char = std::mem::zeroed::<&mut libc::c_char>();
+    let result = libc::strtod(&buf[0] as &libc::c_char, &endptr);
+
+    // Check that the entire string was consumed
+    let consumed = (endptr as usize) - (&buf[0] as &libc::c_char as usize);
+    if consumed != s.len() {
+        return Option::none();
+    }
+
+    Option::some(result)
+}

@@ -1,0 +1,150 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::string::*;
+
+fn test_parse_integer_i32() -> i32 {
+    let v = parse_integer::<i32>("123", 10u16);
+    if v.unwrap() != 123i32 { return 1i32; }
+
+    let v = parse_integer::<i32>("-42", 10u16);
+    if v.unwrap() != -42i32 { return 2i32; }
+
+    let v = parse_integer::<i32>("0", 10u16);
+    if v.unwrap() != 0i32 { return 3i32; }
+
+    let v = parse_integer::<i32>("ff", 16u16);
+    if v.unwrap() != 255i32 { return 4i32; }
+
+    let v = parse_integer::<i32>("1010", 2u16);
+    if v.unwrap() != 10i32 { return 5i32; }
+
+    let v = parse_integer::<i32>("77", 8u16);
+    if v.unwrap() != 63i32 { return 6i32; }
+
+    // Invalid input
+    let v = parse_integer::<i32>("", 10u16);
+    if v.is_some() { return 7i32; }
+
+    let v = parse_integer::<i32>("abc", 10u16);
+    if v.is_some() { return 8i32; }
+
+    let v = parse_integer::<i32>("-", 10u16);
+    if v.is_some() { return 9i32; }
+
+    0i32
+}
+
+fn test_parse_integer_u64() -> i32 {
+    let v = parse_integer::<u64>("18446744073709551615", 10u16);
+    if v.unwrap() != 18446744073709551615u64 { return 10i32; }
+
+    // Overflow
+    let v = parse_integer::<u64>("18446744073709551616", 10u16);
+    if v.is_some() { return 11i32; }
+
+    let v = parse_integer::<u64>("0", 10u16);
+    if v.unwrap() != 0u64 { return 12i32; }
+
+    // Hex
+    let v = parse_integer::<u64>("DEADBEEF", 16u16);
+    if v.unwrap() != 3735928559u64 { return 13i32; }
+
+    0i32
+}
+
+fn test_parse_integer_i8() -> i32 {
+    let v = parse_integer::<i8>("127", 10u16);
+    if v.unwrap() != 127i8 { return 20i32; }
+
+    let v = parse_integer::<i8>("-128", 10u16);
+    if v.unwrap() != -128i8 { return 21i32; }
+
+    // Overflow
+    let v = parse_integer::<i8>("128", 10u16);
+    if v.is_some() { return 22i32; }
+
+    let v = parse_integer::<i8>("-129", 10u16);
+    if v.is_some() { return 23i32; }
+
+    0i32
+}
+
+fn test_parse_integer_u8() -> i32 {
+    let v = parse_integer::<u8>("255", 10u16);
+    if v.unwrap() != 255u8 { return 30i32; }
+
+    let v = parse_integer::<u8>("256", 10u16);
+    if v.is_some() { return 31i32; }
+
+    let v = parse_integer::<u8>("ff", 16u16);
+    if v.unwrap() != 255u8 { return 32i32; }
+
+    0i32
+}
+
+fn test_parse_float_basic() -> i32 {
+    let v = parse_float("3.14");
+    if v.is_none() { return 40i32; }
+    let diff = v.unwrap() - 3.14f64;
+    if diff < -0.001f64 || diff > 0.001f64 { return 41i32; }
+
+    let v = parse_float("-0.5");
+    if v.unwrap() != -0.5f64 { return 42i32; }
+
+    let v = parse_float("0");
+    if v.unwrap() != 0.0f64 { return 43i32; }
+
+    let v = parse_float("1e10");
+    if v.unwrap() != 10000000000.0f64 { return 44i32; }
+
+    0i32
+}
+
+fn test_parse_float_special() -> i32 {
+    let v = parse_float("inf");
+    if v.unwrap() != 1.0f64 / 0.0f64 { return 50i32; }
+
+    let v = parse_float("-inf");
+    if v.unwrap() != -1.0f64 / 0.0f64 { return 51i32; }
+
+    let v = parse_float("nan");
+    if v.is_none() { return 52i32; }
+    let nan = v.unwrap();
+    if nan == nan { return 53i32; } // NaN != NaN
+
+    0i32
+}
+
+fn test_parse_float_invalid() -> i32 {
+    let v = parse_float("");
+    if v.is_some() { return 60i32; }
+
+    let v = parse_float("abc");
+    if v.is_some() { return 61i32; }
+
+    let v = parse_float("  123");
+    if v.is_some() { return 62i32; }
+
+    0i32
+}
+
+fn test_parse_integer_usize() -> i32 {
+    let v = parse_integer::<usize>("12345", 10u16);
+    if v.unwrap() != 12345usize { return 70i32; }
+
+    let v = parse_integer::<usize>("0", 10u16);
+    if v.unwrap() != 0usize { return 71i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_parse_integer_i32(); if r != 0i32 { return r; }
+    let r = test_parse_integer_u64(); if r != 0i32 { return r; }
+    let r = test_parse_integer_i8(); if r != 0i32 { return r; }
+    let r = test_parse_integer_u8(); if r != 0i32 { return r; }
+    let r = test_parse_float_basic(); if r != 0i32 { return r; }
+    let r = test_parse_float_special(); if r != 0i32 { return r; }
+    let r = test_parse_float_invalid(); if r != 0i32 { return r; }
+    let r = test_parse_integer_usize(); if r != 0i32 { return r; }
+    0i32
+}
