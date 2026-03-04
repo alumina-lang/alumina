@@ -172,19 +172,19 @@ impl ConstEvaluator {
 
     fn materialize_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue) -> ConstResult {
         if lv.tag == CLVTag::Variable {
-            ConstResult::success(self.load_var(Id { _value: lv.id._value }))
+            ConstResult::success(self.load_var(Id { _value: lv.id()._value }))
         } else if lv.tag == CLVTag::Field {
-            let base = self.materialize_lvalue(lv.inner);
+            let base = self.materialize_lvalue(lv.inner());
             if !base.ok { return base; }
-            self.access_field(base.value, lv.field_idx)
+            self.access_field(base.value, lv.field_idx())
         } else if lv.tag == CLVTag::Index {
-            let base = self.materialize_lvalue(lv.inner);
+            let base = self.materialize_lvalue(lv.inner());
             if !base.ok { return base; }
-            self.access_index(base.value, lv.index)
+            self.access_index(base.value, lv.index())
         } else if lv.tag == CLVTag::TupleIndex {
-            let base = self.materialize_lvalue(lv.inner);
+            let base = self.materialize_lvalue(lv.inner());
             if !base.ok { return base; }
-            self.access_tuple_index(base.value, lv.index)
+            self.access_tuple_index(base.value, lv.index())
         } else {
             ConstResult::fail(ConstEvalError::unsupported())
         }
@@ -257,13 +257,7 @@ impl ConstEvaluator {
         IrTag::Binary => self.eval_binary(expr),
         IrTag::Unary => self.eval_unary(expr),
         IrTag::Local, IrTag::Param => {
-            let lv = self.arena.alloc(ConstLValue {
-                tag: CLVTag::Variable,
-                id: Id { _value: self.var_id(expr.id) },
-                inner: std::mem::zeroed::<&ConstLValue>(),
-                field_idx: 0,
-                index: 0,
-            });
+            let lv = self.arena.alloc(ConstLValue::variable(Id { _value: self.var_id(expr.id) }));
             ConstResult::success(ConstValue::make_lvalue(lv))
         }
         IrTag::Block => self.eval_block(expr),
@@ -511,7 +505,7 @@ impl ConstEvaluator {
 
     fn pointer_int_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
         if lhs.lvalue.tag == CLVTag::Index {
-            let offset = lhs.lvalue.index;
+            let offset = lhs.lvalue.index();
             let new_offset: usize = 0;
             if op == BinOp::Add {
                 new_offset = offset + (rhs.int_val as usize);
@@ -523,13 +517,7 @@ impl ConstEvaluator {
             } else {
                 return ConstResult::fail(ConstEvalError::unsupported());
             }
-            let new_lv = self.arena.alloc(ConstLValue {
-                tag: CLVTag::Index,
-                id: lhs.lvalue.id,
-                inner: lhs.lvalue.inner,
-                field_idx: lhs.lvalue.field_idx,
-                index: new_offset,
-            });
+            let new_lv = self.arena.alloc(ConstLValue::mk_index(lhs.lvalue.inner(), new_offset));
             return ConstResult::success(ConstValue::make_pointer(new_lv, lhs.pointee_ty));
         }
         ConstResult::fail(ConstEvalError::unsupported())
@@ -747,11 +735,11 @@ impl ConstEvaluator {
 
     fn assign_to_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue, val: ConstValue) -> ConstResult {
         if lv.tag == CLVTag::Variable {
-            self.variables.insert(lv.id._value, val);
+            self.variables.insert(lv.id()._value, val);
             return ConstResult::success(ConstValue::make_void());
         } else if lv.tag == CLVTag::Field {
             // Read base, update field, write back
-            let base_r = self.materialize_lvalue(lv.inner);
+            let base_r = self.materialize_lvalue(lv.inner());
             if !base_r.ok { return base_r; }
             let base = base_r.value;
             if base.tag == CValTag::Struct {
@@ -759,8 +747,8 @@ impl ConstEvaluator {
                 let new_fields = self.arena.alloc_slice::<ConstField>(base.fields.len());
                 let found = false;
                 for i in 0usize..base.fields.len() {
-                    if base.fields[i].field_idx == lv.field_idx {
-                        new_fields[i] = ConstField { field_idx: lv.field_idx, value: val };
+                    if base.fields[i].field_idx == lv.field_idx() {
+                        new_fields[i] = ConstField { field_idx: lv.field_idx(), value: val };
                         found = true;
                     } else {
                         new_fields[i] = base.fields[i];
@@ -772,48 +760,48 @@ impl ConstEvaluator {
                     for i in 0usize..base.fields.len() {
                         grown[i] = new_fields[i];
                     }
-                    grown[base.fields.len()] = ConstField { field_idx: lv.field_idx, value: val };
-                    return self.assign_to_lvalue(lv.inner, ConstValue::make_struct(grown));
+                    grown[base.fields.len()] = ConstField { field_idx: lv.field_idx(), value: val };
+                    return self.assign_to_lvalue(lv.inner(), ConstValue::make_struct(grown));
                 }
-                return self.assign_to_lvalue(lv.inner, ConstValue::make_struct(new_fields));
+                return self.assign_to_lvalue(lv.inner(), ConstValue::make_struct(new_fields));
             }
             return ConstResult::fail(ConstEvalError::unsupported());
         } else if lv.tag == CLVTag::Index {
-            let base_r = self.materialize_lvalue(lv.inner);
+            let base_r = self.materialize_lvalue(lv.inner());
             if !base_r.ok { return base_r; }
             let base = base_r.value;
             if base.tag == CValTag::Array {
-                if lv.index >= base.elems.len() {
+                if lv.index() >= base.elems.len() {
                     return ConstResult::fail(ConstEvalError::index_oob());
                 }
                 let new_elems = self.arena.alloc_slice::<ConstValue>(base.elems.len());
                 for i in 0usize..base.elems.len() {
-                    if i == lv.index {
+                    if i == lv.index() {
                         new_elems[i] = val;
                     } else {
                         new_elems[i] = base.elems[i];
                     }
                 }
-                return self.assign_to_lvalue(lv.inner, ConstValue::make_array(new_elems));
+                return self.assign_to_lvalue(lv.inner(), ConstValue::make_array(new_elems));
             }
             return ConstResult::fail(ConstEvalError::unsupported());
         } else if lv.tag == CLVTag::TupleIndex {
-            let base_r = self.materialize_lvalue(lv.inner);
+            let base_r = self.materialize_lvalue(lv.inner());
             if !base_r.ok { return base_r; }
             let base = base_r.value;
             if base.tag == CValTag::Tuple {
-                if lv.index >= base.elems.len() {
+                if lv.index() >= base.elems.len() {
                     return ConstResult::fail(ConstEvalError::index_oob());
                 }
                 let new_elems = self.arena.alloc_slice::<ConstValue>(base.elems.len());
                 for i in 0usize..base.elems.len() {
-                    if i == lv.index {
+                    if i == lv.index() {
                         new_elems[i] = val;
                     } else {
                         new_elems[i] = base.elems[i];
                     }
                 }
-                return self.assign_to_lvalue(lv.inner, ConstValue::make_tuple(new_elems));
+                return self.assign_to_lvalue(lv.inner(), ConstValue::make_tuple(new_elems));
             }
             return ConstResult::fail(ConstEvalError::unsupported());
         }
@@ -828,13 +816,7 @@ impl ConstEvaluator {
         let base = base_r.value;
 
         if base.tag == CValTag::Lvalue {
-            let new_lv = self.arena.alloc(ConstLValue {
-                tag: CLVTag::Field,
-                id: Id { _value: 0 },
-                inner: base.lvalue,
-                field_idx: expr.field_idx,
-                index: 0,
-            });
+            let new_lv = self.arena.alloc(ConstLValue::mk_field(base.lvalue, expr.field_idx));
             return ConstResult::success(ConstValue::make_lvalue(new_lv));
         }
 
@@ -864,13 +846,7 @@ impl ConstEvaluator {
 
         let base = base_r.value;
         if base.tag == CValTag::Lvalue {
-            let new_lv = self.arena.alloc(ConstLValue {
-                tag: CLVTag::Index,
-                id: Id { _value: 0 },
-                inner: base.lvalue,
-                field_idx: 0,
-                index: idx_val,
-            });
+            let new_lv = self.arena.alloc(ConstLValue::mk_index(base.lvalue, idx_val));
             return ConstResult::success(ConstValue::make_lvalue(new_lv));
         }
         if base.tag == CValTag::Array {

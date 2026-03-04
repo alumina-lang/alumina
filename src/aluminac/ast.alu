@@ -961,12 +961,45 @@ enum CLVTag {
     ConstItem = 5i32,
 }
 
+struct _CLVFieldData {
+    inner: &ConstLValue,
+    field_idx: u32,
+}
+
+struct _CLVIndexData {
+    inner: &ConstLValue,
+    index: usize,
+}
+
+union _ConstLValueData {
+    id: Id,                  // Variable, Alloc, ConstItem
+    field: _CLVFieldData,    // Field
+    idx: _CLVIndexData,      // Index, TupleIndex
+}
+
 struct ConstLValue {
     tag: CLVTag,
-    id: Id,                  // for CLVTag::Variable, CLVTag::Alloc, CLVTag::ConstItem
-    inner: &ConstLValue,     // for CLVTag::Field, CLVTag::Index, CLVTag::TupleIndex
-    field_idx: u32,          // for CLVTag::Field
-    index: usize,            // for CLVTag::Index, CLVTag::TupleIndex
+    _data: _ConstLValueData,
+}
+
+impl ConstLValue {
+    fn id(self: &ConstLValue) -> Id { self._data.id }
+    fn inner(self: &ConstLValue) -> &ConstLValue { self._data.field.inner }
+    fn field_idx(self: &ConstLValue) -> u32 { self._data.field.field_idx }
+    fn index(self: &ConstLValue) -> usize { self._data.idx.index }
+
+    fn variable(id: Id) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Variable, _data: _ConstLValueData { id: id } }
+    }
+    fn mk_field(inner: &ConstLValue, field_idx: u32) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Field, _data: _ConstLValueData { field: _CLVFieldData { inner: inner, field_idx: field_idx } } }
+    }
+    fn mk_index(inner: &ConstLValue, index: usize) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Index, _data: _ConstLValueData { idx: _CLVIndexData { inner: inner, index: index } } }
+    }
+    fn mk_tuple_index(inner: &ConstLValue, index: usize) -> ConstLValue {
+        ConstLValue { tag: CLVTag::TupleIndex, _data: _ConstLValueData { idx: _CLVIndexData { inner: inner, index: index } } }
+    }
 }
 
 struct ConstField {
