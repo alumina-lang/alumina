@@ -1,0 +1,162 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn test_u8_checked() -> i32 {
+    // checked_add
+    let r = u8::checked_add(200u8, 50u8);
+    if r.is_none() { return 1i32; }
+    if r.unwrap() != 250u8 { return 2i32; }
+
+    let r2 = u8::checked_add(200u8, 100u8);
+    if r2.is_some() { return 3i32; }
+
+    // checked_sub
+    let r3 = u8::checked_sub(100u8, 50u8);
+    if r3.unwrap() != 50u8 { return 4i32; }
+
+    let r4 = u8::checked_sub(50u8, 100u8);
+    if r4.is_some() { return 5i32; }
+
+    // checked_mul
+    let r5 = u8::checked_mul(10u8, 25u8);
+    if r5.unwrap() != 250u8 { return 6i32; }
+
+    let r6 = u8::checked_mul(20u8, 20u8);
+    if r6.is_some() { return 7i32; }
+
+    0i32
+}
+
+fn test_u32_checked() -> i32 {
+    let r = u32::checked_add(4294967290u32, 5u32);
+    if r.unwrap() != 4294967295u32 { return 10i32; }
+
+    let r2 = u32::checked_add(4294967295u32, 1u32);
+    if r2.is_some() { return 11i32; }
+
+    let r3 = u32::checked_mul(100000u32, 42949u32);
+    if r3.is_none() { return 12i32; }
+
+    let r4 = u32::checked_mul(100000u32, 50000u32);
+    if r4.is_some() { return 13i32; }
+
+    0i32
+}
+
+fn test_u64_checked() -> i32 {
+    let r = u64::checked_add(18446744073709551610u64, 5u64);
+    if r.unwrap() != 18446744073709551615u64 { return 20i32; }
+
+    let r2 = u64::checked_add(18446744073709551615u64, 1u64);
+    if r2.is_some() { return 21i32; }
+
+    let r3 = u64::checked_mul(0u64, 999u64);
+    if r3.unwrap() != 0u64 { return 22i32; }
+
+    let r4 = u64::checked_mul(18446744073709551615u64, 2u64);
+    if r4.is_some() { return 23i32; }
+
+    0i32
+}
+
+fn test_i32_checked() -> i32 {
+    let r = i32::checked_add(2147483640i32, 7i32);
+    if r.unwrap() != 2147483647i32 { return 30i32; }
+
+    let r2 = i32::checked_add(2147483647i32, 1i32);
+    if r2.is_some() { return 31i32; }
+
+    let r3 = i32::checked_add(-2147483648i32, -1i32);
+    if r3.is_some() { return 32i32; }
+
+    let r4 = i32::checked_sub(-2147483648i32, 1i32);
+    if r4.is_some() { return 33i32; }
+
+    let r5 = i32::checked_mul(50000i32, 50000i32);
+    if r5.is_some() { return 34i32; }
+
+    let r6 = i32::checked_mul(1000i32, 1000i32);
+    if r6.unwrap() != 1000000i32 { return 35i32; }
+
+    0i32
+}
+
+fn test_i64_checked() -> i32 {
+    let r = i64::checked_add(9223372036854775800i64, 7i64);
+    if r.unwrap() != 9223372036854775807i64 { return 40i32; }
+
+    let r2 = i64::checked_add(9223372036854775807i64, 1i64);
+    if r2.is_some() { return 41i32; }
+
+    let r3 = i64::checked_add(-9223372036854775808i64, -1i64);
+    if r3.is_some() { return 42i32; }
+
+    let r4 = i64::checked_mul(0i64, 999i64);
+    if r4.unwrap() != 0i64 { return 43i32; }
+
+    // MIN * -1 overflow
+    let r5 = i64::checked_mul(-9223372036854775808i64, -1i64);
+    if r5.is_some() { return 44i32; }
+
+    let r6 = i64::checked_mul(100i64, 100i64);
+    if r6.unwrap() != 10000i64 { return 45i32; }
+
+    0i32
+}
+
+fn test_usize_checked() -> i32 {
+    let r = usize::checked_add(100usize, 200usize);
+    if r.unwrap() != 300usize { return 50i32; }
+
+    let r2 = usize::checked_sub(100usize, 200usize);
+    if r2.is_some() { return 51i32; }
+
+    let r3 = usize::checked_sub(200usize, 100usize);
+    if r3.unwrap() != 100usize { return 52i32; }
+
+    0i32
+}
+
+fn test_float_methods() -> i32 {
+    // f64 methods
+    let v = 2.0f64;
+    if v.sqrt() != 1.4142135623730951f64 { return 60i32; }
+    if v.abs() != 2.0f64 { return 61i32; }
+
+    let neg = -3.5f64;
+    if neg.abs() != 3.5f64 { return 62i32; }
+    if neg.ceil() != -3.0f64 { return 63i32; }
+    if neg.floor() != -4.0f64 { return 64i32; }
+
+    // min/max
+    let a = 1.5f64;
+    if a.min(2.5f64) != 1.5f64 { return 65i32; }
+    if a.max(2.5f64) != 2.5f64 { return 66i32; }
+
+    // f32 methods
+    let v32 = 4.0f32;
+    if v32.sqrt() != 2.0f32 { return 67i32; }
+
+    let a32 = 1.5f32;
+    if a32.min(2.5f32) != 1.5f32 { return 68i32; }
+    if a32.max(2.5f32) != 2.5f32 { return 69i32; }
+
+    // nan/infinity
+    if !f64::nan().is_nan() { return 70i32; }
+    if !f64::infinity().is_infinite() { return 71i32; }
+    if !f64::neg_infinity().is_infinite() { return 72i32; }
+    if f64::infinity().is_finite() { return 73i32; }
+    if !(1.0f64).is_finite() { return 74i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_u8_checked(); if r != 0i32 { return r; }
+    let r = test_u32_checked(); if r != 0i32 { return r; }
+    let r = test_u64_checked(); if r != 0i32 { return r; }
+    let r = test_i32_checked(); if r != 0i32 { return r; }
+    let r = test_i64_checked(); if r != 0i32 { return r; }
+    let r = test_usize_checked(); if r != 0i32 { return r; }
+    let r = test_float_methods(); if r != 0i32 { return r; }
+    0i32
+}

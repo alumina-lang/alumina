@@ -35,6 +35,20 @@ struct u8 {}
 impl u8 {
     fn min_value() -> u8 { 0u8 }
     fn max_value() -> u8 { 255u8 }
+    /// Add with overflow check.
+    fn checked_add(lhs: u8, rhs: u8) -> Option<u8> {
+        let r = lhs as u16 + rhs as u16;
+        if r > 255u16 { Option::none() } else { Option::some(r as u8) }
+    }
+    /// Subtract with overflow check.
+    fn checked_sub(lhs: u8, rhs: u8) -> Option<u8> {
+        if rhs > lhs { Option::none() } else { Option::some(lhs - rhs) }
+    }
+    /// Multiply with overflow check.
+    fn checked_mul(lhs: u8, rhs: u8) -> Option<u8> {
+        let r = lhs as u16 * rhs as u16;
+        if r > 255u16 { Option::none() } else { Option::some(r as u8) }
+    }
     fn equals(lhs: &u8, rhs: &u8) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &u8, rhs: &u8) -> bool { *lhs != *rhs }
     fn compare(lhs: &u8, rhs: &u8) -> std::cmp::Ordering {
@@ -59,6 +73,17 @@ struct u16 {}
 impl u16 {
     fn min_value() -> u16 { 0u16 }
     fn max_value() -> u16 { 65535u16 }
+    fn checked_add(lhs: u16, rhs: u16) -> Option<u16> {
+        let r = lhs as u32 + rhs as u32;
+        if r > 65535u32 { Option::none() } else { Option::some(r as u16) }
+    }
+    fn checked_sub(lhs: u16, rhs: u16) -> Option<u16> {
+        if rhs > lhs { Option::none() } else { Option::some(lhs - rhs) }
+    }
+    fn checked_mul(lhs: u16, rhs: u16) -> Option<u16> {
+        let r = lhs as u32 * rhs as u32;
+        if r > 65535u32 { Option::none() } else { Option::some(r as u16) }
+    }
     fn equals(lhs: &u16, rhs: &u16) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &u16, rhs: &u16) -> bool { *lhs != *rhs }
     fn compare(lhs: &u16, rhs: &u16) -> std::cmp::Ordering {
@@ -83,6 +108,17 @@ struct u32 {}
 impl u32 {
     fn min_value() -> u32 { 0u32 }
     fn max_value() -> u32 { 4294967295u32 }
+    fn checked_add(lhs: u32, rhs: u32) -> Option<u32> {
+        let r = lhs as u64 + rhs as u64;
+        if r > 4294967295u64 { Option::none() } else { Option::some(r as u32) }
+    }
+    fn checked_sub(lhs: u32, rhs: u32) -> Option<u32> {
+        if rhs > lhs { Option::none() } else { Option::some(lhs - rhs) }
+    }
+    fn checked_mul(lhs: u32, rhs: u32) -> Option<u32> {
+        let r = lhs as u64 * rhs as u64;
+        if r > 4294967295u64 { Option::none() } else { Option::some(r as u32) }
+    }
     fn equals(lhs: &u32, rhs: &u32) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &u32, rhs: &u32) -> bool { *lhs != *rhs }
     fn compare(lhs: &u32, rhs: &u32) -> std::cmp::Ordering {
@@ -107,6 +143,18 @@ struct u64 {}
 impl u64 {
     fn min_value() -> u64 { 0u64 }
     fn max_value() -> u64 { 18446744073709551615u64 }
+    fn checked_add(lhs: u64, rhs: u64) -> Option<u64> {
+        let r = lhs + rhs; // wraps in LLVM IR
+        if r < lhs { Option::none() } else { Option::some(r) }
+    }
+    fn checked_sub(lhs: u64, rhs: u64) -> Option<u64> {
+        if rhs > lhs { Option::none() } else { Option::some(lhs - rhs) }
+    }
+    fn checked_mul(lhs: u64, rhs: u64) -> Option<u64> {
+        if lhs == 0u64 { return Option::some(0u64); }
+        let r = lhs * rhs; // wraps in LLVM IR
+        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+    }
     fn equals(lhs: &u64, rhs: &u64) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &u64, rhs: &u64) -> bool { *lhs != *rhs }
     fn compare(lhs: &u64, rhs: &u64) -> std::cmp::Ordering {
@@ -141,6 +189,18 @@ struct usize {}
 impl usize {
     fn min_value() -> usize { 0usize }
     fn max_value() -> usize { 18446744073709551615usize }
+    fn checked_add(lhs: usize, rhs: usize) -> Option<usize> {
+        let r = lhs + rhs;
+        if r < lhs { Option::none() } else { Option::some(r) }
+    }
+    fn checked_sub(lhs: usize, rhs: usize) -> Option<usize> {
+        if rhs > lhs { Option::none() } else { Option::some(lhs - rhs) }
+    }
+    fn checked_mul(lhs: usize, rhs: usize) -> Option<usize> {
+        if lhs == 0usize { return Option::some(0usize); }
+        let r = lhs * rhs;
+        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+    }
     fn equals(lhs: &usize, rhs: &usize) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &usize, rhs: &usize) -> bool { *lhs != *rhs }
     fn compare(lhs: &usize, rhs: &usize) -> std::cmp::Ordering {
@@ -166,6 +226,18 @@ impl i8 {
     fn min_value() -> i8 { -128i8 }
     fn max_value() -> i8 { 127i8 }
     fn abs(self: &i8) -> i8 { if *self < 0i8 { -*self } else { *self } }
+    fn checked_add(lhs: i8, rhs: i8) -> Option<i8> {
+        let r = lhs as i16 + rhs as i16;
+        if r < -128i16 || r > 127i16 { Option::none() } else { Option::some(r as i8) }
+    }
+    fn checked_sub(lhs: i8, rhs: i8) -> Option<i8> {
+        let r = lhs as i16 - rhs as i16;
+        if r < -128i16 || r > 127i16 { Option::none() } else { Option::some(r as i8) }
+    }
+    fn checked_mul(lhs: i8, rhs: i8) -> Option<i8> {
+        let r = lhs as i16 * rhs as i16;
+        if r < -128i16 || r > 127i16 { Option::none() } else { Option::some(r as i8) }
+    }
     fn equals(lhs: &i8, rhs: &i8) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &i8, rhs: &i8) -> bool { *lhs != *rhs }
     fn compare(lhs: &i8, rhs: &i8) -> std::cmp::Ordering {
@@ -191,6 +263,18 @@ impl i16 {
     fn min_value() -> i16 { -32768i16 }
     fn max_value() -> i16 { 32767i16 }
     fn abs(self: &i16) -> i16 { if *self < 0i16 { -*self } else { *self } }
+    fn checked_add(lhs: i16, rhs: i16) -> Option<i16> {
+        let r = lhs as i32 + rhs as i32;
+        if r < -32768i32 || r > 32767i32 { Option::none() } else { Option::some(r as i16) }
+    }
+    fn checked_sub(lhs: i16, rhs: i16) -> Option<i16> {
+        let r = lhs as i32 - rhs as i32;
+        if r < -32768i32 || r > 32767i32 { Option::none() } else { Option::some(r as i16) }
+    }
+    fn checked_mul(lhs: i16, rhs: i16) -> Option<i16> {
+        let r = lhs as i32 * rhs as i32;
+        if r < -32768i32 || r > 32767i32 { Option::none() } else { Option::some(r as i16) }
+    }
     fn equals(lhs: &i16, rhs: &i16) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &i16, rhs: &i16) -> bool { *lhs != *rhs }
     fn compare(lhs: &i16, rhs: &i16) -> std::cmp::Ordering {
@@ -216,6 +300,18 @@ impl i32 {
     fn min_value() -> i32 { -2147483648i32 }
     fn max_value() -> i32 { 2147483647i32 }
     fn abs(self: &i32) -> i32 { if *self < 0i32 { -*self } else { *self } }
+    fn checked_add(lhs: i32, rhs: i32) -> Option<i32> {
+        let r = lhs as i64 + rhs as i64;
+        if r < -2147483648i64 || r > 2147483647i64 { Option::none() } else { Option::some(r as i32) }
+    }
+    fn checked_sub(lhs: i32, rhs: i32) -> Option<i32> {
+        let r = lhs as i64 - rhs as i64;
+        if r < -2147483648i64 || r > 2147483647i64 { Option::none() } else { Option::some(r as i32) }
+    }
+    fn checked_mul(lhs: i32, rhs: i32) -> Option<i32> {
+        let r = lhs as i64 * rhs as i64;
+        if r < -2147483648i64 || r > 2147483647i64 { Option::none() } else { Option::some(r as i32) }
+    }
     fn equals(lhs: &i32, rhs: &i32) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &i32, rhs: &i32) -> bool { *lhs != *rhs }
     fn compare(lhs: &i32, rhs: &i32) -> std::cmp::Ordering {
@@ -241,6 +337,40 @@ impl i64 {
     fn min_value() -> i64 { -9223372036854775808i64 }
     fn max_value() -> i64 { 9223372036854775807i64 }
     fn abs(self: &i64) -> i64 { if *self < 0i64 { -*self } else { *self } }
+    fn checked_add(lhs: i64, rhs: i64) -> Option<i64> {
+        // Use unsigned arithmetic to avoid UB
+        let ua = lhs as u64;
+        let ub = rhs as u64;
+        let ur = ua + ub;
+        let r = ur as i64;
+        // Overflow if signs of inputs are same but result sign differs
+        if rhs >= 0i64 {
+            if r < lhs { return Option::none(); }
+        } else {
+            if r > lhs { return Option::none(); }
+        }
+        Option::some(r)
+    }
+    fn checked_sub(lhs: i64, rhs: i64) -> Option<i64> {
+        let ua = lhs as u64;
+        let ub = rhs as u64;
+        let ur = ua - ub;
+        let r = ur as i64;
+        if rhs >= 0i64 {
+            if r > lhs { return Option::none(); }
+        } else {
+            if r < lhs { return Option::none(); }
+        }
+        Option::some(r)
+    }
+    fn checked_mul(lhs: i64, rhs: i64) -> Option<i64> {
+        if lhs == 0i64 || rhs == 0i64 { return Option::some(0i64); }
+        // Check for MIN * -1 overflow
+        if lhs == i64::min_value() && rhs == -1i64 { return Option::none(); }
+        if rhs == i64::min_value() && lhs == -1i64 { return Option::none(); }
+        let r = lhs * rhs;
+        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+    }
     fn equals(lhs: &i64, rhs: &i64) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &i64, rhs: &i64) -> bool { *lhs != *rhs }
     fn compare(lhs: &i64, rhs: &i64) -> std::cmp::Ordering {
@@ -266,6 +396,31 @@ impl isize {
     fn min_value() -> isize { -9223372036854775808isize }
     fn max_value() -> isize { 9223372036854775807isize }
     fn abs(self: &isize) -> isize { if *self < 0isize { -*self } else { *self } }
+    fn checked_add(lhs: isize, rhs: isize) -> Option<isize> {
+        let r = (lhs as u64 + rhs as u64) as isize;
+        if rhs >= 0isize {
+            if r < lhs { return Option::none(); }
+        } else {
+            if r > lhs { return Option::none(); }
+        }
+        Option::some(r)
+    }
+    fn checked_sub(lhs: isize, rhs: isize) -> Option<isize> {
+        let r = (lhs as u64 - rhs as u64) as isize;
+        if rhs >= 0isize {
+            if r > lhs { return Option::none(); }
+        } else {
+            if r < lhs { return Option::none(); }
+        }
+        Option::some(r)
+    }
+    fn checked_mul(lhs: isize, rhs: isize) -> Option<isize> {
+        if lhs == 0isize || rhs == 0isize { return Option::some(0isize); }
+        if lhs == isize::min_value() && rhs == -1isize { return Option::none(); }
+        if rhs == isize::min_value() && lhs == -1isize { return Option::none(); }
+        let r = lhs * rhs;
+        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+    }
     fn equals(lhs: &isize, rhs: &isize) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &isize, rhs: &isize) -> bool { *lhs != *rhs }
     fn compare(lhs: &isize, rhs: &isize) -> std::cmp::Ordering {
@@ -304,9 +459,15 @@ impl f32 {
     fn round(self: &f32) -> f32 { libc::roundf(*self) }
     fn sin(self: &f32) -> f32 { libc::sinf(*self) }
     fn cos(self: &f32) -> f32 { libc::cosf(*self) }
+    fn tan(self: &f32) -> f32 { libc::tanf(*self) }
+    fn atan2(self: &f32, x: f32) -> f32 { libc::atan2f(*self, x) }
     fn pow(self: &f32, n: f32) -> f32 { libc::powf(*self, n) }
     fn log(self: &f32) -> f32 { libc::logf(*self) }
+    fn log2(self: &f32) -> f32 { libc::log2f(*self) }
+    fn log10(self: &f32) -> f32 { libc::log10f(*self) }
     fn exp(self: &f32) -> f32 { libc::expf(*self) }
+    fn min(self: &f32, other: f32) -> f32 { libc::fminf(*self, other) }
+    fn max(self: &f32, other: f32) -> f32 { libc::fmaxf(*self, other) }
     fn equals(lhs: &f32, rhs: &f32) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &f32, rhs: &f32) -> bool { *lhs != *rhs }
     fn compare(lhs: &f32, rhs: &f32) -> std::cmp::Ordering {
@@ -353,9 +514,15 @@ impl f64 {
     fn round(self: &f64) -> f64 { libc::round(*self) }
     fn sin(self: &f64) -> f64 { libc::sin(*self) }
     fn cos(self: &f64) -> f64 { libc::cos(*self) }
+    fn tan(self: &f64) -> f64 { libc::tan(*self) }
+    fn atan2(self: &f64, x: f64) -> f64 { libc::atan2(*self, x) }
     fn pow(self: &f64, n: f64) -> f64 { libc::pow(*self, n) }
     fn log(self: &f64) -> f64 { libc::log(*self) }
+    fn log2(self: &f64) -> f64 { libc::log2(*self) }
+    fn log10(self: &f64) -> f64 { libc::log10(*self) }
     fn exp(self: &f64) -> f64 { libc::exp(*self) }
+    fn min(self: &f64, other: f64) -> f64 { libc::fmin(*self, other) }
+    fn max(self: &f64, other: f64) -> f64 { libc::fmax(*self, other) }
     fn equals(lhs: &f64, rhs: &f64) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &f64, rhs: &f64) -> bool { *lhs != *rhs }
     fn compare(lhs: &f64, rhs: &f64) -> std::cmp::Ordering {
