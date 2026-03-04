@@ -1,0 +1,877 @@
+// Pass 1: Scope building
+//
+// Walks the tree-sitter parse tree to build scopes and register all named items
+// (functions, structs, enums, protocols, type aliases, statics, macros, etc.)
+
+use parser::*;
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
+use tree_sitter::{Node, TSFieldId, TSTreeCursor};
+
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+
+struct Pass1 {
+    ctx: &mut ParseContext,
+    current_scope: u32,
+    in_container: bool,   // inside struct/enum/protocol/impl
+    current_enum_id: Option<Id>,
+    impl_generic_param_ids: &[Id],
+    skip_item: bool,      // set by parse_attributes when #[cfg] evaluates to false
+}
+
+impl Pass1 {
+    fn new(ctx: &mut ParseContext, root_scope: u32) -> Pass1 {
+        Pass1 {
+            ctx: ctx,
+            current_scope: root_scope,
+            in_container: false,
+            current_enum_id: Option::none(),
+            impl_generic_param_ids: &[],
+            skip_item: false,
+        }
+    }
+
+    fn run(self: &mut Pass1, root: Node) {
+        self.visit_node(root);
+    }
+
+    fn visit_node(self: &mut Pass1, node: Node) {
+        let sym = node.symbol() as usize;
+        let kind = NODE_KINDS[sym];
+        switch kind {
+            NodeKind::SourceFile => self.visit_source_file_p1(node),
+            NodeKind::ModDefinition => self.visit_mod_p1(node),
+            NodeKind::FunctionDefinition => self.visit_function_p1(node),
+            NodeKind::StructDefinition => self.visit_struct_p1(node),
+            NodeKind::EnumDefinition => self.visit_enum_p1(node),
+            NodeKind::EnumItem => self.visit_enum_item_p1(node),
+            NodeKind::ProtocolDefinition => self.visit_protocol_p1(node),
+            NodeKind::TypeDefinition => self.visit_type_def_p1(node),
+            NodeKind::ImplBlock => self.visit_impl_p1(node),
+            NodeKind::UseDeclaration => self.visit_use_p1(node),
+            NodeKind::StaticDeclaration => self.visit_static_p1(node),
+            NodeKind::ConstDeclaration => self.visit_const_p1(node),
+            NodeKind::MacroDefinition => self.visit_macro_def_p1(node),
+            NodeKind::StructField => self.visit_struct_field_p1(node),
+            NodeKind::Parameter => self.visit_parameter_p1(node),
+            NodeKind::GenericArgumentList => self.visit_generic_args_p1(node),
+            NodeKind::ParameterList => self.visit_parameter_list_p1(node),
+            NodeKind::MacroParameterList => self.visit_macro_param_list_p1(node),
+            NodeKind::MacroParameter => self.visit_macro_param_p1(node),
+            NodeKind::TopLevelBlock => self.visit_top_level_block_p1(node),
+            NodeKind::TopLevelAttributes => {},
+            NodeKind::Mixin => self.visit_mixin_p1(node),
+            NodeKind::DocComment => {},
+            NodeKind::FileDocComment => {},
+            NodeKind::LineComment => {},
+            NodeKind::BlockComment => {},
+            _ => {
+                // For unknown nodes, visit children
+                self.visit_children(node);
+            },
+        }
+    }
+
+    fn visit_children(self: &mut Pass1, node: Node) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            self.visit_node(child);
+        }
+    }
+
+    fn visit_children_by_field(self: &mut Pass1, node: Node, field: FieldKind) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, field, &cursor) {
+            self.visit_node(child);
+        }
+    }
+
+    fn get_name(self: &mut Pass1, node: Node) -> &[u8] {
+        let name_node = child_by!(node, FieldKind::Name);
+        if name_node.is_none() {
+            return "";
+        }
+        self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()))
+    }
+
+    fn parse_attributes(self: &mut Pass1, node: Node) -> &[Attribute] {
+        let attr_node = child_by!(node, FieldKind::Attributes);
+        if attr_node.is_none() {
+            return &[];
+        }
+        self.parse_attribute_list(attr_node.unwrap())
+    }
+
+    fn parse_attribute_list(self: &mut Pass1, node: Node) -> &[Attribute] {
+        let attrs: Vector<Attribute> = Vector::new();
+        defer attrs.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::AttributeItem {
+                // attribute_item -> inner: meta_item -> name, arguments
+                let inner_node = child_by!(child, FieldKind::Inner);
+                if inner_node.is_none() {
+                    continue;
+                }
+                let meta = inner_node.unwrap();
+                let name_node = child_by!(meta, FieldKind::Name);
+                if !name_node.is_none() {
+                    let name = self.ctx.node_text(name_node.unwrap());
+                    switch name {
+                        "inline" => attrs.push(Attribute::inline_attr()),
+                        "cold" => attrs.push(Attribute::cold()),
+                        "export" => attrs.push(Attribute::export()),
+                        "test" => attrs.push(Attribute::test()),
+                        "thread_local" => attrs.push(Attribute::thread_local()),
+                        "static_ctor" => attrs.push(Attribute::static_ctor()),
+                        "always_inline" => attrs.push(Attribute::always_inline()),
+                        "no_return" => attrs.push(Attribute::no_return()),
+                        "builtin" => attrs.push(Attribute::builtin()),
+                        "returns_twice" => attrs.push(Attribute::returns_twice()),
+                        "cfg" => {
+                            if !self.eval_cfg_meta_item(meta) {
+                                self.skip_item = true;
+                            }
+                        }
+                        "align" => {
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let val_text = self.ctx.node_text(args_node.unwrap());
+                                let val = parse_usize(val_text);
+                                attrs.push(Attribute::align(val));
+                            }
+                        }
+                        "link_name" => {
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let link_name = self.ctx.node_text(args_node.unwrap());
+                                if link_name.len() >= 2 && link_name[0] == '"' as u8 {
+                                    attrs.push(Attribute::extern_attr(
+                                        self.ctx.intern_str(link_name[1..link_name.len()-1])
+                                    ));
+                                }
+                            }
+                        }
+                        "lang" => {
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let lang_name = self.ctx.node_text(args_node.unwrap());
+                                if lang_name.len() >= 2 && lang_name[0] == '(' as u8 && lang_name[lang_name.len() - 1] == ')' as u8 {
+                                    lang_name = lang_name[1..lang_name.len() - 1];
+                                }
+                                attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if attrs.len() == 0 {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<Attribute>(attrs.as_slice())
+    }
+
+    // Evaluate a cfg condition from a meta_item node.
+    // For #[cfg(condition)], this is called on the inner meta_item (the one with name="cfg").
+    // Returns true if the condition is satisfied.
+    fn eval_cfg_meta_item(self: &mut Pass1, node: Node) -> bool {
+        let kind = NODE_KINDS[node.symbol() as usize];
+
+        // If it's a string literal (inside meta_arguments), this shouldn't happen
+        // at the top level, but guard against it.
+        if kind != NodeKind::MetaItem {
+            return false;
+        }
+
+        let name_node = child_by!(node, FieldKind::Name);
+        if name_node.is_none() {
+            return false;
+        }
+        let name = self.ctx.node_text(name_node.unwrap());
+
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        // Check for key = "value" form
+        let value_node = child_by!(node, FieldKind::Value);
+        if !value_node.is_none() {
+            // key = "value" form: check if cfg flag matches the value
+            let value_text = self.ctx.node_text(value_node.unwrap());
+            // Strip quotes from string literal
+            if value_text.len() >= 2 && value_text[0] == '"' as u8 {
+                value_text = value_text[1..value_text.len() - 1];
+            }
+            // Look for a cfg flag of the form "key=value"
+            // Build "key=value" string and check against has_cfg
+            let match_buf = self.ctx.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
+            name.copy_to_nonoverlapping(&match_buf[0]);
+            match_buf[name.len()] = '=' as u8;
+            value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
+            return self.ctx.has_cfg(match_buf as &[u8]);
+        }
+
+        // Compound forms: cfg(...), not(...), all(...), any(...)
+        if name == "cfg" {
+            if args_node.is_none() { return false; }
+            return self.eval_cfg_arguments_single(args_node.unwrap());
+        } else if name == "not" {
+            if args_node.is_none() { return false; }
+            return !self.eval_cfg_arguments_single(args_node.unwrap());
+        } else if name == "all" {
+            if args_node.is_none() { return true; } // empty all() = true
+            return self.eval_cfg_arguments_all(args_node.unwrap());
+        } else if name == "any" {
+            if args_node.is_none() { return false; } // empty any() = false
+            return self.eval_cfg_arguments_any(args_node.unwrap());
+        }
+
+        // Simple flag: check presence
+        if !args_node.is_none() {
+            // Unknown compound form, treat as false
+            return false;
+        }
+        self.ctx.has_cfg(name)
+    }
+
+    // Evaluate a meta_arguments node expecting exactly one argument (for cfg() and not())
+    fn eval_cfg_arguments_single(self: &mut Pass1, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                return self.eval_cfg_meta_item(child);
+            }
+        }
+        false
+    }
+
+    // Evaluate a meta_arguments node with AND semantics (for all())
+    fn eval_cfg_arguments_all(self: &mut Pass1, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                if !self.eval_cfg_meta_item(child) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    // Evaluate a meta_arguments node with OR semantics (for any())
+    fn eval_cfg_arguments_any(self: &mut Pass1, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                if self.eval_cfg_meta_item(child) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn visit_source_file_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Body);
+    }
+
+    fn visit_top_level_block_p1(self: &mut Pass1, node: Node) {
+        // Check cfg attributes on top-level blocks
+        let attr_node = child_by!(node, FieldKind::Attributes);
+        if !attr_node.is_none() {
+            let _ = self.parse_attribute_list(attr_node.unwrap());
+            if self.skip_item {
+                self.skip_item = false;
+                return;
+            }
+        }
+        self.visit_children_by_field(node, FieldKind::Items);
+    }
+
+    fn visit_mod_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::module(child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, FieldKind::Body);
+        self.current_scope = prev;
+    }
+
+    fn visit_function_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        let item_kind = if self.in_container {
+            NamedItemKind::method(id, id) // simplified: both type and fn ids are the same
+        } else {
+            NamedItemKind::function(id)
+        };
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: item_kind,
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_functions.push(PendingFunction {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_method: self.in_container,
+            impl_generic_param_ids: self.impl_generic_param_ids,
+        });
+
+        // Visit generic params and parameters in child scope
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_none() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Parameters);
+
+        self.current_scope = prev;
+    }
+
+    fn visit_struct_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        // Check if it's a union
+        let kind_node = child_by!(node, FieldKind::Kind);
+        let is_union = !kind_node.is_none() && self.ctx.node_text(kind_node.unwrap()) == "union";
+
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::struct_kind_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_structs.push(PendingStruct {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_union: is_union,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_none() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+    }
+
+    fn visit_enum_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::enum_kind_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_enums.push(PendingEnum {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+        });
+
+        let prev = self.current_scope;
+        let prev_enum = self.current_enum_id;
+        self.current_scope = child_scope;
+        self.current_enum_id = Option::some(id);
+        self.visit_children_by_field(node, FieldKind::Body);
+        self.current_scope = prev;
+        self.current_enum_id = prev_enum;
+    }
+
+    fn visit_enum_item_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let variant_id = self.ctx.next_id();
+
+        if self.current_enum_id.is_some() {
+            self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                name: name,
+                kind: NamedItemKind::enum_variant(self.current_enum_id.unwrap(), variant_id),
+                span: self.ctx.make_span(node),
+            });
+        }
+    }
+
+    fn visit_struct_field_p1(self: &mut Pass1, node: Node) {
+        // Fields are collected during pass 2
+    }
+
+    fn visit_protocol_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Protocol, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::protocol_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_protocols.push(PendingProtocol {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+        });
+
+        let prev = self.current_scope;
+        let prev_container = self.in_container;
+        self.current_scope = child_scope;
+        self.in_container = true;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_none() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+        self.in_container = prev_container;
+    }
+
+    fn visit_impl_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let name = self.get_name(node);
+
+        // Try to resolve the type to find its scope
+        let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+        let child_scope = if resolved.is_some() {
+            let item = resolved.unwrap();
+            if (item.kind.tag == scope::NamedItemTag::Struct || item.kind.tag == scope::NamedItemTag::Enum) && item.kind.scope_idx != 0 {
+                // Use the type's existing scope
+                item.kind.scope_idx
+            } else {
+                self.ctx.scopes.create_scope(ScopeKind::Impl, Option::some(self.current_scope))
+            }
+        } else {
+            self.ctx.scopes.create_scope(ScopeKind::Impl, Option::some(self.current_scope))
+        };
+
+        self.ctx.pending_impls.push(PendingImpl {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            target_type_scope: self.current_scope,
+        });
+
+        let prev = self.current_scope;
+        let prev_container = self.in_container;
+        let prev_impl_gp = self.impl_generic_param_ids;
+        self.current_scope = child_scope;
+        self.in_container = true;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_none() {
+            // Visit to register generic params in scope
+            self.visit_node(type_args.unwrap());
+            // Collect the IDs of the generic params we just registered
+            self.impl_generic_param_ids = self.collect_generic_param_ids(type_args.unwrap());
+        } else {
+            self.impl_generic_param_ids = &[];
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+        self.in_container = prev_container;
+        self.impl_generic_param_ids = prev_impl_gp;
+    }
+
+    fn visit_type_def_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::type_alias(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_type_aliases.push(PendingTypeAlias {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_none() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.current_scope = prev;
+    }
+
+    fn visit_use_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let arg = child_by!(node, FieldKind::Argument);
+        if arg.is_none() {
+            return;
+        }
+        self.process_use(arg.unwrap(), &[]);
+    }
+
+    fn process_use(self: &mut Pass1, node: Node, prefix: &[&[u8]]) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::ScopedIdentifier => {
+                // use a::b::c; - import c from path a::b
+                let segments = self.collect_path_segments(node);
+                if segments.len() > 0 {
+                    let name = segments[segments.len() - 1];
+                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::use_alias(self.current_scope, segments),
+                        span: self.ctx.make_span(node),
+                    });
+                }
+            },
+            NodeKind::Identifier => {
+                let name = self.ctx.intern_str(self.ctx.node_text(node));
+                let full_path = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + 1);
+                for i in 0usize..prefix.len() {
+                    full_path[i] = prefix[i];
+                }
+                full_path[prefix.len()] = name;
+                self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                    name: name,
+                    kind: NamedItemKind::use_alias(self.current_scope, full_path),
+                    span: self.ctx.make_span(node),
+                });
+            },
+            NodeKind::UseWildcard => {
+                // use a::*; - star import
+                let path_node = child_by!(node, FieldKind::Path);
+                if !path_node.is_none() {
+                    let segments = self.collect_path_segments(path_node.unwrap());
+                    // Resolve the module path to get its scope
+                    let resolved = self.ctx.scopes.resolve_path(self.current_scope, segments);
+                    if resolved.is_some() {
+                        let item = resolved.unwrap();
+                        if item.kind.tag == scope::NamedItemTag::Module && item.kind.scope_idx != 0 {
+                            self.ctx.scopes.add_star_import(self.current_scope, item.kind.scope_idx, self.ctx.arena);
+                        }
+                    }
+                }
+            },
+            NodeKind::UseAsClause => {
+                let path_node = child_by!(node, FieldKind::Path);
+                let alias_node = child_by!(node, FieldKind::Alias);
+                if !path_node.is_none() && !alias_node.is_none() {
+                    let segments = self.collect_path_segments(path_node.unwrap());
+                    let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
+                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                        name: alias,
+                        kind: NamedItemKind::use_alias(self.current_scope, segments),
+                        span: self.ctx.make_span(node),
+                    });
+                }
+            },
+            NodeKind::ScopedUseList => {
+                let path_node = child_by!(node, FieldKind::Path);
+                let new_prefix = if !path_node.is_none() {
+                    self.collect_path_segments(path_node.unwrap())
+                } else {
+                    prefix
+                };
+                let list_node = child_by!(node, FieldKind::List);
+                if !list_node.is_none() {
+                    let cursor = list_node.unwrap().walk();
+                    defer cursor.free();
+                    for child in list_node.unwrap().children(&cursor) {
+                        if child.is_named() {
+                            self.process_use(child, new_prefix);
+                        }
+                    }
+                }
+            },
+            NodeKind::UseList => {
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in node.children(&cursor) {
+                    if child.is_named() {
+                        self.process_use(child, prefix);
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn collect_path_segments(self: &mut Pass1, node: Node) -> &[&[u8]] {
+        let segments: Vector<&[u8]> = Vector::new();
+        defer segments.free();
+        self.collect_path_segments_inner(node, &segments);
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(segments.as_slice())
+    }
+
+    fn collect_path_segments_inner(self: &mut Pass1, node: Node, segments: &mut Vector<&[u8]>) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::Identifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::TypeIdentifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::ScopedIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_none() {
+                    self.collect_path_segments_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_none() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_none() {
+                    self.collect_path_segments_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_none() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            _ => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+        }
+    }
+
+    fn visit_static_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::static_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_statics.push(PendingStatic {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: self.current_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_const: false,
+        });
+    }
+
+    fn visit_const_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::const_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_statics.push(PendingStatic {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: self.current_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_const: true,
+        });
+    }
+
+    fn visit_macro_def_p1(self: &mut Pass1, node: Node) {
+        let attrs = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        // Check for #[builtin] attribute
+        let is_builtin = false;
+        for i in 0usize..attrs.len() {
+            if attrs[i].tag == AttrTag::Builtin {
+                is_builtin = true;
+            }
+        }
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::macro_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_macros.push(PendingMacro {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            is_builtin: is_builtin,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, FieldKind::Parameters);
+        self.current_scope = prev;
+    }
+
+    fn visit_generic_args_p1(self: &mut Pass1, node: Node) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if !placeholder.is_none() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let id = self.ctx.next_id();
+                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::generic_param(id),
+                        span: self.ctx.make_span(child),
+                    });
+                }
+            }
+        }
+    }
+
+    fn collect_generic_param_ids(self: &mut Pass1, type_args_node: Node) -> &[Id] {
+        let ids: Vector<Id> = Vector::new();
+        defer ids.free();
+
+        let cursor = type_args_node.walk();
+        defer cursor.free();
+        for child in children_by!(type_args_node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if !placeholder.is_none() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
+                        ids.push(resolved.unwrap().kind.id);
+                    }
+                }
+            }
+        }
+
+        if ids.len() == 0 {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<Id>(ids.as_slice())
+    }
+
+    fn visit_parameter_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::param(id),
+            span: self.ctx.make_span(node),
+        });
+    }
+
+    fn visit_parameter_list_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Parameter);
+    }
+
+    fn visit_macro_param_list_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Parameter);
+    }
+
+    fn visit_macro_param_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::param(id),
+            span: self.ctx.make_span(node),
+        });
+    }
+
+    fn visit_mixin_p1(self: &mut Pass1, node: Node) {
+        // Store mixin info for later expansion during mono
+        self.ctx.pending_mixins.push(PendingMixin {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            impl_scope_idx: self.current_scope,
+            type_scope_idx: self.current_scope,
+            impl_generic_param_ids: self.impl_generic_param_ids,
+        });
+    }
+}

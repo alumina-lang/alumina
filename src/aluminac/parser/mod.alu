@@ -1,0 +1,635 @@
+// Parser: converts tree-sitter parse tree to AST
+//
+// Two-pass approach:
+// Pass 1: Walk the tree to build scopes and register all named items
+// Pass 2: Walk again to fill in function bodies, type definitions, etc.
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
+use tree_sitter::{Node, TSFieldId, TSTreeCursor};
+
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+use std::result::Result;
+
+struct ParseError {
+    message: &[u8],
+    span: Span,
+}
+
+// Sentinel value for "no variadic parameter" / "not in et cetera expansion"
+const NO_VARIADIC: i32 = -1i32;
+
+struct MacroEntry {
+    params: &[&[u8]],
+    body: &Expr,              // Pre-parsed AST body (parsed in definition-site scope)
+    source: &[u8],            // Source text for error reporting
+    is_builtin: bool,
+    variadic_param_idx: i32,  // NO_VARIADIC if no variadic param, otherwise index into params
+    scope_idx: u32,           // Definition-site scope for nested macro resolution
+}
+
+struct ParseContext {
+    arena: &mut Arena,
+    scopes: &mut ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    source: &[u8],
+    file_id: u32,
+    cfg_flags: &[&[u8]],
+
+    // Items collected during pass 1, processed in pass 2
+    pending_functions: Vector<PendingFunction>,
+    pending_structs: Vector<PendingStruct>,
+    pending_enums: Vector<PendingEnum>,
+    pending_protocols: Vector<PendingProtocol>,
+    pending_type_aliases: Vector<PendingTypeAlias>,
+    pending_statics: Vector<PendingStatic>,
+    pending_impls: Vector<PendingImpl>,
+    pending_mixins: Vector<PendingMixin>,
+    pending_macros: Vector<PendingMacro>,
+
+    // Macro definitions: item_id -> MacroEntry
+    macro_defs: HashMap<usize, MacroEntry>,
+    // Reverse map: name -> item_id (for builtins and fallback)
+    macro_name_to_id: HashMap<&[u8], usize>,
+
+    // Current macro expansion arguments (for $param substitution in old code paths)
+    macro_args: HashMap<&[u8], &Expr>,
+
+    // Variadic (et cetera) macro expansion state
+    macro_variadic_name: &[u8],       // name of the variadic param (empty if none)
+    macro_variadic_args: &[&Expr],    // the variadic arguments
+    macro_et_cetera_idx: i32,         // -1 if not in et cetera expansion, otherwise current index
+
+    // Macro body pre-parsing state
+    in_macro_body: bool,              // true when pre-parsing a macro body
+    macro_param_names: &[&[u8]],      // param names for current macro being pre-parsed
+    macro_variadic_param_idx: i32,    // variadic param index during pre-parse
+
+    // Items ready for compilation
+    items: Vector<Item>,
+}
+
+struct PendingFunction {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+    is_method: bool,
+    impl_generic_param_ids: &[Id],
+}
+
+struct PendingStruct {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+    is_union: bool,
+}
+
+struct PendingEnum {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+}
+
+struct PendingProtocol {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+}
+
+struct PendingTypeAlias {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+}
+
+struct PendingStatic {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+    is_const: bool,
+}
+
+struct PendingMixin {
+    node_start: u32,
+    node_end: u32,
+    impl_scope_idx: u32,     // the impl block's scope
+    type_scope_idx: u32,     // the scope for resolving the protocol type ref
+    impl_generic_param_ids: &[Id],  // generic param IDs from the enclosing impl
+}
+
+struct PendingImpl {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    target_type_scope: u32,
+}
+
+struct PendingMacro {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    is_builtin: bool,
+}
+
+impl ParseContext {
+    fn new(
+        arena: &mut Arena,
+        scopes: &mut ScopeArena,
+        id_gen: &mut IdGen,
+        diag: &mut DiagnosticContext,
+        source: &[u8],
+        file_id: u32,
+        cfg_flags: &[&[u8]],
+    ) -> ParseContext {
+        ParseContext {
+            arena: arena,
+            scopes: scopes,
+            id_gen: id_gen,
+            diag: diag,
+            source: source,
+            file_id: file_id,
+            cfg_flags: cfg_flags,
+            pending_functions: Vector::new(),
+            pending_structs: Vector::new(),
+            pending_enums: Vector::new(),
+            pending_protocols: Vector::new(),
+            pending_type_aliases: Vector::new(),
+            pending_statics: Vector::new(),
+            pending_impls: Vector::new(),
+            pending_mixins: Vector::new(),
+            pending_macros: Vector::new(),
+            macro_defs: HashMap::new(),
+            macro_name_to_id: HashMap::new(),
+            macro_args: HashMap::new(),
+            macro_variadic_name: "",
+            macro_variadic_args: &[],
+            macro_et_cetera_idx: NO_VARIADIC,
+            in_macro_body: false,
+            macro_param_names: &[],
+            macro_variadic_param_idx: NO_VARIADIC,
+            items: Vector::new(),
+        }
+    }
+
+    fn node_text(self: &ParseContext, node: Node) -> &[u8] {
+        self.source[node.start_byte() as usize..node.end_byte() as usize]
+    }
+
+    fn make_span(self: &ParseContext, node: Node) -> Span {
+        Span {
+            file_id: self.file_id,
+            start: node.start_byte() as u32,
+            end: node.end_byte() as u32,
+        }
+    }
+
+    fn next_id(self: &mut ParseContext) -> Id {
+        self.id_gen.next_id()
+    }
+
+    fn alloc_ty(self: &mut ParseContext, ty: Ty) -> &Ty {
+        self.arena.alloc(ty) as &Ty
+    }
+
+    // Resolve a macro by name: first try scope resolution, then fall back to name-to-id map.
+    // Returns the MacroEntry if found.
+    fn resolve_macro(self: &mut ParseContext, scope_idx: u32, name: &[u8]) -> Option<MacroEntry> {
+        // Try scope-based resolution first (handles use aliases and shadowing)
+        let resolved = self.scopes.resolve(scope_idx, name);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NamedItemTag::Macro {
+                let id = item.kind.id._value;
+                let entry = self.macro_defs.get(&id);
+                if entry.is_some() {
+                    return entry;
+                }
+            }
+        }
+        // Fallback: use name-to-id map (for builtins or when scope doesn't have the entry)
+        let id = self.macro_name_to_id.get(&name);
+        if id.is_some() {
+            return self.macro_defs.get(&id.unwrap());
+        }
+        Option::none()
+    }
+
+    // Resolve a macro by item ID directly
+    fn resolve_macro_by_id(self: &mut ParseContext, id: usize) -> Option<MacroEntry> {
+        self.macro_defs.get(&id)
+    }
+
+    fn alloc_expr(self: &mut ParseContext, e: Expr) -> &Expr {
+        self.arena.alloc(e) as &Expr
+    }
+
+    fn intern_str(self: &mut ParseContext, s: &[u8]) -> &[u8] {
+        let buf = self.arena.alloc_slice::<u8>(s.len());
+        s.copy_to_nonoverlapping(&buf[0]);
+        buf
+    }
+
+    fn has_cfg(self: &ParseContext, flag: &[u8]) -> bool {
+        for i in 0usize..self.cfg_flags.len() {
+            let s = self.cfg_flags[i];
+            if s.len() == flag.len() {
+                let found = true;
+                for j in 0usize..s.len() {
+                    if s[j] != flag[j] {
+                        found = false;
+                        break;
+                    }
+                }
+                if found {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn error(self: &mut ParseContext, node: Node, message: &[u8]) {
+        self.diag.error(self.make_span(node), message);
+    }
+
+    fn free(self: &mut ParseContext) {
+        self.pending_functions.free();
+        self.pending_structs.free();
+        self.pending_enums.free();
+        self.pending_protocols.free();
+        self.pending_type_aliases.free();
+        self.pending_statics.free();
+        self.pending_impls.free();
+        self.pending_mixins.free();
+        self.pending_macros.free();
+        self.macro_defs.free();
+        self.macro_name_to_id.free();
+        self.macro_args.free();
+        self.items.free();
+    }
+    fn collect_macro_entries(self: &mut ParseContext, ids: &mut Vector<usize>, entries: &mut Vector<MacroEntry>) {
+        for pair in self.macro_defs {
+            ids.push(pair.0);
+            entries.push(pair.1);
+        }
+    }
+}
+
+// ============================================================
+// Utility functions
+// ============================================================
+
+fn parse_usize(text: &[u8]) -> usize {
+    let result: usize = 0;
+    for i in 0usize..text.len() {
+        let c = text[i];
+        if c >= '0' as u8 && c <= '9' as u8 {
+            result = result * 10 + (c - '0' as u8) as usize;
+        } else if c == '_' as u8 {
+            // Skip underscores in numeric literals
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
+    let value: u64 = 0;
+    let base: u64 = 10;
+    let i: usize = 0;
+    let negative: bool = false;
+
+    // Check for leading negative sign
+    if text.len() > 0 && text[0] == '-' as u8 {
+        negative = true;
+        i = 1;
+    }
+
+    // Check for hex/octal/binary prefix
+    if text.len() >= i + 2 && text[i] == '0' as u8 {
+        if text[i + 1] == 'x' as u8 || text[i + 1] == 'X' as u8 {
+            base = 16;
+            i = i + 2;
+        } else if text[i + 1] == 'o' as u8 || text[i + 1] == 'O' as u8 {
+            base = 8;
+            i = i + 2;
+        } else if text[i + 1] == 'b' as u8 || text[i + 1] == 'B' as u8 {
+            base = 2;
+            i = i + 2;
+        }
+    }
+
+    let suffix_start: usize = text.len();
+    while i < text.len() {
+        let c = text[i];
+        if c == '_' as u8 {
+            i = i + 1;
+        } else if base == 16 && ((c >= 'a' as u8 && c <= 'f' as u8) || (c >= 'A' as u8 && c <= 'F' as u8)) {
+            let digit: u64 = if c >= 'a' as u8 { (c - 'a' as u8 + 10) as u64 } else { (c - 'A' as u8 + 10) as u64 };
+            value = value * base + digit;
+            i = i + 1;
+        } else if c >= '0' as u8 && c <= '9' as u8 {
+            value = value * base + (c - '0' as u8) as u64;
+            i = i + 1;
+        } else {
+            suffix_start = i;
+            break;
+        }
+    }
+
+    let suffix = if suffix_start < text.len() {
+        let suffix_text = text[suffix_start..];
+        parse_builtin_type(suffix_text)
+    } else {
+        Option::none()
+    };
+
+    if negative {
+        value = (0u64 - value);
+    }
+
+    (value, suffix)
+}
+
+fn parse_float_with_suffix(text: &[u8]) -> (f64, Option<BuiltinType>) {
+    // Simple float parser - we'll use libc strtod for accuracy
+    let cstr = std::ffi::CString::from_slice(text);
+    defer cstr.free();
+
+    let end: &mut libc::c_char = null;
+    let value = libc::strtod(cstr.ptr, &end);
+
+    // Check for type suffix (f32, f64)
+    let consumed = (end as usize) - (cstr.ptr as usize);
+    let suffix = if consumed < text.len() {
+        parse_builtin_type(text[consumed..])
+    } else {
+        Option::none()
+    };
+
+    (value, suffix)
+}
+
+fn parse_binop(text: &[u8]) -> BinOp {
+    switch text {
+        "+" => BinOp::Add,
+        "-" => BinOp::Sub,
+        "*" => BinOp::Mul,
+        "/" => BinOp::Div,
+        "%" => BinOp::Rem,
+        "&" => BinOp::BitAnd,
+        "|" => BinOp::BitOr,
+        "^" => BinOp::BitXor,
+        "<<" => BinOp::Shl,
+        ">>" => BinOp::Shr,
+        "==" => BinOp::Eq,
+        "!=" => BinOp::Ne,
+        "<" => BinOp::Lt,
+        "<=" => BinOp::Le,
+        ">" => BinOp::Gt,
+        ">=" => BinOp::Ge,
+        "&&" => BinOp::And,
+        "||" => BinOp::Or,
+        _ => BinOp::Add,
+    }
+}
+
+fn parse_assign_op(text: &[u8]) -> AssignOp {
+    switch text {
+        "+=" => AssignOp::AddAssign,
+        "-=" => AssignOp::SubAssign,
+        "*=" => AssignOp::MulAssign,
+        "/=" => AssignOp::DivAssign,
+        "%=" => AssignOp::RemAssign,
+        "&=" => AssignOp::BitAndAssign,
+        "|=" => AssignOp::BitOrAssign,
+        "^=" => AssignOp::BitXorAssign,
+        "<<=" => AssignOp::ShlAssign,
+        ">>=" => AssignOp::ShrAssign,
+        _ => AssignOp::Assign,
+    }
+}
+
+fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
+    // Count output length first
+    let out_len: usize = 0;
+    let i: usize = 0;
+    while i < text.len() {
+        if text[i] == '\\' as u8 && i + 1 < text.len() {
+            i = i + 2;
+            if text[i - 1] == 'x' as u8 && i + 1 < text.len() {
+                i = i + 2;  // \xNN
+            }
+        } else {
+            i = i + 1;
+        }
+        out_len = out_len + 1;
+    }
+
+    let buf = arena.alloc_slice::<u8>(out_len);
+    let j: usize = 0;
+    i = 0;
+    while i < text.len() {
+        if text[i] == '\\' as u8 && i + 1 < text.len() {
+            switch text[i + 1] {
+                'n' as u8 => { buf[j] = '\n' as u8; },
+                'r' as u8 => { buf[j] = '\r' as u8; },
+                't' as u8 => { buf[j] = '\t' as u8; },
+                '\\' as u8 => { buf[j] = '\\' as u8; },
+                '"' as u8 => { buf[j] = '"' as u8; },
+                '0' as u8 => { buf[j] = 0u8; },
+                'x' as u8 => {
+                    if i + 3 < text.len() {
+                        let hi = hex_digit(text[i + 2]);
+                        let lo = hex_digit(text[i + 3]);
+                        buf[j] = ((hi << 4) | lo) as u8;
+                        i = i + 2;
+                    }
+                },
+                _ => { buf[j] = text[i + 1]; },
+            }
+            i = i + 2;
+        } else {
+            buf[j] = text[i];
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+
+    buf[0..j]
+}
+
+fn hex_digit(c: u8) -> u8 {
+    if c >= '0' as u8 && c <= '9' as u8 { c - '0' as u8 }
+    else if c >= 'a' as u8 && c <= 'f' as u8 { c - 'a' as u8 + 10 }
+    else if c >= 'A' as u8 && c <= 'F' as u8 { c - 'A' as u8 + 10 }
+    else { 0u8 }
+}
+
+// ============================================================
+// Main entry points for parsing
+// ============================================================
+
+fn parse_file(
+    root: Node,
+    source: &[u8],
+    file_id: u32,
+    arena: &mut Arena,
+    scopes: &mut ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    root_scope: u32,
+    cfg_flags: &[&[u8]],
+) -> &[Item] {
+    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg_flags);
+    defer ctx.free();
+
+    // Pass 1: build scopes
+    let pass1 = pass1::Pass1::new(&ctx, root_scope);
+    pass1.run(root);
+
+    // Pass 2: construct AST
+    let pass2 = pass2::Pass2::new(&ctx);
+    pass2.run(root);
+
+    arena.alloc_slice_copy::<Item>(ctx.items.as_slice())
+}
+
+// Two-phase parsing: run all Pass1s across all files first to register all names
+// in scopes, then run all Pass2s to parse bodies (which may reference any name).
+// This fixes cross-module references where file B references a name defined in file A
+// but file A hasn't been parsed yet.
+
+fn parse_file_pass1(
+    root: Node,
+    source: &[u8],
+    file_id: u32,
+    arena: &mut Arena,
+    scopes: &mut ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    root_scope: u32,
+    cfg_flags: &[&[u8]],
+) -> ParseContext {
+    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg_flags);
+
+    // Pass 1: build scopes and register all names
+    let pass1 = pass1::Pass1::new(&ctx, root_scope);
+    pass1.run(root);
+
+    ctx
+}
+
+fn collect_macros(ctx: &mut ParseContext, root: Node) {
+    let p2 = pass2::Pass2::new(ctx);
+    p2.process_macros(root);
+}
+
+fn share_macros(contexts: &mut [ParseContext]) {
+    // Collect all macro ids+entries from all contexts
+    let all_ids: Vector<usize> = Vector::new();
+    let all_entries: Vector<MacroEntry> = Vector::new();
+    defer all_ids.free();
+    defer all_entries.free();
+
+    // Also collect name->id mappings for fallback
+    let all_names: Vector<&[u8]> = Vector::new();
+    let all_name_ids: Vector<usize> = Vector::new();
+    defer all_names.free();
+    defer all_name_ids.free();
+
+    for i in 0usize..contexts.len() {
+        contexts[i].collect_macro_entries(&all_ids, &all_entries);
+        for pair in contexts[i].macro_name_to_id {
+            all_names.push(pair.0);
+            all_name_ids.push(pair.1);
+        }
+    }
+
+    // Inject all macros into every context
+    for i in 0usize..contexts.len() {
+        for j in 0usize..all_ids.len() {
+            if contexts[i].macro_defs.get(&all_ids[j]).is_none() {
+                contexts[i].macro_defs.insert(all_ids[j], all_entries[j]);
+            }
+        }
+        for j in 0usize..all_names.len() {
+            if contexts[i].macro_name_to_id.get(&all_names[j]).is_none() {
+                contexts[i].macro_name_to_id.insert(all_names[j], all_name_ids[j]);
+            }
+        }
+    }
+}
+
+fn parse_file_pass2(
+    ctx: &mut ParseContext,
+    root: Node,
+) -> &[Item] {
+    // Pass 2: construct AST (all names are now registered across all files)
+    let p2 = pass2::Pass2::new(ctx);
+    p2.run(root);
+
+    ctx.arena.alloc_slice_copy::<Item>(ctx.items.as_slice())
+}
+
+/// After phase 1, link #[lang(builtin_X)] struct scopes to the root scope's
+/// BuiltinType entries so that `u8::max_value()` style calls can resolve.
+fn link_builtin_lang_items(contexts: &[ParseContext], scopes: &mut ScopeArena, root_scope: u32) {
+    for i in 0usize..contexts.len() {
+        let ctx = &contexts[i];
+        for j in 0usize..ctx.pending_structs.len() {
+            let pending = &ctx.pending_structs[j];
+            for k in 0usize..pending.attributes.len() {
+                let attr = &pending.attributes[k];
+                if attr.tag == AttrTag::Lang && std::string::starts_with(attr.str_val, "builtin_") {
+                    // Extract the type name from "builtin_u8" -> "u8"
+                    let type_name = attr.str_val[8..];
+                    scopes.set_builtin_scope(root_scope, type_name, pending.scope_idx);
+                }
+            }
+        }
+    }
+}
+
+fn format_num_small(n: usize) -> &[u8] {
+    if n == 0usize { return "0"; }
+    if n == 1usize { return "1"; }
+    if n == 2usize { return "2"; }
+    if n == 3usize { return "3"; }
+    if n == 4usize { return "4"; }
+    if n == 5usize { return "5"; }
+    if n == 6usize { return "6"; }
+    if n == 7usize { return "7"; }
+    if n == 8usize { return "8"; }
+    if n == 9usize { return "9"; }
+    if n < 20usize { return "1X"; }
+    if n < 50usize { return "2X-4X"; }
+    if n < 100usize { return "5X-9X"; }
+    "100++"
+}
