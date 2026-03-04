@@ -1,0 +1,19 @@
+/// Process management utilities.
+
+/// Terminates the current process with the given exit code.
+fn exit(code: i32) -> ! {
+    libc::exit(code as libc::c_int)
+}
+
+/// Returns the environment variable value for the given key, or `Option::none()`.
+fn getenv(key: &[u8]) -> Option<&[u8]> {
+    let ckey = std::ffi::CString::from_slice(key);
+    defer ckey.free();
+    let val = libc::getenv(ckey.ptr);
+    if val as usize == 0usize {
+        Option::none()
+    } else {
+        let len = libc::strlen(val);
+        Option::some(std::mem::slice_from_raw_const::<u8>(val as &u8, len))
+    }
+}

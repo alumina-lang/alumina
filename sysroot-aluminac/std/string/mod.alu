@@ -349,6 +349,12 @@ impl SplitIterator {
 
         Option::some(ret)
     }
+    mixin std::iter::Iterator<SplitIterator, &[u8]>;
+
+    /// Return self, enabling for-loop compatibility.
+    fn iter(self: &mut SplitIterator) -> &mut SplitIterator {
+        self
+    }
 }
 
 /// Split a string by a delimiter, returning an iterator.
@@ -358,6 +364,39 @@ fn split(s: &[u8], sep: &[u8]) -> SplitIterator {
         _sep: sep,
         _done: false,
     }
+}
+
+/// Join a slice of strings with a separator.
+fn join(parts: &[&[u8]], sep: &[u8]) -> StringBuf {
+    let result = StringBuf::new();
+    for i in 0usize..parts.len() {
+        if i > 0usize {
+            result.extend_from_slice(sep);
+        }
+        result.extend_from_slice(parts[i]);
+    }
+    result
+}
+
+/// Replace all occurrences of `from` with `to` in `s`.
+fn replace(s: &[u8], from: &[u8], to: &[u8]) -> StringBuf {
+    if from.len() == 0usize {
+        return StringBuf::from_slice(s);
+    }
+    let result = StringBuf::new();
+    let remaining = s;
+    loop {
+        let pos = find(remaining, from);
+        if pos.is_none() {
+            result.extend_from_slice(remaining);
+            break;
+        }
+        let p = pos.unwrap();
+        result.extend_from_slice(remaining[0usize..p]);
+        result.extend_from_slice(to);
+        remaining = remaining[p + from.len()..];
+    }
+    result
 }
 
 // === Integer parsing functions ===

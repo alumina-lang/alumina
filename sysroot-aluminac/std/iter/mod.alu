@@ -147,8 +147,16 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Find the first element matching a predicate.
-    fn find<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> Option<T> {
-        iter.filter(fun).next()
+    fn find<F: Fn(T) -> bool>(self: &mut Self, fun: F) -> Option<T> {
+        loop {
+            let val = self.next();
+            if val.is_none() {
+                return Option::none();
+            }
+            if fun(val.unwrap()) {
+                return val;
+            }
+        }
     }
 
     /// Find the index of the first element matching a predicate.
