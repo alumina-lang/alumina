@@ -11,6 +11,7 @@ struct HashMap<K, V> {
 }
 
 impl HashMap<K, V> {
+    /// Create an empty hash map.
     fn new() -> HashMap<K, V> {
         HashMap::<K, V> {
             _keys: std::mem::slice_empty::<K>(),
@@ -21,14 +22,42 @@ impl HashMap<K, V> {
         }
     }
 
+    /// Create a hash map with pre-allocated capacity for at least `capacity` elements.
+    fn with_capacity(capacity: usize) -> HashMap<K, V> {
+        if capacity == 0usize {
+            return HashMap::new::<K, V>();
+        }
+        // Allocate enough buckets so load factor stays below 0.75
+        let buckets = capacity * 4usize / 3usize + 1usize;
+        if buckets < 16usize {
+            buckets = 16usize;
+        }
+        let map = HashMap::<K, V> {
+            _keys: std::mem::slice_alloc::<K>(buckets),
+            _values: std::mem::slice_alloc::<V>(buckets),
+            _states: std::mem::slice_alloc::<u8>(buckets),
+            _length: 0usize,
+            _capacity: buckets,
+        };
+        let i = 0usize;
+        while i < buckets {
+            map._states[i] = 0u8;
+            i = i + 1usize;
+        }
+        map
+    }
+
+    /// Return the number of elements in the map.
     fn len(self: &HashMap<K, V>) -> usize {
         self._length
     }
 
+    /// Return the number of buckets in the underlying storage.
     fn capacity(self: &HashMap<K, V>) -> usize {
         self._capacity
     }
 
+    /// Returns `true` if the map contains no elements.
     fn is_empty(self: &HashMap<K, V>) -> bool {
         self._length == 0usize
     }
@@ -139,6 +168,10 @@ impl HashMap<K, V> {
 
     fn _grow(self: &mut HashMap<K, V>) {
         let new_cap = if self._capacity == 0usize { 16usize } else { self._capacity * 2usize };
+        self._rehash(new_cap);
+    }
+
+    fn _rehash(self: &mut HashMap<K, V>, new_cap: usize) {
         let old_keys = self._keys;
         let old_values = self._values;
         let old_states = self._states;
@@ -173,24 +206,45 @@ impl HashMap<K, V> {
         }
     }
 
-    fn insert(self: &mut HashMap<K, V>, key: K, value: V) {
+    /// Reserve capacity for at least `additional` more elements.
+    fn reserve(self: &mut HashMap<K, V>, additional: usize) {
+        let needed = self._length + additional;
+        // Keep load factor below 0.75
+        if needed * 4usize > self._capacity * 3usize {
+            let new_cap = std::cmp::max(self._capacity * 2usize, needed * 4usize / 3usize + 1usize);
+            if new_cap < 16usize {
+                new_cap = 16usize;
+            }
+            self._rehash(new_cap);
+        }
+    }
+
+    /// Insert a key-value pair. If the key already exists, the value is updated
+    /// and the old value is returned.
+    fn insert(self: &mut HashMap<K, V>, key: K, value: V) -> Option<V> {
         // Grow if load factor > 0.75
         if self._capacity == 0usize || (self._length + 1usize) * 4usize > self._capacity * 3usize {
             self._grow();
         }
 
         let slot = self._find_slot_for_insert(&key);
-        if self._states[slot] != 1u8 {
-            self._length = self._length + 1usize;
+        if self._states[slot] == 1u8 {
+            // Key exists, replace value
+            let old = self._values[slot];
+            self._values[slot] = value;
+            return Option::some(old);
         }
+        self._length = self._length + 1usize;
         self._keys[slot] = key;
         self._values[slot] = value;
         self._states[slot] = 1u8;
+        Option::none()
     }
 
-    fn get(self: &HashMap<K, V>, key: &K) -> std::option::Option<V> {
+    /// Get a copy of the value associated with the key.
+    fn get(self: &HashMap<K, V>, key: &K) -> Option<V> {
         if self._capacity == 0usize {
-            return std::option::Option::none::<V>();
+            return Option::none();
         }
         let h = HashMap::<K, V>::_hash_key(key);
         let idx = h % self._capacity;
@@ -198,16 +252,59 @@ impl HashMap<K, V> {
         while i < self._capacity {
             let slot = (idx + i) % self._capacity;
             if self._states[slot] == 0u8 {
-                return std::option::Option::none::<V>();
+                return Option::none();
             }
             if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return std::option::Option::some::<V>(self._values[slot]);
+                return Option::some(self._values[slot]);
             }
             i = i + 1usize;
         }
-        std::option::Option::none::<V>()
+        Option::none()
     }
 
+    /// Get a reference to the value associated with the key.
+    fn get_ref(self: &HashMap<K, V>, key: &K) -> Option<&V> {
+        if self._capacity == 0usize {
+            return Option::none();
+        }
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                return Option::none();
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                return Option::some(&self._values[slot]);
+            }
+            i = i + 1usize;
+        }
+        Option::none()
+    }
+
+    /// Get a mutable reference to the value associated with the key.
+    fn get_mut(self: &mut HashMap<K, V>, key: &K) -> Option<&mut V> {
+        if self._capacity == 0usize {
+            return Option::none();
+        }
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                return Option::none();
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                return Option::some(&self._values[slot]);
+            }
+            i = i + 1usize;
+        }
+        Option::none()
+    }
+
+    /// Returns true if the map contains the given key.
     fn contains_key(self: &HashMap<K, V>, key: &K) -> bool {
         if self._capacity == 0usize {
             return false;
@@ -228,6 +325,56 @@ impl HashMap<K, V> {
         false
     }
 
+    /// Remove the entry with the given key, returning the value if it existed.
+    fn remove(self: &mut HashMap<K, V>, key: &K) -> Option<V> {
+        if self._capacity == 0usize {
+            return Option::none();
+        }
+        let h = HashMap::<K, V>::_hash_key(key);
+        let idx = h % self._capacity;
+        let i = 0usize;
+        while i < self._capacity {
+            let slot = (idx + i) % self._capacity;
+            if self._states[slot] == 0u8 {
+                return Option::none();
+            }
+            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
+                self._states[slot] = 2u8; // tombstone
+                self._length = self._length - 1usize;
+                return Option::some(self._values[slot]);
+            }
+            i = i + 1usize;
+        }
+        Option::none()
+    }
+
+    /// Remove all entries from the map without releasing memory.
+    fn clear(self: &mut HashMap<K, V>) {
+        let i = 0usize;
+        while i < self._capacity {
+            self._states[i] = 0u8;
+            i = i + 1usize;
+        }
+        self._length = 0usize;
+    }
+
+    /// Remove entries that don't match the predicate.
+    fn retain<F: Fn(&K, &V) -> bool>(self: &mut HashMap<K, V>, func: F) {
+        let deleted = 0usize;
+        let i = 0usize;
+        while i < self._capacity {
+            if self._states[i] == 1u8 {
+                if !func(&self._keys[i], &self._values[i]) {
+                    self._states[i] = 2u8;
+                    deleted = deleted + 1usize;
+                }
+            }
+            i = i + 1usize;
+        }
+        self._length = self._length - deleted;
+    }
+
+    /// Return an iterator over the map's key-value pairs.
     fn iter(self: &HashMap<K, V>) -> HashMapIterator<K, V> {
         HashMapIterator::<K, V> {
             _map: self,
@@ -235,6 +382,31 @@ impl HashMap<K, V> {
         }
     }
 
+    /// Move the map's contents, leaving `self` empty.
+    fn move(self: &mut HashMap<K, V>) -> HashMap<K, V> {
+        let ret = *self;
+        self._keys = std::mem::slice_empty::<K>();
+        self._values = std::mem::slice_empty::<V>();
+        self._states = std::mem::slice_empty::<u8>();
+        self._length = 0usize;
+        self._capacity = 0usize;
+        ret
+    }
+
+    /// Clone the map, copying all entries.
+    fn clone(self: &HashMap<K, V>) -> HashMap<K, V> {
+        let map = HashMap::with_capacity::<K, V>(self._length);
+        let i = 0usize;
+        while i < self._capacity {
+            if self._states[i] == 1u8 {
+                map.insert(self._keys[i], self._values[i]);
+            }
+            i = i + 1usize;
+        }
+        map
+    }
+
+    /// Free the map's underlying storage.
     fn free(self: &mut HashMap<K, V>) {
         if self._capacity > 0usize {
             std::mem::slice_free::<K>(self._keys);
@@ -255,16 +427,16 @@ struct HashMapIterator<K, V> {
 }
 
 impl HashMapIterator<K, V> {
-    fn next(self: &mut HashMapIterator<K, V>) -> std::option::Option<(K, V)> {
+    fn next(self: &mut HashMapIterator<K, V>) -> Option<(K, V)> {
         while self._index < self._map._capacity {
             if self._map._states[self._index] == 1u8 {
                 let k = self._map._keys[self._index];
                 let v = self._map._values[self._index];
                 self._index = self._index + 1usize;
-                return std::option::Option::some::<(K, V)>((k, v));
+                return Option::some((k, v));
             }
             self._index = self._index + 1usize;
         }
-        std::option::Option::none::<(K, V)>()
+        Option::none()
     }
 }

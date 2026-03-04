@@ -1,37 +1,60 @@
-// Simplified HashSet for self-hosted compiler bootstrap
-// Uses linear scan, same as HashMap
+// HashSet backed by HashMap
 
 struct HashSet<K> {
     _inner: std::collections::hashmap::HashMap<K, bool>,
 }
 
 impl HashSet<K> {
+    /// Create an empty hash set.
     fn new() -> HashSet<K> {
         HashSet::<K> {
             _inner: std::collections::hashmap::HashMap::new(),
         }
     }
 
+    /// Create a hash set with pre-allocated capacity.
+    fn with_capacity(capacity: usize) -> HashSet<K> {
+        HashSet::<K> {
+            _inner: std::collections::hashmap::HashMap::with_capacity(capacity),
+        }
+    }
+
+    /// Return the number of elements in the set.
     fn len(self: &HashSet<K>) -> usize {
         self._inner.len()
     }
 
+    /// Returns `true` if the set contains no elements.
     fn is_empty(self: &HashSet<K>) -> bool {
         self._inner.is_empty()
     }
 
-    fn insert(self: &mut HashSet<K>, key: K) {
-        self._inner.insert(key, true);
+    /// Insert a key into the set. Returns `true` if the key was newly inserted.
+    fn insert(self: &mut HashSet<K>, key: K) -> bool {
+        self._inner.insert(key, true).is_none()
     }
 
+    /// Returns `true` if the set contains the given key.
     fn contains(self: &HashSet<K>, key: &K) -> bool {
         self._inner.contains_key(key)
     }
 
+    /// Remove a key from the set. Returns `true` if the key was present.
     fn remove(self: &mut HashSet<K>, key: &K) -> bool {
-        self._inner.remove(key)
+        self._inner.remove(key).is_some()
     }
 
+    /// Remove all elements from the set.
+    fn clear(self: &mut HashSet<K>) {
+        self._inner.clear();
+    }
+
+    /// Reserve capacity for at least `additional` more elements.
+    fn reserve(self: &mut HashSet<K>, additional: usize) {
+        self._inner.reserve(additional);
+    }
+
+    /// Free the set's underlying storage.
     fn free(self: &mut HashSet<K>) {
         self._inner.free();
     }
