@@ -1,0 +1,286 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+use std::string::StringBuf;
+use std::string;
+
+fn test_stringbuf_basic() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+
+    if !s.is_empty() { return 1i32; }
+    if s.len() != 0usize { return 2i32; }
+
+    s.push('H');
+    s.push('i');
+    if s.len() != 2usize { return 3i32; }
+    if s.as_slice() != "Hi" { return 4i32; }
+    0i32
+}
+
+fn test_stringbuf_from_slice() -> i32 {
+    let s = StringBuf::from_slice("Hello, world!");
+    defer s.free();
+
+    if s.len() != 13usize { return 10i32; }
+    if s.as_slice() != "Hello, world!" { return 11i32; }
+    0i32
+}
+
+fn test_stringbuf_with_capacity() -> i32 {
+    let s = StringBuf::with_capacity(100usize);
+    defer s.free();
+
+    if s.len() != 0usize { return 20i32; }
+    if s.capacity() < 100usize { return 21i32; }
+
+    s.extend_from_slice("test");
+    if s.as_slice() != "test" { return 22i32; }
+    0i32
+}
+
+fn test_stringbuf_extend() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+
+    s.extend_from_slice("Hello");
+    s.extend_from_slice(", ");
+    s.extend_from_slice("world!");
+    if s.as_slice() != "Hello, world!" { return 30i32; }
+    0i32
+}
+
+fn test_stringbuf_pop() -> i32 {
+    let s = StringBuf::from_slice("abc");
+    defer s.free();
+
+    let c = s.pop();
+    if !c.is_some() { return 40i32; }
+    if c.unwrap() != 'c' { return 41i32; }
+    if s.as_slice() != "ab" { return 42i32; }
+
+    s.pop();
+    s.pop();
+    let c2 = s.pop();
+    if c2.is_some() { return 43i32; }
+    0i32
+}
+
+fn test_stringbuf_insert() -> i32 {
+    let s = StringBuf::from_slice("hllo");
+    defer s.free();
+
+    s.insert(1usize, 'e');
+    if s.as_slice() != "hello" { return 50i32; }
+
+    s.insert(0usize, '!');
+    if s.as_slice() != "!hello" { return 51i32; }
+    0i32
+}
+
+fn test_stringbuf_truncate() -> i32 {
+    let s = StringBuf::from_slice("Hello, world!");
+    defer s.free();
+
+    s.truncate(5usize);
+    if s.as_slice() != "Hello" { return 60i32; }
+
+    s.clear();
+    if s.len() != 0usize { return 61i32; }
+    0i32
+}
+
+fn test_stringbuf_move_clone() -> i32 {
+    let s = StringBuf::from_slice("hello");
+
+    let s2 = s.move();
+    defer s2.free();
+
+    if s.len() != 0usize { return 70i32; }
+    if s2.as_slice() != "hello" { return 71i32; }
+
+    let s3 = s2.clone();
+    defer s3.free();
+
+    if s3.as_slice() != "hello" { return 72i32; }
+    s2.extend_from_slice("!");
+    if s3.as_slice() != "hello" { return 73i32; }  // clone unaffected
+    0i32
+}
+
+fn test_stringbuf_write_str() -> i32 {
+    let s = StringBuf::new();
+    defer s.free();
+
+    s.write_str("Hello");
+    s.write_str(", world!");
+    if s.as_slice() != "Hello, world!" { return 80i32; }
+    0i32
+}
+
+fn test_starts_with() -> i32 {
+    if !string::starts_with("hello world", "hello") { return 100i32; }
+    if !string::starts_with("hello world", "hello world") { return 101i32; }
+    if !string::starts_with("hello world", "") { return 102i32; }
+    if string::starts_with("hello world", "world") { return 103i32; }
+    if string::starts_with("", "hello") { return 104i32; }
+    if !string::starts_with("", "") { return 105i32; }
+    0i32
+}
+
+fn test_ends_with() -> i32 {
+    if !string::ends_with("hello world", "world") { return 110i32; }
+    if !string::ends_with("hello world", "hello world") { return 111i32; }
+    if !string::ends_with("hello world", "") { return 112i32; }
+    if string::ends_with("hello world", "hello") { return 113i32; }
+    0i32
+}
+
+fn test_trim_prefix_suffix() -> i32 {
+    if string::trim_prefix("hello world", "hello ") != "world" { return 120i32; }
+    if string::trim_prefix("hello world", "xyz") != "hello world" { return 121i32; }
+    if string::trim_suffix("hello world", " world") != "hello" { return 122i32; }
+    if string::trim_suffix("hello world", "xyz") != "hello world" { return 123i32; }
+    0i32
+}
+
+fn test_find() -> i32 {
+    let r1 = string::find("hello world", "world");
+    if !r1.is_some() { return 130i32; }
+    if r1.unwrap() != 6usize { return 131i32; }
+
+    let r2 = string::find("hello world", "xyz");
+    if r2.is_some() { return 132i32; }
+
+    let r3 = string::find("hello world", "");
+    if !r3.is_some() { return 133i32; }
+    if r3.unwrap() != 0usize { return 134i32; }
+
+    let r4 = string::find("", "hello");
+    if r4.is_some() { return 135i32; }
+    0i32
+}
+
+fn test_find_char() -> i32 {
+    let r1 = string::find_char("hello world", 'o');
+    if !r1.is_some() { return 140i32; }
+    if r1.unwrap() != 4usize { return 141i32; }
+
+    let r2 = string::find_char("hello world", 'x');
+    if r2.is_some() { return 142i32; }
+    0i32
+}
+
+fn test_contains() -> i32 {
+    if !string::contains("hello world", "world") { return 150i32; }
+    if string::contains("hello world", "xyz") { return 151i32; }
+    0i32
+}
+
+fn test_trim() -> i32 {
+    if string::trim("  hello  ") != "hello" { return 160i32; }
+    if string::trim_start("  hello  ") != "hello  " { return 161i32; }
+    if string::trim_end("  hello  ") != "  hello" { return 162i32; }
+    if string::trim("hello") != "hello" { return 163i32; }
+    if string::trim("") != "" { return 164i32; }
+    0i32
+}
+
+fn test_char_utils() -> i32 {
+    if !string::is_whitespace(' ') { return 170i32; }
+    if !string::is_whitespace('\t') { return 171i32; }
+    if !string::is_whitespace('\n') { return 172i32; }
+    if string::is_whitespace('a') { return 173i32; }
+
+    if !string::is_digit('0') { return 180i32; }
+    if !string::is_digit('9') { return 181i32; }
+    if string::is_digit('a') { return 182i32; }
+
+    if string::to_lower('A') != 'a' { return 190i32; }
+    if string::to_lower('Z') != 'z' { return 191i32; }
+    if string::to_lower('a') != 'a' { return 192i32; }
+    if string::to_upper('a') != 'A' { return 193i32; }
+    if string::to_upper('z') != 'Z' { return 194i32; }
+    if string::to_upper('A') != 'A' { return 195i32; }
+    0i32
+}
+
+fn test_split() -> i32 {
+    let iter = string::split("192.168.0.1", ".");
+    let r1 = iter.next();
+    if !r1.is_some() { return 200i32; }
+    if r1.unwrap() != "192" { return 201i32; }
+    let r2 = iter.next();
+    if r2.unwrap() != "168" { return 202i32; }
+    let r3 = iter.next();
+    if r3.unwrap() != "0" { return 203i32; }
+    let r4 = iter.next();
+    if r4.unwrap() != "1" { return 204i32; }
+    let r5 = iter.next();
+    if r5.is_some() { return 205i32; }
+
+    // Single element (no separator found)
+    let iter2 = string::split("hello", ".");
+    let r6 = iter2.next();
+    if r6.unwrap() != "hello" { return 206i32; }
+    let r7 = iter2.next();
+    if r7.is_some() { return 207i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_stringbuf_basic();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_from_slice();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_with_capacity();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_extend();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_pop();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_insert();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_truncate();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_move_clone();
+    if r != 0i32 { return r; }
+
+    let r = test_stringbuf_write_str();
+    if r != 0i32 { return r; }
+
+    let r = test_starts_with();
+    if r != 0i32 { return r; }
+
+    let r = test_ends_with();
+    if r != 0i32 { return r; }
+
+    let r = test_trim_prefix_suffix();
+    if r != 0i32 { return r; }
+
+    let r = test_find();
+    if r != 0i32 { return r; }
+
+    let r = test_find_char();
+    if r != 0i32 { return r; }
+
+    let r = test_contains();
+    if r != 0i32 { return r; }
+
+    let r = test_trim();
+    if r != 0i32 { return r; }
+
+    let r = test_char_utils();
+    if r != 0i32 { return r; }
+
+    let r = test_split();
+    if r != 0i32 { return r; }
+
+    0i32
+}

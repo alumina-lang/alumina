@@ -1,9 +1,11 @@
+/// A heap-allocated string buffer.
 struct StringBuf {
     _data: &mut [u8],
     _length: usize,
 }
 
 impl StringBuf {
+    /// Create an empty string buffer.
     fn new() -> StringBuf {
         StringBuf {
             _data: std::mem::slice_empty::<u8>(),
@@ -11,99 +13,344 @@ impl StringBuf {
         }
     }
 
+    /// Create a string buffer from a slice, copying the bytes.
     fn from_slice(s: &[u8]) -> StringBuf {
         let buf = StringBuf::with_capacity(s.len());
-        if s.len() > 0 {
+        if s.len() > 0usize {
             std::mem::memcpy(&buf._data[0] as &mut void, &s[0] as &void, s.len());
         }
         buf._length = s.len();
         buf
     }
 
+    /// Create a string buffer with pre-allocated capacity.
     fn with_capacity(cap: usize) -> StringBuf {
-        if cap == 0 {
+        if cap == 0usize {
             return StringBuf::new();
         }
-        let data = std::mem::slice_alloc::<u8>(cap);
         StringBuf {
-            _data: data,
+            _data: std::mem::slice_alloc::<u8>(cap),
             _length: 0usize,
         }
     }
 
+    /// Return the length of the string.
     fn len(self: &StringBuf) -> usize {
         self._length
     }
 
+    /// Return the capacity of the underlying buffer.
     fn capacity(self: &StringBuf) -> usize {
         self._data.len()
     }
 
-    fn as_slice(self: &StringBuf) -> &mut [u8] {
-        self._data[0..self._length]
+    /// Returns `true` if the string is empty.
+    fn is_empty(self: &StringBuf) -> bool {
+        self._length == 0usize
     }
 
+    /// Return a slice of the string's contents.
+    fn as_slice(self: &StringBuf) -> &[u8] {
+        self._data[0usize..self._length]
+    }
+
+    /// Return a mutable slice of the string's contents.
+    fn as_slice_mut(self: &mut StringBuf) -> &mut [u8] {
+        self._data[0usize..self._length]
+    }
+
+    /// Reserve capacity for at least `additional` more bytes.
     fn reserve(self: &mut StringBuf, additional: usize) {
         let needed = self._length + additional;
         if needed > self._data.len() {
-            self.grow(needed);
+            self._grow(needed);
         }
     }
 
+    /// Push a byte to the end of the string.
     fn push(self: &mut StringBuf, b: u8) {
         if self._length >= self._data.len() {
-            self.grow(self._length + 1);
+            self._grow(self._length + 1usize);
         }
         self._data[self._length] = b;
-        self._length = self._length + 1;
+        self._length = self._length + 1usize;
     }
 
+    /// Pop a byte from the end of the string.
+    fn pop(self: &mut StringBuf) -> Option<u8> {
+        if self._length == 0usize {
+            return Option::none();
+        }
+        self._length = self._length - 1usize;
+        Option::some(self._data[self._length])
+    }
+
+    /// Extend the string with the bytes from a slice.
     fn extend_from_slice(self: &mut StringBuf, s: &[u8]) {
-        if s.len() == 0 {
+        if s.len() == 0usize {
             return;
         }
         let needed = self._length + s.len();
         if needed > self._data.len() {
-            self.grow(needed);
+            self._grow(needed);
         }
         std::mem::memcpy(&self._data[self._length] as &mut void, &s[0] as &void, s.len());
         self._length = self._length + s.len();
     }
 
+    /// Insert a byte at the given index, shifting all bytes after it.
+    fn insert(self: &mut StringBuf, index: usize, value: u8) {
+        if self._length >= self._data.len() {
+            self._grow(self._length + 1usize);
+        }
+        if index < self._length {
+            libc::memmove(
+                &self._data[index + 1usize] as &mut void,
+                &self._data[index] as &void,
+                self._length - index
+            );
+        }
+        self._data[index] = value;
+        self._length = self._length + 1usize;
+    }
+
+    /// Truncate the string to the first `len` bytes.
     fn truncate(self: &mut StringBuf, len: usize) {
         if len < self._length {
             self._length = len;
         }
     }
 
+    /// Clear the string, removing all bytes.
     fn clear(self: &mut StringBuf) {
-        self._length = 0;
+        self._length = 0usize;
     }
 
-    fn grow(self: &mut StringBuf, min_cap: usize) {
+    /// Move the string's contents, leaving `self` empty.
+    fn move(self: &mut StringBuf) -> StringBuf {
+        let ret = *self;
+        self._data = std::mem::slice_empty::<u8>();
+        self._length = 0usize;
+        ret
+    }
+
+    /// Clone the string, copying all bytes.
+    fn clone(self: &StringBuf) -> StringBuf {
+        StringBuf::from_slice(self._data[0usize..self._length])
+    }
+
+    /// Write a string slice to this buffer (for use as a fmt::Formatter sink).
+    fn write_str(self: &mut StringBuf, buf: &[u8]) -> Result<(), std::fmt::Error> {
+        self.extend_from_slice(buf);
+        Result::ok(())
+    }
+
+    /// Write a byte to this buffer (for use as a fmt::Formatter sink).
+    fn write_byte(self: &mut StringBuf, c: u8) -> Result<(), std::fmt::Error> {
+        self.push(c);
+        Result::ok(())
+    }
+
+    /// Format this string buffer.
+    fn fmt<F: std::fmt::Formatter<F>>(self: &StringBuf, f: &mut F) -> std::fmt::Result {
+        f.write_str(self._data[0usize..self._length])
+    }
+
+    fn _grow(self: &mut StringBuf, min_cap: usize) {
         let old_cap = self._data.len();
-        let new_cap = old_cap * 2;
+        let new_cap = old_cap * 2usize;
         if new_cap < min_cap {
             new_cap = min_cap;
         }
-        if new_cap < 8 {
-            new_cap = 8;
+        if new_cap < 8usize {
+            new_cap = 8usize;
         }
         let new_data = std::mem::slice_alloc::<u8>(new_cap);
-        if self._length > 0 {
+        if self._length > 0usize {
             std::mem::memcpy(&new_data[0] as &mut void, &self._data[0] as &void, self._length);
         }
-        if old_cap > 0 {
+        if old_cap > 0usize {
             std::mem::slice_free::<u8>(self._data);
         }
         self._data = new_data;
     }
 
+    /// Free the string's underlying buffer.
     fn free(self: &mut StringBuf) {
-        if self._data.len() > 0 {
+        if self._data.len() > 0usize {
             std::mem::slice_free::<u8>(self._data);
         }
         self._data = std::mem::slice_empty::<u8>();
-        self._length = 0;
+        self._length = 0usize;
+    }
+}
+
+// === String utility functions (on &[u8] slices) ===
+
+/// Returns `true` if character is ASCII whitespace.
+fn is_whitespace(c: u8) -> bool {
+    c == 0x20u8 || c == 0x85u8 || c == 0xa0u8 || (c >= 0x09u8 && c <= 0x0Du8)
+}
+
+/// Returns `true` if character is a decimal digit.
+fn is_digit(c: u8) -> bool {
+    c >= '0' && c <= '9'
+}
+
+/// Convert character to lower case.
+fn to_lower(c: u8) -> u8 {
+    if c >= 'A' && c <= 'Z' {
+        c + 0x20u8
+    } else {
+        c
+    }
+}
+
+/// Convert character to upper case.
+fn to_upper(c: u8) -> u8 {
+    if c >= 'a' && c <= 'z' {
+        c - 0x20u8
+    } else {
+        c
+    }
+}
+
+/// Returns `true` if string starts with the given prefix.
+fn starts_with(s: &[u8], prefix: &[u8]) -> bool {
+    if s.len() < prefix.len() {
+        return false;
+    }
+    s[0usize..prefix.len()] == prefix
+}
+
+/// Returns `true` if string ends with the given suffix.
+fn ends_with(s: &[u8], suffix: &[u8]) -> bool {
+    if s.len() < suffix.len() {
+        return false;
+    }
+    s[s.len() - suffix.len()..] == suffix
+}
+
+/// Return string without the given prefix.
+fn trim_prefix(s: &[u8], prefix: &[u8]) -> &[u8] {
+    if starts_with(s, prefix) {
+        s[prefix.len()..]
+    } else {
+        s
+    }
+}
+
+/// Return string without the given suffix.
+fn trim_suffix(s: &[u8], suffix: &[u8]) -> &[u8] {
+    if ends_with(s, suffix) {
+        s[0usize..s.len() - suffix.len()]
+    } else {
+        s
+    }
+}
+
+/// Find the first occurrence of `needle` in `haystack`.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.len() == 0usize {
+        return Option::some(0usize);
+    }
+    if haystack.len() == 0usize {
+        return Option::none();
+    }
+
+    let ret = libc::memmem(
+        &haystack[0] as &void,
+        haystack.len(),
+        &needle[0] as &void,
+        needle.len()
+    );
+
+    if ret as usize == 0usize {
+        Option::none()
+    } else {
+        Option::some((ret as usize) - (&haystack[0] as usize))
+    }
+}
+
+/// Find the first occurrence of a byte in a string.
+fn find_char(s: &[u8], needle: u8) -> Option<usize> {
+    if s.len() == 0usize {
+        return Option::none();
+    }
+
+    let p = libc::memchr(
+        &s[0] as &void,
+        needle as libc::c_int,
+        s.len(),
+    );
+
+    if p as usize == 0usize {
+        Option::none()
+    } else {
+        Option::some((p as usize) - (&s[0] as usize))
+    }
+}
+
+/// Returns `true` if `needle` is a substring of `haystack`.
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    find(haystack, needle).is_some()
+}
+
+/// Trim ASCII whitespace from the start of the string.
+fn trim_start(s: &[u8]) -> &[u8] {
+    let i = 0usize;
+    while i < s.len() && is_whitespace(s[i]) {
+        i = i + 1usize;
+    }
+    s[i..]
+}
+
+/// Trim ASCII whitespace from the end of the string.
+fn trim_end(s: &[u8]) -> &[u8] {
+    let i = s.len();
+    while i > 0usize && is_whitespace(s[i - 1usize]) {
+        i = i - 1usize;
+    }
+    s[0usize..i]
+}
+
+/// Trim ASCII whitespace from both ends of the string.
+fn trim(s: &[u8]) -> &[u8] {
+    trim_end(trim_start(s))
+}
+
+/// Iterator over parts of a string split by a delimiter.
+struct SplitIterator {
+    _data: &[u8],
+    _sep: &[u8],
+    _done: bool,
+}
+
+impl SplitIterator {
+    fn next(self: &mut SplitIterator) -> Option<&[u8]> {
+        if self._done {
+            return Option::none();
+        }
+
+        let pos = find(self._data, self._sep);
+        if pos.is_none() {
+            self._done = true;
+            return Option::some(self._data);
+        }
+
+        let p = pos.unwrap();
+        let ret = self._data[0usize..p];
+        self._data = self._data[p + self._sep.len()..];
+
+        Option::some(ret)
+    }
+}
+
+/// Split a string by a delimiter, returning an iterator.
+fn split(s: &[u8], sep: &[u8]) -> SplitIterator {
+    SplitIterator {
+        _data: s,
+        _sep: sep,
+        _done: false,
     }
 }
