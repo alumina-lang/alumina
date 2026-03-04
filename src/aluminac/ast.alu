@@ -1007,123 +1007,113 @@ struct ConstField {
     value: ConstValue,
 }
 
+struct _CVIntData {
+    builtin_type: BuiltinType,
+    int_val: u64,
+}
+
+struct _CVFloatData {
+    builtin_type: BuiltinType,
+    float_val: f64,
+}
+
+struct _CVBytesData {
+    bytes: &[u8],
+    bytes_offset: usize,
+}
+
+struct _CVPointerData {
+    lvalue: &ConstLValue,
+    pointee_ty: &IrTy,
+}
+
+union _ConstValueData {
+    int_data: _CVIntData,           // Bool, Int
+    float_data: _CVFloatData,       // Float
+    bytes_data: _CVBytesData,       // Bytes
+    elems: &[ConstValue],           // Tuple, Array
+    fields: &[ConstField],          // Struct
+    fn_ref: IrFnRef,                // FnPtr
+    ptr_data: _CVPointerData,       // Pointer
+    lvalue: &ConstLValue,           // Lvalue
+}
+
 struct ConstValue {
     tag: CValTag,
-    builtin_type: BuiltinType,  // precise type for CValTag::Int, CValTag::Float
-    int_val: u64,               // CValTag::Int (two's complement for signed), CValTag::Bool (0/1)
-    float_val: f64,             // CValTag::Float
-    bytes: &[u8],               // CValTag::Bytes
-    bytes_offset: usize,        // CValTag::Bytes offset
-    elems: &[ConstValue],       // CValTag::Tuple, CValTag::Array
-    fields: &[ConstField],      // CValTag::Struct
-    fn_ref: IrFnRef,            // CValTag::FnPtr
-    lvalue: &ConstLValue,       // CValTag::Pointer, CValTag::Lvalue
-    pointee_ty: &IrTy,          // CValTag::Pointer
+    _data: _ConstValueData,
 }
 
 impl ConstValue {
+    // Accessors - builtin_type is at offset 0 in both int_data and float_data
+    fn builtin_type(self: &ConstValue) -> BuiltinType { self._data.int_data.builtin_type }
+    fn int_val(self: &ConstValue) -> u64 { self._data.int_data.int_val }
+    fn float_val(self: &ConstValue) -> f64 { self._data.float_data.float_val }
+    fn bytes(self: &ConstValue) -> &[u8] { self._data.bytes_data.bytes }
+    fn bytes_offset(self: &ConstValue) -> usize { self._data.bytes_data.bytes_offset }
+    fn elems(self: &ConstValue) -> &[ConstValue] { self._data.elems }
+    fn fields(self: &ConstValue) -> &[ConstField] { self._data.fields }
+    fn fn_ref(self: &ConstValue) -> IrFnRef { self._data.fn_ref }
+    fn lvalue(self: &ConstValue) -> &ConstLValue { self._data.lvalue }
+    fn pointee_ty(self: &ConstValue) -> &IrTy { self._data.ptr_data.pointee_ty }
+
     fn make_void() -> ConstValue {
-        ConstValue {
-            tag: CValTag::Void, builtin_type: BuiltinType::Void,
-            int_val: 0, float_val: 0.0, bytes: "", bytes_offset: 0,
-            elems: &[], fields: &[],
-            fn_ref: IrFnRef::empty(),
-            lvalue: std::mem::zeroed::<&ConstLValue>(),
-            pointee_ty: std::mem::zeroed::<&IrTy>(),
-        }
+        ConstValue { tag: CValTag::Void, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
     }
 
     fn make_bool(v: bool) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Bool;
-        r.builtin_type = BuiltinType::Bool;
-        r.int_val = if v { 1u64 } else { 0u64 };
-        r
+        ConstValue { tag: CValTag::Bool, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Bool, int_val: if v { 1u64 } else { 0u64 } } } }
     }
 
     fn make_int(v: u64, bt: BuiltinType) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Int;
-        r.builtin_type = bt;
-        r.int_val = v;
-        r
+        ConstValue { tag: CValTag::Int, _data: _ConstValueData { int_data: _CVIntData { builtin_type: bt, int_val: v } } }
     }
 
     fn make_float(v: f64, bt: BuiltinType) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Float;
-        r.builtin_type = bt;
-        r.float_val = v;
-        r
+        ConstValue { tag: CValTag::Float, _data: _ConstValueData { float_data: _CVFloatData { builtin_type: bt, float_val: v } } }
     }
 
     fn make_bytes(data: &[u8], offset: usize) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Bytes;
-        r.bytes = data;
-        r.bytes_offset = offset;
-        r
+        ConstValue { tag: CValTag::Bytes, _data: _ConstValueData { bytes_data: _CVBytesData { bytes: data, bytes_offset: offset } } }
     }
 
     fn make_tuple(elems: &[ConstValue]) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Tuple;
-        r.elems = elems;
-        r
+        ConstValue { tag: CValTag::Tuple, _data: _ConstValueData { elems: elems } }
     }
 
     fn make_array(elems: &[ConstValue]) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Array;
-        r.elems = elems;
-        r
+        ConstValue { tag: CValTag::Array, _data: _ConstValueData { elems: elems } }
     }
 
     fn make_struct(fields: &[ConstField]) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Struct;
-        r.fields = fields;
-        r
+        ConstValue { tag: CValTag::Struct, _data: _ConstValueData { fields: fields } }
     }
 
     fn make_fn_ptr(fr: IrFnRef) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::FnPtr;
-        r.fn_ref = fr;
-        r
+        ConstValue { tag: CValTag::FnPtr, _data: _ConstValueData { fn_ref: fr } }
     }
 
     fn make_pointer(lv: &ConstLValue, ty: &IrTy) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Pointer;
-        r.lvalue = lv;
-        r.pointee_ty = ty;
-        r
+        ConstValue { tag: CValTag::Pointer, _data: _ConstValueData { ptr_data: _CVPointerData { lvalue: lv, pointee_ty: ty } } }
     }
 
     fn make_lvalue(lv: &ConstLValue) -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Lvalue;
-        r.lvalue = lv;
-        r
+        ConstValue { tag: CValTag::Lvalue, _data: _ConstValueData { lvalue: lv } }
     }
 
     fn make_uninitialized() -> ConstValue {
-        let r = ConstValue::make_void();
-        r.tag = CValTag::Uninitialized;
-        r
+        ConstValue { tag: CValTag::Uninitialized, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
     }
 
     fn is_truthy(self: &ConstValue) -> bool {
-        if self.tag == CValTag::Bool { return self.int_val != 0u64; }
-        if self.tag == CValTag::Int { return self.int_val != 0u64; }
+        if self.tag == CValTag::Bool { return self.int_val() != 0u64; }
+        if self.tag == CValTag::Int { return self.int_val() != 0u64; }
         false
     }
 
     /// Extract a u64 value (for enum variants, array sizes, etc.)
     fn as_u64(self: &ConstValue) -> Option<u64> {
         if self.tag == CValTag::Int || self.tag == CValTag::Bool {
-            Option::some(self.int_val)
+            Option::some(self.int_val())
         } else {
             Option::none()
         }
@@ -1132,9 +1122,9 @@ impl ConstValue {
     /// Extract a bool value
     fn as_bool(self: &ConstValue) -> Option<bool> {
         if self.tag == CValTag::Bool {
-            Option::some(self.int_val != 0u64)
+            Option::some(self.int_val() != 0u64)
         } else if self.tag == CValTag::Int {
-            Option::some(self.int_val != 0u64)
+            Option::some(self.int_val() != 0u64)
         } else {
             Option::none()
         }
@@ -1143,7 +1133,7 @@ impl ConstValue {
     /// Extract a usize value
     fn as_usize(self: &ConstValue) -> Option<usize> {
         if self.tag == CValTag::Int || self.tag == CValTag::Bool {
-            Option::some(self.int_val as usize)
+            Option::some(self.int_val() as usize)
         } else {
             Option::none()
         }
