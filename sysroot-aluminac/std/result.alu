@@ -1,5 +1,9 @@
-// Simplified Result type for self-hosted compiler bootstrap
+//! Type for operations that can fail.
+//!
+//! The `?` operator on Result types is handled by the compiler's hardcoded
+//! ExprTag::Try lowering (no try macro needed).
 
+/// Either a success value or an error value.
 struct Result<T, E> {
     _is_ok: bool,
     _ok: T,
@@ -7,6 +11,7 @@ struct Result<T, E> {
 }
 
 impl Result<T, E> {
+    /// Create a success variant
     fn ok(value: T) -> Result<T, E> {
         let r: Result<T, E> = std::mem::zeroed::<Result<T, E>>();
         r._is_ok = true;
@@ -14,6 +19,7 @@ impl Result<T, E> {
         r
     }
 
+    /// Create an error variant
     fn err(value: E) -> Result<T, E> {
         let r: Result<T, E> = std::mem::zeroed::<Result<T, E>>();
         r._is_ok = false;
@@ -21,29 +27,100 @@ impl Result<T, E> {
         r
     }
 
+    /// Returns `true` if the result contains an OK variant
     fn is_ok(self: &Result<T, E>) -> bool {
         self._is_ok
     }
 
+    /// Returns `true` if the result contains an error variant
     fn is_err(self: &Result<T, E>) -> bool {
         !self._is_ok
     }
 
-    fn unwrap(self: &Result<T, E>) -> T {
+    /// Return the success value, aborting if error value is present
+    fn unwrap(self: Result<T, E>) -> T {
+        if !self._is_ok {
+            libc::abort();
+        }
         self._ok
     }
 
-    fn unwrap_err(self: &Result<T, E>) -> E {
+    /// Return the error value, aborting if success value is present
+    fn unwrap_err(self: Result<T, E>) -> E {
+        if self._is_ok {
+            libc::abort();
+        }
         self._err
     }
-}
 
-macro try($expr) {
-    {
-        let _result = $expr;
-        if _result.is_err() {
-            return Result::err(_result.unwrap_err());
+    /// Return the success value or a default value
+    fn unwrap_or(self: Result<T, E>, val: T) -> T {
+        if self._is_ok {
+            self._ok
+        } else {
+            val
         }
-        _result.unwrap()
+    }
+
+    /// Return the success value or a default value provided by a callback
+    fn unwrap_or_else<F: Fn(E) -> T>(self: Result<T, E>, func: F) -> T {
+        if self._is_ok {
+            self._ok
+        } else {
+            func(self._err)
+        }
+    }
+
+    /// Converts from `Result<T, E>` to `Option<T>`.
+    fn get(self: Result<T, E>) -> Option<T> {
+        if self._is_ok {
+            Option::some(self._ok)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Converts from `Result<T, E>` to `Option<E>`.
+    fn get_err(self: Result<T, E>) -> Option<E> {
+        if self._is_ok {
+            Option::none()
+        } else {
+            Option::some(self._err)
+        }
+    }
+
+    /// Transform the success value by calling the provided function.
+    fn map<Tm, F: Fn(T) -> Tm>(self: Result<T, E>, func: F) -> Result<Tm, E> {
+        if self._is_ok {
+            Result::ok(func(self._ok))
+        } else {
+            Result::err(self._err)
+        }
+    }
+
+    /// Transform the error value by calling the provided function.
+    fn map_err<Em, F: Fn(E) -> Em>(self: Result<T, E>, func: F) -> Result<T, Em> {
+        if self._is_ok {
+            Result::ok(self._ok)
+        } else {
+            Result::err(func(self._err))
+        }
+    }
+
+    /// Transform the value by calling the provided function, which returns a Result.
+    fn and_then<Tm, F: Fn(T) -> Result<Tm, E>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
+        if self._is_ok {
+            func(self._ok)
+        } else {
+            Result::err(self._err)
+        }
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &Result<T, E>, f: &mut F) -> std::fmt::Result {
+        if self._is_ok {
+            f.write_str("ok(...)") // TODO: format inner value when available
+        } else {
+            f.write_str("err(...)")
+        }
     }
 }

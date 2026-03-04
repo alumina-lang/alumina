@@ -3134,6 +3134,100 @@ impl Mono {
                     }
                 }
             }
+            // Generic type with placeholder args: fn foo<Tm>(x: SomeType<Tm>)
+            if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
+                let gen_arg_ty = self.lower_expr(args[p]).ty;
+                if gen_arg_ty.tag == IrTyTag::Struct && gen_arg_ty.struct_ref.type_args.len() >= param_ty.elems.len() {
+                    for te in 0usize..param_ty.elems.len() {
+                        if param_ty.elems[te].tag == TyTag::Placeholder {
+                            for g in 0usize..num_generics {
+                                if def.generic_params[g].id._value == param_ty.elems[te].id._value && !found[g] {
+                                    inferred[g] = gen_arg_ty.struct_ref.type_args[te];
+                                    found[g] = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try to infer remaining generics from Fn bounds.
+        // For F: Fn(A) -> R, if the actual argument for F is a lambda or function,
+        // extract the return type to infer R.
+        for g in 0usize..num_generics {
+            if found[g] { continue; }
+            // Check all generic params for Fn bounds that reference this one
+            for h in 0usize..num_generics {
+                if h == g { continue; }
+                // Check bounds of param h
+                for b in 0usize..def.generic_params[h].bounds.len() {
+                    let bound = def.generic_params[h].bounds[b];
+                    // Fn bound is TyTag::FnPointer: Fn(params) -> ret_ty
+                    if bound.tag == TyTag::FnPointer {
+                        // Find which parameter position corresponds to generic h
+                        let param_idx: i32 = -1i32;
+                        for pp in 0usize..num_params {
+                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id._value == def.generic_params[h].id._value {
+                                param_idx = pp as i32;
+                                break;
+                            }
+                        }
+                        if param_idx < 0i32 || param_idx as usize >= args.len() { continue; }
+                        let arg_expr = args[param_idx as usize];
+
+                        // Check if ret_ty is a placeholder matching our target generic
+                        if bound.ret_ty.tag == TyTag::Placeholder && bound.ret_ty.id._value == def.generic_params[g].id._value {
+                            // Extract return type from the lambda/fn's AST return type
+                            if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
+                                let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
+                                inferred[g] = ret_ty;
+                                found[g] = true;
+                            } else if arg_expr.tag == ExprTag::FnRef {
+                                // Function reference: look up the function def's return type
+                                let fn_def = self.ctx.fn_defs.get(&arg_expr.id._value);
+                                if fn_def.is_some() {
+                                    let ret_ty = self.resolve_type(fn_def.unwrap().return_type);
+                                    inferred[g] = ret_ty;
+                                    found[g] = true;
+                                }
+                            }
+                        }
+                        // Check if Fn bound return type is Generic containing our placeholder
+                        // e.g. F: Fn(T) -> Option<Tm>
+                        if !found[g] && bound.ret_ty.tag == TyTag::Generic && bound.ret_ty.elems.len() > 0 {
+                            for re in 0usize..bound.ret_ty.elems.len() {
+                                if found[g] { break; }
+                                if bound.ret_ty.elems[re].tag == TyTag::Placeholder && bound.ret_ty.elems[re].id._value == def.generic_params[g].id._value {
+                                    if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
+                                        let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
+                                        if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref.type_args.len() > re {
+                                            inferred[g] = ret_ty.struct_ref.type_args[re];
+                                            found[g] = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Also check Fn bound params for placeholder matches
+                        for bp in 0usize..bound.elems.len() {
+                            if found[g] { break; }
+                            if bound.elems[bp].tag == TyTag::Placeholder && bound.elems[bp].id._value == def.generic_params[g].id._value {
+                                if arg_expr.tag == ExprTag::Lambda && bp < arg_expr.lambda_params.len() {
+                                    // Get the lambda parameter type
+                                    let lp_ty = arg_expr.lambda_params[bp].ty;
+                                    if lp_ty.is_some() {
+                                        let param_ty = self.resolve_type(lp_ty.unwrap());
+                                        inferred[g] = param_ty;
+                                        found[g] = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // If we haven't inferred all generics from args, try return type inference.
@@ -3519,6 +3613,24 @@ impl Mono {
                         }
                     }
                 }
+                // Generic type with placeholder args: fn foo<Tm>(x: SomeType<Tm>)
+                if param_ty.tag == TyTag::Generic && param_ty.elems.len() > 0 {
+                    let m_gen_arg_ty = self.lower_expr(expr.args[p]).ty;
+                    // Match against struct type args
+                    if m_gen_arg_ty.tag == IrTyTag::Struct && m_gen_arg_ty.struct_ref.type_args.len() >= param_ty.elems.len() {
+                        for te in 0usize..param_ty.elems.len() {
+                            if param_ty.elems[te].tag == TyTag::Placeholder {
+                                for g in 0usize..num_generics {
+                                    if def.generic_params[g].id._value == param_ty.elems[te].id._value && inferred[g].is_void() {
+                                        inferred[g] = m_gen_arg_ty.struct_ref.type_args[te];
+                                        found_count = found_count + 1usize;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Slice of placeholder: fn foo<T>(x: &[T])
                 if param_ty.tag == TyTag::Slice && param_ty.inner.tag == TyTag::Placeholder {
                     for g in 0usize..num_generics {
@@ -3536,6 +3648,67 @@ impl Mono {
                     }
                 }
             }
+            // Infer generics from Fn bounds (e.g. F: Fn(T) -> Tm => infer Tm from lambda return type)
+            for g in 0usize..num_generics {
+                if !inferred[g].is_void() { continue; }
+                for h in 0usize..num_generics {
+                    if h == g { continue; }
+                    for b in 0usize..def.generic_params[h].bounds.len() {
+                        let bound = def.generic_params[h].bounds[b];
+                        if bound.tag != TyTag::FnPointer { continue; }
+                        // Find which explicit parameter (skipping self) corresponds to generic h
+                        let param_idx: i32 = -1i32;
+                        for pp in 1usize..def.params.len() {
+                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id._value == def.generic_params[h].id._value {
+                                param_idx = (pp - 1) as i32;  // index into expr.args (0-based, skip self)
+                                break;
+                            }
+                        }
+                        if param_idx < 0i32 || param_idx as usize >= expr.args.len() { continue; }
+                        let arg_expr = expr.args[param_idx as usize];
+                        // Check if Fn bound return type is a placeholder matching our target generic
+                        if bound.ret_ty.tag == TyTag::Placeholder && bound.ret_ty.id._value == def.generic_params[g].id._value {
+                            if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
+                                let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
+                                inferred[g] = ret_ty;
+                                found_count = found_count + 1usize;
+                            }
+                        }
+                        // Check if Fn bound return type is a Generic containing our placeholder
+                        // e.g. F: Fn(T) -> Option<Tm> where Tm is what we're inferring
+                        if bound.ret_ty.tag == TyTag::Generic && bound.ret_ty.elems.len() > 0 {
+                            for re in 0usize..bound.ret_ty.elems.len() {
+                                if !inferred[g].is_void() { break; }
+                                if bound.ret_ty.elems[re].tag == TyTag::Placeholder && bound.ret_ty.elems[re].id._value == def.generic_params[g].id._value {
+                                    // Resolve the lambda's return type and extract the type arg
+                                    if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty.is_some() {
+                                        let ret_ty = self.resolve_type(arg_expr.opt_ty.unwrap());
+                                        if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref.type_args.len() > re {
+                                            inferred[g] = ret_ty.struct_ref.type_args[re];
+                                            found_count = found_count + 1usize;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Check Fn bound params for placeholder matches
+                        for bp in 0usize..bound.elems.len() {
+                            if !inferred[g].is_void() { break; }
+                            if bound.elems[bp].tag == TyTag::Placeholder && bound.elems[bp].id._value == def.generic_params[g].id._value {
+                                if arg_expr.tag == ExprTag::Lambda && bp < arg_expr.lambda_params.len() {
+                                    let lp_ty = arg_expr.lambda_params[bp].ty;
+                                    if lp_ty.is_some() {
+                                        let param_ty = self.resolve_type(lp_ty.unwrap());
+                                        inferred[g] = param_ty;
+                                        found_count = found_count + 1usize;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if found_count > 0 {
                 combined_type_args = inferred;
             }

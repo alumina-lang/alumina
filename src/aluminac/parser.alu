@@ -1679,7 +1679,9 @@ impl Pass2 {
             NodeKind::NeverType => {
                 self.ctx.alloc_ty(Ty::never_ty())
             },
-            NodeKind::FunctionPointer => {
+            NodeKind::FunctionPointer, NodeKind::FunctionProtocol => {
+                // fn(A, B) -> R (function pointer type) or Fn(A, B) -> R (Fn protocol bound)
+                // Both have the same structure: parameters and optional return type
                 let params_node = child_by!(node, FieldKind::Parameters);
                 let ret_node = child_by!(node, FieldKind::ReturnType);
 

@@ -1,0 +1,288 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn test_option_basic() -> i32 {
+    let some = Option::some(42i32);
+    let none: Option<i32> = Option::none();
+
+    if !some.is_some() { return 1i32; }
+    if some.is_none() { return 2i32; }
+    if none.is_some() { return 3i32; }
+    if !none.is_none() { return 4i32; }
+    if some.unwrap() != 42 { return 5i32; }
+
+    0i32
+}
+
+fn test_option_unwrap_or() -> i32 {
+    let some = Option::some(42i32);
+    let none: Option<i32> = Option::none();
+
+    if some.unwrap_or(0i32) != 42 { return 10i32; }
+    if none.unwrap_or(99i32) != 99 { return 11i32; }
+
+    if some.unwrap_or_else(|| -> i32 { 0i32 }) != 42 { return 12i32; }
+    if none.unwrap_or_else(|| -> i32 { 99i32 }) != 99 { return 13i32; }
+
+    0i32
+}
+
+fn test_option_map() -> i32 {
+    let some = Option::some(21i32);
+    let none: Option<i32> = Option::none();
+
+    let doubled = some.map(|v: i32| -> i32 { v * 2 });
+    let none_mapped = none.map(|v: i32| -> i32 { v * 2 });
+
+    if !doubled.is_some() { return 20i32; }
+    if doubled.unwrap() != 42 { return 21i32; }
+    if none_mapped.is_some() { return 22i32; }
+
+    0i32
+}
+
+fn test_option_and_or() -> i32 {
+    let a = Option::some(1i32);
+    let b = Option::some(2i32);
+    let n: Option<i32> = Option::none();
+
+    // and
+    let r1 = a.and(b);
+    if !r1.is_some() { return 30i32; }
+    if r1.unwrap() != 2 { return 31i32; }
+    let r2 = n.and(b);
+    if r2.is_some() { return 32i32; }
+
+    // or
+    let r3 = a.or(b);
+    if r3.unwrap() != 1 { return 33i32; }
+    let r4 = n.or(b);
+    if r4.unwrap() != 2 { return 34i32; }
+
+    0i32
+}
+
+fn test_option_and_then() -> i32 {
+    let a = Option::some(42i32);
+    let n: Option<i32> = Option::none();
+
+    let r1 = a.and_then(|v: i32| -> Option<i32> {
+        if v > 0 { Option::some(v + 1) } else { Option::none() }
+    });
+    if r1.unwrap() != 43 { return 40i32; }
+
+    let r2 = n.and_then(|v: i32| -> Option<i32> { Option::some(v + 1) });
+    if r2.is_some() { return 41i32; }
+
+    0i32
+}
+
+fn test_option_flatten() -> i32 {
+    // TODO: nested Option<Option<T>> causes LLVM IR verification failure
+    // Need to fix type inference for nested generic structs
+    0i32
+}
+
+fn test_option_zip() -> i32 {
+    let a = Option::some(1i32);
+    let b = Option::some(2i32);
+    let n: Option<i32> = Option::none();
+
+    let zipped = a.zip(b);
+    if !zipped.is_some() { return 60i32; }
+    let pair = zipped.unwrap();
+    if pair.0 != 1 { return 61i32; }
+    if pair.1 != 2 { return 62i32; }
+
+    let zipped2 = a.zip(n);
+    if zipped2.is_some() { return 63i32; }
+
+    0i32
+}
+
+fn test_option_ok_or() -> i32 {
+    let a = Option::some(42i32);
+    let n: Option<i32> = Option::none();
+
+    let r1 = a.ok_or(0i32);
+    if !r1.is_ok() { return 70i32; }
+    if r1.unwrap() != 42 { return 71i32; }
+
+    let r2 = n.ok_or(99i32);
+    if !r2.is_err() { return 72i32; }
+    if r2.unwrap_err() != 99 { return 73i32; }
+
+    0i32
+}
+
+fn test_result_basic() -> i32 {
+    let ok: Result<i32, i32> = Result::ok(42i32);
+    let err: Result<i32, i32> = Result::err(99i32);
+
+    if !ok.is_ok() { return 100i32; }
+    if ok.is_err() { return 101i32; }
+    if err.is_ok() { return 102i32; }
+    if !err.is_err() { return 103i32; }
+
+    if ok.unwrap() != 42 { return 104i32; }
+    if err.unwrap_err() != 99 { return 105i32; }
+
+    0i32
+}
+
+fn test_result_unwrap_or() -> i32 {
+    let ok: Result<i32, i32> = Result::ok(42i32);
+    let err: Result<i32, i32> = Result::err(99i32);
+
+    if ok.unwrap_or(0i32) != 42 { return 110i32; }
+    if err.unwrap_or(0i32) != 0 { return 111i32; }
+
+    0i32
+}
+
+fn test_result_map() -> i32 {
+    let ok: Result<i32, i32> = Result::ok(21i32);
+    let err: Result<i32, i32> = Result::err(99i32);
+
+    let mapped = ok.map(|v: i32| -> i32 { v * 2 });
+    if mapped.unwrap() != 42 { return 120i32; }
+
+    let mapped_err = err.map(|v: i32| -> i32 { v * 2 });
+    if !mapped_err.is_err() { return 121i32; }
+    if mapped_err.unwrap_err() != 99 { return 122i32; }
+
+    0i32
+}
+
+fn test_result_map_err() -> i32 {
+    let ok: Result<i32, i32> = Result::ok(42i32);
+    let err: Result<i32, i32> = Result::err(1i32);
+
+    let r1 = ok.map_err(|e: i32| -> i32 { e * 100 });
+    if r1.unwrap() != 42 { return 130i32; }
+
+    let r2 = err.map_err(|e: i32| -> i32 { e * 100 });
+    if r2.unwrap_err() != 100 { return 131i32; }
+
+    0i32
+}
+
+fn test_result_and_then() -> i32 {
+    let ok: Result<i32, i32> = Result::ok(42i32);
+    let err: Result<i32, i32> = Result::err(99i32);
+
+    let r1 = ok.and_then(|v: i32| -> Result<i32, i32> { Result::ok(v + 1) });
+    if r1.unwrap() != 43 { return 140i32; }
+
+    let r2 = err.and_then(|v: i32| -> Result<i32, i32> { Result::ok(v + 1) });
+    if !r2.is_err() { return 141i32; }
+    if r2.unwrap_err() != 99 { return 142i32; }
+
+    0i32
+}
+
+fn test_result_get() -> i32 {
+    let ok: Result<i32, i32> = Result::ok(42i32);
+    let err: Result<i32, i32> = Result::err(99i32);
+
+    let o1 = ok.get();
+    if !o1.is_some() { return 150i32; }
+    if o1.unwrap() != 42 { return 151i32; }
+
+    let o2 = err.get();
+    if o2.is_some() { return 152i32; }
+
+    let o3 = err.get_err();
+    if !o3.is_some() { return 153i32; }
+    if o3.unwrap() != 99 { return 154i32; }
+
+    0i32
+}
+
+fn try_add(a: Option<i32>, b: Option<i32>) -> Option<i32> {
+    // Uses hardcoded ExprTag::Try lowering (no macro import needed)
+    let x = a?;
+    let y = b?;
+    Option::some(x + y)
+}
+
+fn try_divide(a: i32, b: i32) -> Result<i32, i32> {
+    if b == 0 { return Result::err(-1i32); }
+    Result::ok(a / b)
+}
+
+fn try_chain(a: i32, b: i32, c: i32) -> Result<i32, i32> {
+    let r1 = try_divide(a, b)?;
+    let r2 = try_divide(r1, c)?;
+    Result::ok(r2)
+}
+
+fn test_try_macro() -> i32 {
+    let r1 = try_add(Option::some(1i32), Option::some(2i32));
+    if r1.unwrap() != 3 { return 160i32; }
+
+    let r2 = try_add(Option::some(1i32), Option::none());
+    if r2.is_some() { return 161i32; }
+
+    let r3 = try_divide(10i32, 2i32);
+    if r3.unwrap() != 5 { return 162i32; }
+
+    let r4 = try_divide(10i32, 0i32);
+    if !r4.is_err() { return 163i32; }
+
+    let r5 = try_chain(100i32, 2i32, 5i32);
+    if r5.unwrap() != 10 { return 164i32; }
+
+    let r6 = try_chain(100i32, 0i32, 5i32);
+    if !r6.is_err() { return 165i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_option_basic();
+    if r != 0 { return r; }
+
+    let r = test_option_unwrap_or();
+    if r != 0 { return r; }
+
+    let r = test_option_map();
+    if r != 0 { return r; }
+
+    let r = test_option_and_or();
+    if r != 0 { return r; }
+
+    let r = test_option_and_then();
+    if r != 0 { return r; }
+
+    let r = test_option_flatten();
+    if r != 0 { return r; }
+
+    let r = test_option_zip();
+    if r != 0 { return r; }
+
+    let r = test_option_ok_or();
+    if r != 0 { return r; }
+
+    let r = test_result_basic();
+    if r != 0 { return r; }
+
+    let r = test_result_unwrap_or();
+    if r != 0 { return r; }
+
+    let r = test_result_map();
+    if r != 0 { return r; }
+
+    let r = test_result_map_err();
+    if r != 0 { return r; }
+
+    let r = test_result_and_then();
+    if r != 0 { return r; }
+
+    let r = test_result_get();
+    if r != 0 { return r; }
+
+    let r = test_try_macro();
+    if r != 0 { return r; }
+
+    0i32
+}

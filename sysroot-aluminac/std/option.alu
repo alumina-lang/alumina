@@ -1,46 +1,186 @@
-// Simplified Option type for self-hosted compiler bootstrap
+//! Optional values
+//!
+//! The `?` operator on Option types is handled by the compiler's hardcoded
+//! ExprTag::Try lowering (no try macro needed).
 
-macro try($opt) {
-    {
-        let _opt = $opt;
-        if _opt.is_some() {
-            _opt.unwrap()
-        } else {
-            return Option::none()
-        }
-    }
-}
-
+/// Optional value
+///
+/// Optional values can either contain a value or they can be empty.
 struct Option<T> {
-    _is_some: usize,
+    _is_some: bool,
     _inner: T,
 }
 
 impl Option<T> {
+    /// Create a populated `Option` value
     fn some(inner: T) -> Option<T> {
         Option::<T> {
-            _is_some: 1usize,
+            _is_some: true,
             _inner: inner,
         }
     }
 
+    /// Create an empty `Option` value
     fn none() -> Option<T> {
         std::mem::zeroed::<Option<T>>()
     }
 
+    /// Returns `true` if the option is populated, `false` otherwise.
     fn is_some(self: &Option<T>) -> bool {
-        self._is_some != 0usize
+        self._is_some
     }
 
+    /// Returns `true` if the option is empty, `false` otherwise.
     fn is_none(self: &Option<T>) -> bool {
-        self._is_some == 0usize
+        !self._is_some
     }
 
-    fn unwrap(self: &Option<T>) -> T {
+    /// Returns a value, if present, aborts otherwise.
+    fn unwrap(self: Option<T>) -> T {
+        if !self._is_some {
+            libc::abort();
+        }
         self._inner
     }
 
-    fn unwrap_or(self: &Option<T>, default: T) -> T {
-        if self._is_some != 0usize { self._inner } else { default }
+    /// Returns a value, if present, otherwise return a default value.
+    fn unwrap_or(self: Option<T>, val: T) -> T {
+        if self._is_some {
+            self._inner
+        } else {
+            val
+        }
+    }
+
+    /// Returns a value, if present, otherwise invoke func to get the default.
+    fn unwrap_or_else<F: Fn() -> T>(self: Option<T>, func: F) -> T {
+        if self._is_some {
+            self._inner
+        } else {
+            func()
+        }
+    }
+
+    /// Transform the value inside the `Option` by calling the provided function.
+    fn map<Tm, F: Fn(T) -> Tm>(self: Option<T>, func: F) -> Option<Tm> {
+        if self._is_some {
+            Option::some(func(self._inner))
+        } else {
+            Option::none()
+        }
+    }
+
+    /// If `self` is none, return none, otherwise return `other`
+    fn and<Tm>(self: Option<T>, other: Option<Tm>) -> Option<Tm> {
+        if self._is_some {
+            other
+        } else {
+            Option::none()
+        }
+    }
+
+    /// If `self` is none, return none, otherwise return the result of calling `func`.
+    fn and_then<Tm, F: Fn(T) -> Option<Tm>>(self: Option<T>, func: F) -> Option<Tm> {
+        if self._is_some {
+            func(self._inner)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Return `self` if it is populated, otherwise return `other`.
+    fn or(self: Option<T>, other: Option<T>) -> Option<T> {
+        if self._is_some {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// Return `self` if it is populated, otherwise return the result of calling `func`.
+    fn or_else<F: Fn() -> Option<T>>(self: Option<T>, func: F) -> Option<T> {
+        if self._is_some {
+            self
+        } else {
+            func()
+        }
+    }
+
+    /// Replaces the value in the option, returning the old value if present.
+    fn replace(self: &mut Option<T>, val: T) -> Option<T> {
+        let old = *self;
+        *self = Option::some(val);
+        old
+    }
+
+    /// Returns pointer to inner or a null pointer if not present.
+    fn as_nullable_ptr(self: &Option<T>) -> &T {
+        if self._is_some {
+            &self._inner
+        } else {
+            null as &T
+        }
+    }
+
+    /// Transform a pointer to `Option` to an `Option` of pointer.
+    fn as_ptr(self: &Option<T>) -> Option<&T> {
+        if self._is_some {
+            Option::some(&self._inner)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Transform a mutable pointer to `Option` to an `Option` of mutable pointer.
+    fn as_mut_ptr(self: &mut Option<T>) -> Option<&mut T> {
+        if self._is_some {
+            Option::some(&self._inner)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Flattens a nested `Option` into a single `Option`.
+    fn flatten(self: Option<Option<T>>) -> Option<T> {
+        if self._is_some {
+            self._inner
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Merges two `Option`s into an `Option` of a tuple.
+    fn zip<O>(self: Option<T>, other: Option<O>) -> Option<(T, O)> {
+        if self._is_some && other._is_some {
+            Option::some((self._inner, other._inner))
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Convert the option into a Result. If empty, use `err` for the error variant.
+    fn ok_or<E>(self: Option<T>, err: E) -> std::result::Result<T, E> {
+        if self._is_some {
+            std::result::Result::ok(self._inner)
+        } else {
+            std::result::Result::err(err)
+        }
+    }
+
+    /// Convert the option into a Result. If empty, call `f` for the error variant.
+    fn ok_or_else<E, F: Fn() -> E>(self: Option<T>, f: F) -> std::result::Result<T, E> {
+        if self._is_some {
+            std::result::Result::ok(self._inner)
+        } else {
+            std::result::Result::err(f())
+        }
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &Option<T>, f: &mut F) -> std::fmt::Result {
+        if self._is_some {
+            f.write_str("some(...)") // TODO: format inner value when available
+        } else {
+            f.write_str("none")
+        }
     }
 }
