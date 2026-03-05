@@ -97,6 +97,13 @@ impl FnCodegen {
         LLVMSetCurrentDebugLocation2(self.ctx.builder, loc);
     }
 
+    // Emit a warning for error-recovery LLVMGetUndef, only if no prior errors (suppress cascade)
+    fn warn_undef(self: &mut FnCodegen, diag: &diagnostics::CodeDiagnostic, span: Span) {
+        if !self.ctx.diag.has_errors {
+            self.ctx.diag.emit_code_warning(span, diag, self.ctx.arena);
+        }
+    }
+
     fn emit(self: &mut FnCodegen) {
         // Set up debug info subprogram
         if self.ctx.debug_enabled && (self.ir_fn.span.start != 0u32 || self.ir_fn.span.end != 0u32) {
@@ -427,6 +434,8 @@ impl FnCodegen {
                 }
                 LLVMBuildLoad2(self.ctx.builder, ty, ptr, self.temp_cname())
             } else {
+                let diag = diagnostics::CodeDiagnostic::codegen_missing_local();
+                self.warn_undef(&diag, expr.span);
                 LLVMGetUndef(self.ctx.llvm_type(expr.ty))
             }
         }
@@ -450,6 +459,8 @@ impl FnCodegen {
                 // Bitcast function pointer to i8* for uniform pointer representation
                 LLVMBuildBitCast(self.ctx.builder, existing.unwrap(), self.ctx.ptr_type, self.temp_cname())
             } else {
+                let diag = diagnostics::CodeDiagnostic::codegen_missing_function(expr.fn_ref().mangled_name);
+                self.warn_undef(&diag, expr.span);
                 LLVMGetUndef(self.ctx.ptr_type)
             }
         }
@@ -464,6 +475,8 @@ impl FnCodegen {
                 }
                 LLVMBuildLoad2(self.ctx.builder, ty, ptr, self.temp_cname())
             } else {
+                let diag = diagnostics::CodeDiagnostic::codegen_missing_global(expr.global_ref().mangled_name);
+                self.warn_undef(&diag, expr.span);
                 LLVMGetUndef(self.ctx.llvm_type(expr.ty))
             }
         }
@@ -519,6 +532,8 @@ impl FnCodegen {
 
             let num_fields = LLVMCountStructElementTypes(obj_ty);
             if expr.field_idx() >= num_fields {
+                let diag = diagnostics::CodeDiagnostic::codegen_field_oob();
+                self.warn_undef(&diag, expr.span);
                 return LLVMGetUndef(result_ty);
             }
             let field_ptr = LLVMBuildStructGEP2(
@@ -912,6 +927,8 @@ impl FnCodegen {
             }
         }
         _ => {
+            let diag = diagnostics::CodeDiagnostic::codegen_unhandled_node("unknown");
+            self.warn_undef(&diag, expr.span);
             LLVMGetUndef(self.ctx.void_type)
         }
         };
