@@ -357,12 +357,20 @@ impl Mono {
         let struct_def = self.ctx.struct_defs.get(&item_ref.id._value);
         if struct_def.is_some() {
             let sd = struct_def.unwrap();
-            // Check for #[lang(builtin_X)] - these structs represent builtin types
+            // Check for lang item structs that represent builtin types
             for attr in sd.attributes {
                 if attr.tag == AttrTag::Lang {
-                    let bt = Mono::lang_name_to_builtin(attr.str_val());
+                    let lang = attr.str_val();
+                    let bt = Mono::lang_name_to_builtin(lang);
                     if bt as i32 != BuiltinType::Void as i32 {
                         return self.ctx.intern_builtin_ty(bt);
+                    }
+                    // #[lang(slice)] with type arg Ptr: slice<&T> → IrTyTag::Slice
+                    if lang == "slice" && type_args.len() == 1 {
+                        let ptr_ty = type_args[0];
+                        if ptr_ty.tag == IrTyTag::Pointer {
+                            return self.ctx.make_slice_ty(ptr_ty.inner(), ptr_ty.is_const());
+                        }
                     }
                 }
             }
