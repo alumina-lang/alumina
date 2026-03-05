@@ -59,6 +59,14 @@ impl Mono {
     // ---- IR node construction helpers ----
     // These reduce the 3-4 line boilerplate for constructing common IR nodes.
 
+    // Emit a CodeDiagnostic error with mono stack notes (guarded by !has_errors)
+    fn emit_diag(self: &mut Mono, span: Span, diag: &diagnostics::CodeDiagnostic) {
+        if !self.ctx.diag.has_errors {
+            self.ctx.diag.emit_code_error(span, diag, self.ctx.arena);
+            self.ctx.emit_mono_stack_notes();
+        }
+    }
+
     fn mk_int_lit(self: &mut Mono, ty: &IrTy, val: u64) -> &IrExpr {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::IntLit;
@@ -266,9 +274,7 @@ impl Mono {
                     self.resolve_type(ty.ret_ty())
                 }
             }
-            TyTag::Unresolved => {
-                self.ctx.void_ty
-            }
+            TyTag::Unresolved => self.ctx.void_ty,
             _ => self.ctx.void_ty,
         }
     }
@@ -790,6 +796,8 @@ impl Mono {
             }
             ExprTag::StaticFor => self.lower_static_for(expr),
             _ => {
+                // Unhandled expression tag — may be an unexpanded macro builtin (e.g. file!())
+                // inside a macro body. Stay silent; proper fix is to expand these in the parser.
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
             }
@@ -925,11 +933,10 @@ impl Mono {
                 };
                 self.ctx.arena.alloc(result)
             } else {
-                if expr.str_val().len() > 0usize {
-                    let msg = DiagnosticContext::format_msg(self.ctx.arena, "could not resolve function '", expr.str_val(), "'");
-                    self.ctx.diag.error(expr.span, msg);
-                } else if expr.id()._value != 0usize {
-                    self.ctx.diag.error(expr.span, "could not resolve function");
+                let name = if expr.str_val().len() > 0usize { expr.str_val() } else { "<unknown>" };
+                if expr.str_val().len() > 0usize || expr.id()._value != 0usize {
+                    let diag = diagnostics::CodeDiagnostic::unresolved_function(name);
+                    self.emit_diag(expr.span, &diag);
                 }
                 let result = IrExpr::void_expr(self.ctx.void_ty);
                 result.tag = IrTag::NullLit;
@@ -2442,6 +2449,8 @@ impl Mono {
             let pointee_ty = if ir_inner.ty.tag == IrTyTag::Pointer {
                 ir_inner.ty.inner()
             } else {
+                let diag = diagnostics::CodeDiagnostic::invalid_deref();
+                self.emit_diag(expr.span, &diag);
                 self.ctx.void_ty
             };
             self.mk_deref(ir_inner, pointee_ty)
@@ -2458,8 +2467,8 @@ impl Mono {
             // Find field index on the dereferenced struct type
             let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val());
             if !field_found && expr.str_val().len() > 0usize && !self.suppress_field_error {
-                let msg = DiagnosticContext::format_msg(self.ctx.arena, "could not resolve field '", expr.str_val(), "'");
-                self.ctx.diag.error(expr.span, msg);
+                let diag = diagnostics::CodeDiagnostic::unresolved_field(expr.str_val());
+                self.emit_diag(expr.span, &diag);
             }
             self.mk_field(actual_obj, field_idx, field_ty)
         } else if expr.tag == ExprTag::TupleIndex {
@@ -2473,12 +2482,20 @@ impl Mono {
                 expr.index_val()
             };
             let elem_ty = if ir_obj.ty.tag == IrTyTag::Tuple {
-                if idx < ir_obj.ty.elems().len() { ir_obj.ty.elems()[idx] } else { self.ctx.void_ty }
+                if idx < ir_obj.ty.elems().len() {
+                    ir_obj.ty.elems()[idx]
+                } else {
+                    let diag = diagnostics::CodeDiagnostic::tuple_index_oob();
+                    self.emit_diag(expr.span, &diag);
+                    self.ctx.void_ty
+                }
             } else if ir_obj.ty.tag == IrTyTag::Struct && !ir_obj.ty.struct_ref().is_zero_sized {
                 // Tuples of non-trivial types may be lowered as anonymous structs
                 if idx < ir_obj.ty.struct_ref().fields.len() {
                     ir_obj.ty.struct_ref().fields[idx].ty
                 } else {
+                    let diag = diagnostics::CodeDiagnostic::tuple_index_oob();
+                    self.emit_diag(expr.span, &diag);
                     self.ctx.void_ty
                 }
             } else {
@@ -2537,6 +2554,8 @@ impl Mono {
             } else if ir_base.ty.tag == IrTyTag::Pointer {
                 ir_base.ty.inner()
             } else {
+                let diag = diagnostics::CodeDiagnostic::generic_error("cannot index into this type");
+                self.emit_diag(expr.span, &diag);
                 self.ctx.void_ty
             };
             self.mk_index(ir_base, ir_index, elem_ty)
@@ -4000,8 +4019,8 @@ impl Mono {
                 return self.ctx.arena.alloc(result);
             }
             // Unknown codegen_func - emit error
-            let msg = DiagnosticContext::format_msg(self.ctx.arena, "unknown codegen_func '", fn_name, "'");
-            self.ctx.diag.error(expr.span, msg);
+            let diag = diagnostics::CodeDiagnostic::unknown_codegen_func(fn_name);
+            self.emit_diag(expr.span, &diag);
             let result = IrExpr::void_expr(ret_ty);
             result.tag = IrTag::Void;
             return self.ctx.arena.alloc(result);
@@ -4090,8 +4109,8 @@ impl Mono {
             return self.ctx.arena.alloc(result);
         }
         // Unknown intrinsic - emit void with error
-        let msg = DiagnosticContext::format_msg(self.ctx.arena, "unknown intrinsic '", name, "'");
-        self.ctx.diag.error(expr.span, msg);
+        let diag = diagnostics::CodeDiagnostic::unknown_intrinsic(name);
+        self.emit_diag(expr.span, &diag);
         let result = IrExpr::void_expr(self.ctx.void_ty);
         result.tag = IrTag::Void;
         self.ctx.arena.alloc(result)
@@ -4388,10 +4407,11 @@ impl Mono {
             } else {
                 // Not a function pointer or closure - method resolution failed
                 if expr.lhs().tag == ExprTag::FieldAccess && expr.lhs().str_val().len() > 0usize {
-                    let msg = DiagnosticContext::format_msg(self.ctx.arena, "could not resolve method '", expr.lhs().str_val(), "'");
-                    self.ctx.diag.error(expr.span, msg);
+                    let diag = diagnostics::CodeDiagnostic::unresolved_method(expr.lhs().str_val(), "");
+                    self.emit_diag(expr.span, &diag);
                 } else {
-                    self.ctx.diag.error(expr.span, "expression is not callable");
+                    let diag = diagnostics::CodeDiagnostic::not_callable();
+                    self.emit_diag(expr.span, &diag);
                 }
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
@@ -4402,7 +4422,8 @@ impl Mono {
             if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref().is_union {
                 // Union: only lower the single initialized field
                 if expr.field_inits().len() != 1 {
-                    self.ctx.diag.error(expr.span, "union literal must initialize exactly one field");
+                    let diag = diagnostics::CodeDiagnostic::generic_error("union literal must initialize exactly one field");
+                    self.emit_diag(expr.span, &diag);
                     return self.ctx.arena.alloc(IrExpr::void_expr(ir_ty));
                 }
                 let fi = &expr.field_inits()[0];
