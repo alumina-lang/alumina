@@ -3187,6 +3187,48 @@ impl Mono {
                 }
                 return Option::none();
             }
+        } else if resolved_ty.tag == IrTyTag::Array {
+            let lang_id = self.ctx.get_lang_item("builtin_array");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
+            if scope_idx == 0 {
+                if field_expr.id2()._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
+                }
+                return Option::none();
+            }
+        } else if resolved_ty.tag == IrTyTag::Tuple {
+            let lang_id = self.ctx.get_lang_item("builtin_tuple");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
+            if scope_idx == 0 {
+                if field_expr.id2()._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
+                }
+                return Option::none();
+            }
+        } else if resolved_ty.tag == IrTyTag::Fn || resolved_ty.tag == IrTyTag::FnPointer || resolved_ty.tag == IrTyTag::Closure {
+            let lang_id = self.ctx.get_lang_item("builtin_callable");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
+            if scope_idx == 0 {
+                if field_expr.id2()._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
+                }
+                return Option::none();
+            }
         } else if resolved_ty.tag == IrTyTag::Builtin {
             // Look up #[lang(builtin_X)] struct to find methods on builtin types
             let lang_name = Mono::builtin_lang_name(resolved_ty.builtin());
