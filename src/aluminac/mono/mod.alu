@@ -12,6 +12,12 @@ use std::collections::{HashMap, HashSet, Vector};
 use std::option::Option;
 use mono::lower::Mono;
 
+// Frame in the monomorphization call stack for diagnostics
+struct MonoFrame {
+    fn_name: &[u8],
+    span: Span,
+}
+
 // Key for memoizing monomorphized items
 struct MonoKey {
     item_id: Id,
@@ -88,8 +94,8 @@ struct MonoCtx {
     // Protocol method Self substitution: maps method_fn_id -> protocol's Self generic param id
     proto_method_self_id: HashMap<usize, usize>,
 
-    // Debug counter
-    unresolved_count: usize,
+    // Monomorphization call stack for diagnostic notes
+    mono_stack: Vector<MonoFrame>,
 }
 
 impl MonoCtx {
@@ -164,7 +170,7 @@ impl MonoCtx {
             slice_new_fn_id: 0,
             lang_items: HashMap::new(),
             proto_method_self_id: HashMap::new(),
-            unresolved_count: 0,
+            mono_stack: Vector::new(),
         };
 
         // Build lookup tables
@@ -377,6 +383,45 @@ impl MonoCtx {
         result
     }
 
+    fn push_mono_frame(self: &mut MonoCtx, fn_name: &[u8], span: Span) {
+        self.mono_stack.push(MonoFrame { fn_name: fn_name, span: span });
+    }
+
+    fn pop_mono_frame(self: &mut MonoCtx) {
+        if self.mono_stack.len() > 0 {
+            self.mono_stack.pop();
+        }
+    }
+
+    // Returns true (and emits error) if depth > 500
+    fn check_mono_depth(self: &mut MonoCtx, span: Span) -> bool {
+        if self.mono_stack.len() > 500 {
+            let diag = diagnostics::CodeDiagnostic::depth_overflow();
+            self.diag.emit_code_error(span, &diag, self.arena);
+            self.emit_mono_stack_notes();
+            true
+        } else {
+            false
+        }
+    }
+
+    // Emit "note: in instantiation of 'X'" for each frame in the mono stack
+    fn emit_mono_stack_notes(self: &mut MonoCtx) {
+        // Walk in reverse, limit to 10 frames to avoid flooding
+        let count = self.mono_stack.len();
+        let limit: usize = if count > 10 { 10usize } else { count };
+        let i: usize = 0;
+        while i < limit {
+            let frame = self.mono_stack[count - 1 - i];
+            let msg = diagnostics::DiagnosticContext::format_msg(self.arena, "in instantiation of '", frame.fn_name, "'");
+            self.diag.note(frame.span, msg);
+            i = i + 1;
+        }
+        if count > limit {
+            self.diag.note(ast::Span::empty(), "... and more frames omitted");
+        }
+    }
+
     fn free(self: &mut MonoCtx) {
         self.fn_defs.free();
         self.struct_defs.free();
@@ -396,6 +441,7 @@ impl MonoCtx {
         self.ptr_ty_cache.free();
         self.array_ty_cache.free();
         self.tuple_ty_cache.free();
+        self.mono_stack.free();
     }
 }
 

@@ -25,8 +25,6 @@ struct Mono {
     current_fn_name: &[u8],
     // Expected type hint for return type inference (e.g. from if-else sibling branch)
     expected_type: &IrTy,
-    // Debug: mono_function nesting depth
-    mono_depth: usize,
     // Suppress field errors when lowering call target (method error takes priority)
     suppress_field_error: bool,
 }
@@ -41,7 +39,6 @@ impl Mono {
             return_type: ctx.void_ty,
             current_fn_name: "",
             expected_type: ctx.void_ty,
-            mono_depth: 0usize,
             suppress_field_error: false,
         }
     }
@@ -55,7 +52,6 @@ impl Mono {
             return_type: ctx.void_ty,
             current_fn_name: "",
             expected_type: ctx.void_ty,
-            mono_depth: 0usize,
             suppress_field_error: false,
         }
     }
@@ -198,7 +194,6 @@ impl Mono {
                 if resolved.is_some() {
                     resolved.unwrap()
                 } else {
-                    self.ctx.unresolved_count = self.ctx.unresolved_count + 1;
                     self.ctx.void_ty
                 }
             }
@@ -272,7 +267,6 @@ impl Mono {
                 }
             }
             TyTag::Unresolved => {
-                self.ctx.unresolved_count = self.ctx.unresolved_count + 1;
                 self.ctx.void_ty
             }
             _ => self.ctx.void_ty,
@@ -620,14 +614,20 @@ impl Mono {
             return cached.unwrap();
         }
 
+        // Push mono stack frame and check depth
+        self.ctx.push_mono_frame(def.name, def.span);
+        if self.ctx.check_mono_depth(def.span) {
+            self.ctx.pop_mono_frame();
+            self.current_fn_name = prev_fn_name;
+            return 0usize;
+        }
+
         // Save state for nested mono_function calls
         let prev_return_type = self.return_type;
         let prev_local_types = self.local_types;
         let prev_local_defs = self.local_defs;
-        let prev_depth = self.mono_depth;
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
-        self.mono_depth = self.mono_depth + 1usize;
 
         // Set up generic substitution
         if def.generic_params.len() > 0 && type_args.len() > 0 {
@@ -706,8 +706,8 @@ impl Mono {
         self.return_type = prev_return_type;
         self.local_types = prev_local_types;
         self.local_defs = prev_local_defs;
-        self.mono_depth = prev_depth;
         self.current_fn_name = prev_fn_name;
+        self.ctx.pop_mono_frame();
         idx
     }
 
