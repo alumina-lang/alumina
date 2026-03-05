@@ -104,6 +104,9 @@ enum CodeDiagKind {
     CodegenFieldOOB = 43i32,
     CodegenUnhandledNode = 44i32,
 
+    // Type checking
+    TypeMismatch = 45i32,
+
     // Syntax errors
     SyntaxError = 50i32,
     SyntaxMissing = 51i32,
@@ -204,6 +207,10 @@ impl CodeDiagnostic {
         CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::SyntaxMissing, kind)
     }
 
+    fn type_mismatch(span: Span, expected: &[u8], got: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::TypeMismatch, expected, got)
+    }
+
     fn generic_error(span: Span, msg: &[u8]) -> CodeDiagnostic {
         CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::GenericError, msg)
     }
@@ -265,6 +272,8 @@ impl CodeDiagnostic {
                 write!(f, "codegen: function '{}' not found", self._data.name.name),
             CodeDiagKind::CodegenMissingGlobal =>
                 write!(f, "codegen: global '{}' not found", self._data.name.name),
+            CodeDiagKind::TypeMismatch =>
+                write!(f, "type mismatch: expected '{}', got '{}'", self._data.pair.name, self._data.pair.type_name),
             CodeDiagKind::CodegenFieldOOB => f.write_str("codegen: field index out of bounds"),
             CodeDiagKind::CodegenUnhandledNode =>
                 write!(f, "codegen: unhandled IR node '{}'", self._data.name.name),

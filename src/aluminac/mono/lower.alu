@@ -695,7 +695,8 @@ impl Mono {
 
         // Lower body (may recursively call mono_function)
         let body: Option<&IrExpr> = if def.body.is_some() {
-            let body_ir = self.lower_expr(def.body.unwrap());
+            let body_ir = self.lower_expr_coerced(def.body.unwrap(), self.return_type);
+            let body_ir = self.check_and_coerce(body_ir, self.return_type, def.body.unwrap().span);
             Option::some(body_ir)
         } else {
             Option::none()
@@ -1325,7 +1326,8 @@ impl Mono {
         let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
         for i in 0usize..expr.args().len() {
             if i < ir_fn.params.len() {
-                call_args[i] = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                call_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
             } else {
                 call_args[i] = self.lower_expr(expr.args()[i]);
             }
@@ -1538,9 +1540,9 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Assign {
             let ir_lhs = self.lower_expr(expr.lhs());
-            let ir_rhs = self.lower_expr_coerced(expr.rhs(), ir_lhs.ty);
-            // For compound assignment, desugar to binary + assign
+            // For compound assignment, desugar to binary + assign (RHS type differs from LHS)
             if expr.assign_op() as i32 != AssignOp::Assign as i32 {
+                let ir_rhs = self.lower_expr(expr.rhs());
                 let bin_op = switch expr.assign_op() {
                     AssignOp::AddAssign => BinOp::Add,
                     AssignOp::SubAssign => BinOp::Sub,
@@ -1557,6 +1559,9 @@ impl Mono {
                 let binop_expr = self.mk_binary(bin_op, ir_lhs, ir_rhs, ir_lhs.ty);
                 return self.mk_assign(ir_lhs, binop_expr);
             }
+            // Plain assignment: coerce and typecheck
+            let ir_rhs = self.lower_expr_coerced(expr.rhs(), ir_lhs.ty);
+            let ir_rhs = self.check_and_coerce(ir_rhs, ir_lhs.ty, expr.rhs().span);
             self.mk_assign(ir_lhs, ir_rhs)
         } else {
             let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -1743,6 +1748,7 @@ impl Mono {
         } else if expr.tag == ExprTag::Return {
             if expr.opt_expr().is_some() {
                 let ir_val = self.lower_expr_coerced(expr.opt_expr().unwrap(), self.return_type);
+                let ir_val = self.check_and_coerce(ir_val, self.return_type, expr.opt_expr().unwrap().span);
                 let result = IrExpr::void_expr(self.ctx.never_ty);
                 result.tag = IrTag::Return;
                 result._data.ret.opt_expr = Option::some(ir_val);
@@ -1795,17 +1801,7 @@ impl Mono {
             let ir_iterable_local = self.mk_local(iterable_var_id, iterable_ty);
             let ir_iterable_ref = self.mk_ref(ir_iterable_local, false);
 
-            // For arrays, coerce &[T; N] to &[T] so slice.iter() can be resolved
-            let call_self_ref = ir_iterable_ref;
-            let call_ty = iterable_ty;
-            if iterable_ty.tag == IrTyTag::Array {
-                let elem_ty = iterable_ty.inner();
-                let slice_ty = self.ctx.make_slice_ty(elem_ty, true);
-                call_self_ref = self.coerce_to_type(ir_iterable_ref, slice_ty);
-                call_ty = slice_ty;
-            }
-
-            let iter_call = self.resolve_method_call_on_type(call_ty, "iter", call_self_ref, &[]);
+            let iter_call = self.resolve_method_call_on_type(iterable_ty, "iter", ir_iterable_ref, &[]);
             if iter_call.is_some() {
                 // let _iterable = iterable_expr;
                 iter_let_stmt = Option::some(self.mk_let(iterable_var_id, iterable_ty, iterable_ir));
@@ -2796,65 +2792,96 @@ impl Mono {
     /// Check if the init type is clearly incompatible with the declared type.
     /// This catches specific mismatches like Pointer(Slice) vs Slice (from &a[..]).
     /// Returns true if there is a clear type tag mismatch.
-    fn types_clearly_mismatch(self: &Mono, init_ty: &IrTy, var_ty: &IrTy) -> bool {
-        if init_ty as &void == var_ty as &void { return false; }
-        if init_ty.is_void() || var_ty.is_void() { return false; }
-        if init_ty.tag == IrTyTag::Never { return false; }
-        // Tag mismatch is a clear error (e.g. Pointer vs Slice)
-        if init_ty.tag != var_ty.tag { return true; }
-        false
-    }
+    /// Try to coerce `val` to `expected_ty`. Returns the coerced expression on success.
+    /// Returns null (as &IrExpr) if the types are incompatible.
+    fn try_coerce(self: &mut Mono, val: &IrExpr, expected_ty: &IrTy) -> &IrExpr {
+        // Exact match
+        if val.ty as &void == expected_ty as &void { return val; }
 
-    // Coerce a value to a target type (e.g., pointer-to-array → slice)
-    fn coerce_to_type(self: &mut Mono, val: &IrExpr, target_ty: &IrTy) -> &IrExpr {
+        // Bottom type matches anything
+        if val.ty.tag == IrTyTag::Never { return val; }
+
+        // Void on either side = unknown/error, don't report further
+        if val.ty.is_void() || expected_ty.is_void() { return val; }
+
+        // Same tag, assume compatible (struct identity etc. checked elsewhere)
+        if val.ty.tag == expected_ty.tag && val.ty.tag != IrTyTag::Pointer && val.ty.tag != IrTyTag::Slice {
+            return val;
+        }
+
         // Coerce &[T; N] to &[T] (pointer to array → slice fat pointer)
-        if target_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Pointer && val.ty.inner().tag == IrTyTag::Array {
+        if expected_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Pointer && val.ty.inner().tag == IrTyTag::Array {
             let array_ty = val.ty.inner();
             let elem_ty = array_ty.inner();
             let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-
-            // Data pointer: cast the array pointer to element pointer
             let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
             let data_ptr_ref = self.mk_cast(val, data_ptr_ty);
-
-            // Length: array size as usize literal
             let len_ref = self.mk_int_lit(usize_ty, array_ty.array_size() as u64);
-
-            // Build tuple {data_ptr, len}
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
             items[0] = data_ptr_ref;
             items[1] = len_ref;
-            let tuple_result = IrExpr::void_expr(target_ty);
+            let tuple_result = IrExpr::void_expr(expected_ty);
             tuple_result.tag = IrTag::TupleLit;
             tuple_result._data.block.items = items;
             return self.ctx.arena.alloc(tuple_result);
         }
+
         // Coerce &mut T -> &T (mutable pointer to const pointer)
-        if target_ty.tag == IrTyTag::Pointer && val.ty.tag == IrTyTag::Pointer
-            && target_ty.is_const() && !val.ty.is_const()
-            && target_ty.inner() == val.ty.inner() {
-            return self.mk_cast(val, target_ty);
+        if expected_ty.tag == IrTyTag::Pointer && val.ty.tag == IrTyTag::Pointer
+            && expected_ty.is_const() && !val.ty.is_const()
+            && expected_ty.inner() == val.ty.inner() {
+            return self.mk_cast(val, expected_ty);
         }
 
         // Coerce &mut [T] -> &[T] (mutable slice to const slice)
-        if target_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Slice {
-            let target_elem = self.slice_elem_ty(target_ty);
+        if expected_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Slice {
+            let target_elem = self.slice_elem_ty(expected_ty);
             let val_elem = self.slice_elem_ty(val.ty);
-            if target_elem == val_elem && target_ty != val.ty {
-                return self.mk_cast(val, target_ty);
+            if target_elem == val_elem && expected_ty != val.ty {
+                return self.mk_cast(val, expected_ty);
             }
         }
 
+        // Same-tag pointers/slices that didn't match above
+        if val.ty.tag == expected_ty.tag {
+            return val;
+        }
+
         // Coerce Fn (function item ZST) to fn pointer
-        if target_ty.tag == IrTyTag::FnPointer && val.ty.tag == IrTyTag::Fn {
+        if expected_ty.tag == IrTyTag::FnPointer && val.ty.tag == IrTyTag::Fn {
             let fn_ref = val.ty.fn_item_ref();
-            let result = IrExpr::void_expr(target_ty);
+            let result = IrExpr::void_expr(expected_ty);
             result.tag = IrTag::FnRef;
             result._data.fn_ref = fn_ref;
             return self.ctx.arena.alloc(result);
         }
 
-        // No coercion needed
+        // Incompatible
+        0usize as &IrExpr
+    }
+
+    /// Coerce `val` to `expected_ty`, emitting a diagnostic on type mismatch.
+    /// On failure, returns an expression with the expected type (to allow continued compilation).
+    fn check_and_coerce(self: &mut Mono, val: &IrExpr, expected_ty: &IrTy, span: Span) -> &IrExpr {
+        let result = self.try_coerce(val, expected_ty);
+        if result as &void as usize != 0 {
+            return result;
+        }
+        let expected_name = self.ir_type_name(expected_ty);
+        let got_name = self.ir_type_name(val.ty);
+        self.emit_diag(diagnostics::CodeDiagnostic::type_mismatch(
+            span, expected_name, got_name));
+        // Return a dummy expression with expected type so compilation can continue
+        let dummy = IrExpr::void_expr(expected_ty);
+        self.ctx.arena.alloc(dummy)
+    }
+
+    /// Coerce without error reporting (for contexts where mismatch is not an error).
+    fn coerce_to_type(self: &mut Mono, val: &IrExpr, target_ty: &IrTy) -> &IrExpr {
+        let result = self.try_coerce(val, target_ty);
+        if result as &void as usize != 0 {
+            return result;
+        }
         val
     }
 
@@ -3613,9 +3640,9 @@ impl Mono {
         // Rest of the args
         for i in 0usize..expr.args().len() {
             ir_args[1 + i] = self.lower_expr(expr.args()[i]);
-            // Coerce args (e.g. &[T; N] to &[T]), +1 for self param
+            // Check args, +1 for self param
             if (1usize + i) < ir_fn.params.len() {
-                ir_args[1usize + i] = self.coerce_to_type(ir_args[1usize + i], ir_fn.params[1usize + i].ty);
+                ir_args[1usize + i] = self.check_and_coerce(ir_args[1usize + i], ir_fn.params[1usize + i].ty, expr.args()[i].span);
             }
         }
 
@@ -3972,7 +3999,8 @@ impl Mono {
                     let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                     for i in 0usize..expr.args().len() {
                         if i < ir_fn.params.len() {
-                            ir_args[i] = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                            let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                            ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
                         } else {
                             ir_args[i] = self.lower_expr(expr.args()[i]);
                         }
@@ -4044,7 +4072,8 @@ impl Mono {
                             let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                             for i in 0usize..expr.args().len() {
                                 if i < ir_fn.params.len() {
-                                    ir_args[i] = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                                    let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                                    ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
                                 } else {
                                     ir_args[i] = self.lower_expr(expr.args()[i]);
                                 }
@@ -4075,7 +4104,8 @@ impl Mono {
                         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                         for i in 0usize..expr.args().len() {
                             if i < ir_fn.params.len() {
-                                ir_args[i] = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                                let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                                ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
                             } else {
                                 ir_args[i] = self.lower_expr(expr.args()[i]);
                             }
@@ -4169,7 +4199,8 @@ impl Mono {
                     }
                 }
                 let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(1);
-                ir_fields[0] = self.lower_expr_coerced(fi.value, field_ty);
+                let field_val = self.lower_expr_coerced(fi.value, field_ty);
+                ir_fields[0] = self.check_and_coerce(field_val, field_ty, fi.value.span);
                 let result = IrExpr::void_expr(ir_ty);
                 result.tag = IrTag::StructLit;
                 result._data.struct_lit.ir_ty = ir_ty;
@@ -4188,13 +4219,15 @@ impl Mono {
                     let found = false;
                     for j in 0usize..expr.field_inits().len() {
                         if expr.field_inits()[j].name == def_name {
-                            ir_fields[i] = self.lower_expr_coerced(expr.field_inits()[j].value, field_ty);
+                            let fv = self.lower_expr_coerced(expr.field_inits()[j].value, field_ty);
+                            ir_fields[i] = self.check_and_coerce(fv, field_ty, expr.field_inits()[j].value.span);
                             found = true;
                             break;
                         }
                     }
                     if !found {
-                        ir_fields[i] = self.lower_expr_coerced(expr.field_inits()[i].value, field_ty);
+                        let fv = self.lower_expr_coerced(expr.field_inits()[i].value, field_ty);
+                        ir_fields[i] = self.check_and_coerce(fv, field_ty, expr.field_inits()[i].value.span);
                     }
                 } else {
                     ir_fields[i] = self.lower_expr(expr.field_inits()[i].value);
@@ -4248,11 +4281,7 @@ impl Mono {
 
             if expr.opt_expr().is_some() {
                 let init_val = self.lower_expr_coerced(expr.opt_expr().unwrap(), var_ty);
-                // Reject clear type mismatches (e.g. &&[T] assigned to &[T])
-                if self.types_clearly_mismatch(init_val.ty, var_ty) {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
-                        expr.span, "type mismatch in let binding"));
-                }
+                let init_val = self.check_and_coerce(init_val, var_ty, expr.span);
                 self.mk_let(expr.id(), var_ty, init_val)
             } else {
                 self.mk_let_uninit(expr.id(), var_ty)

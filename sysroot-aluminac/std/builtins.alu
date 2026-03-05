@@ -47,6 +47,22 @@ protocol None {}
 #[lang(builtin_array)]
 struct array {}
 
+type element_of<T> = typeof({ let t: T; t[0] });
+
+impl array<Arr> {
+    fn as_slice(self: &Arr) -> &[element_of<Arr>] {
+        self
+    }
+
+    fn len(self: &Arr) -> usize {
+        std::intrinsics::length_of::<Arr>()
+    }
+
+    fn iter(self: &Arr) -> std::iter::SliceIterator<element_of<Arr>> {
+        self.as_slice().iter()
+    }
+}
+
 #[lang(builtin_tuple)]
 struct tuple {}
 
