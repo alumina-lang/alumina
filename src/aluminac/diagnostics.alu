@@ -141,7 +141,10 @@ impl DiagnosticContext {
             DiagnosticContext::_write_stderr(": ");
             DiagnosticContext::_write_stderr(diag.message);
 
-            if diag.span.file_id < self.files.len() as u32 {
+            // Show location if span has meaningful data (skip empty/sentinel spans)
+            let has_location = diag.span.file_id < self.files.len() as u32
+                && (diag.span.start != 0u32 || diag.span.end != 0u32);
+            if has_location {
                 let file = &self.files[diag.span.file_id as usize];
                 let (line, col) = file.line_col(diag.span.start);
                 DiagnosticContext::_write_stderr("\n  --> ");
