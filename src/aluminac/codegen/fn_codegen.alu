@@ -855,22 +855,7 @@ impl FnCodegen {
             let llvm_ty = self.ctx.llvm_type(expr.ty);
             LLVMGetUndef(llvm_ty)
         }
-        IrTag::SizeOf => {
-            let measured_ty = self.ctx.llvm_type(expr.ir_ty());
-            if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
-                LLVMConstInt(self.ctx.i64_type, 0u64, 0i32)
-            } else {
-                LLVMSizeOf(measured_ty)
-            }
-        }
-        IrTag::AlignOf => {
-            let measured_ty = self.ctx.llvm_type(expr.ir_ty());
-            if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
-                LLVMConstInt(self.ctx.i64_type, 1u64, 0i32)
-            } else {
-                LLVMAlignOf(measured_ty)
-            }
-        }
+
         IrTag::CodegenFunc => {
             // Emit call to a named C/compiler function (e.g. __builtin_add_overflow)
             let name = expr.str_val();

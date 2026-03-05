@@ -842,22 +842,7 @@ impl CodegenCtx {
             let ty = self.llvm_type(expr.ty);
             LLVMGetUndef(ty)
         }
-        IrTag::SizeOf => {
-            let measured_ty = self.llvm_type(expr.ir_ty());
-            if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
-                LLVMConstInt(LLVMInt64TypeInContext(self.context), 0u64, 0i32)
-            } else {
-                LLVMSizeOf(measured_ty)
-            }
-        }
-        IrTag::AlignOf => {
-            let measured_ty = self.llvm_type(expr.ir_ty());
-            if LLVMGetTypeKind(measured_ty) == LLVMTypeKind::Void {
-                LLVMConstInt(LLVMInt64TypeInContext(self.context), 1u64, 0i32)
-            } else {
-                LLVMAlignOf(measured_ty)
-            }
-        }
+
         IrTag::StringLit => {
             self.get_or_create_string(expr.str_val())
         }

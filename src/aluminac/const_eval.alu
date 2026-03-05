@@ -245,14 +245,7 @@ impl ConstEvaluator {
         IrTag::StringLit => ConstResult::success(ConstValue::make_bytes(expr.str_val(), 0)),
         IrTag::Void => ConstResult::success(ConstValue::make_void()),
         IrTag::NullLit => ConstResult::success(ConstValue::make_int(0u64, BuiltinType::USize)),
-        IrTag::SizeOf => {
-            let sz = compute_type_size(expr.ir_ty(), self.pointer_size);
-            ConstResult::success(ConstValue::make_int(sz as u64, BuiltinType::USize))
-        }
-        IrTag::AlignOf => {
-            let al = compute_type_align(expr.ir_ty(), self.pointer_size);
-            ConstResult::success(ConstValue::make_int(al as u64, BuiltinType::USize))
-        }
+
         IrTag::Cast => self.eval_cast(expr),
         IrTag::Binary => self.eval_binary(expr),
         IrTag::Unary => self.eval_unary(expr),

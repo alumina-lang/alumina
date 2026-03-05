@@ -3242,10 +3242,8 @@ impl Mono {
                 let new_len = self.lower_expr(expr.args()[0]);
 
                 // Compute byte size: size_of<T>() * new_len
-                let size_of_elem = IrExpr::void_expr(usize_ty);
-                size_of_elem.tag = IrTag::SizeOf;
-                size_of_elem._data.type_op.ir_ty = elem_ty;
-                let size_of_val = self.ctx.arena.alloc(size_of_elem);
+                let elem_size = layout::compute_type_size(elem_ty, self.ctx.pointer_size);
+                let size_of_val = self.mk_int_lit(usize_ty, elem_size as u64);
 
                 let byte_size_val = self.mk_binary(BinOp::Mul, size_of_val, new_len, usize_ty);
 
@@ -3873,26 +3871,22 @@ impl Mono {
             // Always false at runtime (we're not in a const context)
             return self.mk_bool_lit(false);
         } else if name == "size_of" {
-            // size_of<T>() -> usize
+            // size_of<T>() -> usize - compute at monomorphization time
             let measured_ty = if ir_type_args.len() > 0 {
                 ir_type_args[0]
             } else {
                 self.ctx.void_ty
             };
-            let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
-            result.tag = IrTag::SizeOf;
-            result._data.type_op.ir_ty = measured_ty;
-            return self.ctx.arena.alloc(result);
+            let sz = layout::compute_type_size(measured_ty, self.ctx.pointer_size);
+            return self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::USize), sz as u64);
         } else if name == "align_of" {
             let measured_ty = if ir_type_args.len() > 0 {
                 ir_type_args[0]
             } else {
                 self.ctx.void_ty
             };
-            let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
-            result.tag = IrTag::AlignOf;
-            result._data.type_op.ir_ty = measured_ty;
-            return self.ctx.arena.alloc(result);
+            let al = layout::compute_type_align(measured_ty, self.ctx.pointer_size);
+            return self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::USize), al as u64);
         } else if name == "unreachable" {
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::Unreachable;
@@ -3929,11 +3923,8 @@ impl Mono {
             };
             // Use align_of on the pointee type, then cast to pointer
             let ir_align = if ret_ty.tag == IrTyTag::Pointer {
-                // emit align_of on pointee
-                let align_val = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::USize));
-                align_val.tag = IrTag::AlignOf;
-                align_val._data.type_op.ir_ty = ret_ty.inner();
-                self.ctx.arena.alloc(align_val) as &IrExpr
+                let al = layout::compute_type_align(ret_ty.inner(), self.ctx.pointer_size);
+                self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::USize), al as u64)
             } else {
                 self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::USize), 1u64)
             };
