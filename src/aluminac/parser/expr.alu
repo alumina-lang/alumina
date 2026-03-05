@@ -139,9 +139,9 @@ impl ExprParser {
                     }
                     if param_idx >= 0i32 {
                         let e = self.make_expr(ExprTag::MacroParam, span);
-                        e.str_val = name;
-                        e.int_val = param_idx as u64;
-                        e.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        e._data.id_ref.str_val = name;
+                        e._data.id_ref.int_val = param_idx as u64;
+                        e._data.id_ref.flag = (param_idx == self.ctx.macro_variadic_param_idx);
                         return self.ctx.alloc_expr(e);
                     }
                     return self.alloc_void(span);
@@ -271,7 +271,7 @@ impl ExprParser {
         let result = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
 
         let e = self.make_expr(ExprTag::Block, span);
-        e.args = result;
+        e._data.list.args = result;
         self.ctx.alloc_expr(e)
     }
 
@@ -279,8 +279,8 @@ impl ExprParser {
         let text = self.ctx.node_text(node);
         let (value, suffix) = parse_int_with_suffix(text);
         let e = self.make_expr(ExprTag::IntLit, span);
-        e.int_val = value;
-        e.type_suffix = suffix;
+        e._data.lit.int_val = value;
+        e._data.lit.type_suffix = suffix;
         self.ctx.alloc_expr(e)
     }
 
@@ -288,15 +288,15 @@ impl ExprParser {
         let text = self.ctx.node_text(node);
         let (value, suffix) = parse_float_with_suffix(text);
         let e = self.make_expr(ExprTag::FloatLit, span);
-        e.float_val = value;
-        e.type_suffix = suffix;
+        e._data.lit.float_val = value;
+        e._data.lit.type_suffix = suffix;
         self.ctx.alloc_expr(e)
     }
 
     fn parse_bool_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
         let e = self.make_expr(ExprTag::BoolLit, span);
-        e.bool_val = text == "true";
+        e._data.lit.bool_val = text == "true";
         self.ctx.alloc_expr(e)
     }
 
@@ -309,7 +309,7 @@ impl ExprParser {
             ""
         };
         let e = self.make_expr(ExprTag::StringLit, span);
-        e.str_val = content;
+        e._data.lit.str_val = content;
         self.ctx.alloc_expr(e)
     }
 
@@ -335,7 +335,7 @@ impl ExprParser {
             0u32
         };
         let e = self.make_expr(ExprTag::CharLit, span);
-        e.int_val = ch as u64;
+        e._data.lit.int_val = ch as u64;
         self.ctx.alloc_expr(e)
     }
 
@@ -347,62 +347,62 @@ impl ExprParser {
             if item.kind.tag == scope::NamedItemTag::Local {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::Local, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Param {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::Param, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Function {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::FnRef, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Method {
                 let fn_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::FnRef, span);
-                e.id = fn_id;
+                e._data.id_ref.id = fn_id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Static {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Const {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::BoundValue {
                 let e = self.make_expr(ExprTag::BoundValue, span);
-                e.id = item.kind.id();       // binding id
-                e.id2 = item.kind.id2();     // self_param id
-                e.str_val = item.name;     // binding name (for field lookup)
-                e.flag = item.kind.scope_idx == BoundType::ByReference as u32;
+                e._data.id_ref.id = item.kind.id();       // binding id
+                e._data.id_ref.id2 = item.kind.id2();     // self_param id
+                e._data.id_ref.str_val = item.name;     // binding name (for field lookup)
+                e._data.id_ref.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
                 let enum_id = item.kind.id();
                 let variant_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::EnumRef, span);
-                e.id = enum_id;
-                e.id2 = variant_id;
+                e._data.id_ref.id = enum_id;
+                e._data.id_ref.id2 = variant_id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Macro {
                 // Macro used in expression context (e.g. as argument to bind!)
                 let e = self.make_expr(ExprTag::MacroInvocation, span);
-                e.str_val = self.ctx.intern_str(name);
-                e.args = &[];
+                e._data.macro_expr.str_val = self.ctx.intern_str(name);
+                e._data.macro_expr.args = &[];
                 return self.ctx.alloc_expr(e);
             } else {
                 let e = self.make_expr(ExprTag::Local, span);
-                e.id = Id { _value: 0 };
+                e._data.id_ref.id = Id { _value: 0 };
                 return self.ctx.alloc_expr(e);
             }
         } else {
             // Unresolved - may be resolved later during monomorphization
             let e = self.make_expr(ExprTag::Local, span);
-            e.id = Id { _value: 0 };
+            e._data.id_ref.id = Id { _value: 0 };
             self.ctx.alloc_expr(e)
         }
     }
@@ -416,39 +416,39 @@ impl ExprParser {
             if item.kind.tag == scope::NamedItemTag::Function {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::FnRef, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Method {
                 let fn_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::FnRef, span);
-                e.id = fn_id;
+                e._data.id_ref.id = fn_id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Static {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Const {
                 let id = item.kind.id();
                 let e = self.make_expr(ExprTag::StaticRef, span);
-                e.id = id;
+                e._data.id_ref.id = id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
                 let enum_id = item.kind.id();
                 let variant_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::EnumRef, span);
-                e.id = enum_id;
-                e.id2 = variant_id;
+                e._data.id_ref.id = enum_id;
+                e._data.id_ref.id2 = variant_id;
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Macro {
                 // Macro used in expression context (e.g. as argument to bind!)
                 let e = self.make_expr(ExprTag::MacroInvocation, span);
-                e.str_val = item.name;
-                e.args = &[];
+                e._data.macro_expr.str_val = item.name;
+                e._data.macro_expr.args = &[];
                 return self.ctx.alloc_expr(e);
             } else {
                 let e = self.make_expr(ExprTag::Local, span);
-                e.id = Id { _value: 0 };
+                e._data.id_ref.id = Id { _value: 0 };
                 return self.ctx.alloc_expr(e);
             }
         } else {
@@ -461,14 +461,14 @@ impl ExprParser {
                     if first_item.kind.tag == scope::NamedItemTag::GenericParam
                         || first_item.kind.tag == scope::NamedItemTag::TypeAlias {
                         let e = self.make_expr(ExprTag::Defered, span);
-                        e.id = first_item.kind.id();
-                        e.str_val = segments[segments.len() - 1];
+                        e._data.id_ref.id = first_item.kind.id();
+                        e._data.id_ref.str_val = segments[segments.len() - 1];
                         return self.ctx.alloc_expr(e);
                     }
                 }
             }
             let e = self.make_expr(ExprTag::Local, span);
-            e.id = Id { _value: 0 };
+            e._data.id_ref.id = Id { _value: 0 };
             self.ctx.alloc_expr(e)
         }
     }
@@ -489,9 +489,9 @@ impl ExprParser {
         let rhs = self.parse_expr(right.unwrap());
 
         let e = self.make_expr(ExprTag::Binary, span);
-        e.bin_op = op;
-        e.lhs = lhs;
-        e.rhs = rhs;
+        e._data.binary.bin_op = op;
+        e._data.binary.lhs = lhs;
+        e._data.binary.rhs = rhs;
         self.ctx.alloc_expr(e)
     }
 
@@ -512,8 +512,8 @@ impl ExprParser {
         let operand = self.parse_expr(operand_node.unwrap());
 
         let e = self.make_expr(ExprTag::Unary, span);
-        e.un_op = op;
-        e.lhs = operand;
+        e._data.unary.un_op = op;
+        e._data.unary.lhs = operand;
         self.ctx.alloc_expr(e)
     }
 
@@ -527,9 +527,9 @@ impl ExprParser {
         let rhs = self.parse_expr(right.unwrap());
 
         let e = self.make_expr(ExprTag::Assign, span);
-        e.assign_op = AssignOp::Assign;
-        e.lhs = lhs;
-        e.rhs = rhs;
+        e._data.assign.assign_op = AssignOp::Assign;
+        e._data.assign.lhs = lhs;
+        e._data.assign.rhs = rhs;
         self.ctx.alloc_expr(e)
     }
 
@@ -548,9 +548,9 @@ impl ExprParser {
         let rhs = self.parse_expr(right.unwrap());
 
         let e = self.make_expr(ExprTag::Assign, span);
-        e.assign_op = op;
-        e.lhs = lhs;
-        e.rhs = rhs;
+        e._data.assign.assign_op = op;
+        e._data.assign.lhs = lhs;
+        e._data.assign.rhs = rhs;
         self.ctx.alloc_expr(e)
     }
 
@@ -606,9 +606,9 @@ impl ExprParser {
                     };
 
                     let e = self.make_expr(ExprTag::Call, span);
-                    e.lhs = callee;
-                    e.args = call_args;
-                    e.type_args = type_args;
+                    e._data.call.lhs = callee;
+                    e._data.call.args = call_args;
+                    e._data.call.type_args = type_args;
                     return self.ctx.alloc_expr(e);
                 }
             }
@@ -623,8 +623,8 @@ impl ExprParser {
         };
 
         let e = self.make_expr(ExprTag::Call, span);
-        e.lhs = callee;
-        e.args = args;
+        e._data.call.lhs = callee;
+        e._data.call.args = args;
         self.ctx.alloc_expr(e)
     }
 
@@ -653,7 +653,7 @@ impl ExprParser {
             let type_args = pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx);
             if type_args.len() >= 1 {
                 let e = self.make_expr(ExprTag::Zeroed, span);
-                e.ty = type_args[0];
+                e._data.typed.ty = type_args[0];
                 return e;
             }
         }
@@ -687,9 +687,9 @@ impl ExprParser {
 
         // Use TurbofishValue tag to distinguish from a real Call with 0 args.
         let e = self.make_expr(ExprTag::TurbofishValue, span);
-        e.lhs = callee;
-        e.args = &[];
-        e.type_args = type_args;
+        e._data.call.lhs = callee;
+        e._data.call.args = &[];
+        e._data.call.type_args = type_args;
         self.ctx.alloc_expr(e)
     }
 
@@ -725,9 +725,9 @@ impl ExprParser {
         };
 
         let e = self.make_expr(ExprTag::Call, span);
-        e.lhs = callee;
-        e.args = args;
-        e.type_args = type_args;
+        e._data.call.lhs = callee;
+        e._data.call.args = args;
+        e._data.call.type_args = type_args;
         e
     }
 
@@ -786,22 +786,22 @@ impl ExprParser {
                     // Simple literal index: t.0, t.1, etc.
                     let idx = parse_usize(self.ctx.node_text(idx_inner));
                     let e = self.make_expr(ExprTag::TupleIndex, span);
-                    e.lhs = obj_expr;
-                    e.index_val = idx;
+                    e._data.index.lhs = obj_expr;
+                    e._data.index.index_val = idx;
                     return self.ctx.alloc_expr(e);
                 }
                 // Expression index: t.(expr) - parse and const-eval later
                 let idx_expr = self.parse_expr(idx_inner);
                 let e = self.make_expr(ExprTag::TupleIndex, span);
-                e.lhs = obj_expr;
-                e.opt_expr = Option::some(idx_expr);
+                e._data.index.lhs = obj_expr;
+                e._data.index.opt_expr = Option::some(idx_expr);
                 return self.ctx.alloc_expr(e);
             }
             // Fallback: try parsing the whole text as a number
             let idx = parse_usize(self.ctx.node_text(field_node));
             let e = self.make_expr(ExprTag::TupleIndex, span);
-            e.lhs = obj_expr;
-            e.index_val = idx;
+            e._data.index.lhs = obj_expr;
+            e._data.index.index_val = idx;
             return self.ctx.alloc_expr(e);
         }
 
@@ -809,8 +809,8 @@ impl ExprParser {
         let field_name = self.ctx.intern_str(self.ctx.node_text(field_node));
 
         let e = self.make_expr(ExprTag::FieldAccess, span);
-        e.lhs = obj_expr;
-        e.str_val = field_name;
+        e._data.field.lhs = obj_expr;
+        e._data.field.str_val = field_name;
 
         // UFCS hint: try to resolve field_name as a free function in scope.
         // If found, store its ID+1 in id2 so mono can try UFCS fallback.
@@ -820,7 +820,7 @@ impl ExprParser {
             if resolved.is_some() {
                 let item = resolved.unwrap();
                 if item.kind.tag == scope::NamedItemTag::Function {
-                    e.id2 = Id { _value: item.kind.id()._value + 1usize };
+                    e._data.field.id2 = Id { _value: item.kind.id()._value + 1usize };
                 }
             }
         }
@@ -848,8 +848,8 @@ impl ExprParser {
         let idx_expr = self.parse_expr(index.unwrap());
 
         let e = self.make_expr(ExprTag::Index, span);
-        e.lhs = obj_expr;
-        e.rhs = idx_expr;
+        e._data.index.lhs = obj_expr;
+        e._data.index.rhs = idx_expr;
         self.ctx.alloc_expr(e)
     }
 
@@ -861,8 +861,8 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::Ref, span);
-        e.lhs = self.parse_expr(inner.unwrap());
-        e.flag = is_mut;
+        e._data.typed.lhs = self.parse_expr(inner.unwrap());
+        e._data.typed.flag = is_mut;
         self.ctx.alloc_expr(e)
     }
 
@@ -873,7 +873,7 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::Deref, span);
-        e.lhs = self.parse_expr(inner.unwrap());
+        e._data.typed.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
     }
 
@@ -888,8 +888,8 @@ impl ExprParser {
         let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
 
         let e = self.make_expr(ExprTag::Cast, span);
-        e.lhs = self.parse_expr(value.unwrap());
-        e.ty = ty;
+        e._data.typed.lhs = self.parse_expr(value.unwrap());
+        e._data.typed.ty = ty;
         self.ctx.alloc_expr(e)
     }
 
@@ -904,8 +904,8 @@ impl ExprParser {
         let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
 
         let e = self.make_expr(ExprTag::TypeCheck, span);
-        e.lhs = self.parse_expr(value.unwrap());
-        e.ty = ty;
+        e._data.typed.lhs = self.parse_expr(value.unwrap());
+        e._data.typed.ty = ty;
         self.ctx.alloc_expr(e)
     }
 
@@ -943,9 +943,9 @@ impl ExprParser {
 
         let tag = if is_when { ExprTag::When } else { ExprTag::If };
         let e = self.make_expr(tag, span);
-        e.cond = cond_expr;
-        e.lhs = then_expr;
-        e.opt_expr = else_expr;
+        e._data.cond.cond = cond_expr;
+        e._data.cond.lhs = then_expr;
+        e._data.cond.opt_expr = else_expr;
         self.ctx.alloc_expr(e)
     }
 
@@ -1007,8 +1007,8 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::Switch, span);
-        e.lhs = value_expr;
-        e.switch_arms = self.ctx.arena.alloc_slice_copy::<SwitchArm>(arms.as_slice());
+        e._data.switch_expr.lhs = value_expr;
+        e._data.switch_expr.switch_arms = self.ctx.arena.alloc_slice_copy::<SwitchArm>(arms.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -1020,8 +1020,8 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::While, span);
-        e.cond = self.parse_expr(cond.unwrap());
-        e.lhs = self.parse_expr(body.unwrap());
+        e._data.loop_expr.cond = self.parse_expr(cond.unwrap());
+        e._data.loop_expr.lhs = self.parse_expr(body.unwrap());
         self.ctx.alloc_expr(e)
     }
 
@@ -1051,8 +1051,8 @@ impl ExprParser {
                 span: self.ctx.make_span(name_node.unwrap()),
             });
 
-            e.id = var_id;
-            e.args = &[];
+            e._data.for_expr.id = var_id;
+            e._data.for_expr.args = &[];
         } else {
             // Tuple unpacking: for (a, b, ...) in iterable { body }
             // Collect element names from tree-sitter Element children
@@ -1073,19 +1073,19 @@ impl ExprParser {
 
                 // Store element ID and name in an ExprTag::Local node
                 let elem_expr = self.make_expr(ExprTag::Local, self.ctx.make_span(elem_node));
-                elem_expr.id = elem_id;
-                elem_expr.str_val = elem_name;
+                elem_expr._data.id_ref.id = elem_id;
+                elem_expr._data.id_ref.str_val = elem_name;
                 elem_exprs.push(self.ctx.alloc_expr(elem_expr));
             }
 
             // Use a hidden temporary for the whole tuple value
             let var_id = self.ctx.next_id();
-            e.id = var_id;
-            e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elem_exprs.as_slice());
+            e._data.for_expr.id = var_id;
+            e._data.for_expr.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elem_exprs.as_slice());
         }
 
-        e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
-        e.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
+        e._data.for_expr.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
+        e._data.for_expr.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
         self.ctx.alloc_expr(e)
     }
 
@@ -1096,7 +1096,7 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::Loop, span);
-        e.lhs = self.parse_expr(body.unwrap());
+        e._data.loop_expr.lhs = self.parse_expr(body.unwrap());
         self.ctx.alloc_expr(e)
     }
 
@@ -1104,7 +1104,7 @@ impl ExprParser {
         let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(ExprTag::Break, span);
         if !value.is_none() {
-            e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+            e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
         self.ctx.alloc_expr(e)
     }
@@ -1113,7 +1113,7 @@ impl ExprParser {
         let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(ExprTag::Return, span);
         if !value.is_none() {
-            e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+            e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
         self.ctx.alloc_expr(e)
     }
@@ -1152,10 +1152,10 @@ impl ExprParser {
             });
 
             let e = self.make_expr(ExprTag::Let, span);
-            e.id = var_id;
-            e.str_val = var_name;
-            e.opt_ty = ty;
-            e.opt_expr = init;
+            e._data.let_expr.id = var_id;
+            e._data.let_expr.str_val = var_name;
+            e._data.let_expr.opt_ty = ty;
+            e._data.let_expr.opt_expr = init;
             return self.ctx.alloc_expr(e);
         }
 
@@ -1179,8 +1179,8 @@ impl ExprParser {
 
         // let _tmp = expr
         let tmp_let = self.make_expr(ExprTag::Let, span);
-        tmp_let.id = tmp_id;
-        tmp_let.opt_expr = Option::some(init_expr);
+        tmp_let._data.let_expr.id = tmp_id;
+        tmp_let._data.let_expr.opt_expr = Option::some(init_expr);
         let ir_tmp_let = self.ctx.alloc_expr(tmp_let);
 
         // Build block: _tmp_let, then each element let
@@ -1200,24 +1200,24 @@ impl ExprParser {
 
             // _tmp reference
             let tmp_ref = self.make_expr(ExprTag::Local, span);
-            tmp_ref.id = tmp_id;
+            tmp_ref._data.id_ref.id = tmp_id;
             let ir_tmp_ref = self.ctx.alloc_expr(tmp_ref);
 
             // _tmp.i (tuple index)
             let idx_expr = self.make_expr(ExprTag::TupleIndex, span);
-            idx_expr.lhs = ir_tmp_ref;
-            idx_expr.index_val = i;
+            idx_expr._data.index.lhs = ir_tmp_ref;
+            idx_expr._data.index.index_val = i;
             let ir_idx = self.ctx.alloc_expr(idx_expr);
 
             // let elem = _tmp.i
             let elem_let = self.make_expr(ExprTag::Let, span);
-            elem_let.id = elem_id;
-            elem_let.opt_expr = Option::some(ir_idx);
+            elem_let._data.let_expr.id = elem_id;
+            elem_let._data.let_expr.opt_expr = Option::some(ir_idx);
             stmts[i + 1] = self.ctx.alloc_expr(elem_let);
         }
 
         let block = self.make_expr(ExprTag::Block, span);
-        block.args = stmts;
+        block._data.list.args = stmts;
         self.ctx.alloc_expr(block)
     }
 
@@ -1254,8 +1254,8 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::StructLit, span);
-        e.ty = ty;
-        e.field_inits = self.ctx.arena.alloc_slice_copy::<FieldInit>(fields.as_slice());
+        e._data.struct_lit.ty = ty;
+        e._data.struct_lit.field_inits = self.ctx.arena.alloc_slice_copy::<FieldInit>(fields.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -1270,7 +1270,7 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::TupleLit, span);
-        e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
+        e._data.list.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -1285,7 +1285,7 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::ArrayLit, span);
-        e.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
+        e._data.list.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
         self.ctx.alloc_expr(e)
     }
 
@@ -1337,19 +1337,19 @@ impl ExprParser {
                                 let item = resolved.unwrap();
                                 if item.kind.tag == scope::NamedItemTag::Local {
                                     let ve = self.make_expr(ExprTag::Local, span);
-                                    ve.id = item.kind.id();
+                                    ve._data.id_ref.id = item.kind.id();
                                     self.ctx.alloc_expr(ve)
                                 } else if item.kind.tag == scope::NamedItemTag::Param {
                                     let ve = self.make_expr(ExprTag::Param, span);
-                                    ve.id = item.kind.id();
+                                    ve._data.id_ref.id = item.kind.id();
                                     self.ctx.alloc_expr(ve)
                                 } else if item.kind.tag == scope::NamedItemTag::BoundValue {
                                     // Nested closure: capture from enclosing closure
                                     let ve = self.make_expr(ExprTag::BoundValue, span);
-                                    ve.id = item.kind.id();
-                                    ve.id2 = item.kind.id2();
-                                    ve.str_val = item.name;
-                                    ve.flag = item.kind.scope_idx == BoundType::ByReference as u32;
+                                    ve._data.id_ref.id = item.kind.id();
+                                    ve._data.id_ref.id2 = item.kind.id2();
+                                    ve._data.id_ref.str_val = item.name;
+                                    ve._data.id_ref.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                                     self.ctx.alloc_expr(ve)
                                 } else {
                                     self.alloc_void(span) // Can only close over locals
@@ -1420,12 +1420,12 @@ impl ExprParser {
         let body = lambda_parser.parse_expr(body_node.unwrap());
 
         let e = self.make_expr(ExprTag::Lambda, span);
-        e.lambda_params = self.ctx.arena.alloc_slice_copy::<LambdaParam>(params.as_slice());
-        e.closure_bindings = self.ctx.arena.alloc_slice_copy::<ClosureBinding>(bindings.as_slice());
-        e.opt_ty = ret_ty;
-        e.lhs = body;
+        e._data.lambda.lambda_params = self.ctx.arena.alloc_slice_copy::<LambdaParam>(params.as_slice());
+        e._data.lambda.closure_bindings = self.ctx.arena.alloc_slice_copy::<ClosureBinding>(bindings.as_slice());
+        e._data.lambda.opt_ty = ret_ty;
+        e._data.lambda.lhs = body;
         // Store the self_param_id for use in mono
-        e.id = self_param_id;
+        e._data.lambda.id = self_param_id;
         self.ctx.alloc_expr(e)
     }
 
@@ -1436,7 +1436,7 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::Defer, span);
-        e.lhs = self.parse_expr(inner.unwrap());
+        e._data.defer.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
     }
 
@@ -1471,7 +1471,7 @@ impl ExprParser {
         let inclusive_node = child_by!(node, FieldKind::Inclusive);
 
         let e = self.make_expr(ExprTag::Range, span);
-        e.flag = if !inclusive_node.is_none() {
+        e._data.range.flag = if !inclusive_node.is_none() {
             let text = self.ctx.node_text(inclusive_node.unwrap());
             text.len() == 3  // "..=" is 3 bytes, ".." is 2 bytes
         } else {
@@ -1479,10 +1479,10 @@ impl ExprParser {
         };
 
         if !lower.is_none() {
-            e.lhs = self.parse_expr(lower.unwrap());
+            e._data.range.lhs = self.parse_expr(lower.unwrap());
         }
         if !upper.is_none() {
-            e.rhs = self.parse_expr(upper.unwrap());
+            e._data.range.rhs = self.parse_expr(upper.unwrap());
         }
         self.ctx.alloc_expr(e)
     }
@@ -1530,9 +1530,9 @@ impl ExprParser {
         // When pre-parsing a macro body, store as ExprTag::MacroInvocation without expanding
         if self.ctx.in_macro_body {
             let e = self.make_expr(ExprTag::MacroInvocation, span);
-            e.str_val = name;
-            e.args = args;
-            e.flag = true;  // Mark as actual invocation (not bare macro reference)
+            e._data.macro_expr.str_val = name;
+            e._data.macro_expr.args = args;
+            e._data.macro_expr.flag = true;  // Mark as actual invocation (not bare macro reference)
             return self.ctx.alloc_expr(e);
         }
 
@@ -1556,8 +1556,8 @@ impl ExprParser {
 
         // Fallback: unresolved macro invocation
         let e = self.make_expr(ExprTag::MacroInvocation, span);
-        e.str_val = name;
-        e.args = args;
+        e._data.macro_expr.str_val = name;
+        e._data.macro_expr.args = args;
         self.ctx.alloc_expr(e)
     }
 
@@ -1568,13 +1568,13 @@ impl ExprParser {
         "cfg" => {
             // cfg!(flag) -> bool literal
             if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
-                let flag = args[0].str_val;
+                let flag = args[0].str_val();
                 let e = self.make_expr(ExprTag::BoolLit, span);
-                e.bool_val = self.ctx.has_cfg(flag);
+                e._data.lit.bool_val = self.ctx.has_cfg(flag);
                 return self.ctx.alloc_expr(e);
             }
             let e = self.make_expr(ExprTag::BoolLit, span);
-            e.bool_val = false;
+            e._data.lit.bool_val = false;
             self.ctx.alloc_expr(e)
         }
         "line" => {
@@ -1585,7 +1585,7 @@ impl ExprParser {
                 line = l as u64;
             }
             let e = self.make_expr(ExprTag::IntLit, span);
-            e.int_val = line;
+            e._data.lit.int_val = line;
             self.ctx.alloc_expr(e)
         }
         "column" => {
@@ -1596,7 +1596,7 @@ impl ExprParser {
                 col = c as u64;
             }
             let e = self.make_expr(ExprTag::IntLit, span);
-            e.int_val = col;
+            e._data.lit.int_val = col;
             self.ctx.alloc_expr(e)
         }
         "file" => {
@@ -1606,7 +1606,7 @@ impl ExprParser {
                 path = file.path;
             }
             let e = self.make_expr(ExprTag::StringLit, span);
-            e.str_val = path;
+            e._data.lit.str_val = path;
             self.ctx.alloc_expr(e)
         }
         "stringify" => {
@@ -1625,13 +1625,13 @@ impl ExprParser {
                 }
             }
             let e = self.make_expr(ExprTag::StringLit, span);
-            e.str_val = text;
+            e._data.lit.str_val = text;
             self.ctx.alloc_expr(e)
         }
         "env" => {
             let value: &[u8] = "";
             if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
-                let var_name = args[0].str_val;
+                let var_name = args[0].str_val();
                 let buf = self.ctx.arena.alloc_slice::<u8>(var_name.len() + 1);
                 var_name.copy_to_nonoverlapping(&buf[0]);
                 buf[var_name.len()] = 0u8;
@@ -1649,21 +1649,21 @@ impl ExprParser {
                 }
             }
             let e = self.make_expr(ExprTag::StringLit, span);
-            e.str_val = value;
+            e._data.lit.str_val = value;
             self.ctx.alloc_expr(e)
         }
         "concat" => {
             let total_len: usize = 0;
             for i in 0usize..args.len() {
                 if args[i].tag == ExprTag::StringLit {
-                    total_len = total_len + args[i].str_val.len();
+                    total_len = total_len + args[i].str_val().len();
                 }
             }
             let buf = self.ctx.arena.alloc_slice::<u8>(total_len);
             let offset: usize = 0;
             for i in 0usize..args.len() {
                 if args[i].tag == ExprTag::StringLit {
-                    let s = args[i].str_val;
+                    let s = args[i].str_val();
                     for j in 0usize..s.len() {
                         buf[offset + j] = s[j];
                     }
@@ -1671,12 +1671,12 @@ impl ExprParser {
                 }
             }
             let e = self.make_expr(ExprTag::StringLit, span);
-            e.str_val = buf;
+            e._data.lit.str_val = buf;
             self.ctx.alloc_expr(e)
         }
         "include_bytes" => {
             if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
-                let path = args[0].str_val;
+                let path = args[0].str_val();
                 let path_buf = self.ctx.arena.alloc_slice::<u8>(path.len() + 1);
                 path.copy_to_nonoverlapping(&path_buf[0]);
                 path_buf[path.len()] = 0u8;
@@ -1689,12 +1689,12 @@ impl ExprParser {
                     libc::fread(&data[0] as &mut libc::c_void, 1usize, size, fp);
                     libc::fclose(fp);
                     let e = self.make_expr(ExprTag::StringLit, span);
-                    e.str_val = data;
+                    e._data.lit.str_val = data;
                     return self.ctx.alloc_expr(e);
                 }
             }
             let e = self.make_expr(ExprTag::StringLit, span);
-            e.str_val = "";
+            e._data.lit.str_val = "";
             self.ctx.alloc_expr(e)
         }
         "format_args" => self.expand_format_args(args, span),
@@ -1706,8 +1706,8 @@ impl ExprParser {
             let macro_name: &[u8] = "";
             let prev_bound: &[&Expr] = &[];
             if macro_ref.tag == ExprTag::MacroInvocation {
-                macro_name = macro_ref.str_val;
-                prev_bound = macro_ref.args;
+                macro_name = macro_ref.str_val();
+                prev_bound = macro_ref.args();
             }
             let new_bound_count = prev_bound.len() + args.len() - 1;
             let bound_args = self.ctx.arena.alloc_slice::<&Expr>(new_bound_count);
@@ -1718,8 +1718,8 @@ impl ExprParser {
                 bound_args[prev_bound.len() + i - 1] = args[i];
             }
             let e = self.make_expr(ExprTag::MacroInvocation, span);
-            e.str_val = macro_name;
-            e.args = bound_args;
+            e._data.macro_expr.str_val = macro_name;
+            e._data.macro_expr.args = bound_args;
             self.ctx.alloc_expr(e)
         }
         "reduce" => {
@@ -1730,8 +1730,8 @@ impl ExprParser {
             let macro_name: &[u8] = "";
             let prev_bound: &[&Expr] = &[];
             if macro_ref.tag == ExprTag::MacroInvocation {
-                macro_name = macro_ref.str_val;
-                prev_bound = macro_ref.args;
+                macro_name = macro_ref.str_val();
+                prev_bound = macro_ref.args();
             }
             let accumulator: &Expr = args[1];
             for i in 2usize..args.len() {
@@ -1752,7 +1752,7 @@ impl ExprParser {
         }
         "count" => {
             let e = self.make_expr(ExprTag::IntLit, span);
-            e.int_val = args.len() as u64;
+            e._data.lit.int_val = args.len() as u64;
             self.ctx.alloc_expr(e)
         }
         _ => self.alloc_void(span),
@@ -1776,7 +1776,7 @@ impl ExprParser {
         if fmt_str_expr.tag != ExprTag::StringLit {
             return self.alloc_void(span);
         }
-        let fmt_str = fmt_str_expr.str_val;
+        let fmt_str = fmt_str_expr.str_val();
 
         // Parse the format string into pieces
         let pieces: Vector<&Expr> = Vector::new();
@@ -1805,7 +1805,7 @@ impl ExprParser {
                     // Flush current string part
                     if string_part.len() > 0usize {
                         let e = self.make_expr(ExprTag::StringLit, span);
-                        e.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
+                        e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
                         pieces.push(self.ctx.alloc_expr(e));
                         string_part.clear();
                     }
@@ -1857,7 +1857,7 @@ impl ExprParser {
         // Flush remaining string part
         if string_part.len() > 0usize {
             let e = self.make_expr(ExprTag::StringLit, span);
-            e.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
+            e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
             pieces.push(self.ctx.alloc_expr(e));
         }
 
@@ -1874,9 +1874,9 @@ impl ExprParser {
         // For now, if wrapper is an ExprTag::MacroInvocation, invoke that macro with
         // the collected pieces as args.
         if wrapper_expr.tag == ExprTag::MacroInvocation {
-            let wrapper_name = wrapper_expr.str_val;
+            let wrapper_name = wrapper_expr.str_val();
             // Combine wrapper's existing args with format pieces
-            let wrapper_args = wrapper_expr.args;
+            let wrapper_args = wrapper_expr.args();
             let total_args = wrapper_args.len() + pieces.len();
             let all_args = self.ctx.arena.alloc_slice::<&Expr>(total_args);
             for j in 0usize..wrapper_args.len() {
@@ -1937,8 +1937,8 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::MacroInvocation, span);
-        e.str_val = name;
-        e.args = args_slice;
+        e._data.macro_expr.str_val = name;
+        e._data.macro_expr.args = args_slice;
         self.ctx.alloc_expr(e)
     }
 
@@ -1968,9 +1968,9 @@ impl ExprParser {
         });
 
         let e = self.make_expr(ExprTag::StaticFor, span);
-        e.id = var_id;
-        e.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
-        e.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
+        e._data.for_expr.id = var_id;
+        e._data.for_expr.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
+        e._data.for_expr.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
         self.ctx.alloc_expr(e)
     }
 
@@ -1981,7 +1981,7 @@ impl ExprParser {
         }
 
         let e = self.make_expr(ExprTag::EtCetera, span);
-        e.lhs = self.parse_expr(inner.unwrap());
+        e._data.defer.lhs = self.parse_expr(inner.unwrap());
         self.ctx.alloc_expr(e)
     }
 
@@ -2066,8 +2066,8 @@ impl ExprParser {
     ) -> &Expr {
         // Substitute macro parameter
         if expr.tag == ExprTag::MacroParam {
-            let idx = expr.int_val as i32;
-            if expr.flag && et_cetera_idx != NO_VARIADIC {
+            let idx = expr.int_val() as i32;
+            if expr.flag() && et_cetera_idx != NO_VARIADIC {
                 // Variadic param in et cetera context
                 let vi = et_cetera_idx as usize;
                 if vi < variadic_args.len() {
@@ -2082,23 +2082,23 @@ impl ExprParser {
         }
 
         // Expand nested macro invocation (only actual invocations, not bare references)
-        if expr.tag == ExprTag::MacroInvocation && expr.flag {
+        if expr.tag == ExprTag::MacroInvocation && expr.flag() {
             // First expand the args
             let expanded_args = self.expand_macro_args_list(
-                expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
+                expr.args(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
             );
             // Look up the macro via scope resolution
-            let macro_entry = self.ctx.resolve_macro(self.scope_idx, expr.str_val);
+            let macro_entry = self.ctx.resolve_macro(self.scope_idx, expr.str_val());
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
                 if entry.is_builtin {
-                    return self.expand_builtin_macro(expr.str_val, expanded_args, expr.span);
+                    return self.expand_builtin_macro(expr.str_val(), expanded_args, expr.span);
                 }
                 return self.do_expand_macro(entry, expanded_args, expr.span);
             }
             // Unresolved macro - keep with expanded args
             let e = *expr;
-            e.args = expanded_args;
+            e.set_args(expanded_args);
             return self.ctx.alloc_expr(e);
         }
 
@@ -2116,10 +2116,10 @@ impl ExprParser {
            expr.tag == ExprTag::EnumRef || expr.tag == ExprTag::BoundValue {
             // Check if this local needs ID remapping (hygiene)
             if expr.tag == ExprTag::Local {
-                let mapped = id_map.get(&expr.id._value);
+                let mapped = id_map.get(&expr.id()._value);
                 if mapped.is_some() {
                     let e = *expr;
-                    e.id = mapped.unwrap();
+                    e.set_id(mapped.unwrap());
                     return self.ctx.alloc_expr(e);
                 }
             }
@@ -2132,64 +2132,115 @@ impl ExprParser {
         // Generate fresh ID for let bindings (hygiene)
         if e.tag == ExprTag::Let {
             let new_id = self.ctx.next_id();
-            id_map.insert(e.id._value, new_id);
-            e.id = new_id;
+            id_map.insert(e._data.let_expr.id._value, new_id);
+            e._data.let_expr.id = new_id;
             // Register the new local in scope so it can be referenced
             self.ctx.scopes.add_item(self.scope_idx, NamedItem {
-                name: e.str_val,
+                name: e._data.let_expr.str_val,
                 kind: NamedItemKind::local(new_id),
                 span: e.span,
             });
         }
 
-        // Expand sub-expressions
-        if e.lhs as &void as usize != 0usize {
-            e.lhs = self.expand_macro_expr(e.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        }
-        if e.rhs as &void as usize != 0usize {
-            e.rhs = self.expand_macro_expr(e.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        }
-        if e.cond as &void as usize != 0usize {
-            e.cond = self.expand_macro_expr(e.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        }
-
-        // Expand arg lists (handling et cetera)
-        if e.args.len() > 0usize {
-            e.args = self.expand_macro_args_list(e.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        }
-
-        // Expand optional expression
-        if e.opt_expr.is_some() {
-            e.opt_expr = Option::some(self.expand_macro_expr(e.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
-        }
-
-        // Expand switch arms
-        if e.switch_arms.len() > 0usize {
-            let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e.switch_arms.len());
-            for i in 0usize..e.switch_arms.len() {
-                let arm = e.switch_arms[i];
-                let new_patterns = self.ctx.arena.alloc_slice::<&Expr>(arm.pattern.len());
-                for j in 0usize..arm.pattern.len() {
-                    new_patterns[j] = self.expand_macro_expr(arm.pattern[j], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        // Use a tag-dispatched approach for expand to avoid accessor/setter overhead
+        // and ensure correct union variant access
+        if e.tag == ExprTag::Binary {
+            e._data.binary.lhs = self.expand_macro_expr(e._data.binary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.binary.rhs = self.expand_macro_expr(e._data.binary.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Unary {
+            e._data.unary.lhs = self.expand_macro_expr(e._data.unary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Assign {
+            e._data.assign.lhs = self.expand_macro_expr(e._data.assign.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.assign.rhs = self.expand_macro_expr(e._data.assign.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Call || e.tag == ExprTag::TurbofishValue {
+            if e._data.call.lhs as &void as usize != 0usize {
+                e._data.call.lhs = self.expand_macro_expr(e._data.call.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.call.args.len() > 0usize {
+                e._data.call.args = self.expand_macro_args_list(e._data.call.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::FieldAccess {
+            e._data.field.lhs = self.expand_macro_expr(e._data.field.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Index || e.tag == ExprTag::TupleIndex {
+            if e._data.index.lhs as &void as usize != 0usize {
+                e._data.index.lhs = self.expand_macro_expr(e._data.index.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.index.rhs as &void as usize != 0usize {
+                e._data.index.rhs = self.expand_macro_expr(e._data.index.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.index.opt_expr.is_some() {
+                e._data.index.opt_expr = Option::some(self.expand_macro_expr(e._data.index.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::Ref || e.tag == ExprTag::Deref || e.tag == ExprTag::Cast || e.tag == ExprTag::TypeCheck {
+            e._data.typed.lhs = self.expand_macro_expr(e._data.typed.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::If || e.tag == ExprTag::When {
+            e._data.cond.cond = self.expand_macro_expr(e._data.cond.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.cond.lhs = self.expand_macro_expr(e._data.cond.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            if e._data.cond.opt_expr.is_some() {
+                e._data.cond.opt_expr = Option::some(self.expand_macro_expr(e._data.cond.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::Switch {
+            e._data.switch_expr.lhs = self.expand_macro_expr(e._data.switch_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            if e._data.switch_expr.switch_arms.len() > 0usize {
+                let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e._data.switch_expr.switch_arms.len());
+                for i in 0usize..e._data.switch_expr.switch_arms.len() {
+                    let arm = e._data.switch_expr.switch_arms[i];
+                    let new_patterns = self.ctx.arena.alloc_slice::<&Expr>(arm.pattern.len());
+                    for j in 0usize..arm.pattern.len() {
+                        new_patterns[j] = self.expand_macro_expr(arm.pattern[j], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                    }
+                    new_arms[i] = SwitchArm {
+                        pattern: new_patterns,
+                        body: self.expand_macro_expr(arm.body, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                    };
                 }
-                new_arms[i] = SwitchArm {
-                    pattern: new_patterns,
-                    body: self.expand_macro_expr(arm.body, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
-                };
+                e._data.switch_expr.switch_arms = new_arms;
             }
-            e.switch_arms = new_arms;
-        }
-
-        // Expand field inits
-        if e.field_inits.len() > 0usize {
-            let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e.field_inits.len());
-            for i in 0usize..e.field_inits.len() {
-                new_inits[i] = FieldInit {
-                    name: e.field_inits[i].name,
-                    value: self.expand_macro_expr(e.field_inits[i].value, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
-                };
+        } else if e.tag == ExprTag::While || e.tag == ExprTag::Loop {
+            if e._data.loop_expr.cond as &void as usize != 0usize {
+                e._data.loop_expr.cond = self.expand_macro_expr(e._data.loop_expr.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-            e.field_inits = new_inits;
+            e._data.loop_expr.lhs = self.expand_macro_expr(e._data.loop_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::For || e.tag == ExprTag::StaticFor {
+            e._data.for_expr.lhs = self.expand_macro_expr(e._data.for_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.for_expr.rhs = self.expand_macro_expr(e._data.for_expr.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            if e._data.for_expr.args.len() > 0usize {
+                e._data.for_expr.args = self.expand_macro_args_list(e._data.for_expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::Break || e.tag == ExprTag::Return {
+            if e._data.jump.opt_expr.is_some() {
+                e._data.jump.opt_expr = Option::some(self.expand_macro_expr(e._data.jump.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::Let {
+            if e._data.let_expr.opt_expr.is_some() {
+                e._data.let_expr.opt_expr = Option::some(self.expand_macro_expr(e._data.let_expr.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::StructLit {
+            if e._data.struct_lit.field_inits.len() > 0usize {
+                let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e._data.struct_lit.field_inits.len());
+                for i in 0usize..e._data.struct_lit.field_inits.len() {
+                    new_inits[i] = FieldInit {
+                        name: e._data.struct_lit.field_inits[i].name,
+                        value: self.expand_macro_expr(e._data.struct_lit.field_inits[i].value, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                    };
+                }
+                e._data.struct_lit.field_inits = new_inits;
+            }
+        } else if e.tag == ExprTag::TupleLit || e.tag == ExprTag::ArrayLit || e.tag == ExprTag::Block {
+            if e._data.list.args.len() > 0usize {
+                e._data.list.args = self.expand_macro_args_list(e._data.list.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::Lambda {
+            e._data.lambda.lhs = self.expand_macro_expr(e._data.lambda.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Range {
+            if e._data.range.lhs as &void as usize != 0usize {
+                e._data.range.lhs = self.expand_macro_expr(e._data.range.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.range.rhs as &void as usize != 0usize {
+                e._data.range.rhs = self.expand_macro_expr(e._data.range.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::Defer || e.tag == ExprTag::EtCetera {
+            e._data.defer.lhs = self.expand_macro_expr(e._data.defer.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
         }
 
         // Expand lambda params (their types use Ty, not Expr - skip for now)
@@ -2214,7 +2265,7 @@ impl ExprParser {
         for i in 0usize..args.len() {
             if args[i].tag == ExprTag::EtCetera {
                 // Expand inner expression for each variadic arg
-                let inner = args[i].lhs;
+                let inner = args[i].lhs();
                 for vi in 0usize..variadic_args.len() {
                     result.push(self.expand_macro_expr(
                         inner, param_args, variadic_args, variadic_param_idx, vi as i32, id_map

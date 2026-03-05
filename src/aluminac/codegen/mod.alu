@@ -5,6 +5,7 @@
 
 use llvm::*;
 use ast::*;
+use layout::compute_type_size;
 use aluminac_common::arena::Arena;
 use diagnostics::DiagnosticContext;
 use std::collections::HashMap;
@@ -338,19 +339,22 @@ impl CodegenCtx {
             // Union: represent as [N x i64] to avoid LLVM optimizing away
             // "padding" bytes that are meaningful for other variants.
             // Using i64 array ensures 8-byte alignment and no internal padding holes.
-            let max_size: u64 = 0;
+            // Note: we use compute_type_size from layout.alu instead of LLVMABISizeOfType
+            // because LLVM may return 0 for named struct types whose bodies haven't been
+            // set yet during recursive type construction.
+            let max_size: usize = 0;
             for i in 0usize..s.fields.len() {
-                let field_ty = self.llvm_type(s.fields[i].ty);
-                if LLVMGetTypeKind(field_ty) == LLVMTypeKind::Void {
-                    // Skip void fields in union
-                } else {
-                    let size = LLVMABISizeOfType(self.target_data, field_ty);
-                    if size > max_size {
-                        max_size = size;
-                    }
+                let size = compute_type_size(s.fields[i].ty, 8usize);
+                if size > max_size {
+                    max_size = size;
                 }
             }
-            let n_i64s = (max_size + 7u64) / 8u64;
+            let n_i64s = (max_size as u64 + 7u64) / 8u64;
+            // Still need to trigger LLVM type creation for all variants
+            // so they exist when used in bitcasts later
+            for i in 0usize..s.fields.len() {
+                self.llvm_type(s.fields[i].ty);
+            }
             let elems = self.arena.alloc_slice::<LLVMTypeRef>(1);
             elems[0] = LLVMArrayType(self.i64_type, n_i64s as u32);
             LLVMStructSetBody(struct_ty, &elems[0], 1, 0i32);

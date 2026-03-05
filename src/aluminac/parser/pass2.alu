@@ -679,9 +679,9 @@ impl Pass2 {
                     if param_idx >= 0i32 {
                         let param_expr = Expr::void_expr();
                         param_expr.tag = ExprTag::MacroParam;
-                        param_expr.str_val = name;
-                        param_expr.int_val = param_idx as u64;
-                        param_expr.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        param_expr._data.id_ref.str_val = name;
+                        param_expr._data.id_ref.int_val = param_idx as u64;
+                        param_expr._data.id_ref.flag = (param_idx == self.ctx.macro_variadic_param_idx);
                         return self.ctx.alloc_ty(Ty::typeof_ty(self.ctx.alloc_expr(param_expr)));
                     }
                     return self.ctx.alloc_ty(Ty::unresolved());
@@ -692,8 +692,8 @@ impl Pass2 {
                     // The macro arg is an Expr, but we need a Ty
                     // If it's a named ref, extract the type
                     let expr = arg.unwrap();
-                    if expr.ty as &void as usize != 0usize {
-                        return expr.ty;
+                    if expr.ty() as &void as usize != 0usize {
+                        return expr.ty();
                     }
                 }
                 self.ctx.alloc_ty(Ty::unresolved())

@@ -350,67 +350,271 @@ enum ExprTag {
                             // id = generic param id, str_val = method name
 }
 
-// Expression struct - flat with multiple fields reused per tag
+// Expression sub-structs for union variants
+struct _ExprLitData { int_val: u64, float_val: f64, bool_val: bool, str_val: &[u8], type_suffix: Option<BuiltinType> }
+struct _ExprIdData { id: Id, id2: Id, str_val: &[u8], flag: bool, int_val: u64 }
+struct _ExprUnaryData { un_op: UnOp, lhs: &Expr }
+struct _ExprBinaryData { bin_op: BinOp, lhs: &Expr, rhs: &Expr }
+struct _ExprAssignData { assign_op: AssignOp, lhs: &Expr, rhs: &Expr }
+struct _ExprCallData { lhs: &Expr, args: &[&Expr], type_args: &[&Ty] }
+struct _ExprFieldData { lhs: &Expr, str_val: &[u8], id2: Id }
+struct _ExprIndexData { lhs: &Expr, rhs: &Expr, index_val: usize, opt_expr: Option<&Expr> }
+struct _ExprTypedData { lhs: &Expr, ty: &Ty, flag: bool }
+struct _ExprCondData { cond: &Expr, lhs: &Expr, opt_expr: Option<&Expr> }
+struct _ExprSwitchData { lhs: &Expr, switch_arms: &[SwitchArm] }
+struct _ExprLoopData { cond: &Expr, lhs: &Expr }
+struct _ExprForData { id: Id, lhs: &Expr, rhs: &Expr, args: &[&Expr] }
+struct _ExprJumpData { opt_expr: Option<&Expr> }
+struct _ExprLetData { id: Id, str_val: &[u8], opt_ty: Option<&Ty>, opt_expr: Option<&Expr> }
+struct _ExprStructLitData { ty: &Ty, field_inits: &[FieldInit] }
+struct _ExprListData { args: &[&Expr] }
+struct _ExprLambdaData { id: Id, lambda_params: &[LambdaParam], closure_bindings: &[ClosureBinding], opt_ty: Option<&Ty>, lhs: &Expr }
+struct _ExprMacroData { str_val: &[u8], args: &[&Expr], flag: bool }
+struct _ExprRangeData { lhs: &Expr, rhs: &Expr, flag: bool }
+struct _ExprDeferData { lhs: &Expr }
+
+union _ExprData {
+    lit: _ExprLitData,
+    id_ref: _ExprIdData,
+    unary: _ExprUnaryData,
+    binary: _ExprBinaryData,
+    assign: _ExprAssignData,
+    call: _ExprCallData,
+    field: _ExprFieldData,
+    index: _ExprIndexData,
+    typed: _ExprTypedData,
+    cond: _ExprCondData,
+    switch_expr: _ExprSwitchData,
+    loop_expr: _ExprLoopData,
+    for_expr: _ExprForData,
+    jump: _ExprJumpData,
+    let_expr: _ExprLetData,
+    struct_lit: _ExprStructLitData,
+    list: _ExprListData,
+    lambda: _ExprLambdaData,
+    macro_expr: _ExprMacroData,
+    range: _ExprRangeData,
+    defer: _ExprDeferData,
+}
+
 struct Expr {
     tag: ExprTag,
     span: Span,
-    // Numeric data
-    int_val: u64,
-    float_val: f64,
-    bool_val: bool,
-    // String data
-    str_val: &[u8],
-    // Id data
-    id: Id,
-    id2: Id,  // secondary id (e.g. enum variant id)
-    // Operator
-    bin_op: BinOp,
-    un_op: UnOp,
-    assign_op: AssignOp,
-    // Type data
-    ty: &Ty,
-    // Optional type suffix for literals
-    type_suffix: Option<BuiltinType>,
-    // Sub-expressions
-    lhs: &Expr,
-    rhs: &Expr,
-    cond: &Expr,
-    // Expression lists
-    args: &[&Expr],
-    // Field inits (struct lit)
-    field_inits: &[FieldInit],
-    // Switch arms
-    switch_arms: &[SwitchArm],
-    // Type args for method calls
-    type_args: &[&Ty],
-    // Bool flag (is_mut for Ref, inclusive for Range)
-    flag: bool,
-    // Optional expression (else branch, break value, etc)
-    opt_expr: Option<&Expr>,
-    // Optional type
-    opt_ty: Option<&Ty>,
-    // Tuple index
-    index_val: usize,
-    // Lambda params
-    lambda_params: &[LambdaParam],
-    // Closure bindings (captures)
-    closure_bindings: &[ClosureBinding],
+    _data: _ExprData,
 }
 
 impl Expr {
     fn void_expr() -> Expr {
-        Expr {
-            tag: ExprTag::Void, span: Span::empty(),
-            int_val: 0, float_val: 0.0, bool_val: false, str_val: "",
-            id: Id { _value: 0 }, id2: Id { _value: 0 },
-            bin_op: BinOp::Add, un_op: UnOp::Neg, assign_op: AssignOp::Assign,
-            ty: std::mem::zeroed::<&Ty>(), type_suffix: Option::none(),
-            lhs: std::mem::zeroed::<&Expr>(), rhs: std::mem::zeroed::<&Expr>(),
-            cond: std::mem::zeroed::<&Expr>(),
-            args: &[], field_inits: &[], switch_arms: &[], type_args: &[],
-            flag: false, opt_expr: Option::none(), opt_ty: Option::none(),
-            index_val: 0, lambda_params: &[], closure_bindings: &[],
+        let e = std::mem::zeroed::<Expr>();
+        e.tag = ExprTag::Void;
+        e.span = Span::empty();
+        e
+    }
+
+    // --- Getter accessors ---
+
+    fn int_val(self: &Expr) -> u64 {
+        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::CharLit || self.tag == ExprTag::NullLit {
+            self._data.lit.int_val
+        } else {
+            self._data.id_ref.int_val  // MacroParam, etc.
         }
+    }
+
+    fn float_val(self: &Expr) -> f64 { self._data.lit.float_val }
+    fn bool_val(self: &Expr) -> bool { self._data.lit.bool_val }
+
+    fn str_val(self: &Expr) -> &[u8] {
+        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::CharLit || self.tag == ExprTag::NullLit {
+            self._data.lit.str_val
+        } else if self.tag == ExprTag::FieldAccess {
+            self._data.field.str_val
+        } else if self.tag == ExprTag::Let {
+            self._data.let_expr.str_val
+        } else if self.tag == ExprTag::MacroInvocation || self.tag == ExprTag::EtCetera {
+            self._data.macro_expr.str_val
+        } else {
+            self._data.id_ref.str_val  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam
+        }
+    }
+
+    fn id(self: &Expr) -> Id {
+        if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor {
+            self._data.for_expr.id
+        } else if self.tag == ExprTag::Let {
+            self._data.let_expr.id
+        } else if self.tag == ExprTag::Lambda {
+            self._data.lambda.id
+        } else {
+            self._data.id_ref.id  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam
+        }
+    }
+
+    fn id2(self: &Expr) -> Id {
+        if self.tag == ExprTag::FieldAccess {
+            self._data.field.id2
+        } else {
+            self._data.id_ref.id2
+        }
+    }
+
+    fn bin_op(self: &Expr) -> BinOp { self._data.binary.bin_op }
+    fn un_op(self: &Expr) -> UnOp { self._data.unary.un_op }
+    fn assign_op(self: &Expr) -> AssignOp { self._data.assign.assign_op }
+
+    fn ty(self: &Expr) -> &Ty {
+        if self.tag == ExprTag::StructLit {
+            self._data.struct_lit.ty
+        } else {
+            self._data.typed.ty  // Ref, Deref, Cast, TypeCheck, Zeroed
+        }
+    }
+
+    fn type_suffix(self: &Expr) -> Option<BuiltinType> { self._data.lit.type_suffix }
+
+    fn lhs(self: &Expr) -> &Expr {
+        if self.tag == ExprTag::Binary { self._data.binary.lhs }
+        else if self.tag == ExprTag::Unary { self._data.unary.lhs }
+        else if self.tag == ExprTag::Assign { self._data.assign.lhs }
+        else if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.lhs }
+        else if self.tag == ExprTag::FieldAccess { self._data.field.lhs }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.lhs }
+        else if self.tag == ExprTag::Ref || self.tag == ExprTag::Deref || self.tag == ExprTag::Cast || self.tag == ExprTag::TypeCheck { self._data.typed.lhs }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.lhs }
+        else if self.tag == ExprTag::Switch { self._data.switch_expr.lhs }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.lhs }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.lhs }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.lhs }
+        else if self.tag == ExprTag::Range { self._data.range.lhs }
+        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs }
+        else { std::mem::zeroed::<&Expr>() }
+    }
+
+    fn rhs(self: &Expr) -> &Expr {
+        if self.tag == ExprTag::Binary { self._data.binary.rhs }
+        else if self.tag == ExprTag::Assign { self._data.assign.rhs }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.rhs }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.rhs }
+        else if self.tag == ExprTag::Range { self._data.range.rhs }
+        else { std::mem::zeroed::<&Expr>() }
+    }
+
+    fn cond(self: &Expr) -> &Expr {
+        if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.cond }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.cond }
+        else { std::mem::zeroed::<&Expr>() }
+    }
+
+    fn args(self: &Expr) -> &[&Expr] {
+        if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.args }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.args }
+        else if self.tag == ExprTag::TupleLit || self.tag == ExprTag::ArrayLit || self.tag == ExprTag::Block { self._data.list.args }
+        else if self.tag == ExprTag::MacroInvocation { self._data.macro_expr.args }
+        else { &[] }
+    }
+
+    fn field_inits(self: &Expr) -> &[FieldInit] {
+        if self.tag == ExprTag::StructLit { self._data.struct_lit.field_inits }
+        else { &[] }
+    }
+
+    fn switch_arms(self: &Expr) -> &[SwitchArm] {
+        if self.tag == ExprTag::Switch { self._data.switch_expr.switch_arms }
+        else { &[] }
+    }
+
+    fn type_args(self: &Expr) -> &[&Ty] {
+        if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.type_args }
+        else { &[] }
+    }
+
+    fn flag(self: &Expr) -> bool {
+        if self.tag == ExprTag::Ref || self.tag == ExprTag::Deref || self.tag == ExprTag::Cast || self.tag == ExprTag::TypeCheck { self._data.typed.flag }
+        else if self.tag == ExprTag::Range { self._data.range.flag }
+        else if self.tag == ExprTag::MacroInvocation || self.tag == ExprTag::EtCetera { self._data.macro_expr.flag }
+        else if self.tag == ExprTag::Local || self.tag == ExprTag::Param || self.tag == ExprTag::StaticRef || self.tag == ExprTag::FnRef || self.tag == ExprTag::EnumRef || self.tag == ExprTag::BoundValue || self.tag == ExprTag::Defered || self.tag == ExprTag::MacroParam {
+            self._data.id_ref.flag
+        }
+        else { false }
+    }
+
+    fn opt_expr(self: &Expr) -> Option<&Expr> {
+        if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.opt_expr }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.opt_expr }
+        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue { self._data.jump.opt_expr }
+        else if self.tag == ExprTag::Let { self._data.let_expr.opt_expr }
+        else { Option::none() }
+    }
+
+    fn opt_ty(self: &Expr) -> Option<&Ty> {
+        if self.tag == ExprTag::Let { self._data.let_expr.opt_ty }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.opt_ty }
+        else { Option::none() }
+    }
+
+    fn index_val(self: &Expr) -> usize { self._data.index.index_val }
+    fn lambda_params(self: &Expr) -> &[LambdaParam] { self._data.lambda.lambda_params }
+    fn closure_bindings(self: &Expr) -> &[ClosureBinding] { self._data.lambda.closure_bindings }
+
+    // --- Setter methods for expand_macro_expr ---
+
+    fn set_lhs(self: &mut Expr, val: &Expr) {
+        if self.tag == ExprTag::Binary { self._data.binary.lhs = val; }
+        else if self.tag == ExprTag::Unary { self._data.unary.lhs = val; }
+        else if self.tag == ExprTag::Assign { self._data.assign.lhs = val; }
+        else if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.lhs = val; }
+        else if self.tag == ExprTag::FieldAccess { self._data.field.lhs = val; }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.lhs = val; }
+        else if self.tag == ExprTag::Ref || self.tag == ExprTag::Deref || self.tag == ExprTag::Cast || self.tag == ExprTag::TypeCheck { self._data.typed.lhs = val; }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.lhs = val; }
+        else if self.tag == ExprTag::Switch { self._data.switch_expr.lhs = val; }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.lhs = val; }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.lhs = val; }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.lhs = val; }
+        else if self.tag == ExprTag::Range { self._data.range.lhs = val; }
+        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs = val; }
+    }
+
+    fn set_rhs(self: &mut Expr, val: &Expr) {
+        if self.tag == ExprTag::Binary { self._data.binary.rhs = val; }
+        else if self.tag == ExprTag::Assign { self._data.assign.rhs = val; }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.rhs = val; }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.rhs = val; }
+        else if self.tag == ExprTag::Range { self._data.range.rhs = val; }
+    }
+
+    fn set_cond(self: &mut Expr, val: &Expr) {
+        if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.cond = val; }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.cond = val; }
+    }
+
+    fn set_args(self: &mut Expr, val: &[&Expr]) {
+        if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.args = val; }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.args = val; }
+        else if self.tag == ExprTag::TupleLit || self.tag == ExprTag::ArrayLit || self.tag == ExprTag::Block { self._data.list.args = val; }
+        else if self.tag == ExprTag::MacroInvocation { self._data.macro_expr.args = val; }
+    }
+
+    fn set_opt_expr(self: &mut Expr, val: Option<&Expr>) {
+        if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.opt_expr = val; }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.opt_expr = val; }
+        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue { self._data.jump.opt_expr = val; }
+        else if self.tag == ExprTag::Let { self._data.let_expr.opt_expr = val; }
+    }
+
+    fn set_switch_arms(self: &mut Expr, val: &[SwitchArm]) {
+        if self.tag == ExprTag::Switch { self._data.switch_expr.switch_arms = val; }
+    }
+
+    fn set_field_inits(self: &mut Expr, val: &[FieldInit]) {
+        if self.tag == ExprTag::StructLit { self._data.struct_lit.field_inits = val; }
+    }
+
+    fn set_id(self: &mut Expr, val: Id) {
+        if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.id = val; }
+        else if self.tag == ExprTag::Let { self._data.let_expr.id = val; }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.id = val; }
+        else { self._data.id_ref.id = val; }
     }
 }
 
