@@ -856,114 +856,76 @@ impl FnCodegen {
             LLVMGetUndef(llvm_ty)
         }
 
-        IrTag::CodegenFunc => {
-            // Emit call to a named C/compiler function (e.g. __builtin_add_overflow)
-            let name = expr.str_val();
+        IrTag::StackAlloc => {
+            let size = self.gen_expr(expr.lhs());
+            let i8_ty = LLVMInt8TypeInContext(self.ctx.context);
+            let alloca = LLVMBuildArrayAlloca(self.ctx.builder, i8_ty, size, self.temp_cname());
+            LLVMBuildBitCast(self.ctx.builder, alloca, self.ctx.llvm_type(expr.ty), self.temp_cname())
+        }
 
-            // Build arg values and types
-            let arg_count = expr.items().len();
-            let arg_vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(arg_count);
-            let arg_types = self.ctx.arena.alloc_slice::<LLVMTypeRef>(arg_count);
-            for i in 0usize..arg_count {
-                arg_vals[i] = self.gen_expr(expr.items()[i]);
-                arg_types[i] = LLVMTypeOf(arg_vals[i]);
-            }
+        IrTag::OverflowAdd, IrTag::OverflowSub, IrTag::OverflowMul => {
+            let items = expr.items();
+            if items.len() >= 3 {
+                let a = self.gen_expr(items[0]);
+                let b = self.gen_expr(items[1]);
+                let result_ptr = self.gen_expr(items[2]);
+                let op_ty = LLVMTypeOf(a);
 
-            // Handle GCC builtins that need LLVM-specific lowering
-            if name == "__builtin_alloca" {
-                // Use LLVM's alloca with i8 element type
-                let i8_ty = LLVMInt8TypeInContext(self.ctx.context);
-                let alloca = LLVMBuildArrayAlloca(self.ctx.builder, i8_ty, arg_vals[0], self.temp_cname());
-                LLVMBuildBitCast(self.ctx.builder, alloca, self.ctx.llvm_type(expr.ty), self.temp_cname())
-            } else if name == "__builtin_trap" {
-                let builtin_trap_lookup = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
-                let builtin_trap_fn = if (builtin_trap_lookup as usize) == 0 {
-                    let bt_void_ty = LLVMVoidTypeInContext(self.ctx.context);
-                    let bt_fn_ty = LLVMFunctionType(bt_void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
-                    LLVMAddFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char, bt_fn_ty)
-                } else {
-                    builtin_trap_lookup
-                };
-                let bt_call_void_ty = LLVMVoidTypeInContext(self.ctx.context);
-                let bt_call_ty = LLVMFunctionType(bt_call_void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
-                LLVMBuildCall2(self.ctx.builder, bt_call_ty, builtin_trap_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
-                LLVMBuildUnreachable(self.ctx.builder);
-                LLVMGetUndef(self.ctx.void_type)
-            } else if name == "__builtin_unreachable" {
-                LLVMBuildUnreachable(self.ctx.builder);
-                LLVMGetUndef(self.ctx.void_type)
-            } else if name == "__builtin_expect" {
-                // __builtin_expect(val, expected) -> val (identity at LLVM level)
-                if arg_count > 0 { arg_vals[0] } else { LLVMGetUndef(self.ctx.void_type) }
-            } else if name == "__builtin_add_overflow" || name == "__builtin_sub_overflow"
-                    || name == "__builtin_mul_overflow" {
-                // Overflow builtins: (a, b, &result) -> bool
-                // Detect overflow via comparison after wrapping arithmetic
-                if arg_count >= 3 {
-                    let a = arg_vals[0];
-                    let b = arg_vals[1];
-                    let result_ptr = arg_vals[2];
+                // Use LLVM overflow intrinsics: llvm.uadd.with.overflow.i*, etc.
+                let intrinsic_name = if expr.tag == IrTag::OverflowAdd { "llvm.uadd.with.overflow" }
+                    else if expr.tag == IrTag::OverflowSub { "llvm.usub.with.overflow" }
+                    else { "llvm.umul.with.overflow" };
 
-                    let val = if name == "__builtin_add_overflow" {
-                        LLVMBuildAdd(self.ctx.builder, a, b, self.temp_cname())
-                    } else if name == "__builtin_sub_overflow" {
-                        LLVMBuildSub(self.ctx.builder, a, b, self.temp_cname())
-                    } else {
-                        LLVMBuildMul(self.ctx.builder, a, b, self.temp_cname())
-                    };
-                    // Store result to pointer
-                    LLVMBuildStore(self.ctx.builder, val, result_ptr);
+                let intrinsic_id = LLVMLookupIntrinsicID(
+                    &intrinsic_name[0] as &libc::c_char,
+                    intrinsic_name.len()
+                );
+                let param_types = self.ctx.arena.alloc_slice::<LLVMTypeRef>(1);
+                param_types[0] = op_ty;
+                let intrinsic_fn = LLVMGetIntrinsicDeclaration(
+                    self.ctx.module, intrinsic_id,
+                    &param_types[0], 1
+                );
+                let intrinsic_fn_ty = LLVMIntrinsicGetType(
+                    self.ctx.context, intrinsic_id,
+                    &param_types[0], 1
+                );
 
-                    // Detect overflow (unsigned semantics):
-                    // add: overflow = result < a
-                    // sub: overflow = a < b
-                    // mul: overflow = (b != 0 && result / b != a)
-                    let overflow = if name == "__builtin_add_overflow" {
-                        LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::ULT, val, a, self.temp_cname())
-                    } else if name == "__builtin_sub_overflow" {
-                        LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::ULT, a, b, self.temp_cname())
-                    } else {
-                        // mul: (b != 0 && val / b != a)
-                        // Use select to avoid division by zero: divcheck = select(b==0, a, val/b)
-                        let op_ty = arg_types[0];
-                        let b_is_zero = LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, b,
-                            LLVMConstInt(op_ty, 0u64, 0i32), self.temp_cname());
-                        // If b==0, no overflow (0*anything=0), use a as divcheck so ne check = false
-                        let safe_b = LLVMBuildSelect(self.ctx.builder, b_is_zero,
-                            LLVMConstInt(op_ty, 1u64, 0i32), b, self.temp_cname());
-                        let div = LLVMBuildUDiv(self.ctx.builder, val, safe_b, self.temp_cname());
-                        let div_ne_a = LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::NE, div, a, self.temp_cname());
-                        let b_not_zero = LLVMBuildNot(self.ctx.builder, b_is_zero, self.temp_cname());
-                        LLVMBuildAnd(self.ctx.builder, b_not_zero, div_ne_a, self.temp_cname())
-                    };
-                    overflow
-                } else {
-                    LLVMGetUndef(self.ctx.i1_type)
-                }
+                let args = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
+                args[0] = a;
+                args[1] = b;
+                let call_result = LLVMBuildCall2(self.ctx.builder, intrinsic_fn_ty, intrinsic_fn,
+                    &args[0], 2u32, self.temp_cname());
+
+                // Extract result value (index 0) and overflow flag (index 1)
+                let val = LLVMBuildExtractValue(self.ctx.builder, call_result, 0u32, self.temp_cname());
+                let overflow = LLVMBuildExtractValue(self.ctx.builder, call_result, 1u32, self.temp_cname());
+
+                // Store result to pointer
+                LLVMBuildStore(self.ctx.builder, val, result_ptr);
+                overflow
             } else {
-                // Generic: emit as function call
-                let fn_name = self.ctx.null_terminate(name);
-                let ret_ty = self.ctx.llvm_type(expr.ty);
-                let fn_ty = if arg_count > 0 {
-                    LLVMFunctionType(ret_ty, &arg_types[0], arg_count as u32, 0i32)
-                } else {
-                    LLVMFunctionType(ret_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32)
-                };
-
-                let callee_lookup = LLVMGetNamedFunction(self.ctx.module, &fn_name[0] as &libc::c_char);
-                let callee = if (callee_lookup as usize) == 0 {
-                    LLVMAddFunction(self.ctx.module, &fn_name[0] as &libc::c_char, fn_ty)
-                } else {
-                    callee_lookup
-                };
-
-                let cname = if self.is_void_type(ret_ty) { self.empty_name() } else { self.temp_cname() };
-                if arg_count > 0 {
-                    LLVMBuildCall2(self.ctx.builder, fn_ty, callee, &arg_vals[0], arg_count as u32, cname)
-                } else {
-                    LLVMBuildCall2(self.ctx.builder, fn_ty, callee, std::mem::zeroed::<&LLVMValueRef>(), 0u32, cname)
-                }
+                LLVMGetUndef(self.ctx.i1_type)
             }
+        }
+
+        IrTag::InlineAsm => {
+            let asm_str = expr.str_val();
+            let asm_cstr = self.ctx.null_terminate(asm_str);
+            let void_ty = LLVMVoidTypeInContext(self.ctx.context);
+            let fn_ty = LLVMFunctionType(void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+            let inline_asm = LLVMGetInlineAsm(
+                fn_ty,
+                &asm_cstr[0] as &libc::c_char, asm_str.len(),
+                &"\0"[0] as &libc::c_char, 0usize,
+                1i32, // has side effects
+                0i32, // not align stack
+                LLVMInlineAsmDialect::ATT,
+                0i32  // can throw = false
+            );
+            LLVMBuildCall2(self.ctx.builder, fn_ty, inline_asm,
+                std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
+            LLVMGetUndef(self.ctx.void_type)
         }
         IrTag::Transmute => {
             let val = self.gen_expr(expr.lhs());

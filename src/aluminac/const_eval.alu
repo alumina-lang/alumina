@@ -286,7 +286,6 @@ impl ConstEvaluator {
         IrTag::Continue => ConstResult::fail(ConstEvalError::continue_err()),
         IrTag::Switch => self.eval_switch(expr),
         IrTag::Transmute => self.eval_transmute(expr),
-        IrTag::CodegenFunc => self.eval_codegen_func(expr),
         _ => ConstResult::fail(ConstEvalError::unsupported()),
         }
     }
@@ -1120,23 +1119,6 @@ impl ConstEvaluator {
         if inner.tag == CValTag::Int && target_bt.is_integer() {
             let result = self.mask_to_width(inner.int_val(), target_bt.bit_width());
             return ConstResult::success(ConstValue::make_int(result, target_bt));
-        }
-
-        ConstResult::fail(ConstEvalError::unsupported())
-    }
-
-    // ========== Codegen func (intrinsics) ==========
-
-    fn eval_codegen_func(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
-        // Some intrinsics are lowered to IrTag::CodegenFunc by mono
-        // Check str_val for the function name
-        let name = expr.str_val();
-
-        if name == "llvm.expect.i1" || name == "llvm.expect.i64" {
-            // expect(val, expected) -> val
-            if expr.items().len() > 0 {
-                return self.eval(expr.items()[0]);
-            }
         }
 
         ConstResult::fail(ConstEvalError::unsupported())

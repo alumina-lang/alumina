@@ -457,6 +457,23 @@ extern "C" fn LLVMBuildGlobalStringPtr(b: LLVMBuilderRef, str: &c_char, name: &c
 extern "C" fn LLVMBuildIsNull(b: LLVMBuilderRef, val: LLVMValueRef, name: &c_char) -> LLVMValueRef;
 extern "C" fn LLVMBuildIsNotNull(b: LLVMBuilderRef, val: LLVMValueRef, name: &c_char) -> LLVMValueRef;
 
+// --- Intrinsics ---
+extern "C" fn LLVMLookupIntrinsicID(name: &c_char, name_len: usize) -> u32;
+extern "C" fn LLVMGetIntrinsicDeclaration(m: LLVMModuleRef, id: u32, param_types: &LLVMTypeRef, param_count: usize) -> LLVMValueRef;
+extern "C" fn LLVMIntrinsicGetType(ctx: LLVMContextRef, id: u32, param_types: &LLVMTypeRef, param_count: usize) -> LLVMTypeRef;
+
+// --- Inline Assembly ---
+enum LLVMInlineAsmDialect {
+    ATT = 0i32,
+    Intel = 1i32,
+}
+extern "C" fn LLVMGetInlineAsm(
+    ty: LLVMTypeRef, asm_str: &c_char, asm_str_size: usize,
+    constraints: &c_char, constraints_size: usize,
+    has_side_effects: LLVMBool, is_align_stack: LLVMBool,
+    dialect: LLVMInlineAsmDialect, can_throw: LLVMBool
+) -> LLVMValueRef;
+
 // --- PHI ---
 extern "C" fn LLVMAddIncoming(phi: LLVMValueRef, incoming_vals: &LLVMValueRef, incoming_blocks: &LLVMBasicBlockRef, count: u32);
 extern "C" fn LLVMCountIncoming(phi: LLVMValueRef) -> u32;

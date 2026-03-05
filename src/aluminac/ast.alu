@@ -1056,9 +1056,13 @@ enum IrTag {
     Memcpy = 33i32,
     Unreachable = 34i32,
     Undef = 35i32,
-    CodegenFunc = 38i32,  // codegen_func intrinsic; str_val holds function name, items holds args
     Transmute = 39i32,    // transmute intrinsic; lhs holds the value, ty holds target type
     Trap = 40i32,
+    StackAlloc = 41i32,   // stack allocation; lhs holds size expr, ty holds return pointer type
+    OverflowAdd = 42i32,  // unsigned add with overflow; items[0]=a, items[1]=b, items[2]=result_ptr; ty=bool
+    OverflowSub = 43i32,  // unsigned sub with overflow; items[0]=a, items[1]=b, items[2]=result_ptr; ty=bool
+    OverflowMul = 44i32,  // unsigned mul with overflow; items[0]=a, items[1]=b, items[2]=result_ptr; ty=bool
+    InlineAsm = 45i32,    // inline assembly; str_val holds asm string
 }
 
 // Call target tags
@@ -1182,8 +1186,7 @@ impl IrExpr {
     fn items(self: &IrExpr) -> &[&IrExpr] {
         if self.tag == IrTag::Call { self._data.call.items }
         else if self.tag == IrTag::StructLit { self._data.struct_lit.items }
-        else if self.tag == IrTag::CodegenFunc { self._data.codegen.items }
-        else { self._data.block.items }  // Block, TupleLit, ArrayLit
+        else { self._data.block.items }  // Block, TupleLit, ArrayLit, OverflowAdd/Sub/Mul
     }
 
     fn ir_ty(self: &IrExpr) -> &IrTy {
@@ -1201,7 +1204,7 @@ impl IrExpr {
     }
 
     fn str_val(self: &IrExpr) -> &[u8] {
-        if self.tag == IrTag::CodegenFunc { self._data.codegen.str_val }
+        if self.tag == IrTag::InlineAsm { self._data.codegen.str_val }
         else { self._data.lit.str_val }  // StringLit
     }
 

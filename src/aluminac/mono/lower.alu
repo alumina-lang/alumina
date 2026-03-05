@@ -3939,14 +3939,12 @@ impl Mono {
             return self.ctx.arena.alloc(result);
         } else if name == "codegen_func" {
             // codegen_func<RetTy>(name, args...) -> RetTy
-            // The first arg is a string literal with the function name
-            // Remaining args are the actual function arguments
+            // Lower known builtins to specific IR tags
             let ret_ty = if ir_type_args.len() > 0 {
                 ir_type_args[0]
             } else {
                 self.ctx.void_ty
             };
-            // Extract function name from first argument (should be a string literal)
             let fn_name: &[u8] = "";
             if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
                 fn_name = expr.args()[0].str_val();
@@ -3957,10 +3955,47 @@ impl Mono {
             for i in 0usize..arg_count {
                 ir_args[i] = self.lower_expr(expr.args()[i + 1]);
             }
+
+            if fn_name == "__builtin_alloca" {
+                let result = IrExpr::void_expr(ret_ty);
+                result.tag = IrTag::StackAlloc;
+                if arg_count > 0 { result._data.single.lhs = ir_args[0]; }
+                return self.ctx.arena.alloc(result);
+            } else if fn_name == "__builtin_trap" {
+                let result = IrExpr::void_expr(self.ctx.void_ty);
+                result.tag = IrTag::Trap;
+                return self.ctx.arena.alloc(result);
+            } else if fn_name == "__builtin_unreachable" {
+                let result = IrExpr::void_expr(self.ctx.void_ty);
+                result.tag = IrTag::Unreachable;
+                return self.ctx.arena.alloc(result);
+            } else if fn_name == "__builtin_expect" {
+                // Identity - just return the first argument
+                if arg_count > 0 { return ir_args[0]; }
+                let result = IrExpr::void_expr(ret_ty);
+                result.tag = IrTag::Undef;
+                return self.ctx.arena.alloc(result);
+            } else if fn_name == "__builtin_add_overflow" {
+                let result = IrExpr::void_expr(self.ctx.bool_ty);
+                result.tag = IrTag::OverflowAdd;
+                result._data.block.items = ir_args;
+                return self.ctx.arena.alloc(result);
+            } else if fn_name == "__builtin_sub_overflow" {
+                let result = IrExpr::void_expr(self.ctx.bool_ty);
+                result.tag = IrTag::OverflowSub;
+                result._data.block.items = ir_args;
+                return self.ctx.arena.alloc(result);
+            } else if fn_name == "__builtin_mul_overflow" {
+                let result = IrExpr::void_expr(self.ctx.bool_ty);
+                result.tag = IrTag::OverflowMul;
+                result._data.block.items = ir_args;
+                return self.ctx.arena.alloc(result);
+            }
+            // Unknown codegen_func - emit error
+            let msg = DiagnosticContext::format_msg(self.ctx.arena, "unknown codegen_func '", fn_name, "'");
+            self.ctx.diag.error(expr.span, msg);
             let result = IrExpr::void_expr(ret_ty);
-            result.tag = IrTag::CodegenFunc;
-            result._data.codegen.str_val = fn_name;
-            result._data.codegen.items = ir_args;
+            result.tag = IrTag::Void;
             return self.ctx.arena.alloc(result);
         } else if name == "const_alloc" || name == "const_free" || name == "const_panic"
                 || name == "const_note" || name == "const_warning" || name == "const_bake" {
@@ -4026,11 +4061,10 @@ impl Mono {
             }
             return self.mk_int_lit(usize_ty, length);
         } else if name == "asm" {
-            // Inline assembly - lower the string argument
-            // For now, just emit as a codegen_func with asm constraint
+            // Inline assembly
             if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
                 let result = IrExpr::void_expr(self.ctx.void_ty);
-                result.tag = IrTag::CodegenFunc;
+                result.tag = IrTag::InlineAsm;
                 result._data.codegen.str_val = expr.args()[0].str_val();
                 result._data.codegen.items = &[];
                 return self.ctx.arena.alloc(result);
