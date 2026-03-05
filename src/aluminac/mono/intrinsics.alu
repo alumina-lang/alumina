@@ -1,0 +1,340 @@
+// Intrinsic lowering for the monomorphization engine
+//
+// Handles compiler intrinsics like size_of, transmute, const_eval, etc.
+// Extracted from lower.alu for modularity.
+
+use mono::*;
+use mono::lower::Mono;
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use std::collections::{HashMap, HashSet, Vector};
+use std::option::Option;
+
+fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    switch name {
+        "const_eval" => lower_const_eval(m, ir_type_args, expr),
+        "is_const_evaluable" => lower_is_const_evaluable(m, expr),
+        "in_const_context" => lower_in_const_context(m),
+        "size_of" => lower_size_of(m, ir_type_args, expr),
+        "align_of" => lower_align_of(m, ir_type_args, expr),
+        "unreachable" => lower_unreachable(m),
+        "trap" => lower_trap(m),
+        "uninitialized" => lower_uninitialized(m, ir_type_args),
+        "zeroed" => lower_zeroed(m, ir_type_args),
+        "dangling" => lower_dangling(m, ir_type_args),
+        "transmute" => lower_transmute(m, ir_type_args, expr),
+        "stack_alloc" => lower_stack_alloc(m, ir_type_args, expr),
+        "llvm" => lower_llvm(m, ir_type_args, expr),
+        "const_alloc", "const_free", "const_panic",
+            "const_note", "const_warning", "const_bake" =>
+            lower_const_runtime_noop(m),
+        "compile_fail", "compile_warn", "compile_note" =>
+            lower_compile_diag_noop(m),
+        "volatile" => lower_volatile(m, ir_type_args, expr),
+        "slice_len" => lower_slice_len(m, expr),
+        "type_id" => lower_type_id(m, ir_type_args),
+        "type_name" => lower_type_name(m, ir_type_args, false),
+        "named_type_name" => lower_type_name(m, ir_type_args, true),
+        "length_of" => lower_length_of(m, type_args, ir_type_args, expr),
+        "asm" => lower_asm(m, expr),
+        "tag" => lower_tag(m, expr),
+        _ => lower_unknown(m, name, expr),
+    }
+}
+
+fn lower_const_eval(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // const_eval<T>(expr) -> T: evaluate expression at compile time
+    if expr.args().len() > 0 {
+        let ir_expr = m.lower_expr(expr.args()[0]);
+        let val = const_eval::try_eval(
+            m.ctx.arena,
+            m.ctx.ir_functions.as_slice(),
+            m.ctx.pointer_size,
+            ir_expr,
+        );
+        if val.is_some() {
+            let materialized = const_eval::materialize_to_ir(
+                m.ctx.arena, val.unwrap(), ir_expr.ty, m.ctx.void_ty,
+            );
+            if materialized.is_some() {
+                return materialized.unwrap();
+            }
+        }
+        // If const eval fails, emit the expression as-is (runtime fallback)
+        return ir_expr;
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_is_const_evaluable(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // is_const_evaluable<T>(expr) -> bool: check if expression can be const-evaluated
+    if expr.args().len() > 0 {
+        let ir_expr = m.lower_expr(expr.args()[0]);
+        let val = const_eval::try_eval(
+            m.ctx.arena,
+            m.ctx.ir_functions.as_slice(),
+            m.ctx.pointer_size,
+            ir_expr,
+        );
+        return m.mk_bool_lit(val.is_some());
+    }
+    m.mk_bool_lit(false)
+}
+
+fn lower_in_const_context(m: &mut Mono) -> &IrExpr {
+    // Always false at runtime (we're not in a const context)
+    m.mk_bool_lit(false)
+}
+
+fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // size_of<T>() -> usize - compute at monomorphization time
+    let measured_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let sz = layout::compute_type_size(measured_ty, m.ctx.pointer_size);
+    m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), sz as u64)
+}
+
+fn lower_align_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    let measured_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let al = layout::compute_type_align(measured_ty, m.ctx.pointer_size);
+    m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), al as u64)
+}
+
+fn lower_unreachable(m: &mut Mono) -> &IrExpr {
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Unreachable;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_trap(m: &mut Mono) -> &IrExpr {
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Trap;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_uninitialized(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // uninitialized<T>() -> T  (undef)
+    let ret_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::Undef;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_zeroed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    let ret_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::Zeroed;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_dangling(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // dangling<Ptr>() -> Ptr  (returns alignment as integer cast to pointer)
+    let ret_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    // Use align_of on the pointee type, then cast to pointer
+    let ir_align = if ret_ty.tag == IrTyTag::Pointer {
+        let al = layout::compute_type_align(ret_ty.inner(), m.ctx.pointer_size);
+        m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), al as u64)
+    } else {
+        m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), 1u64)
+    };
+    // Cast alignment to pointer type
+    m.mk_cast(ir_align, ret_ty)
+}
+
+fn lower_transmute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // transmute<T1, T2>(val) -> T2
+    let ret_ty = if ir_type_args.len() > 1 {
+        ir_type_args[1]
+    } else {
+        m.ctx.void_ty
+    };
+    let ir_val: &IrExpr = if expr.args().len() > 0 {
+        m.lower_expr(expr.args()[0])
+    } else {
+        let v = IrExpr::void_expr(m.ctx.void_ty);
+        v.tag = IrTag::Undef;
+        m.ctx.arena.alloc(v) as &IrExpr
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::Transmute;
+    result._data.cast.lhs = ir_val;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_stack_alloc(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // stack_alloc<T>(size) -> &mut T
+    let ret_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::StackAlloc;
+    if expr.args().len() > 0 {
+        result._data.single.lhs = m.lower_expr(expr.args()[0]);
+    }
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_llvm(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // llvm<Ret>(name, args...) -> Ret
+    let ret_ty = if ir_type_args.len() > 0 {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    // First arg is the intrinsic name string
+    let intrinsic_name: &[u8] = "";
+    if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
+        intrinsic_name = expr.args()[0].str_val();
+    }
+    // Remaining args become call arguments
+    let arg_count = if expr.args().len() > 1 { expr.args().len() - 1 } else { 0usize };
+    let ir_args = m.ctx.arena.alloc_slice::<&IrExpr>(arg_count);
+    for i in 0usize..arg_count {
+        ir_args[i] = m.lower_expr(expr.args()[i + 1]);
+    }
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::LlvmIntrinsic;
+    result._data.codegen.str_val = intrinsic_name;
+    result._data.codegen.items = ir_args;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_const_runtime_noop(m: &mut Mono) -> &IrExpr {
+    // const_alloc, const_free, const_panic, const_note, const_warning, const_bake
+    // These should only be reached in const context. At runtime, emit unreachable.
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Unreachable;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_compile_diag_noop(m: &mut Mono) -> &IrExpr {
+    // compile_fail, compile_warn, compile_note - no-op at runtime
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_volatile(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // volatile<Ptr>(ptr) -> Ptr - identity for now
+    if expr.args().len() > 0 {
+        return m.lower_expr(expr.args()[0]);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Undef;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_slice_len(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // slice_len<T>(s: &[T]) -> usize - extract length from slice
+    let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
+    if expr.args().len() > 0 {
+        let ir_slice = m.lower_expr(expr.args()[0]);
+        return m.mk_field(ir_slice, SLICE_LEN_FIELD, usize_ty);
+    }
+    m.mk_int_lit(usize_ty, 0u64)
+}
+
+fn lower_type_id(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // type_id<T>() -> usize - unique ID per type
+    // Use pointer to type as ID (stable within compilation)
+    let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
+    let measured_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { m.ctx.void_ty };
+    m.mk_int_lit(usize_ty, (measured_ty as &void as usize) as u64)
+}
+
+fn lower_type_name(m: &mut Mono, ir_type_args: &[&IrTy], named_only: bool) -> &IrExpr {
+    let u8_ty = m.ctx.intern_builtin_ty(BuiltinType::U8);
+    let slice_ty = m.ctx.make_slice_ty(u8_ty, true);
+    let measured_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { m.ctx.void_ty };
+    let type_str: &[u8] = "";
+    if named_only {
+        // Return the short name for named types, void for anonymous
+        if measured_ty.tag == IrTyTag::Struct {
+            type_str = measured_ty.struct_ref().name;
+        } else if measured_ty.tag == IrTyTag::Enum {
+            type_str = measured_ty.enum_ref().name;
+        }
+        // For non-named types, return void instead of empty string
+        if type_str.len() == 0 {
+            let result = IrExpr::void_expr(m.ctx.void_ty);
+            result.tag = IrTag::Void;
+            return m.ctx.arena.alloc(result);
+        }
+    } else {
+        // type_name: return the full type name
+        type_str = m.ir_type_name(measured_ty);
+    }
+    let result = IrExpr::void_expr(slice_ty);
+    result.tag = IrTag::StringLit;
+    result._data.lit.str_val = type_str;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_length_of(m: &mut Mono, type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // length_of<T>() -> usize - array/tuple length
+    let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
+    let measured_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { m.ctx.void_ty };
+    let length: u64 = 0;
+    if measured_ty.tag == IrTyTag::Array {
+        length = measured_ty.array_size() as u64;
+    } else if measured_ty.tag == IrTyTag::Tuple {
+        length = measured_ty.elems().len() as u64;
+    }
+    m.mk_int_lit(usize_ty, length)
+}
+
+fn lower_asm(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // Inline assembly
+    if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::InlineAsm;
+        result._data.codegen.str_val = expr.args()[0].str_val();
+        result._data.codegen.items = &[];
+        return m.ctx.arena.alloc(result);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_tag(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // tag(tag, expr) - identity, just lower the expression
+    if expr.args().len() > 1 {
+        return m.lower_expr(expr.args()[1]);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_unknown(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
+    // Unknown intrinsic - emit void with error
+    m.emit_diag(diagnostics::CodeDiagnostic::unknown_intrinsic(expr.span, name));
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
