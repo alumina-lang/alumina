@@ -206,8 +206,194 @@ impl DiagnosticContext {
         DiagnosticContext::concat_parts(arena, parts)
     }
 
+    fn emit_code_error(self: &mut DiagnosticContext, span: Span, diag: &CodeDiagnostic, arena: &mut aluminac_common::arena::Arena) {
+        let msg = diag.format(arena);
+        self.error(span, msg);
+    }
+
+    fn emit_code_warning(self: &mut DiagnosticContext, span: Span, diag: &CodeDiagnostic, arena: &mut aluminac_common::arena::Arena) {
+        let msg = diag.format(arena);
+        self.warning(span, msg);
+    }
+
     fn free(self: &mut DiagnosticContext) {
         self.files.free();
         self.errors.free();
+    }
+}
+
+// Strongly-typed diagnostic kinds used across all compiler phases
+// (parsing, monomorphization, codegen)
+enum CodeDiagKind {
+    // Type resolution
+    UnresolvedType = 0i32,
+    InvalidDeref = 1i32,
+    TupleIndexOutOfBounds = 2i32,
+
+    // Name resolution
+    UnresolvedField = 10i32,
+    UnresolvedMethod = 11i32,
+    UnresolvedFunction = 12i32,
+    NotCallable = 13i32,
+
+    // Intrinsics / codegen builtins
+    UnknownIntrinsic = 20i32,
+    UnknownCodegenFunc = 21i32,
+
+    // Recursion / limits
+    DepthOverflow = 30i32,
+
+    // Codegen
+    CodegenMissingLocal = 40i32,
+    CodegenMissingFunction = 41i32,
+    CodegenMissingGlobal = 42i32,
+    CodegenFieldOOB = 43i32,
+    CodegenUnhandledNode = 44i32,
+
+    // Generic / free-form (escape hatch)
+    GenericError = 99i32,
+}
+
+struct _CodeDiagNameData {
+    name: &[u8],
+}
+
+struct _CodeDiagPairData {
+    name: &[u8],
+    type_name: &[u8],
+}
+
+union _CodeDiagData {
+    name: _CodeDiagNameData,
+    pair: _CodeDiagPairData,
+}
+
+struct CodeDiagnostic {
+    kind: CodeDiagKind,
+    _data: _CodeDiagData,
+}
+
+impl CodeDiagnostic {
+    fn unresolved_type() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::UnresolvedType, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn unresolved_field(name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::UnresolvedField;
+        d._data.name.name = name;
+        d
+    }
+
+    fn unresolved_method(name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::UnresolvedMethod;
+        d._data.pair.name = name;
+        d._data.pair.type_name = type_name;
+        d
+    }
+
+    fn unresolved_function(name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::UnresolvedFunction;
+        d._data.name.name = name;
+        d
+    }
+
+    fn not_callable() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::NotCallable, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn invalid_deref() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::InvalidDeref, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn tuple_index_oob() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::TupleIndexOutOfBounds, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn unknown_intrinsic(name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::UnknownIntrinsic;
+        d._data.name.name = name;
+        d
+    }
+
+    fn unknown_codegen_func(name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::UnknownCodegenFunc;
+        d._data.name.name = name;
+        d
+    }
+
+    fn depth_overflow() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::DepthOverflow, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn codegen_missing_local() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::CodegenMissingLocal, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn codegen_missing_function(name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::CodegenMissingFunction;
+        d._data.name.name = name;
+        d
+    }
+
+    fn codegen_missing_global(name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::CodegenMissingGlobal;
+        d._data.name.name = name;
+        d
+    }
+
+    fn codegen_field_oob() -> CodeDiagnostic {
+        CodeDiagnostic { kind: CodeDiagKind::CodegenFieldOOB, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn codegen_unhandled_node(tag_name: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::CodegenUnhandledNode;
+        d._data.name.name = tag_name;
+        d
+    }
+
+    fn generic_error(msg: &[u8]) -> CodeDiagnostic {
+        let d: CodeDiagnostic;
+        d.kind = CodeDiagKind::GenericError;
+        d._data.name.name = msg;
+        d
+    }
+
+    fn format(self: &CodeDiagnostic, arena: &mut aluminac_common::arena::Arena) -> &[u8] {
+        switch self.kind {
+            CodeDiagKind::UnresolvedType => "could not resolve type",
+            CodeDiagKind::InvalidDeref => "cannot dereference non-pointer type",
+            CodeDiagKind::TupleIndexOutOfBounds => "tuple index out of bounds",
+            CodeDiagKind::UnresolvedField =>
+                DiagnosticContext::format_msg(arena, "could not resolve field '", self._data.name.name, "'"),
+            CodeDiagKind::UnresolvedMethod =>
+                DiagnosticContext::format_msg5(arena, "could not resolve method '", self._data.pair.name, "' on type '", self._data.pair.type_name, "'"),
+            CodeDiagKind::UnresolvedFunction =>
+                DiagnosticContext::format_msg(arena, "could not resolve function '", self._data.name.name, "'"),
+            CodeDiagKind::NotCallable => "expression is not callable",
+            CodeDiagKind::UnknownIntrinsic =>
+                DiagnosticContext::format_msg(arena, "unknown intrinsic '", self._data.name.name, "'"),
+            CodeDiagKind::UnknownCodegenFunc =>
+                DiagnosticContext::format_msg(arena, "unknown codegen_func '", self._data.name.name, "'"),
+            CodeDiagKind::DepthOverflow =>
+                "monomorphization depth limit exceeded (possible infinite recursion)",
+            CodeDiagKind::CodegenMissingLocal => "codegen: local variable not found",
+            CodeDiagKind::CodegenMissingFunction =>
+                DiagnosticContext::format_msg(arena, "codegen: function '", self._data.name.name, "' not found"),
+            CodeDiagKind::CodegenMissingGlobal =>
+                DiagnosticContext::format_msg(arena, "codegen: global '", self._data.name.name, "' not found"),
+            CodeDiagKind::CodegenFieldOOB => "codegen: field index out of bounds",
+            CodeDiagKind::CodegenUnhandledNode =>
+                DiagnosticContext::format_msg(arena, "codegen: unhandled IR node '", self._data.name.name, "'"),
+            CodeDiagKind::GenericError => self._data.name.name,
+            _ => "unknown compiler error",
+        }
     }
 }
