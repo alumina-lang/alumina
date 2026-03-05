@@ -794,6 +794,49 @@ impl Mono {
                     self.ctx.arena.alloc(result)
                 }
             }
+            ExprTag::Range => {
+                // Lower a..b / a..=b to Range<T> / RangeInclusive<T> struct
+                let lang_name: &[u8] = if expr.flag() { "range_inclusive" } else { "range" };
+                let lang_id = self.ctx.get_lang_item(lang_name);
+                if lang_id.is_none() {
+                    let r = IrExpr::void_expr(self.ctx.void_ty);
+                    return self.ctx.arena.alloc(r);
+                }
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_none() {
+                    let r = IrExpr::void_expr(self.ctx.void_ty);
+                    return self.ctx.arena.alloc(r);
+                }
+                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+                let ir_lower = if expr.lhs() as &void as usize != 0 {
+                    let raw = self.lower_expr(expr.lhs());
+                    self.mk_cast(raw, usize_ty)
+                } else {
+                    self.mk_int_lit(usize_ty, 0u64)
+                };
+                let ir_upper = if expr.rhs() as &void as usize != 0 {
+                    let raw = self.lower_expr(expr.rhs());
+                    self.mk_cast(raw, usize_ty)
+                } else {
+                    // Open-ended range (a..) - use max usize as sentinel
+                    self.mk_int_lit(usize_ty, 18446744073709551615u64)
+                };
+                let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                type_args[0] = usize_ty;
+                let range_ty = self.mono_struct(sd.unwrap(), type_args);
+                let fields = self.ctx.arena.alloc_slice::<&IrExpr>(if expr.flag() { 3usize } else { 2usize });
+                fields[0] = ir_lower;
+                fields[1] = ir_upper;
+                if expr.flag() {
+                    // RangeInclusive has a third field: _exhausted
+                    fields[2] = self.mk_bool_lit(false);
+                }
+                let result = IrExpr::void_expr(range_ty);
+                result.tag = IrTag::StructLit;
+                result._data.struct_lit.ir_ty = range_ty;
+                result._data.struct_lit.items = fields;
+                self.ctx.arena.alloc(result)
+            }
             ExprTag::StaticFor => self.lower_static_for(expr),
             _ => {
                 // Unhandled expression tag — may be an unexpanded macro builtin (e.g. file!())
@@ -2500,59 +2543,62 @@ impl Mono {
         } else if expr.tag == ExprTag::Index {
             let ir_base = self.lower_expr(expr.lhs());
 
-            // Check for range indexing (sub-slicing): data[a..b] or data[n..]
-            if expr.rhs().tag == ExprTag::Range {
-                return self.lower_subslice(ir_base, expr.rhs());
+            // Auto-deref through pointer layers to find the underlying type.
+            // Pointers cannot be directly indexed in Alumina (use *(ptr + i) instead).
+            let derefed = ir_base;
+            while derefed.ty.tag == IrTyTag::Pointer {
+                derefed = self.mk_deref(derefed, derefed.ty.inner());
             }
 
+            // Lower the index expression and determine whether it's a range
+            // (sub-slicing) or a scalar (element access).
             let ir_index = self.lower_expr(expr.rhs());
 
-            // Handle slice indexing: extract data pointer, then index
-            if ir_base.ty.tag == IrTyTag::Slice {
-                let elem_ty = self.slice_elem_ty(ir_base.ty);
-                // Extract the data pointer (field 0 of the fat pointer tuple)
-                let data_ptr_ty = if ir_base.ty.tag == IrTyTag::Slice {
-                    // IrTyTag::Slice: data pointer is &elem_ty
-                    self.ctx.make_ptr_ty(elem_ty, false)
+            // Coerce to indexable type (slice/array) via as_slice() if needed
+            let indexee = self.coerce_to_indexable(derefed);
+
+            if self.is_range_ty(ir_index.ty) {
+                // Range indexing (sub-slicing): extract lower/upper from range struct
+                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+                let ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                let ir_end = if ir_index.ty.struct_ref().fields.len() > 1 {
+                    // Check for MAX_USIZE sentinel (open-ended range a..)
+                    // by inspecting the IR expression tree directly. When the range
+                    // was constructed by our Range lowering, the upper bound is a
+                    // struct literal field that may contain a literal sentinel.
+                    let is_sentinel = false;
+                    if ir_index.tag == IrTag::StructLit {
+                        let upper_item = ir_index._data.struct_lit.items[1];
+                        if upper_item.tag == IrTag::IntLit && upper_item.int_val() == 18446744073709551615u64 {
+                            is_sentinel = true;
+                        }
+                    }
+                    if is_sentinel {
+                        self.get_indexee_len(indexee)
+                    } else {
+                        self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty)
+                    }
                 } else {
-                    // IrTyTag::Tuple {&T, usize}: element 0 is the pointer
-                    ir_base.ty.elems()[0]
+                    self.get_indexee_len(indexee)
                 };
-                let data_ptr_ref = self.mk_field(ir_base, SLICE_DATA_FIELD, data_ptr_ty);
-                // Index into the data pointer
+                return self.lower_subslice_ir(indexee, ir_start, ir_end);
+            }
+
+            if indexee.ty.tag == IrTyTag::Slice {
+                let elem_ty = self.slice_elem_ty(indexee.ty);
+                let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+                let data_ptr_ref = self.mk_field(indexee, SLICE_DATA_FIELD, data_ptr_ty);
                 return self.mk_index(data_ptr_ref, ir_index, elem_ty);
             }
 
-            // For struct types (e.g. Vector), try to find a slice-typed field
-            // and index through it (similar to auto-borrow/slicify in alumina-boot)
-            if ir_base.ty.tag == IrTyTag::Struct {
-                let sr = ir_base.ty.struct_ref();
-                for fi in 0usize..sr.fields.len() {
-                    if sr.fields[fi].ty.tag == IrTyTag::Slice {
-                        // Extract the slice field
-                        let slice_ref = self.mk_field(ir_base, fi as u32, sr.fields[fi].ty);
-                        // Index through the slice
-                        let sf_elem_ty = self.slice_elem_ty(sr.fields[fi].ty);
-                        let sf_data_ptr_ty = if sr.fields[fi].ty.tag == IrTyTag::Slice {
-                            self.ctx.make_ptr_ty(sf_elem_ty, false)
-                        } else {
-                            sr.fields[fi].ty.elems()[0]
-                        };
-                        let sf_data_ptr_ref = self.mk_field(slice_ref, SLICE_DATA_FIELD, sf_data_ptr_ty);
-                        return self.mk_index(sf_data_ptr_ref, ir_index, sf_elem_ty);
-                    }
-                }
+            if indexee.ty.tag == IrTyTag::Array {
+                return self.mk_index(indexee, ir_index, indexee.ty.inner());
             }
 
-            let elem_ty = if ir_base.ty.tag == IrTyTag::Array {
-                ir_base.ty.inner()
-            } else if ir_base.ty.tag == IrTyTag::Pointer {
-                ir_base.ty.inner()
-            } else {
-                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot index into this type"));
-                self.ctx.void_ty
-            };
-            self.mk_index(ir_base, ir_index, elem_ty)
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot index into this type"));
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            result.tag = IrTag::Undef;
+            self.ctx.arena.alloc(result) as &IrExpr
         } else if expr.tag == ExprTag::Cast {
             let ir_inner = self.lower_expr(expr.lhs());
             let ir_ty = self.resolve_type(expr.ty());
@@ -2711,99 +2757,65 @@ impl Mono {
         ty.inner()
     }
 
-    // Lower sub-slice indexing: data[a..b], data[n..], data[..m]
-    // Lower ptr[a..b] on a raw pointer - creates a new slice {ptr+a, b-a}
-    fn lower_ptr_subslice(self: &mut Mono, base: &IrExpr, range_expr: &Expr) -> &IrExpr {
-        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-        let elem_ty = base.ty.inner();
-        let slice_ty = self.ctx.make_slice_ty(elem_ty, base.ty.is_const());
-
-        // Start offset (default 0)
-        let ir_start = if range_expr.lhs() as usize != 0 {
-            let raw = self.lower_expr(range_expr.lhs());
-            if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
-                self.mk_cast(raw, usize_ty)
-            } else { raw }
-        } else {
-            self.mk_int_lit(usize_ty, 0u64)
-        };
-
-        // End offset
-        let ir_end = if range_expr.rhs() as usize != 0 {
-            let raw = self.lower_expr(range_expr.rhs());
-            if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
-                self.mk_cast(raw, usize_ty)
-            } else { raw }
-        } else {
-            // No end bound - this is unusual for ptr slicing, return void
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            return self.ctx.arena.alloc(r);
-        };
-
-        // new_ptr = base + start (via index then ref, same pattern as lower_subslice)
-        let ir_new_ptr_idx = self.mk_index(base, ir_start, base.ty.inner());
-        // Take reference to get pointer
-        let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, base.ty.is_const());
-
-        // new_len = end - start
-        let ir_new_len = self.mk_binary(BinOp::Sub, ir_end, ir_start, usize_ty);
-
-        // Build tuple {ptr, len}
-        let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-        items[0] = ir_new_ptr;
-        items[1] = ir_new_len;
-        let result = IrExpr::void_expr(slice_ty);
-        result.tag = IrTag::TupleLit;
-        result._data.block.items = items;
-        self.ctx.arena.alloc(result)
+    /// Coerce a value to an indexable type (slice or array).
+    /// If already a slice or array, returns as-is.
+    /// Otherwise, tries to call as_slice() on the type.
+    fn coerce_to_indexable(self: &mut Mono, val: &IrExpr) -> &IrExpr {
+        if val.ty.tag == IrTyTag::Slice || val.ty.tag == IrTyTag::Array {
+            return val;
+        }
+        // Try to find as_slice() method on this type
+        let as_slice_def = self.find_method_in_scope(val.ty, "as_slice");
+        if as_slice_def.is_some() {
+            let def = as_slice_def.unwrap();
+            let type_args: &[&IrTy] = if val.ty.tag == IrTyTag::Struct && val.ty.struct_ref().type_args.len() > 0 && def.generic_params.len() == val.ty.struct_ref().type_args.len() {
+                val.ty.struct_ref().type_args
+            } else {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                ta[0] = val.ty;
+                ta as &[&IrTy]
+            };
+            let fn_idx = self.mono_function(def, type_args);
+            let ir_fn = &self.ctx.ir_functions[fn_idx];
+            let args = self.ctx.arena.alloc_slice::<&IrExpr>(1);
+            args[0] = self.mk_ref(val, true);
+            let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+            return self.mk_call(fn_ref, args, ir_fn.return_type);
+        }
+        val
     }
 
-    fn lower_subslice(self: &mut Mono, base: &IrExpr, range_expr: &Expr) -> &IrExpr {
-        // Handle raw pointer slicing: ptr[a..b] creates a new slice
-        if base.ty.tag == IrTyTag::Pointer {
-            return self.lower_ptr_subslice(base, range_expr);
+    // Lower sub-slice indexing: data[a..b], data[n..], data[..m]
+    // Lower ptr[a..b] on a raw pointer - creates a new slice {ptr+a, b-a}
+    /// Get the length of an indexee (slice or array) as an IR expression.
+    fn get_indexee_len(self: &mut Mono, base: &IrExpr) -> &IrExpr {
+        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+        if base.ty.tag == IrTyTag::Slice {
+            self.mk_field(base, SLICE_LEN_FIELD, usize_ty)
+        } else if base.ty.tag == IrTyTag::Array {
+            self.mk_int_lit(usize_ty, base.ty.array_size() as u64)
+        } else {
+            self.mk_int_lit(usize_ty, 0u64)
         }
+    }
 
-        // Handle array subslicing: arr[a..b] -> take ref to array, cast to elem ptr, then subslice
+    /// Subslice: base[start..end] → new slice {ptr+start, end-start}
+    /// Works for both slice and array bases. start/end are already-lowered IR usize expressions.
+    fn lower_subslice_ir(self: &mut Mono, base: &IrExpr, ir_start: &IrExpr, ir_end: &IrExpr) -> &IrExpr {
+        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+
         if base.ty.tag == IrTyTag::Array {
-            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
             let elem_ty = base.ty.inner();
             let elem_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
             let slice_ty = self.ctx.make_slice_ty(elem_ty, false);
 
-            // Take reference to base array to get a pointer
             let arr_ref = self.mk_ref(base, false);
-            // Cast &[T; N] to &T (pointer to first element)
             let elem_ptr = self.mk_cast(arr_ref, elem_ptr_ty);
 
-            // Start offset (default 0)
-            let ir_start = if range_expr.lhs() as usize != 0 {
-                let raw = self.lower_expr(range_expr.lhs());
-                if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
-                    self.mk_cast(raw, usize_ty)
-                } else { raw }
-            } else {
-                self.mk_int_lit(usize_ty, 0u64)
-            };
-
-            // End offset (default: array length)
-            let ir_end = if range_expr.rhs() as usize != 0 {
-                let raw = self.lower_expr(range_expr.rhs());
-                if raw.ty.tag != usize_ty.tag || raw.ty.builtin() != usize_ty.builtin() {
-                    self.mk_cast(raw, usize_ty)
-                } else { raw }
-            } else {
-                self.mk_int_lit(usize_ty, base.ty.array_size() as u64)
-            };
-
-            // new_ptr = elem_ptr + start
             let ir_new_ptr_idx = self.mk_index(elem_ptr, ir_start, elem_ty);
             let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, false);
-
-            // new_len = end - start
             let ir_new_len = self.mk_binary(BinOp::Sub, ir_end, ir_start, usize_ty);
 
-            // Build slice {ptr, len}
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
             items[0] = ir_new_ptr;
             items[1] = ir_new_len;
@@ -2818,54 +2830,14 @@ impl Mono {
             return self.ctx.arena.alloc(r);
         }
 
-        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-
-        // Extract data pointer (field 0) and length (field 1)
-        let elem_ty_ = self.slice_elem_ty(base.ty);
-        let data_ptr_ty = if base.ty.tag == IrTyTag::Slice {
-            self.ctx.make_ptr_ty(elem_ty_, false)
-        } else {
-            base.ty.elems()[0]
-        };
+        let elem_ty = self.slice_elem_ty(base.ty);
+        let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
         let ir_data_ptr = self.mk_field(base, SLICE_DATA_FIELD, data_ptr_ty);
-        let ir_base_len = self.mk_field(base, SLICE_LEN_FIELD, usize_ty);
 
-        // Start offset (default 0)
-        let ir_start_raw = if range_expr.lhs() as usize != 0 {
-            self.lower_expr(range_expr.lhs())
-        } else {
-            self.mk_int_lit(usize_ty, 0u64)
-        };
-
-        // End offset (default base.len())
-        let ir_end_raw = if range_expr.rhs() as usize != 0 {
-            self.lower_expr(range_expr.rhs())
-        } else {
-            ir_base_len
-        };
-
-        // Cast start/end to usize if needed (e.g. literal 0 might be i32)
-        let ir_start = if ir_start_raw.ty.tag != usize_ty.tag || ir_start_raw.ty.builtin() != usize_ty.builtin() {
-            self.mk_cast(ir_start_raw, usize_ty)
-        } else {
-            ir_start_raw
-        };
-
-        let ir_end = if ir_end_raw.ty.tag != usize_ty.tag || ir_end_raw.ty.builtin() != usize_ty.builtin() {
-            self.mk_cast(ir_end_raw, usize_ty)
-        } else {
-            ir_end_raw
-        };
-
-        // new_ptr = data_ptr + start (pointer arithmetic via index)
         let ir_new_ptr_idx = self.mk_index(ir_data_ptr, ir_start, data_ptr_ty.inner());
-        // Take reference to get pointer
         let ir_new_ptr = self.mk_ref(ir_new_ptr_idx, data_ptr_ty.is_const());
-
-        // new_len = end - start
         let ir_new_len = self.mk_binary(BinOp::Sub, ir_end, ir_start, usize_ty);
 
-        // Build tuple {new_ptr, new_len}
         let elems = self.ctx.arena.alloc_slice::<&IrExpr>(2);
         elems[0] = ir_new_ptr;
         elems[1] = ir_new_len;
@@ -3168,152 +3140,6 @@ impl Mono {
         let field_expr = expr.lhs();
         let ir_obj = self.lower_expr(field_expr.lhs());
         let method_name = field_expr.str_val();
-
-        // Handle slice built-in methods
-        let slice_ty = ir_obj.ty;
-        let is_ptr_to_slice = false;
-        if slice_ty.tag == IrTyTag::Pointer && slice_ty.inner().tag == IrTyTag::Slice {
-            slice_ty = slice_ty.inner();
-            is_ptr_to_slice = true;
-        }
-        if slice_ty.tag == IrTyTag::Slice {
-            if method_name == "len" {
-                // slice.len() -> extract field 1 (the length)
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                // If we have a pointer to slice, deref first
-                let slice_val = if is_ptr_to_slice {
-                    self.mk_deref(ir_obj, slice_ty)
-                } else {
-                    ir_obj
-                };
-                return Option::some(self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty));
-            } else if method_name == "copy_to_nonoverlapping" || method_name == "copy_to" {
-                // slice.copy_to_nonoverlapping(&dest) -> memcpy
-                // First arg to method is the destination pointer
-                if expr.args().len() >= 1 {
-                    let dest_arg = self.lower_expr(expr.args()[0]);
-                    let slice_val = if is_ptr_to_slice {
-                        self.mk_deref(ir_obj, slice_ty)
-                    } else {
-                        ir_obj
-                    };
-                    // Build memcpy call: memcpy(dest, src_ptr, len * elem_size)
-                    let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                    // Get the element type from the slice's data pointer (field 0)
-                    let elem_ty = self.slice_elem_ty(slice_ty);
-                    // Extract src ptr (field 0)
-                    let data_ptr_ty = if slice_ty.tag == IrTyTag::Slice {
-                        self.ctx.make_ptr_ty(elem_ty, false)
-                    } else {
-                        slice_ty.elems()[0]
-                    };
-                    let src_ptr = self.mk_field(slice_val, SLICE_DATA_FIELD, data_ptr_ty);
-                    let len_val = self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty);
-                    // Build IrTag::Memcpy
-                    let void_ty = self.ctx.void_ty;
-                    let result = IrExpr::void_expr(void_ty);
-                    result.tag = IrTag::Memcpy;
-                    result._data.memcpy.lhs = dest_arg;       // dest ptr
-                    result._data.memcpy.rhs = src_ptr;        // src ptr
-                    result._data.memcpy.cond = len_val;       // length in elements
-                    result._data.memcpy.ir_ty = elem_ty;      // elem type for size calc
-                    return Option::some(self.ctx.arena.alloc(result) as &IrExpr);
-                }
-            } else if method_name == "is_empty" {
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                let slice_val = if is_ptr_to_slice {
-                    self.mk_deref(ir_obj, slice_ty)
-                } else {
-                    ir_obj
-                };
-                // len == 0
-                let len_val = self.mk_field(slice_val, SLICE_LEN_FIELD, usize_ty);
-                return Option::some(self.mk_binary(BinOp::Eq, len_val, self.mk_int_lit(usize_ty, 0u64), self.ctx.bool_ty));
-            }
-            if method_name == "realloc" && expr.args().len() >= 1 {
-                // slice.realloc(new_len) -> new slice
-                // Equivalent to: from_raw(libc::realloc(ptr, size_of<T>() * new_len), new_len)
-                let elem_ty = self.slice_elem_ty(slice_ty);
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false); // &mut T
-                let void_ptr_ty = self.ctx.make_ptr_ty(self.ctx.intern_builtin_ty(BuiltinType::Void), false);
-
-                let slice_val = if is_ptr_to_slice {
-                    self.mk_deref(ir_obj, slice_ty)
-                } else {
-                    ir_obj
-                };
-
-                // Extract current ptr and cast to &mut void for realloc
-                let old_ptr = self.mk_field(slice_val, SLICE_DATA_FIELD, ptr_ty);
-                let cast_ptr_val = self.mk_cast(old_ptr, void_ptr_ty);
-
-                // Compute new_len arg
-                let new_len = self.lower_expr(expr.args()[0]);
-
-                // Compute byte size: size_of<T>() * new_len
-                let elem_size = layout::compute_type_size(elem_ty, self.ctx.pointer_size);
-                let size_of_val = self.mk_int_lit(usize_ty, elem_size as u64);
-
-                let byte_size_val = self.mk_binary(BinOp::Mul, size_of_val, new_len, usize_ty);
-
-                // Call libc::realloc(ptr, byte_size) -> &mut void
-                let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                call_args[0] = cast_ptr_val;
-                call_args[1] = byte_size_val;
-
-                let fn_ref = IrFnRef { id: Id { _value: 0usize }, mangled_name: "realloc" };
-                let new_ptr_void = self.mk_call(fn_ref, call_args, void_ptr_ty);
-
-                // Cast back to &mut T
-                let new_ptr = self.mk_cast(new_ptr_void, ptr_ty);
-
-                // Build new slice
-                let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                items[0] = new_ptr;
-                items[1] = new_len;
-                let new_slice = IrExpr::void_expr(slice_ty);
-                new_slice.tag = IrTag::TupleLit;
-                new_slice._data.block.items = items;
-                return Option::some(self.ctx.arena.alloc(new_slice) as &IrExpr);
-            } else if method_name == "free" {
-                // slice.free() -> libc::free(ptr)
-                let elem_ty = self.slice_elem_ty(slice_ty);
-                let void_ptr_ty = self.ctx.make_ptr_ty(self.ctx.intern_builtin_ty(BuiltinType::Void), false);
-                let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
-
-                let slice_val = if is_ptr_to_slice {
-                    self.mk_deref(ir_obj, slice_ty)
-                } else {
-                    ir_obj
-                };
-
-                // Extract ptr and cast to &mut void
-                let ptr_val = self.mk_field(slice_val, SLICE_DATA_FIELD, ptr_ty);
-                let cast_ptr_val = self.mk_cast(ptr_val, void_ptr_ty);
-
-                // Call libc::free(ptr)
-                let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(1);
-                call_args[0] = cast_ptr_val;
-
-                let fn_ref = IrFnRef { id: Id { _value: 0usize }, mangled_name: "free" };
-                return Option::some(self.mk_call(fn_ref, call_args, self.ctx.void_ty));
-            } else if method_name == "_ptr" || method_name == "as_ptr" {
-                // slice._ptr / slice.as_ptr() -> field 0 (the data pointer)
-                let ptr_ty = if slice_ty.tag == IrTyTag::Slice {
-                    self.ctx.make_ptr_ty(self.slice_elem_ty(slice_ty), false)
-                } else {
-                    slice_ty.elems()[0]
-                };
-                let slice_val = if is_ptr_to_slice {
-                    self.mk_deref(ir_obj, slice_ty)
-                } else {
-                    ir_obj
-                };
-                return Option::some(self.mk_field(slice_val, SLICE_DATA_FIELD, ptr_ty));
-            }
-            // Fall through to lang item lookup for other slice methods
-        }
 
         // Get the struct or enum type (auto-deref)
         let scope_idx: u32 = 0u32;
@@ -4037,6 +3863,14 @@ impl Mono {
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::Undef;
             return self.ctx.arena.alloc(result);
+        } else if name == "slice_len" {
+            // slice_len<T>(s: &[T]) -> usize - extract length from slice
+            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+            if expr.args().len() > 0 {
+                let ir_slice = self.lower_expr(expr.args()[0]);
+                return self.mk_field(ir_slice, SLICE_LEN_FIELD, usize_ty);
+            }
+            return self.mk_int_lit(usize_ty, 0u64);
         } else if name == "type_id" {
             // type_id<T>() -> usize - unique ID per type
             // Use pointer to type as ID (stable within compilation)
@@ -4537,21 +4371,6 @@ impl Mono {
         } else if ty.tag == IrTyTag::Pointer {
             // Auto-deref
             self.resolve_field(ty.inner(), field_name)
-        } else if ty.tag == IrTyTag::Slice {
-            // Slice fields: _ptr (field 0), _len (field 1)
-            if field_name == "_ptr" {
-                let ptr_ty = if ty.tag == IrTyTag::Slice {
-                    self.ctx.make_ptr_ty(ty.inner(), false)
-                } else {
-                    // IrTyTag::Tuple representation
-                    ty.elems()[0]
-                };
-                (0u32, ptr_ty, true)
-            } else if field_name == "_len" {
-                (1u32, self.ctx.intern_builtin_ty(BuiltinType::USize), true)
-            } else {
-                (0u32, self.ctx.void_ty, false)
-            }
         } else {
             (0u32, self.ctx.void_ty, false)
         }

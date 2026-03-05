@@ -480,7 +480,10 @@ impl Compiler {
             },
             OutputFormat::Executable => {
                 // Emit object file, then link
-                let obj_file = ".aluminac_temp.o";
+                let obj_name = std::string::StringBuf::from_slice(self.options.output_file);
+                defer obj_name.free();
+                obj_name.extend_from_slice(".o");
+                let obj_file = obj_name.as_slice();
                 if !ctx.emit_to_object(obj_file) {
                     eprintln!("error: failed to emit object file");
                     ctx.free();

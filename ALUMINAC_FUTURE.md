@@ -61,10 +61,6 @@ or use `iter.to_vector()` instead of `Vector::from_iter()`.
 
 ## Features to Port
 
-### Protocol mixin annotations
-The `/// @ cmp::Equatable::equals` doc comment annotation for registering protocol
-implementations needs proper support.
-
 ### IteratorExt mixin triggers monomorphization of all methods
 When a non-generic type like SplitIterator mixes in IteratorExt<SplitIterator, &[u8]>,
 all methods get monomorphized eagerly, including those with additional generic parameters

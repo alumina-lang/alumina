@@ -66,17 +66,17 @@ impl HashMap<K, V> {
         when *a is &[u8] {
             // Slice key (&[u8]): compare pointed-to content bytes
             let raw_a = a as &K as &usize;
-            let ptr_a = *(&raw_a[0]) as &u8;
-            let len_a = *(&raw_a[1]);
+            let ptr_a = *raw_a as &u8;
+            let len_a = *(raw_a + 1);
             let raw_b = b as &K as &usize;
-            let ptr_b = *(&raw_b[0]) as &u8;
-            let len_b = *(&raw_b[1]);
+            let ptr_b = *raw_b as &u8;
+            let len_b = *(raw_b + 1);
             if len_a != len_b {
                 return false;
             }
             let i = 0usize;
             while i < len_a {
-                if *(&ptr_a[i]) != *(&ptr_b[i]) {
+                if *(ptr_a + i) != *(ptr_b + i) {
                     return false;
                 }
                 i = i + 1usize;
@@ -94,11 +94,11 @@ impl HashMap<K, V> {
             // Slice key (&[u8]): hash the pointed-to content bytes
             // Fat pointer layout is {ptr: &u8, len: usize}
             let raw = key as &K as &usize;
-            let ptr = *(&raw[0]) as &u8;
-            let len = *(&raw[1]);
+            let ptr = *raw as &u8;
+            let len = *(raw + 1);
             let i = 0usize;
             while i < len {
-                let b = *(&ptr[i]) as usize;
+                let b = *(ptr + i) as usize;
                 h = h ^ b;
                 h = h * 1099511628211usize;
                 i = i + 1usize;
@@ -109,7 +109,7 @@ impl HashMap<K, V> {
             let key_size = std::mem::size_of::<K>();
             let i = 0usize;
             while i < key_size {
-                let b = *(&bytes[i]) as usize;
+                let b = *(bytes + i) as usize;
                 h = h ^ b;
                 h = h * 1099511628211usize;
                 i = i + 1usize;

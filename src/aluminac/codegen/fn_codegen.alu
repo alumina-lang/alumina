@@ -780,30 +780,6 @@ impl FnCodegen {
             self.defer_stack.push(expr.lhs());
             LLVMGetUndef(self.ctx.void_type)
         }
-        IrTag::Memcpy => {
-            // IrTag::Memcpy: lhs=dest, rhs=src, cond=len (in elements), ir_ty=elem type
-            let dest_val = self.gen_expr(expr.lhs());
-            let src_val = self.gen_expr(expr.rhs());
-            let len_val = self.gen_expr(expr.cond());
-            let elem_llvm = self.ctx.llvm_type(expr.ir_ty());
-            if self.is_void_type(elem_llvm) {
-                return LLVMGetUndef(self.ctx.void_type);
-            }
-            let elem_size = LLVMSizeOf(elem_llvm);
-            let byte_len = LLVMBuildMul(self.ctx.builder, len_val, elem_size, self.temp_cname());
-            // Declare or get memcpy
-            let memcpy_fn = self.get_or_declare_memcpy();
-            let args = self.ctx.arena.alloc_slice::<LLVMValueRef>(3);
-            // Cast dest and src to i8* for memcpy signature compatibility
-            args[0] = LLVMBuildBitCast(self.ctx.builder, dest_val, self.ctx.ptr_type, self.temp_cname());
-            args[1] = LLVMBuildBitCast(self.ctx.builder, src_val, self.ctx.ptr_type, self.temp_cname());
-            args[2] = byte_len;
-            let memcpy_fn_ty = self.ctx.memcpy_fn_type;
-            if memcpy_fn_ty as usize != 0 {
-                LLVMBuildCall2(self.ctx.builder, memcpy_fn_ty, memcpy_fn, &args[0], 3u32, self.temp_cname());
-            }
-            LLVMGetUndef(self.ctx.void_type)
-        }
         IrTag::Void => {
             LLVMGetUndef(self.ctx.void_type)
         }
@@ -1099,6 +1075,20 @@ impl FnCodegen {
             let res_ty = self.ctx.llvm_type(result_ty);
             return LLVMGetUndef(if self.is_void_type(res_ty) { self.ctx.i64_type } else { res_ty });
         }
+        // Pointer arithmetic: ptr + int or int + ptr → use GEP
+        if op == BinOp::Add && lhs_kind == LLVMTypeKind::Pointer && rhs_kind == LLVMTypeKind::Integer {
+            let pointee_ty = self.ctx.llvm_type(lhs.ty.inner());
+            let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+            indices[0] = rhs_val;
+            return LLVMBuildInBoundsGEP2(self.ctx.builder, pointee_ty, lhs_val, &indices[0], 1u32, self.temp_cname());
+        }
+        if op == BinOp::Add && lhs_kind == LLVMTypeKind::Integer && rhs_kind == LLVMTypeKind::Pointer {
+            let pointee_ty = self.ctx.llvm_type(rhs.ty.inner());
+            let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+            indices[0] = lhs_val;
+            return LLVMBuildInBoundsGEP2(self.ctx.builder, pointee_ty, rhs_val, &indices[0], 1u32, self.temp_cname());
+        }
+
         // If types don't match, coerce: pointer->int or int size mismatch
         let lhs_ty = LLVMTypeOf(lhs_val);
         let rhs_ty = LLVMTypeOf(rhs_val);
@@ -1192,20 +1182,6 @@ impl FnCodegen {
                 LLVMGetUndef(self.ctx.llvm_type(result_ty))
             },
         }
-    }
-
-    fn get_or_declare_memcpy(self: &mut FnCodegen) -> LLVMValueRef {
-        // Always ensure memcpy_fn_type is set
-        if self.ctx.memcpy_fn_type as usize == 0 {
-            let param_types: [LLVMTypeRef; 3] = [self.ctx.ptr_type, self.ctx.ptr_type, self.ctx.isize_type];
-            self.ctx.memcpy_fn_type = LLVMFunctionType(self.ctx.ptr_type, &param_types[0], 3u32, 0i32);
-        }
-        let existing = LLVMGetNamedFunction(self.ctx.module, &"memcpy\0"[0] as &libc::c_char);
-        if existing as &void as usize != 0 {
-            return existing;
-        }
-        // Declare memcpy function
-        LLVMAddFunction(self.ctx.module, &"memcpy\0"[0] as &libc::c_char, self.ctx.memcpy_fn_type)
     }
 
     fn gen_logical_and(self: &mut FnCodegen, lhs: &IrExpr, rhs: &IrExpr) -> LLVMValueRef {

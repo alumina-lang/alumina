@@ -171,26 +171,25 @@ fn replace<T>(ptr: &mut T, val: T) -> T {
 // Slice type: &[T] is syntactic sugar for slice<&T>, &mut [T] for slice<&mut T>
 #[lang(slice)]
 struct slice<Ptr> {
-    _ptr: Ptr,
-    _len: usize,
 }
 
 impl slice {
     #[lang(slice_new)]
     fn from_raw<Ptr>(ptr: Ptr, len: usize) -> slice<Ptr> {
-        slice::<Ptr> { _ptr: ptr, _len: len }
+        // Compiler intrinsic - body is never executed
+        zeroed::<slice<Ptr>>()
     }
 
     fn len<Ptr>(self: slice<Ptr>) -> usize {
-        self._len
+        intrinsics::slice_len(self)
     }
 
     fn as_ptr<Ptr>(self: slice<Ptr>) -> Ptr {
-        self._ptr
+        &self[0]
     }
 
     fn is_empty<Ptr>(self: slice<Ptr>) -> bool {
-        self._len == 0usize
+        intrinsics::slice_len(self) == 0usize
     }
 
     /// Returns the element at the given index, or `Option::none()` if out of bounds.
@@ -222,20 +221,20 @@ impl slice {
     /// Element-wise equality comparison for slices.
     /// Specialized with memcmp for primitive types (u8, i32, etc.).
     fn equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
-        if lhs._len != rhs._len { return false; }
-        when *lhs._ptr is Primitive {
-            if lhs._len > 0usize {
+        if lhs.len() != rhs.len() { return false; }
+        when lhs[0] is Primitive {
+            if lhs.len() > 0usize {
                 memcmp(
-                    &lhs._ptr[0] as &void,
-                    &rhs._ptr[0] as &void,
-                    lhs._len * intrinsics::size_of::<typeof(*lhs._ptr)>()
+                    &lhs[0] as &void,
+                    &rhs[0] as &void,
+                    lhs.len() * intrinsics::size_of::<typeof(lhs[0])>()
                 ) == 0i32
             } else {
                 true
             }
         } else {
-            for i in 0usize..lhs._len {
-                if lhs._ptr[i] != rhs._ptr[i] { return false; }
+            for i in 0usize..lhs.len() {
+                if lhs[i] != rhs[i] { return false; }
             }
             true
         }
@@ -243,14 +242,14 @@ impl slice {
 
     /// Lexicographic comparison for slices.
     fn compare<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> std::cmp::Ordering {
-        let len = lhs._len;
-        if rhs._len < len { len = rhs._len; }
+        let len = lhs.len();
+        if rhs.len() < len { len = rhs.len(); }
         for i in 0usize..len {
-            if lhs._ptr[i] < rhs._ptr[i] { return std::cmp::Ordering::Less; }
-            if lhs._ptr[i] > rhs._ptr[i] { return std::cmp::Ordering::Greater; }
+            if lhs[i] < rhs[i] { return std::cmp::Ordering::Less; }
+            if lhs[i] > rhs[i] { return std::cmp::Ordering::Greater; }
         }
-        if lhs._len < rhs._len { std::cmp::Ordering::Less }
-        else if lhs._len > rhs._len { std::cmp::Ordering::Greater }
+        if lhs.len() < rhs.len() { std::cmp::Ordering::Less }
+        else if lhs.len() > rhs.len() { std::cmp::Ordering::Greater }
         else { std::cmp::Ordering::Equal }
     }
 

@@ -1053,7 +1053,6 @@ enum IrTag {
     Defer = 30i32,
     Void = 31i32,
     Zeroed = 32i32,
-    Memcpy = 33i32,
     Unreachable = 34i32,
     Undef = 35i32,
     Transmute = 39i32,    // transmute intrinsic; lhs holds the value, ty holds target type
@@ -1099,7 +1098,6 @@ struct _IrRetData { opt_expr: Option<&IrExpr> }
 struct _IrBlockData { items: &[&IrExpr] }
 struct _IrLetData { id: Id, ir_ty: &IrTy, opt_expr: Option<&IrExpr> }
 struct _IrStructLitData { items: &[&IrExpr], ir_ty: &IrTy }
-struct _IrMemcpyData { lhs: &IrExpr, rhs: &IrExpr, cond: &IrExpr, ir_ty: &IrTy }
 struct _IrTypeOpData { ir_ty: &IrTy }
 struct _IrCodegenData { str_val: &[u8], items: &[&IrExpr] }
 struct _IrIdxData { lhs: &IrExpr, rhs: &IrExpr }
@@ -1120,7 +1118,6 @@ union _IrExprData {
     block: _IrBlockData,
     let_data: _IrLetData,
     struct_lit: _IrStructLitData,
-    memcpy: _IrMemcpyData,
     type_op: _IrTypeOpData,
     codegen: _IrCodegenData,
     idx: _IrIdxData,
@@ -1167,7 +1164,6 @@ impl IrExpr {
         else if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.lhs }
         else if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.lhs }
         else if self.tag == IrTag::Switch { self._data.switch_data.lhs }
-        else if self.tag == IrTag::Memcpy { self._data.memcpy.lhs }
         else { self._data.single.lhs }  // Ref, Deref, Defer, Loop
     }
 
@@ -1175,12 +1171,12 @@ impl IrExpr {
         if self.tag == IrTag::Binary { self._data.bin.rhs }
         else if self.tag == IrTag::Assign { self._data.assign.rhs }
         else if self.tag == IrTag::Index { self._data.idx.rhs }
-        else { self._data.memcpy.rhs }  // Memcpy
+        else { self._data.idx.rhs }  // fallback
     }
 
     fn cond(self: &IrExpr) -> &IrExpr {
         if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.cond }
-        else { self._data.memcpy.cond }  // Memcpy
+        else { self._data.if_data.cond }  // fallback
     }
 
     fn items(self: &IrExpr) -> &[&IrExpr] {
@@ -1193,7 +1189,6 @@ impl IrExpr {
         if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.ir_ty }
         else if self.tag == IrTag::Let { self._data.let_data.ir_ty }
         else if self.tag == IrTag::StructLit { self._data.struct_lit.ir_ty }
-        else if self.tag == IrTag::Memcpy { self._data.memcpy.ir_ty }
         else { self._data.type_op.ir_ty }  // Zeroed
     }
 
