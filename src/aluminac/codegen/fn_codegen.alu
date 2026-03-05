@@ -378,7 +378,7 @@ impl FnCodegen {
         // Set debug location for this expression
         self.set_debug_loc(expr.span);
 
-        switch expr.tag {
+        let result = switch expr.tag {
         IrTag::IntLit => {
             let ty = self.ctx.llvm_type(expr.ty);
             LLVMConstInt(ty, expr.int_val(), 1i32)
@@ -388,7 +388,7 @@ impl FnCodegen {
             LLVMConstReal(ty, expr.float_val())
         }
         IrTag::BoolLit => {
-            LLVMConstInt(self.ctx.i1_type, if expr.bool_val() { 1u64 } else { 0u64 }, 0i32)
+            LLVMConstInt(self.ctx.i8_type, if expr.bool_val() { 1u64 } else { 0u64 }, 0i32)
         }
         IrTag::StringLit => {
             // Strings are &[u8] = (data pointer, length)
@@ -431,7 +431,7 @@ impl FnCodegen {
             }
         }
         IrTag::Param => {
-            let alloca = self.locals.get(&(expr.param_idx() as usize));
+            let alloca = self.locals.get(&expr.id()._value);
             if alloca.is_some() {
                 let ptr = alloca.unwrap();
                 let ty = self.ctx.llvm_type(expr.ty);
@@ -1002,8 +1002,15 @@ impl FnCodegen {
         _ => {
             LLVMGetUndef(self.ctx.void_type)
         }
-        }
+        };
 
+        // Coerce i1 -> i8: bools are stored as i8 in memory to avoid UB when
+        // loading from union fields or reinterpreted memory. LLVM comparisons
+        // produce i1, so we widen them here to match the i8 bool representation.
+        if LLVMTypeOf(result) == self.ctx.i1_type {
+            result = LLVMBuildZExt(self.ctx.builder, result, self.ctx.i8_type, self.temp_cname());
+        }
+        result
     }
 
     fn gen_lvalue(self: &mut FnCodegen, expr: &IrExpr) -> LLVMValueRef {
@@ -1017,7 +1024,7 @@ impl FnCodegen {
             }
         }
         IrTag::Param => {
-            let alloca = self.locals.get(&(expr.param_idx() as usize));
+            let alloca = self.locals.get(&expr.id()._value);
             if alloca.is_some() {
                 alloca.unwrap()
             } else {
@@ -2212,19 +2219,27 @@ impl FnCodegen {
         LLVMGetTypeKind(ty) == LLVMTypeKind::Void
     }
 
-    /// Store a value to a pointer, handling type mismatches by bitcasting the pointer
+    /// Store a value to a pointer, handling type mismatches by bitcasting the pointer.
+    /// Also coerces i1 values to i8 for bool storage.
     fn safe_store(self: &mut FnCodegen, val: LLVMValueRef, ptr: LLVMValueRef) {
         let val_ty = LLVMTypeOf(val);
         if LLVMGetTypeKind(val_ty) == LLVMTypeKind::Void {
             return;
         }
+        // Coerce i1 -> i8 for bool storage (i1 loads from memory are UB if byte != 0/1)
+        let store_val = val;
+        let store_ty = val_ty;
+        if val_ty == self.ctx.i1_type {
+            store_val = LLVMBuildZExt(self.ctx.builder, val, self.ctx.i8_type, self.temp_cname());
+            store_ty = self.ctx.i8_type;
+        }
         // Bitcast the pointer to match the value type
         let cast_ptr = LLVMBuildBitCast(
             self.ctx.builder, ptr,
-            LLVMPointerType(val_ty, 0),
+            LLVMPointerType(store_ty, 0),
             self.temp_cname()
         );
-        LLVMBuildStore(self.ctx.builder, val, cast_ptr);
+        LLVMBuildStore(self.ctx.builder, store_val, cast_ptr);
     }
 
     fn free(self: &mut FnCodegen) {

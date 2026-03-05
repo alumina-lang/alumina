@@ -530,6 +530,19 @@ extern "C" fn LLVMCreatePassManager() -> LLVMPassManagerRef;
 extern "C" fn LLVMRunPassManager(pm: LLVMPassManagerRef, m: LLVMModuleRef) -> LLVMBool;
 extern "C" fn LLVMDisposePassManager(pm: LLVMPassManagerRef);
 
+// --- New Pass Manager (PassBuilder) ---
+struct LLVMOpaquePassBuilderOptions {}
+type LLVMPassBuilderOptionsRef = &mut LLVMOpaquePassBuilderOptions;
+
+struct LLVMOpaqueError {}
+type LLVMErrorRef = &mut LLVMOpaqueError;
+
+extern "C" fn LLVMRunPasses(m: LLVMModuleRef, passes: &libc::c_char, tm: LLVMTargetMachineRef, options: LLVMPassBuilderOptionsRef) -> LLVMErrorRef;
+extern "C" fn LLVMCreatePassBuilderOptions() -> LLVMPassBuilderOptionsRef;
+extern "C" fn LLVMDisposePassBuilderOptions(options: LLVMPassBuilderOptionsRef);
+extern "C" fn LLVMGetErrorMessage(err: LLVMErrorRef) -> &mut libc::c_char;
+extern "C" fn LLVMDisposeErrorMessage(msg: &mut libc::c_char);
+
 // --- Atomics ---
 extern "C" fn LLVMBuildFence(b: LLVMBuilderRef, ordering: LLVMAtomicOrdering, single_thread: LLVMBool, name: &c_char) -> LLVMValueRef;
 extern "C" fn LLVMBuildAtomicRMW(b: LLVMBuilderRef, op: LLVMAtomicRMWBinOp, ptr: LLVMValueRef, val: LLVMValueRef, ordering: LLVMAtomicOrdering, single_thread: LLVMBool) -> LLVMValueRef;

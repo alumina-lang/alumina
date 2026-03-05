@@ -28,10 +28,18 @@ enum OutputFormat {
     Executable,
 }
 
+enum OptLevel {
+    O0 = 0i32,
+    O1 = 1i32,
+    O2 = 2i32,
+    O3 = 3i32,
+    Os = 4i32,
+}
+
 struct CompilerOptions {
     output_file: &[u8],
     output_format: OutputFormat,
-    optimize: bool,
+    optimize: OptLevel,
     dump_ir: bool,
     verify_ir: bool,
     test_mode: bool,
@@ -46,7 +54,7 @@ impl CompilerOptions {
         CompilerOptions {
             output_file: "a.out",
             output_format: OutputFormat::Executable,
-            optimize: false,
+            optimize: OptLevel::O0,
             dump_ir: false,
             verify_ir: true,
             test_mode: false,
@@ -421,6 +429,7 @@ impl Compiler {
             "alumina_module",
             self.options.test_mode,
             self.options.debug_info,
+            self.options.optimize,
         );
         if self.diag.has_errors {
             self.diag.emit_all();
@@ -438,6 +447,15 @@ impl Compiler {
                 if !self.options.dump_ir {
                     ctx.dump();
                 }
+                ctx.free();
+                return false;
+            }
+        }
+
+        // Run optimization passes if requested
+        if self.options.optimize as i32 != OptLevel::O0 as i32 {
+            if !ctx.optimize() {
+                eprintln!("error: LLVM optimization passes failed");
                 ctx.free();
                 return false;
             }
@@ -658,8 +676,16 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             options.output_format = OutputFormat::LlvmIr;
         } else if arg == "--emit-bc" {
             options.output_format = OutputFormat::Bitcode;
-        } else if arg == "-O" || arg == "-O2" || arg == "-O3" {
-            options.optimize = true;
+        } else if arg == "-O0" {
+            options.optimize = OptLevel::O0;
+        } else if arg == "-O" || arg == "-O1" {
+            options.optimize = OptLevel::O1;
+        } else if arg == "-O2" {
+            options.optimize = OptLevel::O2;
+        } else if arg == "-O3" {
+            options.optimize = OptLevel::O3;
+        } else if arg == "-Os" {
+            options.optimize = OptLevel::Os;
         } else if arg == "-g" {
             options.debug_info = true;
         } else if arg == "--dump-ir" {
@@ -719,7 +745,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
 }
 
 fn print_usage() {
-    eprintln!("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O, -O2, -O3  Enable optimizations\n  --help, -h    Show this help");
+    eprintln!("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O/-O1/-O2/-O3/-Os  Enable optimizations\n  --help, -h    Show this help");
 }
 
 fn main(args: &[&[u8]]) -> i32 {

@@ -197,8 +197,7 @@ SYSROOT_ALUMINAC = sysroot-aluminac/
 
 SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
 ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
-ALUMINAC_MODULES_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu' | grep -v main.alu)
-ALUMINAC_MAIN = src/aluminac/main.alu
+ALUMINAC_MODULES_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu')
 
 LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
 
@@ -206,8 +205,7 @@ $(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALU
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
 		$(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
-		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/) \
-		main=$(ALUMINAC_MAIN)
+		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/)
 
 $(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$(llvm-config-14 --ldflags --libs --system-libs)
@@ -215,8 +213,7 @@ $(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
 BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN) $(SYSROOT_ALUMINAC_FILES)
 BOOTSTRAP_INPUTS = $(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
-		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/) \
-		$(ALUMINAC_MAIN)
+		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/)
 
 $(ALUMINAC_S2): $(ALUMINAC_S1) $(BOOTSTRAP_DEPS)
 	$(ALUMINAC_S1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
@@ -230,7 +227,7 @@ $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
 		-o $(ALUMINAC_S3) \
 		$(BOOTSTRAP_INPUTS)
 
-$(BUILD_DIR)/aluminac: $(ALUMINAC_S1)
+$(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
 	cp $^ $@
 
 .PHONY: bootstrap

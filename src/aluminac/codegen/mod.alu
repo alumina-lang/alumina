@@ -39,6 +39,9 @@ struct CodegenCtx {
     string_cache: HashMap<u64, LLVMValueRef>,
     string_counter: usize,
 
+    // Counter for deterministic struct type naming
+    struct_name_counter: usize,
+
     // Common types
     void_type: LLVMTypeRef,
     i1_type: LLVMTypeRef,
@@ -57,6 +60,9 @@ struct CodegenCtx {
     // Pointer size in bytes
     pointer_size: u32,
 
+    // Optimization level
+    opt_level: main::OptLevel,
+
     // Debug info
     debug_enabled: bool,
     di_builder: LLVMDIBuilderRef,
@@ -66,7 +72,7 @@ struct CodegenCtx {
 }
 
 impl CodegenCtx {
-    fn new(arena: &mut Arena, diag: &mut DiagnosticContext, module_name: &[u8], debug_enabled: bool) -> CodegenCtx {
+    fn new(arena: &mut Arena, diag: &mut DiagnosticContext, module_name: &[u8], debug_enabled: bool, opt_level: main::OptLevel) -> CodegenCtx {
         // Initialize LLVM targets
         llvm::initialize_native_target();
 
@@ -94,12 +100,21 @@ impl CodegenCtx {
         let cpu = LLVMGetHostCPUName();
         let features = LLVMGetHostCPUFeatures();
 
+        let codegen_opt = switch opt_level {
+            main::OptLevel::O0 => LLVMCodeGenOptLevel::None,
+            main::OptLevel::O1 => LLVMCodeGenOptLevel::Less,
+            main::OptLevel::O2 => LLVMCodeGenOptLevel::Default,
+            main::OptLevel::O3 => LLVMCodeGenOptLevel::Aggressive,
+            main::OptLevel::Os => LLVMCodeGenOptLevel::Default,
+            _ => LLVMCodeGenOptLevel::None,
+        };
+
         let target_machine = LLVMCreateTargetMachine(
             target,
             triple,
             cpu,
             features,
-            LLVMCodeGenOptLevel::Default,
+            codegen_opt,
             LLVMRelocMode::PIC,
             LLVMCodeModel::Default,
         );
@@ -187,6 +202,7 @@ impl CodegenCtx {
             global_decls: HashMap::new(),
             string_cache: HashMap::new(),
             string_counter: 0,
+            struct_name_counter: 0,
             void_type: void_type,
             i1_type: i1_type,
             i8_type: i8_type,
@@ -201,6 +217,7 @@ impl CodegenCtx {
             memcmp_fn_type: std::mem::zeroed::<LLVMTypeRef>(),
             memcpy_fn_type: std::mem::zeroed::<LLVMTypeRef>(),
             pointer_size: pointer_size,
+            opt_level: opt_level,
             debug_enabled: debug_enabled,
             di_builder: di_builder,
             di_compile_unit: di_compile_unit,
@@ -327,7 +344,9 @@ impl CodegenCtx {
         // Create named struct for forward reference support
         // Use mangled_name if available, fall back to struct name with unique suffix
         let struct_name = if s.type_args.len() > 0 {
-            self.mangle_struct_name(s.name, key)
+            let counter = self.struct_name_counter;
+            self.struct_name_counter = self.struct_name_counter + 1usize;
+            self.mangle_struct_name(s.name, counter)
         } else {
             s.name
         };
@@ -379,7 +398,7 @@ impl CodegenCtx {
     fn builtin_to_llvm(self: &CodegenCtx, bt: BuiltinType) -> LLVMTypeRef {
         switch bt {
             BuiltinType::Void => self.void_type,
-            BuiltinType::Bool => self.i1_type,
+            BuiltinType::Bool => self.i8_type, // bools are i8 in memory to avoid i1 load UB
             BuiltinType::U8 => self.i8_type,
             BuiltinType::I8 => self.i8_type,
             BuiltinType::U16 => self.i16_type,
@@ -809,7 +828,7 @@ impl CodegenCtx {
             LLVMConstReal(ty, expr.float_val())
         }
         IrTag::BoolLit => {
-            LLVMConstInt(self.i1_type, if expr.bool_val() { 1u64 } else { 0u64 }, 0i32)
+            LLVMConstInt(self.i8_type, if expr.bool_val() { 1u64 } else { 0u64 }, 0i32)
         }
         IrTag::NullLit => {
             let ty = self.llvm_type(expr.ty);
@@ -1005,6 +1024,28 @@ impl CodegenCtx {
             if (error as usize) != 0 {
                 LLVMDisposeMessage(error);
             }
+            return false;
+        }
+        true
+    }
+
+    fn optimize(self: &mut CodegenCtx) -> bool {
+        let options = LLVMCreatePassBuilderOptions();
+        defer LLVMDisposePassBuilderOptions(options);
+
+        let passes = switch self.opt_level {
+            main::OptLevel::O1 => &"default<O1>\0"[0] as &libc::c_char,
+            main::OptLevel::O2 => &"default<O2>\0"[0] as &libc::c_char,
+            main::OptLevel::O3 => &"default<O3>\0"[0] as &libc::c_char,
+            main::OptLevel::Os => &"default<Os>\0"[0] as &libc::c_char,
+            _ => &"default<O2>\0"[0] as &libc::c_char,
+        };
+
+        let error = LLVMRunPasses(self.module, passes, self.target_machine, options);
+        if error as &void as usize != 0usize {
+            let msg = LLVMGetErrorMessage(error);
+            eprintln!("LLVM pass error");
+            LLVMDisposeErrorMessage(msg);
             return false;
         }
         true
@@ -1335,8 +1376,9 @@ fn generate(
     module_name: &[u8],
     test_mode: bool,
     debug_enabled: bool,
+    opt_level: main::OptLevel,
 ) -> CodegenCtx {
-    let ctx = CodegenCtx::new(arena, diag, module_name, debug_enabled);
+    let ctx = CodegenCtx::new(arena, diag, module_name, debug_enabled, opt_level);
 
 
     // Phase 1: Declare all struct types (forward declarations)
