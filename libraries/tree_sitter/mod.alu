@@ -66,6 +66,8 @@ extern "C" fn ts_node_symbol(self: TSNode) -> TSSymbol;
 extern "C" fn ts_node_is_null(self: TSNode) -> bool;
 extern "C" fn ts_node_is_named(self: TSNode) -> bool;
 extern "C" fn ts_node_is_missing(self: TSNode) -> bool;
+extern "C" fn ts_node_is_error(self: TSNode) -> bool;
+extern "C" fn ts_node_type(self: TSNode) -> &c_char;
 extern "C" fn ts_node_is_extra(self: TSNode) -> bool;
 extern "C" fn ts_node_has_changes(self: TSNode) -> bool;
 extern "C" fn ts_node_has_error(self: TSNode) -> bool;
@@ -373,6 +375,14 @@ impl Node {
 
     fn is_missing(self: &Node) -> bool {
         ts_node_is_missing(self.inner)
+    }
+
+    fn is_error(self: &Node) -> bool {
+        ts_node_is_error(self.inner)
+    }
+
+    fn kind_name(self: &Node) -> &[u8] {
+        CString::from_raw(ts_node_type(self.inner))[..]
     }
 
     fn is_extra(self: &Node) -> bool {

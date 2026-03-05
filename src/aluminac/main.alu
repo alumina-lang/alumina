@@ -349,6 +349,9 @@ impl Compiler {
             let raw_node = tree_sitter::ts_tree_root_node(tree.inner);
             let root = tree_sitter::Node { inner: raw_node };
 
+            // Check for syntax errors before proceeding
+            aluminac::parser::check_syntax_errors(root, entry.contents, i as u32, &self.diag);
+
             let ctx = aluminac::parser::parse_file_pass1(
                 root,
                 entry.contents,

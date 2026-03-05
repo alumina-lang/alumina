@@ -396,8 +396,7 @@ impl MonoCtx {
     // Returns true (and emits error) if depth > 500
     fn check_mono_depth(self: &mut MonoCtx, span: Span) -> bool {
         if self.mono_stack.len() > 500 {
-            let diag = diagnostics::CodeDiagnostic::depth_overflow();
-            self.diag.emit_code_error(span, &diag, self.arena);
+            self.diag.emit(diagnostics::CodeDiagnostic::depth_overflow(span));
             self.emit_mono_stack_notes();
             true
         } else {
@@ -413,12 +412,11 @@ impl MonoCtx {
         let i: usize = 0;
         while i < limit {
             let frame = self.mono_stack[count - 1 - i];
-            let msg = diagnostics::DiagnosticContext::format_msg(self.arena, "in instantiation of '", frame.fn_name, "'");
-            self.diag.note(frame.span, msg);
+            self.diag.emit(diagnostics::CodeDiagnostic::instantiation_note(frame.span, frame.fn_name));
             i = i + 1;
         }
         if count > limit {
-            self.diag.note(ast::Span::empty(), "... and more frames omitted");
+            self.diag.emit(diagnostics::CodeDiagnostic::generic_note(ast::Span::empty(), "... and more frames omitted"));
         }
     }
 

@@ -274,7 +274,7 @@ impl ParseContext {
     }
 
     fn error(self: &mut ParseContext, node: Node, message: &[u8]) {
-        self.diag.error(self.make_span(node), message);
+        self.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.make_span(node), message));
     }
 
     fn free(self: &mut ParseContext) {
@@ -582,6 +582,53 @@ fn share_macros(contexts: &mut [ParseContext]) {
         for j in 0usize..all_names.len() {
             if contexts[i].macro_name_to_id.get(&all_names[j]).is_none() {
                 contexts[i].macro_name_to_id.insert(all_names[j], all_name_ids[j]);
+            }
+        }
+    }
+}
+
+fn check_syntax_errors(
+    root: Node,
+    source: &[u8],
+    file_id: u32,
+    diag: &mut DiagnosticContext,
+) {
+    if !root.has_error() {
+        return;
+    }
+
+    // Pre-order walk using tree-sitter cursor
+    let cursor = root.walk();
+    defer cursor.free();
+
+    let done = false;
+    while !done {
+        let node = cursor.node();
+        if node.is_error() {
+            let text = node.text(source);
+            let show = if text.len() > 40usize { text[0usize..40usize] } else { text };
+            let span = Span { file_id: file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+            diag.emit(diagnostics::CodeDiagnostic::syntax_error(span, show));
+        } else if node.is_missing() {
+            let span = Span { file_id: file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+            diag.emit(diagnostics::CodeDiagnostic::syntax_missing(span, node.kind_name()));
+        }
+
+        // Pre-order DFS: try child, then sibling, then uncle
+        if cursor.goto_first_child() {
+            // descended
+        } else if cursor.goto_next_sibling() {
+            // moved to sibling
+        } else {
+            // backtrack until we can go to a sibling
+            loop {
+                if !cursor.goto_parent() {
+                    done = true;
+                    break;
+                }
+                if cursor.goto_next_sibling() {
+                    break;
+                }
             }
         }
     }
