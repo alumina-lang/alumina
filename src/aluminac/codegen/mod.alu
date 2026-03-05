@@ -92,7 +92,7 @@ impl CodegenCtx {
         LLVMSetTarget(module, triple);
 
         let target: LLVMTargetRef = std::mem::zeroed::<LLVMTargetRef>();
-        let error: &mut libc::c_char = std::mem::zeroed::<&mut libc::c_char>();
+        let error: &mut libc::c_char = null;
         LLVMGetTargetFromTriple(triple, &target, &error);
 
         let cpu = LLVMGetHostCPUName();
@@ -331,7 +331,7 @@ impl CodegenCtx {
         if s.is_zero_sized {
             // Zero-sized struct becomes {}
             let result = LLVMStructTypeInContext(
-                self.context, std::mem::zeroed::<&LLVMTypeRef>(), 0, 0i32
+                self.context, null, 0, 0i32
             );
             self.struct_type_cache.insert(key, result);
             return result;
@@ -467,7 +467,7 @@ impl CodegenCtx {
         } else {
             LLVMFunctionType(
                 llvm_ret,
-                std::mem::zeroed::<&LLVMTypeRef>(),
+                null,
                 0u32,
                 if ir_fn.is_variadic { 1i32 } else { 0i32 }
             )
@@ -949,7 +949,7 @@ impl CodegenCtx {
 
     fn emit_to_object(self: &mut CodegenCtx, filename: &[u8]) -> bool {
         let fname = self.null_terminate(filename);
-        let error: &mut libc::c_char = std::mem::zeroed::<&mut libc::c_char>();
+        let error: &mut libc::c_char = null;
         let result = LLVMTargetMachineEmitToFile(
             self.target_machine,
             self.module,
@@ -971,7 +971,7 @@ impl CodegenCtx {
 
     fn emit_to_assembly(self: &mut CodegenCtx, filename: &[u8]) -> bool {
         let fname = self.null_terminate(filename);
-        let error: &mut libc::c_char = std::mem::zeroed::<&mut libc::c_char>();
+        let error: &mut libc::c_char = null;
         let result = LLVMTargetMachineEmitToFile(
             self.target_machine,
             self.module,
@@ -995,7 +995,7 @@ impl CodegenCtx {
 
     fn print_ir(self: &mut CodegenCtx, filename: &[u8]) -> bool {
         let fname = self.null_terminate(filename);
-        let error: &mut libc::c_char = std::mem::zeroed::<&mut libc::c_char>();
+        let error: &mut libc::c_char = null;
         let result = LLVMPrintModuleToFile(
             self.module,
             &fname[0] as &libc::c_char,
@@ -1033,7 +1033,7 @@ impl CodegenCtx {
     }
 
     fn verify(self: &mut CodegenCtx) -> bool {
-        let error: &mut libc::c_char = std::mem::zeroed::<&mut libc::c_char>();
+        let error: &mut libc::c_char = null;
         // Use PrintMessage to print errors to stderr
         let result = LLVMVerifyModule(
             self.module,
@@ -1094,7 +1094,7 @@ impl CodegenCtx {
         let user_fn_ty = if ir_fn.params.len() > 0 {
             LLVMFunctionType(user_ret_ty, &user_param_types[0], ir_fn.params.len() as u32, 0i32)
         } else {
-            LLVMFunctionType(user_ret_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32)
+            LLVMFunctionType(user_ret_ty, null, 0u32, 0i32)
         };
 
         // Convert C argc/argv to Alumina &[&[u8]] format
@@ -1204,7 +1204,7 @@ impl CodegenCtx {
         let result = if ir_fn.params.len() > 0 {
             LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, &call_args[0], ir_fn.params.len() as u32, call_name)
         } else {
-            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, std::mem::zeroed::<&LLVMValueRef>(), 0u32, call_name)
+            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, null, 0u32, call_name)
         };
 
         // Return the user main's return value (or 0 if void)
@@ -1228,7 +1228,7 @@ impl CodegenCtx {
         let puts_fn = LLVMAddFunction(self.module, &"puts\0"[0] as &libc::c_char, puts_ty);
 
         // Create main: int main(void)
-        let main_type = LLVMFunctionType(i32_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+        let main_type = LLVMFunctionType(i32_ty, null, 0u32, 0i32);
         let main_fn = LLVMAddFunction(self.module, &"main\0"[0] as &libc::c_char, main_type);
         LLVMSetLinkage(main_fn, LLVMLinkage::External);
 
@@ -1292,9 +1292,9 @@ impl CodegenCtx {
             let test_fn_val = self.fn_decls.get(&test_fn_hash);
             if test_fn_val.is_none() { continue; }
 
-            let void_fn_ty = LLVMFunctionType(self.void_type, std::mem::zeroed::<&LLVMTypeRef>(), 0u32, 0i32);
+            let void_fn_ty = LLVMFunctionType(self.void_type, null, 0u32, 0i32);
             LLVMBuildCall2(self.builder, void_fn_ty, test_fn_val.unwrap(),
-                std::mem::zeroed::<&LLVMValueRef>(), 0u32, &"\0"[0] as &libc::c_char);
+                null, 0u32, &"\0"[0] as &libc::c_char);
 
             // Print "PASS" (if it didn't crash, it passed)
             let pass_str = LLVMBuildGlobalStringPtr(self.builder, &"PASS\0"[0] as &libc::c_char,
@@ -1442,7 +1442,7 @@ fn generate(
             // Build @llvm.global_ctors = appending global [N x { i32, void ()*, i8* }]
             let i32_ty = LLVMInt32TypeInContext(ctx.context);
             let void_ty = LLVMVoidTypeInContext(ctx.context);
-            let void_fn_ty = LLVMFunctionType(void_ty, std::mem::zeroed::<&LLVMTypeRef>(), 0, 0i32);
+            let void_fn_ty = LLVMFunctionType(void_ty, null, 0, 0i32);
             let void_fn_ptr_ty = LLVMPointerType(void_fn_ty, 0);
             let i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(ctx.context), 0);
 

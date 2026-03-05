@@ -92,7 +92,7 @@ enum CodeDiagKind {
 
     // Intrinsics / codegen builtins
     UnknownIntrinsic = 20i32,
-    UnknownCodegenFunc = 21i32,
+    LlvmIntrinsicTypeMismatch = 21i32,
 
     // Recursion / limits
     DepthOverflow = 30i32,
@@ -188,8 +188,8 @@ impl CodeDiagnostic {
         CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnknownIntrinsic, name)
     }
 
-    fn unknown_codegen_func(span: Span, name: &[u8]) -> CodeDiagnostic {
-        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnknownCodegenFunc, name)
+    fn llvm_intrinsic_type_mismatch(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::LlvmIntrinsicTypeMismatch, name)
     }
 
     fn depth_overflow(span: Span) -> CodeDiagnostic {
@@ -256,8 +256,8 @@ impl CodeDiagnostic {
             CodeDiagKind::NotCallable => f.write_str("expression is not callable"),
             CodeDiagKind::UnknownIntrinsic =>
                 write!(f, "unknown intrinsic '{}'", self._data.name.name),
-            CodeDiagKind::UnknownCodegenFunc =>
-                write!(f, "unknown codegen_func '{}'", self._data.name.name),
+            CodeDiagKind::LlvmIntrinsicTypeMismatch =>
+                write!(f, "LLVM intrinsic '{}' return type does not match Alumina type", self._data.name.name),
             CodeDiagKind::DepthOverflow =>
                 f.write_str("monomorphization depth limit exceeded (possible infinite recursion)"),
             CodeDiagKind::CodegenMissingLocal => f.write_str("codegen: local variable not found"),

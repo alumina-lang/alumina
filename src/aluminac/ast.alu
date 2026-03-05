@@ -209,7 +209,7 @@ impl Ty {
         Ty { tag: TyTag::Array, _data: _TyData { array: _TyArrayData { inner: elem, array_size: size } } }
     }
     fn array_ty_with_expr(elem: &Ty, size_expr: &Expr) -> Ty {
-        Ty { tag: TyTag::Array, _data: _TyData { when: _TyWhenData { inner: elem, ret_ty: std::mem::zeroed::<&Ty>(), typeof_expr: size_expr } } }
+        Ty { tag: TyTag::Array, _data: _TyData { when: _TyWhenData { inner: elem, ret_ty: null, typeof_expr: size_expr } } }
     }
     fn tuple_ty(elems: &[&Ty]) -> Ty {
         Ty { tag: TyTag::Tuple, _data: _TyData { elems: elems } }
@@ -487,7 +487,7 @@ impl Expr {
         else if self.tag == ExprTag::Lambda { self._data.lambda.lhs }
         else if self.tag == ExprTag::Range { self._data.range.lhs }
         else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs }
-        else { std::mem::zeroed::<&Expr>() }
+        else { null }
     }
 
     fn rhs(self: &Expr) -> &Expr {
@@ -496,13 +496,13 @@ impl Expr {
         else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.rhs }
         else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.rhs }
         else if self.tag == ExprTag::Range { self._data.range.rhs }
-        else { std::mem::zeroed::<&Expr>() }
+        else { null }
     }
 
     fn cond(self: &Expr) -> &Expr {
         if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.cond }
         else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.cond }
-        else { std::mem::zeroed::<&Expr>() }
+        else { null }
     }
 
     fn args(self: &Expr) -> &[&Expr] {
@@ -1007,7 +1007,7 @@ struct IrEnumRef {
 impl IrEnumRef {
     fn empty() -> IrEnumRef {
         IrEnumRef { id: Id { _value: 0 }, name: "",
-                     underlying: std::mem::zeroed::<&IrTy>(), variants: &[], scope_idx: 0 }
+                     underlying: null, variants: &[], scope_idx: 0 }
     }
 }
 
@@ -1058,10 +1058,8 @@ enum IrTag {
     Transmute = 39i32,    // transmute intrinsic; lhs holds the value, ty holds target type
     Trap = 40i32,
     StackAlloc = 41i32,   // stack allocation; lhs holds size expr, ty holds return pointer type
-    OverflowAdd = 42i32,  // unsigned add with overflow; items[0]=a, items[1]=b, items[2]=result_ptr; ty=bool
-    OverflowSub = 43i32,  // unsigned sub with overflow; items[0]=a, items[1]=b, items[2]=result_ptr; ty=bool
-    OverflowMul = 44i32,  // unsigned mul with overflow; items[0]=a, items[1]=b, items[2]=result_ptr; ty=bool
     InlineAsm = 45i32,    // inline assembly; str_val holds asm string
+    LlvmIntrinsic = 46i32, // generic LLVM intrinsic call; str_val=intrinsic name, items=args, ty=return type
 }
 
 // Call target tags
@@ -1182,7 +1180,8 @@ impl IrExpr {
     fn items(self: &IrExpr) -> &[&IrExpr] {
         if self.tag == IrTag::Call { self._data.call.items }
         else if self.tag == IrTag::StructLit { self._data.struct_lit.items }
-        else { self._data.block.items }  // Block, TupleLit, ArrayLit, OverflowAdd/Sub/Mul
+        else if self.tag == IrTag::LlvmIntrinsic { self._data.codegen.items }
+        else { self._data.block.items }  // Block, TupleLit, ArrayLit
     }
 
     fn ir_ty(self: &IrExpr) -> &IrTy {
@@ -1199,7 +1198,7 @@ impl IrExpr {
     }
 
     fn str_val(self: &IrExpr) -> &[u8] {
-        if self.tag == IrTag::InlineAsm { self._data.codegen.str_val }
+        if self.tag == IrTag::InlineAsm || self.tag == IrTag::LlvmIntrinsic { self._data.codegen.str_val }
         else { self._data.lit.str_val }  // StringLit
     }
 

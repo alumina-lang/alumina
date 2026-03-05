@@ -171,7 +171,7 @@ impl Mono {
     fn mk_call(self: &mut Mono, fn_ref: IrFnRef, args: &[&IrExpr], ret_ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(ret_ty);
         e.tag = IrTag::Call;
-        e._data.call.call_target = IrCallTarget { tag: CallKind::Direct, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+        e._data.call.call_target = IrCallTarget { tag: CallKind::Direct, fn_ref: fn_ref, callee: null };
         e._data.call.items = args;
         self.ctx.arena.alloc(e) as &IrExpr
     }
@@ -1455,7 +1455,7 @@ impl Mono {
             let arm_body = self.lower_expr(arm.body);
 
             // Build condition: tmp == pat[0] || tmp == pat[1] || ...
-            let cond: &IrExpr = std::mem::zeroed::<&IrExpr>();
+            let cond: &IrExpr = null;
             for j in 0usize..arm.pattern.len() {
                 let pat_val = self.lower_expr(arm.pattern[j]);
 
