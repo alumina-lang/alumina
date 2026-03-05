@@ -1188,8 +1188,6 @@ impl FnCodegen {
             false
         };
 
-        let is_ptr = lhs.ty.tag == IrTyTag::Pointer;
-
         let n = self.temp_cname();
 
         switch op {
@@ -1224,26 +1222,11 @@ impl FnCodegen {
                 else { LLVMBuildLShr(self.ctx.builder, lhs_val, rhs_val, n) }
             },
             BinOp::Eq => {
-                let is_slice = lhs.ty.tag == IrTyTag::Slice ||
-                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems().len() == 2usize && lhs.ty.elems()[0].tag == IrTyTag::Pointer);
-                if is_slice {
-                    self.gen_slice_eq(lhs_val, rhs_val, lhs.ty)
-                } else if LLVMGetTypeKind(LLVMTypeOf(lhs_val)) == LLVMTypeKind::Struct {
-                    self.gen_struct_eq(lhs_val, rhs_val)
-                } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::OEQ, lhs_val, rhs_val, n) }
-                else if is_ptr { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_val, rhs_val, n) }
+                if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::OEQ, lhs_val, rhs_val, n) }
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_val, rhs_val, n) }
             },
             BinOp::Ne => {
-                let is_slice = lhs.ty.tag == IrTyTag::Slice ||
-                    (lhs.ty.tag == IrTyTag::Tuple && lhs.ty.elems().len() == 2usize && lhs.ty.elems()[0].tag == IrTyTag::Pointer);
-                if is_slice {
-                    let eq = self.gen_slice_eq(lhs_val, rhs_val, lhs.ty);
-                    LLVMBuildNot(self.ctx.builder, eq, n)
-                } else if LLVMGetTypeKind(LLVMTypeOf(lhs_val)) == LLVMTypeKind::Struct {
-                    let eq = self.gen_struct_eq(lhs_val, rhs_val);
-                    LLVMBuildNot(self.ctx.builder, eq, n)
-                } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::UNE, lhs_val, rhs_val, n) }
+                if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::UNE, lhs_val, rhs_val, n) }
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::NE, lhs_val, rhs_val, n) }
             },
             BinOp::Lt => {
@@ -1270,131 +1253,6 @@ impl FnCodegen {
                 LLVMGetUndef(self.ctx.llvm_type(result_ty))
             },
         }
-    }
-
-    fn gen_slice_eq(self: &mut FnCodegen, lhs_val: LLVMValueRef, rhs_val: LLVMValueRef, slice_ty: &IrTy) -> LLVMValueRef {
-        let n = self.temp_cname();
-        let slice_llvm = self.ctx.llvm_type(slice_ty);
-
-        // Store both slices to allocas so we can GEP into them
-        let lhs_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
-        LLVMBuildStore(self.ctx.builder, lhs_val, lhs_alloca);
-        let rhs_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
-        LLVMBuildStore(self.ctx.builder, rhs_val, rhs_alloca);
-
-        // Extract ptr and len from both
-        let lhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, SLICE_DATA_FIELD, self.temp_cname());
-        let lhs_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, lhs_ptr_ptr, self.temp_cname());
-        let lhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, SLICE_LEN_FIELD, self.temp_cname());
-        let lhs_len = LLVMBuildLoad2(self.ctx.builder, self.ctx.isize_type, lhs_len_ptr, self.temp_cname());
-
-        let rhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, SLICE_DATA_FIELD, self.temp_cname());
-        let rhs_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, rhs_ptr_ptr, self.temp_cname());
-        let rhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, SLICE_LEN_FIELD, self.temp_cname());
-        let rhs_len = LLVMBuildLoad2(self.ctx.builder, self.ctx.isize_type, rhs_len_ptr, self.temp_cname());
-
-        // Compare lengths
-        let len_eq = LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_len, rhs_len, self.temp_cname());
-
-        // Create basic blocks for the memcmp path
-        let memcmp_bb = LLVMAppendBasicBlockInContext(
-            self.ctx.context, self.llvm_fn, &"slice_eq.memcmp\0"[0] as &libc::c_char
-        );
-        let merge_bb = LLVMAppendBasicBlockInContext(
-            self.ctx.context, self.llvm_fn, &"slice_eq.merge\0"[0] as &libc::c_char
-        );
-
-        let current_bb = LLVMGetInsertBlock(self.ctx.builder);
-        LLVMBuildCondBr(self.ctx.builder, len_eq, memcmp_bb, merge_bb);
-
-        // memcmp path
-        LLVMPositionBuilderAtEnd(self.ctx.builder, memcmp_bb);
-
-        // Declare memcmp if not already declared
-        let memcmp_fn = self.get_or_declare_memcmp();
-        let memcmp_args: [LLVMValueRef; 3] = [lhs_ptr, rhs_ptr, lhs_len];
-        let memcmp_result = LLVMBuildCall2(
-            self.ctx.builder,
-            self.ctx.memcmp_fn_type,
-            memcmp_fn,
-            &memcmp_args[0],
-            3u32,
-            self.temp_cname()
-        );
-        let data_eq = LLVMBuildICmp(
-            self.ctx.builder, LLVMIntPredicate::EQ,
-            memcmp_result,
-            LLVMConstInt(self.ctx.i32_type, 0u64, 0i32),
-            self.temp_cname()
-        );
-        let memcmp_end_bb = LLVMGetInsertBlock(self.ctx.builder);
-        LLVMBuildBr(self.ctx.builder, merge_bb);
-
-        // Merge
-        LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);
-        let phi = LLVMBuildPhi(self.ctx.builder, self.ctx.i1_type, n);
-        let vals: [LLVMValueRef; 2] = [LLVMConstInt(self.ctx.i1_type, 0u64, 0i32), data_eq];
-        let blocks: [LLVMBasicBlockRef; 2] = [current_bb, memcmp_end_bb];
-        LLVMAddIncoming(phi, &vals[0], &blocks[0], 2u32);
-        phi
-    }
-
-    // Compare two struct values field-by-field for equality
-    fn gen_struct_eq(self: &mut FnCodegen, lhs_val: LLVMValueRef, rhs_val: LLVMValueRef) -> LLVMValueRef {
-        let struct_ty = LLVMTypeOf(lhs_val);
-        let nfields = LLVMCountStructElementTypes(struct_ty);
-
-        if nfields == 0u32 {
-            // Empty structs are always equal
-            return LLVMConstInt(self.ctx.i1_type, 1u64, 0i32);
-        }
-
-        // Store both to allocas for GEP
-        let lhs_alloca = LLVMBuildAlloca(self.ctx.builder, struct_ty, self.temp_cname());
-        LLVMBuildStore(self.ctx.builder, lhs_val, lhs_alloca);
-        let rhs_alloca = LLVMBuildAlloca(self.ctx.builder, struct_ty, self.temp_cname());
-        LLVMBuildStore(self.ctx.builder, rhs_val, rhs_alloca);
-
-        // Compare each field and AND results together
-        let result = LLVMConstInt(self.ctx.i1_type, 1u64, 0i32); // start with true
-        for i in 0u32..nfields {
-            let lhs_field_ptr = LLVMBuildStructGEP2(self.ctx.builder, struct_ty, lhs_alloca, i, self.temp_cname());
-            let rhs_field_ptr = LLVMBuildStructGEP2(self.ctx.builder, struct_ty, rhs_alloca, i, self.temp_cname());
-            let field_ty = LLVMStructGetTypeAtIndex(struct_ty, i);
-            let field_kind = LLVMGetTypeKind(field_ty);
-
-            let field_eq: LLVMValueRef = if field_kind == LLVMTypeKind::Struct {
-                // Recursively compare nested structs
-                let lhs_field = LLVMBuildLoad2(self.ctx.builder, field_ty, lhs_field_ptr, self.temp_cname());
-                let rhs_field = LLVMBuildLoad2(self.ctx.builder, field_ty, rhs_field_ptr, self.temp_cname());
-                self.gen_struct_eq(lhs_field, rhs_field)
-            } else if field_kind == LLVMTypeKind::Void {
-                LLVMConstInt(self.ctx.i1_type, 1u64, 0i32) // void fields always equal
-            } else {
-                let lhs_field = LLVMBuildLoad2(self.ctx.builder, field_ty, lhs_field_ptr, self.temp_cname());
-                let rhs_field = LLVMBuildLoad2(self.ctx.builder, field_ty, rhs_field_ptr, self.temp_cname());
-                if field_kind == LLVMTypeKind::Double || field_kind == LLVMTypeKind::Float {
-                    LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::OEQ, lhs_field, rhs_field, self.temp_cname())
-                } else {
-                    LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_field, rhs_field, self.temp_cname())
-                }
-            };
-            result = LLVMBuildAnd(self.ctx.builder, result, field_eq, self.temp_cname());
-        }
-        result
-    }
-
-    fn get_or_declare_memcmp(self: &mut FnCodegen) -> LLVMValueRef {
-        // Always ensure memcmp_fn_type is set
-        if self.ctx.memcmp_fn_type as usize == 0 {
-            let param_types: [LLVMTypeRef; 3] = [self.ctx.ptr_type, self.ctx.ptr_type, self.ctx.isize_type];
-            self.ctx.memcmp_fn_type = LLVMFunctionType(self.ctx.i32_type, &param_types[0], 3u32, 0i32);
-        }
-        let existing = LLVMGetNamedFunction(self.ctx.module, &"memcmp\0"[0] as &libc::c_char);
-        if existing as &void as usize != 0 {
-            return existing;
-        }
-        LLVMAddFunction(self.ctx.module, &"memcmp\0"[0] as &libc::c_char, self.ctx.memcmp_fn_type)
     }
 
     fn get_or_declare_memcpy(self: &mut FnCodegen) -> LLVMValueRef {

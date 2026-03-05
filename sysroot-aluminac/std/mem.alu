@@ -220,12 +220,25 @@ impl slice {
     }
 
     /// Element-wise equality comparison for slices.
+    /// Specialized with memcmp for primitive types (u8, i32, etc.).
     fn equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
         if lhs._len != rhs._len { return false; }
-        for i in 0usize..lhs._len {
-            if lhs._ptr[i] != rhs._ptr[i] { return false; }
+        when *lhs._ptr is Primitive {
+            if lhs._len > 0usize {
+                memcmp(
+                    &lhs._ptr[0] as &void,
+                    &rhs._ptr[0] as &void,
+                    lhs._len * intrinsics::size_of::<typeof(*lhs._ptr)>()
+                ) == 0i32
+            } else {
+                true
+            }
+        } else {
+            for i in 0usize..lhs._len {
+                if lhs._ptr[i] != rhs._ptr[i] { return false; }
+            }
+            true
         }
-        true
     }
 
     /// Lexicographic comparison for slices.

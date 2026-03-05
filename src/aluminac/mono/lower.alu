@@ -203,27 +203,17 @@ impl Mono {
                 }
             }
             TyTag::Pointer => {
-                // Special case: &[T] and &mut [T] are fat pointers (not pointer-to-slice)
+                // Special case: &[T] and &mut [T] are fat pointers (slice type)
                 if ty.inner().tag == TyTag::Slice {
                     let elem_ty = self.resolve_type(ty.inner().inner());
-                    let data_ty = self.ctx.make_ptr_ty(elem_ty, ty.is_const());
-                    let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                    let fields = self.ctx.arena.alloc_slice::<&IrTy>(2);
-                    fields[0] = data_ty;
-                    fields[1] = usize_ty;
-                    return self.ctx.make_tuple_ty(fields);
+                    return self.ctx.make_slice_ty(elem_ty, ty.is_const());
                 }
                 let inner_ty = self.resolve_type(ty.inner());
                 self.ctx.make_ptr_ty(inner_ty, ty.is_const())
             }
             TyTag::Slice => {
                 let inner_ty = self.resolve_type(ty.inner());
-                let data_ty = self.ctx.make_ptr_ty(inner_ty, ty.is_const());
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                let fields = self.ctx.arena.alloc_slice::<&IrTy>(2);
-                fields[0] = data_ty;
-                fields[1] = usize_ty;
-                self.ctx.make_tuple_ty(fields)
+                self.ctx.make_slice_ty(inner_ty, ty.is_const())
             }
             TyTag::Array => {
                 let inner_ty = self.resolve_type(ty.inner());
@@ -1099,6 +1089,14 @@ impl Mono {
             scope_idx = ty.struct_ref().scope_idx;
         } else if ty.tag == IrTyTag::Enum {
             scope_idx = ty.enum_ref().scope_idx;
+        } else if ty.tag == IrTyTag::Slice {
+            let lang_id = self.ctx.get_lang_item("slice");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
         }
         if scope_idx == 0u32 {
             return Option::none();
@@ -1127,7 +1125,14 @@ impl Mono {
         // the full type. This correctly maps to the method's generic params,
         // whether the method is in a generic impl (impl Option<T>) or a
         // non-generic impl (impl Option { fn equals<T>(...) }).
-        let type_args: &[&IrTy] = if ty.tag == IrTyTag::Struct && ty.struct_ref().type_args.len() > 0 && def.generic_params.len() == ty.struct_ref().type_args.len() {
+        let type_args: &[&IrTy] = if ty.tag == IrTyTag::Slice {
+            // For slices, the type arg is Ptr = &elem_type
+            let elem_ty = self.slice_elem_ty(ty);
+            let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+            let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+            ta[0] = ptr_ty;
+            ta as &[&IrTy]
+        } else if ty.tag == IrTyTag::Struct && ty.struct_ref().type_args.len() > 0 && def.generic_params.len() == ty.struct_ref().type_args.len() {
             ty.struct_ref().type_args
         } else {
             // Fallback for non-generic structs, enums, etc: pass the whole type
@@ -1447,7 +1452,7 @@ impl Mono {
                 || expr.bin_op() == BinOp::Le
                 || expr.bin_op() == BinOp::Gt
                 || expr.bin_op() == BinOp::Ge;
-            if is_comparison && ir_lhs.ty.tag == IrTyTag::Struct {
+            if is_comparison && (ir_lhs.ty.tag == IrTyTag::Struct || ir_lhs.ty.tag == IrTyTag::Slice) {
                 let overload = self.try_operator_overload(expr.bin_op(), ir_lhs, ir_rhs);
                 if overload.is_some() {
                     return overload.unwrap();
@@ -1717,7 +1722,7 @@ impl Mono {
         }
 
         // Check if this is a slice iteration: for item in slice { body }
-        if self.is_slice_ty(iterable_ty) {
+        if iterable_ty.tag == IrTyTag::Slice {
             return self.lower_for_slice(expr, iterable_ir, iterable_ty);
         }
 
@@ -1757,7 +1762,7 @@ impl Mono {
                 iter_ty = iter_result.ty;
 
                 // The result of .iter() might be a slice
-                if self.is_slice_ty(iter_ty) {
+                if iter_ty.tag == IrTyTag::Slice {
                     return self.lower_for_slice_with_preamble(expr, iter_ir, iter_ty, iter_let_stmt);
                 }
             }
@@ -2483,7 +2488,7 @@ impl Mono {
             let ir_index = self.lower_expr(expr.rhs());
 
             // Handle slice indexing: extract data pointer, then index
-            if self.is_slice_ty(ir_base.ty) {
+            if ir_base.ty.tag == IrTyTag::Slice {
                 let elem_ty = self.slice_elem_ty(ir_base.ty);
                 // Extract the data pointer (field 0 of the fat pointer tuple)
                 let data_ptr_ty = if ir_base.ty.tag == IrTyTag::Slice {
@@ -2503,7 +2508,7 @@ impl Mono {
             if ir_base.ty.tag == IrTyTag::Struct {
                 let sr = ir_base.ty.struct_ref();
                 for fi in 0usize..sr.fields.len() {
-                    if self.is_slice_ty(sr.fields[fi].ty) {
+                    if sr.fields[fi].ty.tag == IrTyTag::Slice {
                         // Extract the slice field
                         let slice_ref = self.mk_field(ir_base, fi as u32, sr.fields[fi].ty);
                         // Index through the slice
@@ -2628,7 +2633,7 @@ impl Mono {
     // Coerce a value to a target type (e.g., pointer-to-array → slice)
     fn coerce_to_type(self: &mut Mono, val: &IrExpr, target_ty: &IrTy) -> &IrExpr {
         // Coerce &[T; N] to &[T] (pointer to array → slice fat pointer)
-        if self.is_slice_ty(target_ty) && val.ty.tag == IrTyTag::Pointer && val.ty.inner().tag == IrTyTag::Array {
+        if target_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Pointer && val.ty.inner().tag == IrTyTag::Array {
             let array_ty = val.ty.inner();
             let elem_ty = array_ty.inner();
             let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
@@ -2657,7 +2662,7 @@ impl Mono {
         }
 
         // Coerce &mut [T] -> &[T] (mutable slice to const slice)
-        if self.is_slice_ty(target_ty) && self.is_slice_ty(val.ty) {
+        if target_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Slice {
             let target_elem = self.slice_elem_ty(target_ty);
             let val_elem = self.slice_elem_ty(val.ty);
             if target_elem == val_elem && target_ty != val.ty {
@@ -2680,25 +2685,9 @@ impl Mono {
         }
     }
 
-    // Check if a type is a slice
-    fn is_slice_ty(self: &Mono, ty: &IrTy) -> bool {
-        if ty.tag == IrTyTag::Slice { return true; }
-        // Also detect tuples that look like slices (legacy representation)
-        if ty.tag == IrTyTag::Tuple && ty.elems().len() == 2 {
-            return ty.elems()[0].tag == IrTyTag::Pointer;
-        }
-        false
-    }
-
     // Get the element type of a slice
     fn slice_elem_ty(self: &Mono, ty: &IrTy) -> &IrTy {
-        if ty.tag == IrTyTag::Slice {
-            // IrTyTag::Slice stores element type in inner directly
-            ty.inner()
-        } else {
-            // IrTyTag::Tuple representation: {&T, usize}, elem type is pointer's inner type
-            ty.elems()[0].inner()
-        }
+        ty.inner()
     }
 
     // Lower sub-slice indexing: data[a..b], data[n..], data[..m]
@@ -2803,7 +2792,7 @@ impl Mono {
             return self.ctx.arena.alloc(result);
         }
 
-        if !self.is_slice_ty(base.ty) {
+        if base.ty.tag != IrTyTag::Slice {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             return self.ctx.arena.alloc(r);
         }
@@ -3162,11 +3151,11 @@ impl Mono {
         // Handle slice built-in methods
         let slice_ty = ir_obj.ty;
         let is_ptr_to_slice = false;
-        if slice_ty.tag == IrTyTag::Pointer && self.is_slice_ty(slice_ty.inner()) {
+        if slice_ty.tag == IrTyTag::Pointer && slice_ty.inner().tag == IrTyTag::Slice {
             slice_ty = slice_ty.inner();
             is_ptr_to_slice = true;
         }
-        if self.is_slice_ty(slice_ty) {
+        if slice_ty.tag == IrTyTag::Slice {
             if method_name == "len" {
                 // slice.len() -> extract field 1 (the length)
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
@@ -3317,7 +3306,7 @@ impl Mono {
             method_type_args = resolved_ty.struct_ref().type_args;
         } else if resolved_ty.tag == IrTyTag::Enum {
             scope_idx = resolved_ty.enum_ref().scope_idx;
-        } else if self.is_slice_ty(resolved_ty) {
+        } else if resolved_ty.tag == IrTyTag::Slice {
             // Look up #[lang(slice)] struct for methods on slice types
             // slice<Ptr> where Ptr is the pointer-to-element type
             let lang_id = self.ctx.get_lang_item("slice");
@@ -4496,7 +4485,7 @@ impl Mono {
         } else if ty.tag == IrTyTag::Pointer {
             // Auto-deref
             self.resolve_field(ty.inner(), field_name)
-        } else if self.is_slice_ty(ty) {
+        } else if ty.tag == IrTyTag::Slice {
             // Slice fields: _ptr (field 0), _len (field 1)
             if field_name == "_ptr" {
                 let ptr_ty = if ty.tag == IrTyTag::Slice {
