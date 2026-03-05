@@ -452,14 +452,19 @@ impl FnCodegen {
             }
         }
         IrTag::FnRef => {
-            let hash = self.ctx.name_hash(expr.fn_ref().mangled_name);
-            let existing = self.ctx.fn_decls.get(&hash);
-            if existing.is_some() {
-                // Bitcast function pointer to i8* for uniform pointer representation
-                LLVMBuildBitCast(self.ctx.builder, existing.unwrap(), self.ctx.ptr_type, self.temp_cname())
+            if expr.ty.tag == IrTyTag::Fn {
+                // Fn type is a ZST - no runtime value
+                LLVMGetUndef(self.ctx.void_type)
             } else {
-                self.warn_undef(diagnostics::CodeDiagnostic::codegen_missing_function(expr.span, expr.fn_ref().mangled_name));
-                LLVMGetUndef(self.ctx.ptr_type)
+                let hash = self.ctx.name_hash(expr.fn_ref().mangled_name);
+                let existing = self.ctx.fn_decls.get(&hash);
+                if existing.is_some() {
+                    // Bitcast function pointer to i8* for uniform pointer representation
+                    LLVMBuildBitCast(self.ctx.builder, existing.unwrap(), self.ctx.ptr_type, self.temp_cname())
+                } else {
+                    self.warn_undef(diagnostics::CodeDiagnostic::codegen_missing_function(expr.span, expr.fn_ref().mangled_name));
+                    LLVMGetUndef(self.ctx.ptr_type)
+                }
             }
         }
         IrTag::GlobalRef => {

@@ -838,6 +838,7 @@ enum IrTyTag {
     Never = 8i32,
     Slice = 9i32,       // fat pointer: (data_ptr, len) - tracks element type
     Closure = 10i32,    // closure: struct of captures + associated function
+    Fn = 11i32,         // function item: ZST representing a specific function
 }
 
 // Slice struct field indices (fat pointer layout: {data_ptr, len})
@@ -870,6 +871,10 @@ struct _IrTyClosureData {
     closure_fn: IrFnRef,
 }
 
+struct _IrTyFnData {
+    fn_ref: IrFnRef,
+}
+
 union _IrTyData {
     builtin: BuiltinType,           // Builtin, Never
     pointer: _IrTyPointerData,      // Pointer
@@ -880,6 +885,7 @@ union _IrTyData {
     enum_ref: IrEnumRef,            // Enum
     closure: _IrTyClosureData,      // Closure
     slice: _IrTySliceData,          // Slice
+    fn_item: _IrTyFnData,          // Fn
 }
 
 struct IrTy {
@@ -907,6 +913,7 @@ impl IrTy {
         else { self._data.elems }
     }
     fn ret_ty(self: &IrTy) -> &IrTy { self._data.fn_ptr.ret_ty }
+    fn fn_item_ref(self: &IrTy) -> IrFnRef { self._data.fn_item.fn_ref }
     fn struct_ref(self: &IrTy) -> IrStructRef { self._data.struct_ref }
     fn enum_ref(self: &IrTy) -> IrEnumRef { self._data.enum_ref }
     fn closure_fn(self: &IrTy) -> IrFnRef { self._data.closure.closure_fn }
@@ -926,6 +933,9 @@ impl IrTy {
     }
     fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
         IrTy { tag: IrTyTag::FnPointer, _data: _IrTyData { fn_ptr: _IrTyFnPtrData { elems: params, ret_ty: ret } } }
+    }
+    fn mk_fn(fn_ref: IrFnRef) -> IrTy {
+        IrTy { tag: IrTyTag::Fn, _data: _IrTyData { fn_item: _IrTyFnData { fn_ref: fn_ref } } }
     }
     fn mk_struct(s: IrStructRef) -> IrTy {
         IrTy { tag: IrTyTag::Struct, _data: _IrTyData { struct_ref: s } }
@@ -954,6 +964,7 @@ impl IrTy {
     }
     fn is_zero_sized(self: &IrTy) -> bool {
         if self.tag == IrTyTag::Void { return true; }
+        if self.tag == IrTyTag::Fn { return true; }
         if self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void { return true; }
         if self.tag == IrTyTag::Tuple {
             for i in 0usize..self.elems().len() {

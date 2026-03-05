@@ -363,6 +363,15 @@ impl MonoCtx {
         result
     }
 
+    fn make_fn_ty(self: &mut MonoCtx, fn_ref: IrFnRef) -> &IrTy {
+        let key: usize = fn_ref.id._value + 0x40000000usize;
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_fn(fn_ref));
+        self.tuple_ty_cache.insert(key, result);
+        result
+    }
+
     fn make_slice_ty(self: &mut MonoCtx, elem: &IrTy, is_const: bool) -> &IrTy {
         // Slice types are structurally just tuples (ptr, len), but we cache the
         // IrTy::mk_slice wrapper too for pointer stability

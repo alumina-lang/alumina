@@ -299,6 +299,9 @@ impl CodegenCtx {
         } else if ty.tag == IrTyTag::FnPointer {
             // Function pointers are just i8* in LLVM
             self.ptr_type
+        } else if ty.tag == IrTyTag::Fn {
+            // Fn types are ZSTs - no runtime representation
+            self.void_type
         } else if ty.tag == IrTyTag::Struct || ty.tag == IrTyTag::Closure {
             let sr = ty.struct_ref();
             self.llvm_struct_type(&sr)
@@ -635,6 +638,7 @@ impl CodegenCtx {
         else if ty.tag == IrTyTag::Enum { type_name = "enum"; }
         else if ty.tag == IrTyTag::Closure { type_name = "closure"; }
         else if ty.tag == IrTyTag::FnPointer { type_name = "fn"; }
+        else if ty.tag == IrTyTag::Fn { type_name = "fn"; }
         else { type_name = "opaque"; }
 
         LLVMDIBuilderCreateBasicType(

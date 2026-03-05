@@ -961,19 +961,16 @@ impl Mono {
                 let fn_idx = self.mono_function(def, &[]);
                 let ir_fn = &self.ctx.ir_functions[fn_idx];
 
-                // Build function pointer type
-                let param_types = self.ctx.arena.alloc_slice::<&IrTy>(ir_fn.params.len());
-                for i in 0usize..ir_fn.params.len() {
-                    param_types[i] = ir_fn.params[i].ty;
-                }
-                let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ir_fn.return_type);
-
-                let result = IrExpr::void_expr(fn_ty);
-                result.tag = IrTag::FnRef;
-                result._data.fn_ref = IrFnRef {
+                // Build Fn type (ZST representing this specific function)
+                let fn_ref = IrFnRef {
                     id: ir_fn.id,
                     mangled_name: ir_fn.mangled_name,
                 };
+                let fn_ty = self.ctx.make_fn_ty(fn_ref);
+
+                let result = IrExpr::void_expr(fn_ty);
+                result.tag = IrTag::FnRef;
+                result._data.fn_ref = fn_ref;
                 self.ctx.arena.alloc(result)
             } else {
                 let name = if expr.str_val().len() > 0usize { expr.str_val() } else { "<unknown>" };
@@ -2125,6 +2122,8 @@ impl Mono {
             "(...)"
         } else if ty.tag == IrTyTag::FnPointer {
             "fn(...)"
+        } else if ty.tag == IrTyTag::Fn {
+            "fn(...)"
         } else if ty.tag == IrTyTag::Void {
             "()"
         } else {
@@ -2669,6 +2668,10 @@ impl Mono {
                         is_match = val_ty.tag == IrTyTag::Closure;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_function_pointer") {
                         is_match = val_ty.tag == IrTyTag::FnPointer;
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_named_function") {
+                        is_match = val_ty.tag == IrTyTag::Fn;
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_callable") {
+                        is_match = val_ty.tag == IrTyTag::Fn || val_ty.tag == IrTyTag::FnPointer || val_ty.tag == IrTyTag::Closure;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_range") {
                         is_match = self.is_range_ty(val_ty);
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_any") {
@@ -2735,6 +2738,15 @@ impl Mono {
             if target_elem == val_elem && target_ty != val.ty {
                 return self.mk_cast(val, target_ty);
             }
+        }
+
+        // Coerce Fn (function item ZST) to fn pointer
+        if target_ty.tag == IrTyTag::FnPointer && val.ty.tag == IrTyTag::Fn {
+            let fn_ref = val.ty.fn_item_ref();
+            let result = IrExpr::void_expr(target_ty);
+            result.tag = IrTag::FnRef;
+            result._data.fn_ref = fn_ref;
+            return self.ctx.arena.alloc(result);
         }
 
         // No coercion needed
@@ -3359,11 +3371,19 @@ impl Mono {
                                     found_count = found_count + 1usize;
                                 }
                             } else {
-                                // General case: lower the arg and check if it's a function pointer
+                                // General case: lower the arg and check if it's a function pointer or Fn
                                 let arg_ir = self.lower_expr(arg_expr);
                                 if arg_ir.ty.tag == IrTyTag::FnPointer {
                                     inferred[g] = arg_ir.ty.ret_ty();
                                     found_count = found_count + 1usize;
+                                } else if arg_ir.ty.tag == IrTyTag::Fn {
+                                    let fn_ref = arg_ir.ty.fn_item_ref();
+                                    for fi in 0usize..self.ctx.ir_functions.len() {
+                                        if self.ctx.ir_functions[fi].id._value == fn_ref.id._value {
+                                            inferred[g] = self.ctx.ir_functions[fi].return_type;
+                                            found_count = found_count + 1usize;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3386,6 +3406,13 @@ impl Mono {
                                         let arg_ir2 = self.lower_expr(arg_expr);
                                         if arg_ir2.ty.tag == IrTyTag::FnPointer {
                                             resolved_ret = arg_ir2.ty.ret_ty();
+                                        } else if arg_ir2.ty.tag == IrTyTag::Fn {
+                                            let fn_ref2 = arg_ir2.ty.fn_item_ref();
+                                            for fi in 0usize..self.ctx.ir_functions.len() {
+                                                if self.ctx.ir_functions[fi].id._value == fn_ref2.id._value {
+                                                    resolved_ret = self.ctx.ir_functions[fi].return_type;
+                                                }
+                                            }
                                         }
                                     }
                                     if resolved_ret.tag == IrTyTag::Struct && resolved_ret.struct_ref().type_args.len() > re {
@@ -3589,14 +3616,15 @@ impl Mono {
             result._data.struct_lit.items = items;
             self.ctx.arena.alloc(result)
         } else {
-            // No captures: return function pointer as before
-            let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ret_ty);
-            let result = IrExpr::void_expr(fn_ty);
-            result.tag = IrTag::FnRef;
-            result._data.fn_ref = IrFnRef {
+            // No captures: return Fn type (ZST representing this lambda)
+            let fn_ref = IrFnRef {
                 id: lambda_id,
                 mangled_name: mangled,
             };
+            let fn_ty = self.ctx.make_fn_ty(fn_ref);
+            let result = IrExpr::void_expr(fn_ty);
+            result.tag = IrTag::FnRef;
+            result._data.fn_ref = fn_ref;
             self.ctx.arena.alloc(result)
         }
     }
@@ -3780,19 +3808,16 @@ impl Mono {
                     let fn_idx = self.mono_function(def, call_ta);
                     let ir_fn = &self.ctx.ir_functions[fn_idx];
 
-                    // Turbofish value (func::<T> as value): produce fn pointer, not a call
+                    // Turbofish value (func::<T> as value): produce Fn type, not a call
                     if expr.tag == ExprTag::TurbofishValue {
-                        let param_types = self.ctx.arena.alloc_slice::<&IrTy>(ir_fn.params.len());
-                        for i in 0usize..ir_fn.params.len() {
-                            param_types[i] = ir_fn.params[i].ty;
-                        }
-                        let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ir_fn.return_type);
-                        let result = IrExpr::void_expr(fn_ty);
-                        result.tag = IrTag::FnRef;
-                        result._data.fn_ref = IrFnRef {
+                        let fn_ref = IrFnRef {
                             id: ir_fn.id,
                             mangled_name: ir_fn.mangled_name,
                         };
+                        let fn_ty = self.ctx.make_fn_ty(fn_ref);
+                        let result = IrExpr::void_expr(fn_ty);
+                        result.tag = IrTag::FnRef;
+                        result._data.fn_ref = fn_ref;
                         return self.ctx.arena.alloc(result);
                     }
 
@@ -3926,7 +3951,17 @@ impl Mono {
             }
 
             // Determine return type from callee
-            if ir_callee.ty.tag == IrTyTag::FnPointer {
+            if ir_callee.ty.tag == IrTyTag::Fn {
+                // Direct call through Fn type (ZST function item)
+                let fn_ref = ir_callee.ty.fn_item_ref();
+                let ret_ty = self.ctx.void_ty;
+                for i in 0usize..self.ctx.ir_functions.len() {
+                    if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                        ret_ty = self.ctx.ir_functions[i].return_type;
+                    }
+                }
+                self.mk_call(fn_ref, ir_args, ret_ty)
+            } else if ir_callee.ty.tag == IrTyTag::FnPointer {
                 // Indirect call through function pointer
                 let ret_ty = ir_callee.ty.ret_ty();
                 let result = IrExpr::void_expr(ret_ty);
