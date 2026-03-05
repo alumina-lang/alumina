@@ -169,6 +169,43 @@ impl DiagnosticContext {
         buf as &[u8]
     }
 
+    fn note(self: &mut DiagnosticContext, span: Span, message: &[u8]) {
+        self.errors.push(Diagnostic {
+            level: DiagLevel::Note,
+            message: message,
+            span: span,
+        });
+    }
+
+    // Concatenate an arbitrary number of string parts into a single arena-allocated string
+    fn concat_parts(arena: &mut aluminac_common::arena::Arena, parts: &[&[u8]]) -> &[u8] {
+        let total: usize = 0;
+        for i in 0usize..parts.len() {
+            total = total + parts[i].len();
+        }
+        let buf = arena.alloc_slice::<u8>(total);
+        let pos: usize = 0;
+        for i in 0usize..parts.len() {
+            for j in 0usize..parts[i].len() {
+                buf[pos + j] = parts[i][j];
+            }
+            pos = pos + parts[i].len();
+        }
+        buf as &[u8]
+    }
+
+    fn format_msg4(arena: &mut aluminac_common::arena::Arena, a: &[u8], b: &[u8], c: &[u8], d: &[u8]) -> &[u8] {
+        let parts = arena.alloc_slice::<&[u8]>(4);
+        parts[0] = a; parts[1] = b; parts[2] = c; parts[3] = d;
+        DiagnosticContext::concat_parts(arena, parts)
+    }
+
+    fn format_msg5(arena: &mut aluminac_common::arena::Arena, a: &[u8], b: &[u8], c: &[u8], d: &[u8], e: &[u8]) -> &[u8] {
+        let parts = arena.alloc_slice::<&[u8]>(5);
+        parts[0] = a; parts[1] = b; parts[2] = c; parts[3] = d; parts[4] = e;
+        DiagnosticContext::concat_parts(arena, parts)
+    }
+
     fn free(self: &mut DiagnosticContext) {
         self.files.free();
         self.errors.free();
