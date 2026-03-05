@@ -1775,23 +1775,12 @@ impl Mono {
             return self.ctx.arena.alloc(r);
         }
 
-        // Check if this is a slice iteration: for item in slice { body }
-        if iterable_ty.tag == IrTyTag::Slice {
-            return self.lower_for_slice(expr, iterable_ir, iterable_ty);
-        }
-
-        // Check if this is an array iteration: for item in [T; N] { body }
-        if iterable_ty.tag == IrTyTag::Array {
-            return self.lower_for_array(expr, iterable_ir, iterable_ty);
-        }
-
         // Try calling .iter() on the iterable to get an iterator.
-        // Only attempt if the type is a struct (has methods to look up).
         let iter_ir = iterable_ir;
         let iter_ty = iterable_ty;
         let iter_let_stmt: Option<&IrExpr> = Option::none();
 
-        if iterable_ty.tag == IrTyTag::Struct {
+        {
             // Store iterable in a local so we can take a reference for .iter() call
             let iterable_var_id = self.ctx.id_gen.next_id();
             self.local_types.insert(iterable_var_id._value, iterable_ty);
@@ -1806,7 +1795,17 @@ impl Mono {
             let ir_iterable_local = self.mk_local(iterable_var_id, iterable_ty);
             let ir_iterable_ref = self.mk_ref(ir_iterable_local, false);
 
-            let iter_call = self.resolve_method_call_on_type(iterable_ty, "iter", ir_iterable_ref, &[]);
+            // For arrays, coerce &[T; N] to &[T] so slice.iter() can be resolved
+            let call_self_ref = ir_iterable_ref;
+            let call_ty = iterable_ty;
+            if iterable_ty.tag == IrTyTag::Array {
+                let elem_ty = iterable_ty.inner();
+                let slice_ty = self.ctx.make_slice_ty(elem_ty, true);
+                call_self_ref = self.coerce_to_type(ir_iterable_ref, slice_ty);
+                call_ty = slice_ty;
+            }
+
+            let iter_call = self.resolve_method_call_on_type(call_ty, "iter", call_self_ref, &[]);
             if iter_call.is_some() {
                 // let _iterable = iterable_expr;
                 iter_let_stmt = Option::some(self.mk_let(iterable_var_id, iterable_ty, iterable_ir));
@@ -1815,9 +1814,34 @@ impl Mono {
                 iter_ir = iter_result;
                 iter_ty = iter_result.ty;
 
-                // The result of .iter() might be a slice
+                // If .iter() returned a slice, call .iter() on the slice to get a SliceIterator
                 if iter_ty.tag == IrTyTag::Slice {
-                    return self.lower_for_slice_with_preamble(expr, iter_ir, iter_ty, iter_let_stmt);
+                    let slice_var_id = self.ctx.id_gen.next_id();
+                    self.local_types.insert(slice_var_id._value, iter_ty);
+                    self.local_defs.push(IrLocalDef {
+                        id: slice_var_id,
+                        ty: iter_ty,
+                        name: "_iter_slice",
+                        span: Span::empty(),
+                    });
+                    let slice_let = self.mk_let(slice_var_id, iter_ty, iter_ir);
+                    let slice_local = self.mk_local(slice_var_id, iter_ty);
+                    let slice_ref = self.mk_ref(slice_local, false);
+                    let slice_iter_call = self.resolve_method_call_on_type(iter_ty, "iter", slice_ref, &[]);
+                    if slice_iter_call.is_some() {
+                        // Chain: let _iter_slice = iterable.iter(); let _iter = _iter_slice.iter();
+                        iter_ir = slice_iter_call.unwrap();
+                        iter_ty = iter_ir.ty;
+                        // We need to emit the slice let in the preamble too
+                        // Wrap iter_let_stmt and slice_let into a block
+                        let block_items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                        block_items[0] = iter_let_stmt.unwrap();
+                        block_items[1] = slice_let;
+                        let block = IrExpr::void_expr(self.ctx.void_ty);
+                        block.tag = IrTag::Block;
+                        block._data.block.items = block_items;
+                        iter_let_stmt = Option::some(self.ctx.arena.alloc(block) as &IrExpr);
+                    }
                 }
             }
         }
@@ -2396,6 +2420,17 @@ impl Mono {
     }
 
     // Resolve a method call on a known IR type, returning the call result
+    fn resolve_lang_scope(self: &mut Mono, lang_name: &[u8]) -> u32 {
+        let lang_id = self.ctx.get_lang_item(lang_name);
+        if lang_id.is_some() {
+            let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+            if sd.is_some() {
+                return sd.unwrap().scope_idx;
+            }
+        }
+        0u32
+    }
+
     fn resolve_method_call_on_type(self: &mut Mono, ty: &IrTy, method_name: &[u8], self_arg: &IrExpr, args: &[&IrExpr]) -> Option<&IrExpr> {
         let resolved_ty = ty;
         if resolved_ty.tag == IrTyTag::Pointer {
@@ -2408,6 +2443,26 @@ impl Mono {
             method_type_args = resolved_ty.struct_ref().type_args;
         } else if resolved_ty.tag == IrTyTag::Enum {
             scope_idx = resolved_ty.enum_ref().scope_idx;
+        } else if resolved_ty.tag == IrTyTag::Slice {
+            scope_idx = self.resolve_lang_scope("slice");
+            if scope_idx != 0u32 {
+                let elem_ty = self.slice_elem_ty(resolved_ty);
+                let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                ta[0] = ptr_ty;
+                method_type_args = ta;
+            }
+        } else if resolved_ty.tag == IrTyTag::Array {
+            scope_idx = self.resolve_lang_scope("builtin_array");
+        } else if resolved_ty.tag == IrTyTag::Tuple {
+            scope_idx = self.resolve_lang_scope("builtin_tuple");
+        } else if resolved_ty.tag == IrTyTag::Fn || resolved_ty.tag == IrTyTag::FnPointer || resolved_ty.tag == IrTyTag::Closure {
+            scope_idx = self.resolve_lang_scope("builtin_callable");
+        } else if resolved_ty.tag == IrTyTag::Builtin {
+            let lang_name = Mono::builtin_lang_name(resolved_ty.builtin());
+            if lang_name.len() > 0 {
+                scope_idx = self.resolve_lang_scope(lang_name);
+            }
         }
         if scope_idx == 0u32 {
             return Option::none();
@@ -2460,15 +2515,53 @@ impl Mono {
             self.type_map.insert(self_id_opt.unwrap(), resolved_ty);
         }
 
-        // Merge generic type args from the struct + method
+        // Infer type args from self parameter if the method has its own generics
         let all_type_args = method_type_args;
+        if def.generic_params.len() > 0 {
+            let num_generics = def.generic_params.len();
+            let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
+            let found = self.ctx.arena.alloc_slice::<bool>(num_generics);
+            for i in 0usize..num_generics {
+                inferred[i] = self.ctx.void_ty;
+                found[i] = false;
+            }
+            // Infer from self parameter
+            if def.params.len() > 0 {
+                let self_param_ty = def.params[0].ty;
+                let self_arg_ty = self_arg.ty;
+                // Strip matching pointer/ref layers for unification
+                while self_param_ty.tag == TyTag::Pointer && self_arg_ty.tag == IrTyTag::Pointer {
+                    self_param_ty = self_param_ty.inner();
+                    self_arg_ty = self_arg_ty.inner();
+                }
+                // Also strip IR pointer if AST is not a pointer (autoref will handle it)
+                while self_param_ty.tag != TyTag::Pointer && self_arg_ty.tag == IrTyTag::Pointer {
+                    self_arg_ty = self_arg_ty.inner();
+                }
+                self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, def.generic_params);
+            }
+            // Infer from explicit args
+            for p in 0usize..args.len() {
+                if (p + 1) >= def.params.len() { break; }
+                self.unify_type_for_inference(def.params[p + 1].ty, args[p].ty, inferred, found, def.generic_params);
+            }
+            // Fill remaining from method_type_args
+            for i in 0usize..num_generics {
+                if !found[i] && i < method_type_args.len() {
+                    inferred[i] = method_type_args[i];
+                }
+            }
+            all_type_args = inferred;
+        }
 
         let fn_idx = self.mono_function(def, all_type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
 
         // Build call args: self_arg + args
         let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(1 + args.len());
-        call_args[0] = self_arg;
+        // Autoref/autoderef self_arg to match method's self parameter
+        let self_param_ty = if ir_fn.params.len() > 0 { ir_fn.params[0].ty } else { self_arg.ty };
+        call_args[0] = self.autoref(self_arg, self_param_ty);
         for i in 0usize..args.len() {
             call_args[1 + i] = args[i];
         }
@@ -2698,6 +2791,18 @@ impl Mono {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(r)
         }
+    }
+
+    /// Check if the init type is clearly incompatible with the declared type.
+    /// This catches specific mismatches like Pointer(Slice) vs Slice (from &a[..]).
+    /// Returns true if there is a clear type tag mismatch.
+    fn types_clearly_mismatch(self: &Mono, init_ty: &IrTy, var_ty: &IrTy) -> bool {
+        if init_ty as &void == var_ty as &void { return false; }
+        if init_ty.is_void() || var_ty.is_void() { return false; }
+        if init_ty.tag == IrTyTag::Never { return false; }
+        // Tag mismatch is a clear error (e.g. Pointer vs Slice)
+        if init_ty.tag != var_ty.tag { return true; }
+        false
     }
 
     // Coerce a value to a target type (e.g., pointer-to-array → slice)
@@ -4143,8 +4248,12 @@ impl Mono {
 
             if expr.opt_expr().is_some() {
                 let init_val = self.lower_expr_coerced(expr.opt_expr().unwrap(), var_ty);
-                // Coerce pointer-to-array to slice if needed
-                self.mk_let(expr.id(), var_ty, self.coerce_to_type(init_val, var_ty))
+                // Reject clear type mismatches (e.g. &&[T] assigned to &[T])
+                if self.types_clearly_mismatch(init_val.ty, var_ty) {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        expr.span, "type mismatch in let binding"));
+                }
+                self.mk_let(expr.id(), var_ty, init_val)
             } else {
                 self.mk_let_uninit(expr.id(), var_ty)
             }

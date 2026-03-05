@@ -1,3 +1,4 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
 // Test for-loop tuple unpacking: for (a, b) in iterable { ... }
 // Returns 1337 on success to distinguish from a no-op binary.
 // EXPECTED_EXIT: 42
@@ -53,25 +54,7 @@ fn main(args: &[&[u8]]) -> i32 {
     42i32
 }
 
-// Inline Option to avoid sysroot dependency
-struct Option<T> {
-    _is_some: bool,
-    _inner: T,
-}
-
-impl Option<T> {
-    fn some(val: T) -> Option<T> {
-        Option::<T> { _is_some: true, _inner: val }
-    }
-    fn none() -> Option<T> {
-        let o: Option<T>;
-        o._is_some = false;
-        o
-    }
-    fn is_none(self: &Option<T>) -> bool {
-        !self._is_some
-    }
-}
+use std::option::Option;
 
 // Iterator that yields (index, value) pairs
 struct EnumIter {
