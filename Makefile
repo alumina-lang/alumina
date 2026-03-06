@@ -348,11 +348,23 @@ all: alumina-boot
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
+.PHONY: $(BUILD_DIR)/quick.c $(BUILD_DIR)/quick
+ifdef QUICKBOOT
+$(BUILD_DIR)/quick.c: $(ALU_DEPS) quick.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
+$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c $(MINICORO)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+else
 $(BUILD_DIR)/quick: $(BUILD_DIR)/aluminac quick.alu
-	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) -o $@ quick=./quick.alu
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) -o $(BUILD_DIR)/quick quick=./quick.alu
+endif
 
 quick: $(BUILD_DIR)/quick
 	ln -sf $^ $@
+
+.PHONY: quick-ir
+quick-ir: $(BUILD_DIR)/aluminac
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) --emit-llvm quick=./quick.alu -o quick.ll
 
 ## ------------------------------ Benchmarking -------------------------
 

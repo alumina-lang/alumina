@@ -1755,8 +1755,43 @@ impl ExprParser {
             e._data.lit.int_val = args.len() as u64;
             self.ctx.alloc_expr(e)
         }
+        "test_cases" => self.expand_test_cases(span),
         _ => self.alloc_void(span),
         }
+    }
+
+    // Expand test_cases!() -> tuple of all #[test] function references
+    fn expand_test_cases(self: &ExprParser, span: Span) -> &Expr {
+        // Collect all pending functions with #[test] attribute
+        let test_fns: Vector<&PendingFunction> = Vector::new();
+        defer test_fns.free();
+
+        for i in 0usize..self.ctx.pending_functions.len() {
+            let pf = &self.ctx.pending_functions[i];
+            let is_test = false;
+            for j in 0usize..pf.attributes.len() {
+                if pf.attributes[j].tag == AttrTag::Test {
+                    is_test = true;
+                }
+            }
+            if is_test {
+                test_fns.push(pf);
+            }
+        }
+
+        // Build a tuple expression: (fn1, fn2, fn3, ...)
+        let tuple_args = self.ctx.arena.alloc_slice::<&Expr>(test_fns.len());
+        for i in 0usize..test_fns.len() {
+            let pf = test_fns[i];
+            let fn_expr = self.make_expr(ExprTag::FnRef, span);
+            fn_expr._data.id_ref.id = pf.id;
+            fn_expr._data.id_ref.str_val = pf.name;
+            tuple_args[i] = self.ctx.alloc_expr(fn_expr);
+        }
+
+        let tuple = self.make_expr(ExprTag::TupleLit, span);
+        tuple._data.list.args = tuple_args;
+        self.ctx.alloc_expr(tuple)
     }
 
     // Expand format_args!(wrapper_macro, fmt_string, args...)
