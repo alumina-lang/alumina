@@ -194,6 +194,7 @@ ALUMINAC_S2 = $(BUILD_DIR)/aluminac_s2
 ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
 
 SYSROOT_ALUMINAC = sysroot-aluminac/
+STDLIB_ALUMINAC_TESTS = $(BUILD_DIR)/stdlib-aluminac-tests
 
 SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
 ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
@@ -228,6 +229,10 @@ $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
 
 $(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
 	cp $^ $@
+
+$(STDLIB_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES)
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --cfg test_std --sysroot $(SYSROOT_ALUMINAC) \
+		-o $@
 
 .PHONY: bootstrap
 bootstrap: $(ALUMINAC_S3)
@@ -324,10 +329,13 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
+
+test-std-aluminac: $(STDLIB_ALUMINAC_TESTS)
+	$(STDLIB_ALUMINAC_TESTS) $(TEST_FLAGS)
 
 test-lang: alumina-boot $(LANG_TESTS)
 	$(LANG_TESTS) $(TEST_FLAGS)

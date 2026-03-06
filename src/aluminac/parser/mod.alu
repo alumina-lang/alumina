@@ -53,6 +53,9 @@ struct ParseContext {
     pending_mixins: Vector<PendingMixin>,
     pending_macros: Vector<PendingMacro>,
 
+    // All #[test] functions across all source files (shared between pass1 and pass2)
+    all_test_functions: &[PendingFunction],
+
     // Macro definitions: item_id -> MacroEntry
     macro_defs: HashMap<usize, MacroEntry>,
     // Reverse map: name -> item_id (for builtins and fallback)
@@ -183,6 +186,7 @@ impl ParseContext {
             pending_impls: Vector::new(),
             pending_mixins: Vector::new(),
             pending_macros: Vector::new(),
+            all_test_functions: &[],
             macro_defs: HashMap::new(),
             macro_name_to_id: HashMap::new(),
             macro_args: HashMap::new(),
@@ -584,6 +588,47 @@ fn share_macros(contexts: &mut [ParseContext]) {
                 contexts[i].macro_name_to_id.insert(all_names[j], all_name_ids[j]);
             }
         }
+    }
+}
+
+fn share_test_functions(contexts: &mut [ParseContext]) {
+    // Collect all #[test] pending functions from all contexts into a shared slice
+    let count = 0usize;
+    for i in 0usize..contexts.len() {
+        for j in 0usize..contexts[i].pending_functions.len() {
+            let pf = &contexts[i].pending_functions[j];
+            for k in 0usize..pf.attributes.len() {
+                if pf.attributes[k].tag == AttrTag::Test {
+                    count = count + 1;
+                }
+            }
+        }
+    }
+
+    if count == 0 {
+        return;
+    }
+
+    let shared = contexts[0].arena.alloc_slice::<PendingFunction>(count);
+    let idx = 0usize;
+    for i in 0usize..contexts.len() {
+        for j in 0usize..contexts[i].pending_functions.len() {
+            let pf = &contexts[i].pending_functions[j];
+            let is_test = false;
+            for k in 0usize..pf.attributes.len() {
+                if pf.attributes[k].tag == AttrTag::Test {
+                    is_test = true;
+                }
+            }
+            if is_test {
+                shared[idx] = *pf;
+                idx = idx + 1;
+            }
+        }
+    }
+
+    for i in 0usize..contexts.len() {
+        contexts[i].all_test_functions = shared as &[PendingFunction];
     }
 }
 

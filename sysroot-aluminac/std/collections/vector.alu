@@ -242,3 +242,61 @@ impl Vector<T> {
     }
 }
 
+#[cfg(all(test, test_std))]
+mod tests {
+    #[test]
+    fn vector_push_pop() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+        assert_eq!(vec.len(), 3usize);
+        assert_eq!(vec.pop(), Option::some(3));
+        assert_eq!(vec.pop(), Option::some(2));
+        assert_eq!(vec.pop(), Option::some(1));
+        assert_eq!(vec.pop(), Option::none());
+    }
+
+    #[test]
+    fn vector_insert_remove() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.push(1);
+        vec.push(3);
+        vec.insert(1usize, 2);
+
+        let removed = vec.remove(1usize);
+        assert_eq!(removed, 2);
+        assert_eq!(vec.len(), 2usize);
+    }
+
+    #[test]
+    fn vector_clear() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+        vec.clear();
+        assert_eq!(vec.len(), 0usize);
+    }
+
+    #[test]
+    fn vector_move() {
+        let vec = Vector::new::<i32>();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+        let vec2 = vec.move();
+        defer vec2.free();
+        defer vec.free();
+
+        assert_eq!(vec.len(), 0usize);
+        assert_eq!(vec2.len(), 3usize);
+    }
+}
+

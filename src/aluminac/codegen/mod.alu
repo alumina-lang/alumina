@@ -1281,111 +1281,6 @@ impl CodegenCtx {
         }
     }
 
-    // Generate a test runner main function
-    fn emit_test_runner(self: &mut CodegenCtx, unit: &CompilationUnit) {
-        let i32_ty = LLVMInt32TypeInContext(self.context);
-        let i8_ty = LLVMInt8TypeInContext(self.context);
-        let i8_ptr_ty = LLVMPointerType(i8_ty, 0u32);
-
-        // Declare puts(const char*) -> i32
-        let puts_param = self.arena.alloc_slice::<LLVMTypeRef>(1);
-        puts_param[0] = i8_ptr_ty;
-        let puts_ty = LLVMFunctionType(i32_ty, &puts_param[0], 1u32, 0i32);
-        let puts_fn = LLVMAddFunction(self.module, &"puts\0"[0] as &libc::c_char, puts_ty);
-
-        // Create main: int main(void)
-        let main_type = LLVMFunctionType(i32_ty, null, 0u32, 0i32);
-        let main_fn = LLVMAddFunction(self.module, &"main\0"[0] as &libc::c_char, main_type);
-        LLVMSetLinkage(main_fn, LLVMLinkage::External);
-
-        let entry = LLVMAppendBasicBlockInContext(self.context, main_fn, &"entry\0"[0] as &libc::c_char);
-        LLVMPositionBuilderAtEnd(self.builder, entry);
-
-        // Count tests and build calls
-        let fail_count = LLVMBuildAlloca(self.builder, i32_ty, &"fails\0"[0] as &libc::c_char);
-        LLVMBuildStore(self.builder, LLVMConstInt(i32_ty, 0u64, 0i32), fail_count);
-
-        let total_count = LLVMBuildAlloca(self.builder, i32_ty, &"total\0"[0] as &libc::c_char);
-        LLVMBuildStore(self.builder, LLVMConstInt(i32_ty, 0u64, 0i32), total_count);
-
-        let test_count: usize = 0;
-
-        for i in 0usize..unit.functions.len() {
-            let is_test = false;
-            for attr in unit.functions[i].attributes {
-                if attr.tag == AttrTag::Test {
-                    is_test = true;
-                }
-            }
-            if !is_test || unit.functions[i].body.is_none() {
-                continue;
-            }
-
-            test_count = test_count + 1;
-
-            // Print "TEST <name> ... "
-            let test_name = unit.functions[i].name;
-            let msg_len = 6usize + test_name.len() + 5usize; // "TEST " + name + " ... \0"
-            let msg_buf = self.arena.alloc_slice::<u8>(msg_len);
-            msg_buf[0] = 'T' as u8;
-            msg_buf[1] = 'E' as u8;
-            msg_buf[2] = 'S' as u8;
-            msg_buf[3] = 'T' as u8;
-            msg_buf[4] = ' ' as u8;
-            test_name.copy_to_nonoverlapping(&msg_buf[5]);
-            msg_buf[5 + test_name.len()] = ' ' as u8;
-            msg_buf[6 + test_name.len()] = '.' as u8;
-            msg_buf[7 + test_name.len()] = '.' as u8;
-            msg_buf[8 + test_name.len()] = '.' as u8;
-            msg_buf[9 + test_name.len()] = ' ' as u8;
-            msg_buf[10 + test_name.len()] = 0u8;
-            let msg_global = LLVMBuildGlobalStringPtr(self.builder, &msg_buf[0] as &libc::c_char,
-                &"test_msg\0"[0] as &libc::c_char);
-            let puts_args1 = self.arena.alloc_slice::<LLVMValueRef>(1);
-            puts_args1[0] = msg_global;
-            LLVMBuildCall2(self.builder, puts_ty, puts_fn, &puts_args1[0], 1u32,
-                &"\0"[0] as &libc::c_char);
-
-            // Increment total
-            let cur_total = LLVMBuildLoad2(self.builder, i32_ty, total_count,
-                &"ct\0"[0] as &libc::c_char);
-            let new_total = LLVMBuildAdd(self.builder, cur_total,
-                LLVMConstInt(i32_ty, 1u64, 0i32), &"nt\0"[0] as &libc::c_char);
-            LLVMBuildStore(self.builder, new_total, total_count);
-
-            // Call the test function (void -> void, no params, no return)
-            let test_fn_hash = self.name_hash(unit.functions[i].mangled_name);
-            let test_fn_val = self.fn_decls.get(&test_fn_hash);
-            if test_fn_val.is_none() { continue; }
-
-            let void_fn_ty = LLVMFunctionType(self.void_type, null, 0u32, 0i32);
-            LLVMBuildCall2(self.builder, void_fn_ty, test_fn_val.unwrap(),
-                null, 0u32, &"\0"[0] as &libc::c_char);
-
-            // Print "PASS" (if it didn't crash, it passed)
-            let pass_str = LLVMBuildGlobalStringPtr(self.builder, &"PASS\0"[0] as &libc::c_char,
-                &"pass\0"[0] as &libc::c_char);
-            let puts_args2 = self.arena.alloc_slice::<LLVMValueRef>(1);
-            puts_args2[0] = pass_str;
-            LLVMBuildCall2(self.builder, puts_ty, puts_fn, &puts_args2[0], 1u32,
-                &"\0"[0] as &libc::c_char);
-        }
-
-        // Print summary
-        if test_count == 0 {
-            let no_tests = LLVMBuildGlobalStringPtr(self.builder,
-                &"No tests found.\0"[0] as &libc::c_char,
-                &"notests\0"[0] as &libc::c_char);
-            let puts_args3 = self.arena.alloc_slice::<LLVMValueRef>(1);
-            puts_args3[0] = no_tests;
-            LLVMBuildCall2(self.builder, puts_ty, puts_fn, &puts_args3[0], 1u32,
-                &"\0"[0] as &libc::c_char);
-        }
-
-        // Return 0 (all tests that didn't crash passed)
-        LLVMBuildRet(self.builder, LLVMConstInt(i32_ty, 0u64, 0i32));
-    }
-
     fn free(self: &mut CodegenCtx) {
         self.type_cache.free();
         self.struct_type_cache.free();
@@ -1537,8 +1432,18 @@ fn generate(
 
     // Phase 7: Generate main wrapper
     if test_mode {
-        // In test mode, generate a test runner main
-        ctx.emit_test_runner(unit);
+        // In test mode, use the #[test_main] function from test.alu as main
+        for i in 0usize..unit.functions.len() {
+            let is_test_main = false;
+            for attr in unit.functions[i].attributes {
+                if attr.tag == AttrTag::TestMain {
+                    is_test_main = true;
+                }
+            }
+            if is_test_main && unit.functions[i].body.is_some() {
+                ctx.emit_main_wrapper(&unit.functions[i]);
+            }
+        }
     } else {
         // Normal mode: generate C-compatible main wrapper
         for i in 0usize..unit.functions.len() {

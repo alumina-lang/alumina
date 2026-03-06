@@ -1,0 +1,238 @@
+//! Minimal unit test runner for aluminac.
+//!
+//! When `--test` is provided to the compiler, this module is included and its
+//! `#[test_main]` function replaces the normal `main` entrypoint. Each test
+//! case is executed in a forked subprocess.
+
+use std::macros::test_cases;
+use std::process::{Stdio, Forked, ExitStatus};
+use std::collections::Vector;
+use std::string::StringBuf;
+use std::time::{Instant, Duration};
+
+/// Test case metadata
+struct TestCase {
+    /// The test case name (mangled type name of the function)
+    name: &[u8],
+    /// The test case function
+    test: fn(),
+}
+
+/// Discover test cases from the `test_cases!()` builtin macro.
+const _TESTS = test_cases!();
+const TEST_CASES: [TestCase; _TESTS.len()] = {
+    let ret: [TestCase; _TESTS.len()];
+    for const i in 0usize.._TESTS.len() {
+        ret[i] = TestCase {
+            name: std::typing::type_name::<typeof(_TESTS.(i))>(),
+            test: _TESTS.(i),
+        };
+    }
+    ret
+};
+
+/// Holder for the results of a test case.
+struct TestResult {
+    test: TestCase,
+    duration: Duration,
+    success: bool,
+    stdout: StringBuf,
+    stderr: StringBuf,
+    status: ExitStatus,
+}
+
+impl TestResult {
+    fn move(self: &mut TestResult) -> TestResult {
+        TestResult {
+            test: self.test,
+            duration: self.duration,
+            success: self.success,
+            stdout: self.stdout.move(),
+            stderr: self.stderr.move(),
+            status: self.status,
+        }
+    }
+
+    fn free(self: &mut TestResult) {
+        self.stdout.free();
+        self.stderr.free();
+    }
+}
+
+/// Run a single test case in a forked subprocess.
+fn run_test(test: &TestCase) -> TestResult {
+    let start_time = Instant::now();
+    let child = Forked::new()
+        .stdin(Stdio::Null)
+        .stdout(Stdio::Piped)
+        .stderr(Stdio::Piped)
+        .spawn()
+        .unwrap();
+
+    if child.is_none() {
+        // In child process
+        test.test();
+        std::process::exit(0i32);
+    }
+
+    let child = child.unwrap();
+    let output = child.wait_with_output().unwrap();
+    let end_time = Instant::now();
+
+    defer output.free();
+
+    TestResult {
+        test: *test,
+        duration: end_time.elapsed(&start_time),
+        success: output.status.success(),
+        stdout: output.stdout.move(),
+        stderr: output.stderr.move(),
+        status: output.status,
+    }
+}
+
+/// Command line arguments for the test runner.
+struct Args {
+    filter: Option<&[u8]>,
+    timings: bool,
+}
+
+fn parse_args(args: &[&[u8]]) -> Args {
+    let res = Args {
+        filter: Option::none(),
+        timings: false,
+    };
+
+    if args.len() == 0 {
+        return res;
+    }
+
+    let i = 1usize;
+    while i < args.len() {
+        let arg = args[i];
+        if (arg == "--filter" || arg == "-f") && i + 1usize < args.len() {
+            i = i + 1usize;
+            res.filter = Option::some(args[i]);
+        } else if arg == "--timings" {
+            res.timings = true;
+        } else {
+            eprintln!("usage: {} [--filter <FILTER>] [--timings]", args[0]);
+            std::process::exit(1i32);
+        }
+        i = i + 1usize;
+    }
+
+    res
+}
+
+/// Test runner entrypoint.
+#[test_main]
+fn main(args: &[&[u8]]) -> i32 {
+    let args = parse_args(args);
+    let start_time = Instant::now();
+
+    // https://bixense.com/clicolors/
+    let colors = (
+        std::process::getenv("CLICOLOR").unwrap_or("1") != "0"
+            && libc::isatty(libc::STDERR_FILENO) != 0
+        ) || std::process::getenv("CLICOLOR_FORCE").unwrap_or("0") != "0";
+
+    let results: Vector<TestResult> = Vector::new();
+    defer results.free_all();
+
+    let num_failed = 0;
+    let num_passed = 0;
+    let filtered_count = 0;
+
+    // Filter tests
+    let test_cases: Vector<TestCase> = Vector::new();
+    defer test_cases.free();
+
+    for test in TEST_CASES {
+        if args.filter.is_some() && !std::string::contains(test.name, args.filter.unwrap()) {
+            filtered_count = filtered_count + 1;
+            continue;
+        }
+        test_cases.push(test);
+    }
+
+    eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
+
+    for test in test_cases {
+        eprint!("test {} ... ", test.name);
+
+        let result = run_test(&test);
+        if result.success {
+            num_passed = num_passed + 1;
+            if colors {
+                if args.timings {
+                    eprintln!("\x1b[0;32mok\x1b[0m [{}].", result.duration);
+                } else {
+                    eprintln!("\x1b[0;32mok\x1b[0m.");
+                }
+            } else {
+                if args.timings {
+                    eprintln!("ok [{}].", result.duration);
+                } else {
+                    eprintln!("ok.");
+                }
+            }
+        } else {
+            num_failed = num_failed + 1;
+            if colors {
+                eprintln!("\x1b[0;31mFAILED\x1b[0m.");
+            } else {
+                eprintln!("FAILED.");
+            }
+        }
+        results.push(result);
+    }
+
+    let end_time = Instant::now();
+    let elapsed = end_time.elapsed(&start_time);
+
+    if num_failed > 0 {
+        eprintln!("");
+        eprintln!("failures:");
+        eprintln!("");
+        for result in results {
+            if !result.success {
+                if result.status.code().is_some() {
+                    eprintln!("{} exited with code {}", result.test.name, result.status.code().unwrap());
+                    eprintln!("");
+                } else if result.status.signal().is_some() {
+                    eprintln!("{} was killed by signal {}", result.test.name, result.status.signal().unwrap());
+                    eprintln!("");
+                }
+                if result.stdout.len() > 0 {
+                    eprintln!("---- {} stdout ----", result.test.name);
+                    eprintln!("{}", result.stdout[..]);
+                    eprintln!("");
+                }
+                if result.stderr.len() > 0 {
+                    eprintln!("---- {} stderr ----", result.test.name);
+                    eprintln!("{}", result.stderr[..]);
+                    eprintln!("");
+                }
+            }
+        }
+        if colors {
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; finished in {}",
+                num_passed, num_failed, elapsed);
+        } else {
+            eprintln!("test result: FAILED. {} passed; {} failed; finished in {}",
+                num_passed, num_failed, elapsed);
+        }
+        1i32
+    } else {
+        eprintln!("");
+        if colors {
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; finished in {}",
+                num_passed, num_failed, elapsed);
+        } else {
+            eprintln!("test result: ok. {} passed; {} failed; finished in {}",
+                num_passed, num_failed, elapsed);
+        }
+        0i32
+    }
+}

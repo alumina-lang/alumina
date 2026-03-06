@@ -214,8 +214,8 @@ impl Compiler {
 
                     dir_stack.push((child_path, child_prefix));
                 } else if std::string::ends_with(name, ".alu") {
-                    // Skip test.alu in the sysroot root
-                    if name == "test.alu" && mod_prefix.len() == 0 {
+                    // Skip test.alu in the sysroot root unless in test mode
+                    if name == "test.alu" && mod_prefix.len() == 0 && !self.options.test_mode {
                         continue;
                     }
 
@@ -379,6 +379,11 @@ impl Compiler {
         }
         // Share macros across all contexts
         aluminac::parser::share_macros(contexts.as_slice_mut());
+
+        // Share test functions across all contexts (for test_cases!() macro)
+        if self.options.test_mode {
+            aluminac::parser::share_test_functions(contexts.as_slice_mut());
+        }
 
         // Phase 2: Parse all function bodies (all names are now registered)
         for i in 0usize..trees.len() {
@@ -756,12 +761,6 @@ fn print_usage() {
 
 fn main(args: &[&[u8]]) -> i32 {
     let (options, files) = parse_args(args);
-
-    if files.len() == 0 {
-        print_usage();
-        files.free();
-        return 1i32;
-    }
 
     let compiler = Compiler::new(options);
 
