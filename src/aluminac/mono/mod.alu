@@ -51,6 +51,9 @@ struct MonoCtx {
     // Track emitted globals to avoid duplicates
     emitted_globals: HashSet<usize>,
 
+    // Cached const-evaluated values for const globals
+    const_values: HashMap<usize, ConstValue>,
+
     // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
     fn_cache: HashMap<u64, usize>,
     struct_cache: HashMap<u64, usize>,
@@ -141,6 +144,7 @@ impl MonoCtx {
             ir_structs: Vector::new(),
             ir_enums: Vector::new(),
             emitted_globals: HashSet::new(),
+            const_values: HashMap::new(),
             fn_cache: HashMap::new(),
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
@@ -441,6 +445,7 @@ impl MonoCtx {
         self.ir_structs.free();
         self.ir_enums.free();
         self.emitted_globals.free();
+        self.const_values.free();
         self.fn_cache.free();
         self.struct_cache.free();
         self.struct_ty_cache.free();

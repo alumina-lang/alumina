@@ -836,7 +836,11 @@ impl CodegenCtx {
         }
         IrTag::Zeroed => {
             let ty = self.llvm_type(expr.ty);
-            LLVMConstNull(ty)
+            if LLVMGetTypeKind(ty) == LLVMTypeKind::Void {
+                LLVMGetUndef(ty)
+            } else {
+                LLVMConstNull(ty)
+            }
         }
         IrTag::Undef => {
             let ty = self.llvm_type(expr.ty);
@@ -844,7 +848,12 @@ impl CodegenCtx {
         }
 
         IrTag::StringLit => {
-            self.get_or_create_string(expr.str_val())
+            let ptr = self.get_or_create_string(expr.str_val());
+            // StringLit type is a slice — build { ptr, len } fat pointer constant
+            let fields = self.arena.alloc_slice::<LLVMValueRef>(2);
+            fields[0] = ptr;
+            fields[1] = LLVMConstInt(self.i64_type, expr.str_val().len() as u64, 0i32);
+            LLVMConstStructInContext(self.context, &fields[0], 2u32, 0i32)
         }
         IrTag::Cast => {
             let inner = self.gen_const_init(expr.lhs());
@@ -895,6 +904,59 @@ impl CodegenCtx {
                 }
             }
             LLVMConstStructInContext(self.context, &fields[0], expr.items().len() as u32, 0i32)
+        }
+        IrTag::ArrayLit => {
+            let elem_ty = self.llvm_type(expr.ty.inner());
+            let elems = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
+            for i in 0usize..expr.items().len() {
+                elems[i] = self.gen_const_init(expr.items()[i]);
+                if (elems[i] as usize) == 0 {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+            }
+            if elems.len() > 0usize {
+                LLVMConstArray(elem_ty, &elems[0], elems.len() as u32)
+            } else {
+                let ty = self.llvm_type(expr.ty);
+                LLVMConstNull(ty)
+            }
+        }
+        IrTag::TupleLit => {
+            // Skip ZST (void-typed) elements — they have no LLVM representation
+            let all_fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
+            let count = 0usize;
+            for i in 0usize..expr.items().len() {
+                let elem_ty = self.llvm_type(expr.items()[i].ty);
+                if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
+                    continue;
+                }
+                all_fields[count] = self.gen_const_init(expr.items()[i]);
+                if (all_fields[count] as usize) == 0 {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+                count = count + 1;
+            }
+            if count > 0usize {
+                LLVMConstStructInContext(self.context, &all_fields[0], count as u32, 0i32)
+            } else {
+                let ty = self.llvm_type(expr.ty);
+                if LLVMGetTypeKind(ty) == LLVMTypeKind::Void {
+                    LLVMGetUndef(ty)
+                } else {
+                    LLVMConstNull(ty)
+                }
+            }
+        }
+        IrTag::FnRef => {
+            let hash = self.name_hash(expr.fn_ref().mangled_name);
+            let existing = self.fn_decls.get(&hash);
+            if existing.is_some() {
+                let func = existing.unwrap();
+                // Function pointer as constant
+                LLVMConstBitCast(func, self.ptr_type)
+            } else {
+                std::mem::zeroed::<LLVMValueRef>()
+            }
         }
         _ => {
             // Cannot evaluate as constant - return null pointer as sentinel

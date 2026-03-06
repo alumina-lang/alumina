@@ -100,6 +100,10 @@ struct ConstEvaluator {
     id_gen: &mut IdGen,
     // Function lookup (already monomorphized)
     ir_functions: &[IrFunction],
+    // Global variable lookup (for const globals)
+    ir_globals: &[IrGlobal],
+    // Cached const-evaluated values for const globals
+    const_values: &HashMap<usize, ConstValue>,
     // Return slot for function calls
     return_slot: ConstValue,
     has_return: bool,
@@ -116,6 +120,8 @@ impl ConstEvaluator {
         variables: &mut HashMap<usize, ConstValue>,
         id_gen: &mut IdGen,
         ir_functions: &[IrFunction],
+        ir_globals: &[IrGlobal],
+        const_values: &HashMap<usize, ConstValue>,
         pointer_size: usize,
     ) -> ConstEvaluator {
         ConstEvaluator {
@@ -124,6 +130,8 @@ impl ConstEvaluator {
             remapped: HashMap::new(),
             id_gen: id_gen,
             ir_functions: ir_functions,
+            ir_globals: ir_globals,
+            const_values: const_values,
             return_slot: ConstValue::make_void(),
             has_return: false,
             remaining_depth: MAX_RECURSION_DEPTH,
@@ -285,6 +293,7 @@ impl ConstEvaluator {
         IrTag::Undef => ConstResult::success(ConstValue::make_uninitialized()),
         IrTag::Zeroed => ConstResult::success(self.make_zeroed(expr.ty)),
         IrTag::FnRef => ConstResult::success(ConstValue::make_fn_ptr(*expr.fn_ref())),
+        IrTag::GlobalRef => self.eval_global_ref(expr),
         IrTag::While => self.eval_while(expr),
         IrTag::Loop => self.eval_loop(expr),
         IrTag::Break => ConstResult::fail(ConstEvalError::break_err()),
@@ -293,6 +302,25 @@ impl ConstEvaluator {
         IrTag::Transmute => self.eval_transmute(expr),
         _ => ConstResult::fail(ConstEvalError::unsupported()),
         }
+    }
+
+    fn eval_global_ref(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let target_id = expr.global_ref().id._value;
+        // Check cached const values first
+        let cached = self.const_values.get(&target_id);
+        if cached.is_some() {
+            return ConstResult::success(cached.unwrap());
+        }
+        // Fall back to evaluating the global's init expression
+        for i in 0usize..self.ir_globals.len() {
+            if self.ir_globals[i].id._value == target_id {
+                if self.ir_globals[i].init.is_some() {
+                    return self.eval(self.ir_globals[i].init.unwrap());
+                }
+                break;
+            }
+        }
+        ConstResult::fail(ConstEvalError::unsupported())
     }
 
     fn irty_to_builtin(self: &ConstEvaluator, ty: &IrTy) -> BuiltinType {
@@ -708,7 +736,8 @@ impl ConstEvaluator {
             if !init_r.ok { return init_r; }
             self.store_var(expr.id(), init_r.value);
         } else {
-            self.store_var(expr.id(), ConstValue::make_uninitialized());
+            // Zero-initialize based on the declared type
+            self.store_var(expr.id(), self.make_zeroed(expr.ir_ty()));
         }
         ConstResult::success(ConstValue::make_void())
     }
@@ -898,7 +927,12 @@ impl ConstEvaluator {
         if inner.tag == CValTag::Lvalue {
             return ConstResult::success(ConstValue::make_pointer(inner.lvalue(), expr.lhs().ty));
         }
-        ConstResult::fail(ConstEvalError::unsupported())
+        // For non-lvalue values (e.g. inline tuple/struct literals), store in a
+        // temporary variable so we can take a reference to it.
+        let tmp_id = self.id_gen.next_id();
+        self.variables.insert(tmp_id._value, inner);
+        let lv = self.arena.alloc(ConstLValue::variable(tmp_id));
+        ConstResult::success(ConstValue::make_pointer(lv, expr.lhs().ty))
     }
 
     fn eval_deref(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
@@ -1069,6 +1103,8 @@ impl ConstEvaluator {
             remapped: child_remapped,
             id_gen: self.id_gen,
             ir_functions: self.ir_functions,
+            ir_globals: self.ir_globals,
+            const_values: self.const_values,
             return_slot: ConstValue::make_void(),
             has_return: false,
             remaining_depth: self.remaining_depth - 1,
@@ -1196,11 +1232,13 @@ fn try_eval_u64(
     arena: &mut Arena,
     id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
+    ir_globals: &[IrGlobal],
+    const_values: &HashMap<usize, ConstValue>,
     pointer_size: usize,
     expr: &IrExpr,
 ) -> Option<u64> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, pointer_size);
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
     let result = evaluator.eval(expr);
     if result.ok {
         result.value.as_u64()
@@ -1214,11 +1252,13 @@ fn try_eval_bool(
     arena: &mut Arena,
     id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
+    ir_globals: &[IrGlobal],
+    const_values: &HashMap<usize, ConstValue>,
     pointer_size: usize,
     expr: &IrExpr,
 ) -> Option<bool> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, pointer_size);
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
     let result = evaluator.eval(expr);
     if result.ok {
         result.value.as_bool()
@@ -1232,11 +1272,13 @@ fn try_eval(
     arena: &mut Arena,
     id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
+    ir_globals: &[IrGlobal],
+    const_values: &HashMap<usize, ConstValue>,
     pointer_size: usize,
     expr: &IrExpr,
 ) -> Option<ConstValue> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, pointer_size);
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
     let result = evaluator.eval(expr);
     if result.ok {
         Option::some(result.value)
