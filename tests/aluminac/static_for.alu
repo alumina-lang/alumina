@@ -1,15 +1,11 @@
-// Static for: compile-time loop unrolling.
-//
-// NOTE: Current implementation only supports iterating over tuple elements
-// directly (for const elem in tuple { ... }). The full Alumina static_for
-// supports arbitrary compile-time iterators (ranges, etc.) with the loop
-// variable as a compile-time constant, enabling .(i) tuple indexing and
-// when-based compile-time conditionals. That is not yet implemented.
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Static for: compile-time loop unrolling via const-evaluated iterator protocol.
+// The loop variable is a compile-time constant, enabling tuple indexing with .(i).
 
 fn sum_tuple(t: (i32, i32, i32)) -> i32 {
     let result = 0i32;
-    for const elem in t {
-        result = result + elem;
+    for const i in 0usize..t.len() {
+        result = result + t.(i);
     }
     result
 }
@@ -21,10 +17,18 @@ fn main(args: &[&[u8]]) -> i32 {
     // Single-element tuple
     let t2 = (99i32,);
     let s = 0i32;
-    for const e in t2 {
-        s = s + e;
+    for const i in 0usize..t2.len() {
+        s = s + t2.(i);
     }
     if s != 99i32 { return 2i32; }
+
+    // Heterogeneous tuple with range-based static for
+    let foo = (1, "hello", 3.4, true);
+    let count = 0i32;
+    for const i in 0usize..foo.len() {
+        count = count + 1i32;
+    }
+    if count != 4i32 { return 3i32; }
 
     0i32
 }

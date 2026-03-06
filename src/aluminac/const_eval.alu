@@ -92,10 +92,12 @@ impl ConstResult {
 
 struct ConstEvaluator {
     arena: &mut Arena,
-    // Variable storage: id._value -> ConstValue
-    variables: HashMap<usize, ConstValue>,
-    // Variable remapping for function calls: original_id -> new_id
+    // Variable storage: shared across call frames via pointer
+    variables: &mut HashMap<usize, ConstValue>,
+    // Variable remapping for THIS call frame: original_id -> fresh_id
     remapped: HashMap<usize, usize>,
+    // Fresh ID generation for remapping
+    id_gen: &mut IdGen,
     // Function lookup (already monomorphized)
     ir_functions: &[IrFunction],
     // Return slot for function calls
@@ -111,13 +113,16 @@ struct ConstEvaluator {
 impl ConstEvaluator {
     fn new(
         arena: &mut Arena,
+        variables: &mut HashMap<usize, ConstValue>,
+        id_gen: &mut IdGen,
         ir_functions: &[IrFunction],
         pointer_size: usize,
     ) -> ConstEvaluator {
         ConstEvaluator {
             arena: arena,
-            variables: HashMap::new(),
+            variables: variables,
             remapped: HashMap::new(),
+            id_gen: id_gen,
             ir_functions: ir_functions,
             return_slot: ConstValue::make_void(),
             has_return: false,
@@ -1037,11 +1042,32 @@ impl ConstEvaluator {
             arg_values[i] = r.value;
         }
 
-        // Create child evaluator with remapped variables
+        // Create child evaluator sharing the same variable store.
+        // Remap all param/local IDs to fresh ones so recursive calls don't collide,
+        // while pointer-based mutations (&mut self) go through to the shared store.
+        let child_remapped: HashMap<usize, usize> = HashMap::new();
+
+        // Remap and bind parameters
+        for i in 0usize..f.params.len() {
+            let fresh = self.id_gen.next_id();
+            child_remapped.insert(f.params[i].id._value, fresh._value);
+            if i < arg_values.len() {
+                self.variables.insert(fresh._value, arg_values[i]);
+            }
+        }
+
+        // Remap and initialize local variables
+        for i in 0usize..f.local_defs.len() {
+            let fresh = self.id_gen.next_id();
+            child_remapped.insert(f.local_defs[i].id._value, fresh._value);
+            self.variables.insert(fresh._value, ConstValue::make_uninitialized());
+        }
+
         let child = ConstEvaluator {
             arena: self.arena,
-            variables: HashMap::new(),
-            remapped: HashMap::new(),
+            variables: self.variables,
+            remapped: child_remapped,
+            id_gen: self.id_gen,
             ir_functions: self.ir_functions,
             return_slot: ConstValue::make_void(),
             has_return: false,
@@ -1049,18 +1075,6 @@ impl ConstEvaluator {
             steps_remaining: self.steps_remaining,
             pointer_size: self.pointer_size,
         };
-
-        // Bind parameters
-        for i in 0usize..f.params.len() {
-            if i < arg_values.len() {
-                child.variables.insert(f.params[i].id._value, arg_values[i]);
-            }
-        }
-
-        // Initialize local variables
-        for i in 0usize..f.local_defs.len() {
-            child.variables.insert(f.local_defs[i].id._value, ConstValue::make_uninitialized());
-        }
 
         // Evaluate function body
         let result = child.eval(f.body.unwrap());
@@ -1180,11 +1194,13 @@ impl ConstEvaluator {
 /// This is the main entry point used by mono for enum variants, array sizes, etc.
 fn try_eval_u64(
     arena: &mut Arena,
+    id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
     pointer_size: usize,
     expr: &IrExpr,
 ) -> Option<u64> {
-    let evaluator = ConstEvaluator::new(arena, ir_functions, pointer_size);
+    let vars: HashMap<usize, ConstValue> = HashMap::new();
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, pointer_size);
     let result = evaluator.eval(expr);
     if result.ok {
         result.value.as_u64()
@@ -1196,11 +1212,13 @@ fn try_eval_u64(
 /// Try to const-evaluate an expression to a bool value.
 fn try_eval_bool(
     arena: &mut Arena,
+    id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
     pointer_size: usize,
     expr: &IrExpr,
 ) -> Option<bool> {
-    let evaluator = ConstEvaluator::new(arena, ir_functions, pointer_size);
+    let vars: HashMap<usize, ConstValue> = HashMap::new();
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, pointer_size);
     let result = evaluator.eval(expr);
     if result.ok {
         result.value.as_bool()
@@ -1212,11 +1230,13 @@ fn try_eval_bool(
 /// Try to const-evaluate an expression to a full ConstValue.
 fn try_eval(
     arena: &mut Arena,
+    id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
     pointer_size: usize,
     expr: &IrExpr,
 ) -> Option<ConstValue> {
-    let evaluator = ConstEvaluator::new(arena, ir_functions, pointer_size);
+    let vars: HashMap<usize, ConstValue> = HashMap::new();
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, pointer_size);
     let result = evaluator.eval(expr);
     if result.ok {
         Option::some(result.value)

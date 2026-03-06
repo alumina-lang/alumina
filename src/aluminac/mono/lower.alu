@@ -27,6 +27,9 @@ struct Mono {
     expected_type: &IrTy,
     // Suppress field errors when lowering call target (method error takes priority)
     suppress_field_error: bool,
+    // Compile-time constant replacements for static for loop variables.
+    // When a local ID is in this map, lower_variable produces a literal instead of a Local ref.
+    const_replacements: HashMap<usize, ConstValue>,
 }
 
 impl Mono {
@@ -40,6 +43,7 @@ impl Mono {
             current_fn_name: "",
             expected_type: ctx.void_ty,
             suppress_field_error: false,
+            const_replacements: HashMap::new(),
         }
     }
 
@@ -934,6 +938,11 @@ impl Mono {
     // Lower variable references: ExprTag::Local, ExprTag::Param, ExprTag::FnRef
     fn lower_variable(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Local {
+            // Check for compile-time constant replacement (static for loop variables)
+            let const_val = self.const_replacements.get(&expr.id()._value);
+            if const_val.is_some() {
+                return self.constvalue_to_ir(const_val.unwrap());
+            }
             let ty = self.local_types.get(&expr.id()._value);
             let local_ty = if ty.is_some() { ty.unwrap() } else {
                 // HashMap miss - fall back to scanning local_defs vector
@@ -1969,6 +1978,7 @@ impl Mono {
     fn try_const_eval_u64(self: &mut Mono, expr: &IrExpr) -> Option<u64> {
         const_eval::try_eval_u64(
             self.ctx.arena,
+            self.ctx.id_gen,
             self.ctx.ir_functions.as_slice(),
             self.ctx.pointer_size,
             expr,
@@ -1978,10 +1988,131 @@ impl Mono {
     fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
         const_eval::try_eval_bool(
             self.ctx.arena,
+            self.ctx.id_gen,
             self.ctx.ir_functions.as_slice(),
             self.ctx.pointer_size,
             expr,
         )
+    }
+
+    fn try_const_eval(self: &mut Mono, expr: &IrExpr) -> Option<ConstValue> {
+        const_eval::try_eval(
+            self.ctx.arena,
+            self.ctx.id_gen,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.pointer_size,
+            expr,
+        )
+    }
+
+    // Convert a ConstValue to an IR literal expression.
+    fn constvalue_to_ir(self: &mut Mono, val: ConstValue) -> &IrExpr {
+        if val.tag == CValTag::Int {
+            let ty = self.ctx.intern_builtin_ty(val.builtin_type());
+            self.mk_int_lit(ty, val.int_val())
+        } else if val.tag == CValTag::Bool {
+            self.mk_bool_lit(val.int_val() != 0)
+        } else if val.tag == CValTag::Float {
+            let ty = self.ctx.intern_builtin_ty(val.builtin_type());
+            let e = IrExpr::void_expr(ty);
+            e.tag = IrTag::FloatLit;
+            e._data.lit.float_val = val.float_val();
+            self.ctx.arena.alloc(e) as &IrExpr
+        } else if val.tag == CValTag::Bytes {
+            let ty = self.ctx.make_slice_ty(self.ctx.intern_builtin_ty(BuiltinType::U8), true);
+            let e = IrExpr::void_expr(ty);
+            e.tag = IrTag::StringLit;
+            e._data.lit.str_val = val.bytes();
+            self.ctx.arena.alloc(e) as &IrExpr
+        } else {
+            // Unsupported const value type - produce void
+            let e = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(e) as &IrExpr
+        }
+    }
+
+    // Walk an IR expression tree and remap local variable IDs.
+    // Used to deduplicate locals across static for iterations.
+    fn remap_ir_locals(self: &Mono, expr_: &IrExpr, remap: &HashMap<usize, usize>) {
+        // Cast away const - safe because all IrExpr are arena-allocated and owned by us
+        let expr = expr_ as &IrExpr as &mut IrExpr;
+        switch expr.tag {
+            IrTag::Local, IrTag::Param => {
+                let r = remap.get(&expr._data.var.id._value);
+                if r.is_some() {
+                    expr._data.var.id._value = r.unwrap();
+                }
+            }
+            IrTag::Let => {
+                let r = remap.get(&expr._data.let_data.id._value);
+                if r.is_some() {
+                    expr._data.let_data.id._value = r.unwrap();
+                }
+                if expr.opt_expr().is_some() {
+                    self.remap_ir_locals(expr.opt_expr().unwrap(), remap);
+                }
+            }
+            IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit => {
+                for i in 0usize..expr.items().len() {
+                    self.remap_ir_locals(expr.items()[i], remap);
+                }
+            }
+            IrTag::StructLit => {
+                for i in 0usize..expr.items().len() {
+                    self.remap_ir_locals(expr.items()[i], remap);
+                }
+            }
+            IrTag::Binary => {
+                self.remap_ir_locals(expr.lhs(), remap);
+                self.remap_ir_locals(expr.rhs(), remap);
+            }
+            IrTag::Unary, IrTag::Ref, IrTag::Deref, IrTag::Defer, IrTag::Loop => {
+                self.remap_ir_locals(expr.lhs(), remap);
+            }
+            IrTag::Assign => {
+                self.remap_ir_locals(expr.lhs(), remap);
+                self.remap_ir_locals(expr.rhs(), remap);
+            }
+            IrTag::Index => {
+                self.remap_ir_locals(expr.lhs(), remap);
+                self.remap_ir_locals(expr.rhs(), remap);
+            }
+            IrTag::FieldAccess => {
+                self.remap_ir_locals(expr.lhs(), remap);
+            }
+            IrTag::Cast, IrTag::Transmute => {
+                self.remap_ir_locals(expr.lhs(), remap);
+            }
+            IrTag::If, IrTag::While => {
+                self.remap_ir_locals(expr.cond(), remap);
+                self.remap_ir_locals(expr.lhs(), remap);
+                if expr.opt_expr().is_some() {
+                    self.remap_ir_locals(expr.opt_expr().unwrap(), remap);
+                }
+            }
+            IrTag::Switch => {
+                self.remap_ir_locals(expr.lhs(), remap);
+                for i in 0usize..expr.switch_arms().len() {
+                    self.remap_ir_locals(expr.switch_arms()[i].body, remap);
+                }
+            }
+            IrTag::Call => {
+                for i in 0usize..expr.items().len() {
+                    self.remap_ir_locals(expr.items()[i], remap);
+                }
+                if expr.call_target().tag == CallKind::Indirect {
+                    self.remap_ir_locals(expr.call_target().callee, remap);
+                }
+            }
+            IrTag::Return, IrTag::Break => {
+                if expr.opt_expr().is_some() {
+                    self.remap_ir_locals(expr.opt_expr().unwrap(), remap);
+                }
+            }
+            _ => {
+                // Literals, Void, Zeroed, etc. - no children to remap
+            }
+        }
     }
 
     // Try to redirect a bodyless protocol method call to the concrete type's impl.
@@ -2143,7 +2274,7 @@ impl Mono {
         } else if ty.tag == IrTyTag::FnPointer {
             "fn(...)"
         } else if ty.tag == IrTyTag::Fn {
-            "fn(...)"
+            ty.fn_item_ref().mangled_name
         } else if ty.tag == IrTyTag::Void {
             "()"
         } else {
@@ -2177,65 +2308,146 @@ impl Mono {
         }
     }
 
-    // Lower static_for: compile-time loop unrolling over tuple elements
-    // static for v in tuple { body }
+    // Lower static for: compile-time loop unrolling driven by const-evaluating
+    // the iterator protocol (.iter() / .next()), same as a regular for loop but
+    // with the loop variable available as a compile-time constant.
     fn lower_static_for(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let iter_ir = self.lower_expr(expr.lhs());
-        let iter_ty = iter_ir.ty;
+        // 1. Lower the iterable
+        let iterable_ir = self.lower_expr(expr.lhs());
+        let iterable_ty = iterable_ir.ty;
 
-        // Get element count from tuple/array type
-        let count: usize = 0;
-        if iter_ty.tag == IrTyTag::Tuple {
-            count = iter_ty.elems().len();
-        } else if iter_ty.tag == IrTyTag::Array {
-            count = iter_ty.array_size();
+        if iterable_ty.is_void() {
+            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         }
 
-        if count == 0 {
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            return self.ctx.arena.alloc(r);
+        // 2. Store iterable in a local, call .iter() — same as lower_for_iterator
+        let iterable_var_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(iterable_var_id._value, iterable_ty);
+        self.local_defs.push(IrLocalDef { id: iterable_var_id, ty: iterable_ty, name: "_sf_iterable", span: Span::empty() });
+        let ir_let_iterable = self.mk_let(iterable_var_id, iterable_ty, iterable_ir);
+
+        let ir_iterable_ref = self.mk_ref(self.mk_local(iterable_var_id, iterable_ty), false);
+        let iter_call = self.resolve_method_call_on_type(iterable_ty, "iter", ir_iterable_ref, &[]);
+        let iter_ir: &IrExpr;
+        let iter_ty: &IrTy;
+        if iter_call.is_some() {
+            iter_ir = iter_call.unwrap();
+            iter_ty = iter_ir.ty;
+        } else {
+            // No .iter() — use the value directly (e.g. it IS the iterator)
+            iter_ir = self.mk_local(iterable_var_id, iterable_ty);
+            iter_ty = iterable_ty;
         }
 
-        // Store the iterator value in a temp local
-        let iter_id = self.ctx.id_gen.next_id();
-        self.local_types.insert(iter_id._value, iter_ty);
-        self.local_defs.push(IrLocalDef { id: iter_id, ty: iter_ty, name: "", span: Span::empty() });
+        // 3. Store iterator in a local
+        let iter_var_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(iter_var_id._value, iter_ty);
+        self.local_defs.push(IrLocalDef { id: iter_var_id, ty: iter_ty, name: "_sf_iter", span: Span::empty() });
+        let ir_let_iter = self.mk_let(iter_var_id, iter_ty, iter_ir);
 
-        let ir_let_ref = self.mk_let(iter_id, iter_ty, iter_ir);
+        // 4. Build .next() call IR (will be const-evaluated repeatedly)
+        let ir_iter_ref = if iter_ty.tag == IrTyTag::Pointer {
+            self.mk_local(iter_var_id, iter_ty)
+        } else {
+            self.mk_ref(self.mk_local(iter_var_id, iter_ty), false)
+        };
+        let next_call = self.resolve_method_call_on_type(iter_ty, "next", ir_iter_ref, &[]);
+        if next_call.is_none() {
+            self.emit_diag(diagnostics::CodeDiagnostic::unresolved_function(expr.span, "next"));
+            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+        }
+        let ir_next_call = next_call.unwrap();
 
-        // Unroll: for each element, bind the loop variable and lower the body
-        // +1 for the let statement
-        let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(count + 1);
-        stmts[0] = ir_let_ref;
+        // 5. Build initialization block and const-evaluate it
+        let init_block_items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        init_block_items[0] = ir_let_iterable;
+        init_block_items[1] = ir_let_iter;
+        let init_block = self.mk_block_void(init_block_items);
 
-        for i in 0usize..count {
-            let elem_ty = if iter_ty.tag == IrTyTag::Tuple {
-                iter_ty.elems()[i]
-            } else {
-                iter_ty.inner() // array element type
-            };
+        let sf_vars: HashMap<usize, ConstValue> = HashMap::new();
+        let evaluator = const_eval::ConstEvaluator::new(
+            self.ctx.arena,
+            &sf_vars,
+            self.ctx.id_gen,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.pointer_size,
+        );
+        let init_result = evaluator.eval(init_block);
+        if !init_result.ok {
+            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+        }
 
-            // Access element: iter_local.i (tuple index)
-            let ir_elem: &IrExpr = self.mk_field(self.mk_local(iter_id, iter_ty), i as u32, elem_ty);
+        // 6. Drive iteration: const-eval .next() repeatedly, lower body per value
+        let stmts: Vector<&IrExpr> = Vector::new();
+        let saved_local_defs_len = self.local_defs.len();
+        let loop_var_id = expr.id()._value;
 
-            // Bind loop variable (expr.id) to this element
-            let var_id = expr.id();
-            self.local_types.insert(var_id._value, elem_ty);
-            self.local_defs.push(IrLocalDef { id: var_id, ty: elem_ty, name: "", span: Span::empty() });
+        loop {
+            let next_result = evaluator.eval(ir_next_call);
+            if !next_result.ok { break; }
 
-            let ir_let_var_ref = self.mk_let(var_id, elem_ty, ir_elem);
+            // Result is Option<T> struct: { _is_some: bool, _inner: T }
+            let opt_val = next_result.value;
+            if opt_val.tag != CValTag::Struct { break; }
 
-            // Lower the body with this binding
+            // Check _is_some (field index 0)
+            let is_some = false;
+            for fi in 0usize..opt_val.fields().len() {
+                if opt_val.fields()[fi].field_idx == 0u32 {
+                    is_some = opt_val.fields()[fi].value.int_val() != 0;
+                    break;
+                }
+            }
+            if !is_some { break; }
+
+            // Extract _inner (field index 1)
+            let inner_val = ConstValue::make_void();
+            for fi in 0usize..opt_val.fields().len() {
+                if opt_val.fields()[fi].field_idx == 1u32 {
+                    inner_val = opt_val.fields()[fi].value;
+                    break;
+                }
+            }
+
+            // Set the loop variable as a compile-time constant
+            self.const_replacements.insert(loop_var_id, inner_val);
+
+            // Track local_defs before this iteration
+            let iter_defs_start = self.local_defs.len();
+
+            // Lower the body
             let body_ir = self.lower_expr(expr.rhs());
 
-            // Create a block for this iteration: { let v = elem; body }
-            let iter_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-            iter_stmts[0] = ir_let_var_ref;
-            iter_stmts[1] = body_ir;
-            stmts[i + 1] = self.mk_block_void(iter_stmts);
+            // Remap new locals to fresh IDs so iterations don't collide
+            if stmts.len() > 0 {
+                let remap: HashMap<usize, usize> = HashMap::new();
+                for di in iter_defs_start..self.local_defs.len() {
+                    let old_id = self.local_defs[di].id._value;
+                    let new_id = self.ctx.id_gen.next_id();
+                    remap.insert(old_id, new_id._value);
+                    self.local_defs[di].id = new_id;
+                    self.local_types.insert(new_id._value, self.local_defs[di].ty);
+                }
+                if remap.len() > 0 {
+                    self.remap_ir_locals(body_ir, &remap);
+                }
+            }
+
+            stmts.push(body_ir);
         }
 
-        self.mk_block_void(stmts)
+        // Clean up const replacement
+        self.const_replacements.remove(&loop_var_id);
+
+        if stmts.len() == 0 {
+            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+        }
+
+        let result_items = self.ctx.arena.alloc_slice::<&IrExpr>(stmts.len());
+        for i in 0usize..stmts.len() {
+            result_items[i] = stmts[i];
+        }
+        self.mk_block_void(result_items)
     }
 
     // Generate tuple unpacking let-bindings for `for (a, b, ...) in iterable` loops.
