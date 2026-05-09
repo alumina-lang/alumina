@@ -643,6 +643,12 @@ impl Mono {
         // Forward-declare: register the struct with empty fields BEFORE resolving field types.
         // This prevents infinite recursion for self-referential structs (e.g. Node { next: &mut Node }).
         let placeholder_fields = self.ctx.arena.alloc_slice::<IrField>(0);
+        let is_packed = false;
+        for j in 0usize..def.attributes.len() {
+            if def.attributes[j].tag == AttrTag::Packed {
+                is_packed = true;
+            }
+        }
         let ir_struct = IrStructRef {
             id: def.id,
             name: def.name,
@@ -651,6 +657,7 @@ impl Mono {
             is_zero_sized: def.fields.len() == 0,
             scope_idx: scope_idx,
             type_args: type_args,
+            is_packed: is_packed,
         };
 
         let idx = self.ctx.ir_structs.len();
@@ -4237,6 +4244,7 @@ impl Mono {
             is_zero_sized: is_closure_zst,
             scope_idx: 0,
             type_args: &[],
+            is_packed: false,
         };
         let closure_fn_ref = IrFnRef { id: lambda_id, mangled_name: mangled };
 

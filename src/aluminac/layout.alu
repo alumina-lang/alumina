@@ -60,15 +60,24 @@ fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
         } else {
             let size: usize = 0;
             let max_align: usize = 1;
+            let is_packed = ty.struct_ref().is_packed;
             for i in 0usize..ty.struct_ref().fields.len() {
                 let elem_size = compute_type_size(ty.struct_ref().fields[i].ty, pointer_size);
                 let elem_align = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
                 if elem_align > max_align { max_align = elem_align; }
-                let padding = (elem_align - (size % elem_align)) % elem_align;
+                let padding = if is_packed {
+                    0usize
+                } else {
+                    (elem_align - (size % elem_align)) % elem_align
+                };
                 size = size + padding + elem_size;
             }
-            let padding = (max_align - (size % max_align)) % max_align;
-            size + padding
+            let trailing_padding = if is_packed {
+                0usize
+            } else {
+                (max_align - (size % max_align)) % max_align
+            };
+            size + trailing_padding
         }
     }
     IrTyTag::Enum => {
@@ -99,6 +108,9 @@ fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
         max_align
     }
     IrTyTag::Struct, IrTyTag::Closure => {
+        if ty.struct_ref().is_packed {
+            return 1usize;
+        }
         let max_align: usize = 1;
         for i in 0usize..ty.struct_ref().fields.len() {
             let a = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
