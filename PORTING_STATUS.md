@@ -27,7 +27,7 @@ Done since first pass:
 - Closure features: capture-by-value, capture-by-reference, mixed captures, multi-arg closures, closure-of-closure, Fn-protocol-bounded generic args all work (`tests/aluminac/closures.alu`, `closure_features.alu`). Remaining concern: ProtoClosure conformance under `where` clauses isn't exercised; aluminac's bound enforcement is generally weak (noted as a separate soundness gap).
 
 Missing:
-- Side-by-side macro support: `src/alumina-boot/src/ast/macros.rs` is ~800 LoC; map each capability (universal-call macros, `et cetera` packs, named-arg expansion, hygiene, recursion limits) to the aluminac equivalent or a `[TODO]`.
+- Side-by-side macro support — partial audit: aluminac handles all the builtin macros boot has (`cfg`, `line`, `column`, `file`, `stringify`, `env`, `concat`, `include_bytes`, `format_args`, `bind`, `reduce`). Aluminac additionally has `count`, `test_cases` (aluminac-specific test discovery). Untested in this audit: et-cetera packs in deeply nested macro bodies, named-arg expansion under hygiene, macro recursion limits. The widest gap risk is hygiene under variable shadowing — sysroot rarely exercises it but boot has explicit support.
 
 ---
 
