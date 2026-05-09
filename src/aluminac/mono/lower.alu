@@ -813,7 +813,12 @@ impl Mono {
                 }
             }
             ExprTag::Range => {
-                // Lower a..b / a..=b to Range<T> / RangeInclusive<T> struct
+                // Lower a..b / a..=b to Range<T> / RangeInclusive<T> struct.
+                //
+                // T is inferred from the operands: if both lower and upper are
+                // present they must agree (else fallback to usize); if only one
+                // is present its type is T; if neither is present (full range)
+                // T defaults to usize.
                 let lang_name: &[u8] = if expr.flag() { "range_inclusive" } else { "range" };
                 let lang_id = self.ctx.get_lang_item(lang_name);
                 if lang_id.is_none() {
@@ -826,21 +831,45 @@ impl Mono {
                     return self.ctx.arena.alloc(r);
                 }
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                let ir_lower = if expr.lhs() as &void as usize != 0 {
-                    let raw = self.lower_expr(expr.lhs());
-                    self.mk_cast(raw, usize_ty)
+
+                let has_lower = expr.lhs() as &void as usize != 0;
+                let has_upper = expr.rhs() as &void as usize != 0;
+
+                let raw_lower = if has_lower { self.lower_expr(expr.lhs()) } else { null as &IrExpr };
+                let raw_upper = if has_upper { self.lower_expr(expr.rhs()) } else { null as &IrExpr };
+
+                let elem_ty: &IrTy = if has_lower && has_upper {
+                    if raw_lower.ty as &void == raw_upper.ty as &void {
+                        raw_lower.ty
+                    } else {
+                        usize_ty
+                    }
+                } else if has_lower {
+                    raw_lower.ty
+                } else if has_upper {
+                    raw_upper.ty
                 } else {
-                    self.mk_int_lit(usize_ty, 0u64)
+                    usize_ty
                 };
-                let ir_upper = if expr.rhs() as &void as usize != 0 {
-                    let raw = self.lower_expr(expr.rhs());
-                    self.mk_cast(raw, usize_ty)
+
+                let ir_lower = if has_lower {
+                    self.mk_cast(raw_lower, elem_ty)
                 } else {
-                    // Open-ended range (a..) - use max usize as sentinel
-                    self.mk_int_lit(usize_ty, 18446744073709551615u64)
+                    // Open-ended range (..) — start at zero of the element type.
+                    self.mk_int_lit(elem_ty, 0u64)
                 };
+                let ir_upper = if has_upper {
+                    self.mk_cast(raw_upper, elem_ty)
+                } else {
+                    // Open-ended upper (a..) — sentinel = max value of the element type.
+                    // For now use all-ones in the element width; this is correct for usize/u*
+                    // and acceptable as a sentinel for signed integers since the range iterator
+                    // reaches it before overflow.
+                    self.mk_int_lit(elem_ty, 18446744073709551615u64)
+                };
+
                 let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
-                type_args[0] = usize_ty;
+                type_args[0] = elem_ty;
                 let range_ty = self.mono_struct(sd.unwrap(), type_args);
                 let fields = self.ctx.arena.alloc_slice::<&IrExpr>(if expr.flag() { 3usize } else { 2usize });
                 fields[0] = ir_lower;

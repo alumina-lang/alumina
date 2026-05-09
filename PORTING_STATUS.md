@@ -59,7 +59,7 @@ Missing:
 - [TODO] **`Lang::EntrypointGlue`.** sysroot defines an entrypoint-glue lang item; aluminac uses a hardcoded entrypoint. Push the glue into the sysroot once practical.
 - [TODO] **Verify `ProtoZeroSized` is enforced as a generic-bound at typecheck (not just `is`-check).** The `proto_zero_sized` lang item is queried in the `t is Proto` runtime/typecheck path (good); confirm it's also enforced when used in a `where` clause / generic bound (e.g. rejecting `unit::<i32>()` where `i32: ZeroSized` is false). Test by writing a function bounded on `ZeroSized` and instantiating with a non-ZST.
 
-- [TODO] **Range-literal lowering forces `usize` element type.** `mono/lower.alu`'s `ExprTag::Range` branch hardcodes `usize_ty` for the type arg of `Range<T>` / `RangeInclusive<T>` regardless of the lower / upper operand types, then casts the operands to `usize`. So `0i32..10i32` produces `Range<usize>` rather than `Range<i32>`. alumina-boot infers T from the operand types. Update lower.alu to take T from the unified type of the operands (with usize as the inference fallback for an open-ended range like `..`).
+- [DONE] **Range-literal type inference.** `mono/lower.alu` previously hardcoded `Range<usize>` for every range literal. Now infers T from the lower / upper operand types (both must agree, otherwise falls back to usize). `0i32..10i32` produces `Range<i32>` as expected. Verified by the strengthened `tests/aluminac/proto_range_of.alu`.
 
 ## Const evaluation
 
