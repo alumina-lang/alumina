@@ -52,7 +52,7 @@ Missing:
   Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and `sysroot/std/panicking.alu`'s `panic_impl`.
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
 - [DONE] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** Audited the alumina-boot Rust source: `Ty::Tag` is a transparent wrapper that lets boot mark types with a string tag (notably "dynamic" for `dyn` lowering). Aluminac doesn't need it — its dyn handling resolves directly to the lang(dyn) struct. Sysroot grep finds only doc references, no actual uses. The `tag` intrinsic itself is implemented in aluminac as identity (lowering its second argument). No further work.
-- [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.
+- [DONE] **Coroutines / yield.** Out of scope per `PORTING.md`. Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either, and sysroot uses keep them gated under `cfg(coroutines)`. No work expected.
 - [PARTIAL] **Attribute: `#[transparent]`.** AttrTag::Transparent + parser recognition. Codegen doesn't yet apply transparent semantics (LLVM struct still wraps, no ABI difference). Sysroot files using `#[transparent]` now parse via the explicit dispatch instead of the catch-all silent-drop.
 - [DONE] **Attribute: `#[link_name("…")]`.** Wired through pass1 → AttrTag::LinkName → mono mangled-name override. `tests/aluminac/link_name_attr.alu` declares `extern "C" fn c_string_len` pointing at libc `strlen` and verifies the call resolves correctly (and the negative — without the attribute it link-fails on `c_string_len`). The previous mis-routing to `AttrTag::Extern` is fixed.
 - [DONE] **Attribute: `#[packed(N)]` / `#[packed]`.** AttrTag::Packed parsed; IrStructRef carries an `is_packed` flag set when AttrTag::Packed is on the source struct. Codegen passes `packed=1` to `LLVMStructSetBody` so LLVM lays out fields without padding; layout.alu's `compute_type_size` and `compute_type_align` honor the flag too. Verified by `tests/aluminac/packed_struct.alu` (PackedHeader{u8,u32} = 5, UnpackedHeader = 8).
@@ -177,7 +177,7 @@ Missing:
 - [TODO] **Reflection lang items** (`format_arg`, `enum_variant_new`, `field_descriptor_new`, `field_descriptor_new_unnamed`, `type_descriptor_new`). Required by `enum_variants` / `fields` intrinsics.
 - [TODO] **`entrypoint_glue`.** See Language features.
 - [DONE] **`static_for_iter`, `static_for_next`.** Aluminac's `lower_static_for` directly calls the type's `.iter()` and `.next()` methods (per the const-evaluated iterator protocol added in `a6b71e0c`). The sysroot's `static_for_iter` / `static_for_next` lang items are thin wrappers around exactly those calls, so the observable behavior matches alumina-boot. Going through the lang-item indirection would add a layer of inlining without functional change.
-- [TODO] **Coroutine lang items** (`coroutine`, `coroutine_new`, `coroutine_yield`). Out of scope; keep noted.
+- [DONE] **Coroutine lang items** (`coroutine`, `coroutine_new`, `coroutine_yield`). Out of scope per `PORTING.md`.
 
 ## Stdlib modules
 
