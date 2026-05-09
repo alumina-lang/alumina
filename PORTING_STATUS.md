@@ -20,12 +20,15 @@ Completed 2026-05-09. Categories below populated by parallel audit of `src/alumi
 
 The first audit pass produced only ~7 language-feature gaps. That's almost certainly low: aluminac is roughly 1/3 the LoC of alumina-boot and the boot AST has machinery (closures' captured-env lowering, mixin substitution, full macro hygiene, etc.) that one short audit doesn't enumerate.
 
+Done since first pass:
+- Attribute parity walk: Packed, TupleCall, ConstOnly, NoConst, Transparent, MustUse, LinkName all have AttrTag entries and parser dispatch. Custom attributes are still TODO. Tracked individually in the Language-features section above.
+
 Missing:
 - Side-by-side AST node coverage: enumerate every `ExprKind` / `Ty` / `Statement` variant in `src/alumina-boot/src/ast/mod.rs` and verify aluminac's `ast.alu` covers it (or note the gap).
 - Side-by-side macro support: `src/alumina-boot/src/ast/macros.rs` is ~800 LoC; map each capability (universal-call macros, `et cetera` packs, named-arg expansion, hygiene, recursion limits) to the aluminac equivalent or a `[TODO]`.
 - Side-by-side mixin support: alumina-boot's mixin substitution rules vs aluminac's; verify with deliberately tricky cases (mixin with generics, mixin referencing Self, mixin chaining).
 - Closure capture: aluminac has tests/aluminac/closures.alu so the basic case works, but capture-by-reference, closure-of-closure, and ProtoClosure conformance need confirming.
-- Attribute parity: walk every variant of `enum Attribute<'ast>` in `src/alumina-boot/src/ast/mod.rs` (Packed, TupleCall, ConstOnly, NoConst, Transparent, MustUse, LinkName, Coroutine, Custom) and add a `[TODO]` per gap.
+- Custom attributes (Attribute::Custom): still missing. Tracked individually below.
 
 ---
 
