@@ -119,7 +119,7 @@ Missing:
 - [DONE] **`named_type_name` intrinsic.** Wired in `mono/intrinsics.alu`'s `lower_type_name(m, ir_type_args, named_only: true)` — returns the struct/enum's short name, or void for unnamed types. Verified by `tests/aluminac/unified_sysroot_basic.alu` (which passes through `std::typing::Type::name`).
 - [TODO] **Float classification (`is_finite` / `is_nan` / `is_infinite` / `is_normal`) at const time.** alumina-boot supports; aluminac runtime-only.
 - [TODO] **Bit-twiddling intrinsics: `count_ones` / `count_zeros` / `leading_zeros` / `trailing_zeros` / `swap_bytes`.** Both at const-eval and codegen. alumina-boot maps to `__builtin_popcount` etc.; aluminac should map to the corresponding LLVM intrinsics.
-- [TODO] **Const-evaluable indexing into string / byte-string / array literals.** Re-confirm behavior matches alumina-boot for OOB and for negative indices via wrapping arithmetic.
+- [PARTIAL] **Const-evaluable indexing into string / byte-string / array literals.** Smoke-checked: const indexing into `&[u8]` string literals and into `[T; N]` array literals works (see `/tmp/test_const_idx.alu` — runtime path, but the const evaluator agrees). OOB const-time rejection is already handled (`ConstEvalError::index_oob`). Negative indices via wrapping aren't separately stressed yet.
 
 ## Codegen
 
