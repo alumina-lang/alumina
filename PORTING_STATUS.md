@@ -33,16 +33,18 @@ Missing:
 
 *(Parser/AST/type system features in alumina-boot but not aluminac.)*
 
-- [PARTIAL] **`dyn` / dynamic dispatch.** Aluminac now PARSES `&dyn Proto` and `&mut dyn Proto`, COERCES `&T` to `&dyn Proto` (with a null-vtable fat pointer), and DISPATCHES method calls on dyn-typed receivers (emits Unreachable typed as the method's return type — runtime would crash but mono completes). This unblocks `panic_impl`'s body — Option::unwrap and friends now compile through the unified sysroot. Verified by `tests/aluminac/unified_sysroot_basic.alu` (Option::unwrap on the happy path).
+- [PARTIAL] **`dyn` / dynamic dispatch.** Aluminac now PARSES `&dyn Proto` and `&mut dyn Proto` and COERCES `&T` to `&dyn Proto` (fat pointer with null vtable). Sysroot signatures using dyn type-check; the previous "could not resolve method 'fmt' on type ''" error mutates into the call-site error when something tries to method-dispatch through a dyn value.
 
-  Missing (real dyn semantics, not just typecheck):
-  - Vtable construction at `&x as &dyn Proto`: build a static array of fn pointers for each method in Proto, emit pointer to it. Currently the vtable is null, so any actual dispatch crashes.
-  - dyn_vtable_index runtime path: emit `dyn_vtable_index(dyn_val, idx)(dyn_data(dyn_val), args...)` instead of Unreachable.
+  A dyn-method dispatch shim was attempted (mono of the call emits Unreachable typed as the protocol method's return type) but had non-deterministic segfaults in the iteration over `protocol_defs` mid-resolve_type — the underlying ProtocolDef pointers occasionally invalidated. Reverted the shim until the lifetime issue is understood; sysroot paths reaching dyn method calls (Option::unwrap → panic_impl → arg.fmt) still fail at "could not resolve method".
+
+  Missing (real dyn semantics):
+  - Stable method dispatch: look up the method on the protocol(s) referenced by the Protos type-arg and emit a vtable-indexed call. A stub Unreachable was attempted; need to investigate why repeated protocol_defs accesses race or invalidate.
+  - Vtable construction at `&x as &dyn Proto`: build a static array of fn pointers for each method in Proto.
+  - dyn_vtable_index runtime path: emit `dyn_vtable_index(dyn_val, idx)(dyn_data(dyn_val), args...)`.
   - Multi-protocol bounds: `&dyn (A + B)` is parsed but only the first protocol is captured.
-  - dyn_self lang item — `Self` substitution in protocol method signatures inside dyn context (currently resolves to void via the existing fallback, which works for monomorphic cases like Formattable's Self).
-  - Self-substitution in protocol method return types: e.g. `fn foo() -> &Self` would currently resolve to `&void`. Test before declaring DONE on that path.
+  - dyn_self lang item — Self substitution in protocol method signatures inside dyn context.
 
-  Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and `sysroot/std/panicking.alu`'s `panic_impl`. With the dyn shim in place, the milestone test now exercises Option::unwrap end-to-end on the happy path.
+  Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and `sysroot/std/panicking.alu`'s `panic_impl`.
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
 - [TODO] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** alumina-boot uses these for type-level metadata; absent in aluminac. Confirm whether sysroot actually requires them (may be internal to boot).
 - [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.
