@@ -247,6 +247,17 @@ fn main() -> i32 {
     if !std::intrinsics::expect(v > 0, true) { return 65; }
     if std::intrinsics::expect(v < 0, false) { return 66; }
 
+    // Direct intrinsic calls: transmute, type_name, type_id.
+    let bits: u32 = 1078523331u32;  // 0x40490fdb (close to π)
+    let pi: f32 = std::intrinsics::transmute::<u32, f32>(bits);
+    if pi < 3.14f32 || pi > 3.15f32 { return 67; }
+
+    let i32_name: &[u8] = std::intrinsics::type_name::<i32>();
+    if i32_name.len() == 0usize { return 68; }
+
+    if std::intrinsics::type_id::<i32>() == std::intrinsics::type_id::<u32>() { return 69; }
+    if std::intrinsics::type_id::<i32>() != std::intrinsics::type_id::<i32>() { return 70; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
