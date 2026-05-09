@@ -229,11 +229,9 @@ fn main() -> i32 {
     if count_arr.iter().count() != 5usize { return 57; }
 
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
-    // dyn dispatch shim in mono/lower.alu lets that mono complete via an
-    // Unreachable, but the path is non-deterministic enough to exclude
-    // from the milestone for now (sometimes segfaults during mono of the
-    // protocol method's return type — investigation pending). When the
-    // real dyn vtable lands, this section can be re-enabled.
+    // dyn dispatch shim in mono/lower.alu lets the typecheck through but
+    // is currently non-deterministic enough to be unsafe in tests; revert
+    // to an explicit predicate-only test until real dyn dispatch lands.
 
     0
 }
