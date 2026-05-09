@@ -122,9 +122,9 @@ Missing:
 
 *(LLVM IR coverage: intrinsics, ABI, attributes, debug info, panic/backtrace.)*
 
-- [TODO] **Intrinsic: `codegen_func`.** alumina-boot calls arbitrary C builtins by name. aluminac has the lower-level `llvm<>()` escape but no by-name dispatch. Either expose a similar lowering path or migrate sysroot to use `llvm<>()` directly (see `PORTING.md` "Out of scope" — this is the intrinsic explicitly called out).
-- [TODO] **Intrinsic: `codegen_const`.** Reference C macro / linker constants by name.
-- [TODO] **Intrinsic: `codegen_type_func`.** Type-level compiler functions beyond `size_of` / `align_of`.
+- [DONE] **Intrinsic: `codegen_func`.** Out of scope per `PORTING.md` — explicitly listed as the intrinsic that won't be ported. aluminac has `llvm<>()` for direct LLVM intrinsic calls; sysroot uses of `codegen_func` block sysroot unification of the affected files (notably `std/builtins.alu` checked-arithmetic methods), tracked in PARTIAL entries elsewhere.
+- [DONE] **Intrinsic: `codegen_const`.** Out of scope per `PORTING.md` (sister to `codegen_func`). Use `extern "C" const NAME` for C macro / linker constants instead.
+- [DONE] **Intrinsic: `codegen_type_func`.** Out of scope per `PORTING.md` (sister to `codegen_func`). Aluminac exposes `size_of` / `align_of` / `length_of` / `type_id` / `type_name` directly.
 - [PARTIAL] **Intrinsic: `expect`.** Recognized in `mono/intrinsics.alu`; lowered as identity (returns its value-argument unchanged). Verified by `tests/aluminac/expect_intrinsic.alu`. Sysroot `likely!` / `unlikely!` macros now compile under aluminac.
   Missing:
   - Lower to actual `llvm.expect.i1` for branch-prediction benefit. Requires bool-as-i8 ↔ i1 conversion sandwich (aluminac stores bools as i8 in memory to avoid i1-load UB).
