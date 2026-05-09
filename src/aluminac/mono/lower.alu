@@ -3238,6 +3238,17 @@ impl Mono {
                             let arg_align = layout::compute_type_align(arg_ty, self.ctx.pointer_size);
                             is_match = val_size == arg_size && val_align == arg_align;
                         }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_same_base_as") {
+                        // SameBaseAs<T>: val_ty and T are both struct/enum monomorphizations
+                        // of the same base generic def. Compare def-ids.
+                        if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                            if val_ty.tag == IrTyTag::Struct && arg_ty.tag == IrTyTag::Struct {
+                                is_match = val_ty.struct_ref().id._value == arg_ty.struct_ref().id._value;
+                            } else if val_ty.tag == IrTyTag::Enum && arg_ty.tag == IrTyTag::Enum {
+                                is_match = val_ty.enum_ref().id._value == arg_ty.enum_ref().id._value;
+                            }
+                        }
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_meta") {
                         // Meta: val_ty is itself a protocol (declared as such in source).
                         // Aluminac wraps protocols as IrTyTag::Protocol so the check is direct.
