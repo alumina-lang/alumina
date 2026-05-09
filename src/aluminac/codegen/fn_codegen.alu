@@ -1122,6 +1122,34 @@ impl FnCodegen {
             let res_ty = self.ctx.llvm_type(result_ty);
             return LLVMGetUndef(if self.is_void_type(res_ty) { self.ctx.i64_type } else { res_ty });
         }
+
+        // Eq/Ne on aggregate (Array) operands: LLVM's icmp can't compare
+        // arrays directly, so unroll into element-wise compare folded with
+        // AND/OR. Same approach for both — for Ne we negate at the end.
+        if (op == BinOp::Eq || op == BinOp::Ne) && lhs.ty.tag == IrTyTag::Array {
+            let arr_size = lhs.ty.array_size();
+            let acc: LLVMValueRef = LLVMConstInt(self.ctx.i8_type, if op == BinOp::Eq { 1u64 } else { 0u64 }, 0i32);
+            for i in 0u32..arr_size as u32 {
+                let a_i = LLVMBuildExtractValue(self.ctx.builder, lhs_val, i, self.temp_cname());
+                let b_i = LLVMBuildExtractValue(self.ctx.builder, rhs_val, i, self.temp_cname());
+                let cmp_kind = LLVMGetTypeKind(LLVMTypeOf(a_i));
+                let elem_eq: LLVMValueRef;
+                if cmp_kind == LLVMTypeKind::Float || cmp_kind == LLVMTypeKind::Double {
+                    let pred = if op == BinOp::Eq { LLVMRealPredicate::OEQ } else { LLVMRealPredicate::UNE };
+                    elem_eq = LLVMBuildFCmp(self.ctx.builder, pred, a_i, b_i, self.temp_cname());
+                } else {
+                    let pred = if op == BinOp::Eq { LLVMIntPredicate::EQ } else { LLVMIntPredicate::NE };
+                    elem_eq = LLVMBuildICmp(self.ctx.builder, pred, a_i, b_i, self.temp_cname());
+                }
+                let elem_eq_i8 = LLVMBuildZExt(self.ctx.builder, elem_eq, self.ctx.i8_type, self.temp_cname());
+                if op == BinOp::Eq {
+                    acc = LLVMBuildAnd(self.ctx.builder, acc, elem_eq_i8, self.temp_cname());
+                } else {
+                    acc = LLVMBuildOr(self.ctx.builder, acc, elem_eq_i8, self.temp_cname());
+                }
+            }
+            return acc;
+        }
         // Pointer arithmetic: ptr + int or int + ptr → use GEP
         if op == BinOp::Add && lhs_kind == LLVMTypeKind::Pointer && rhs_kind == LLVMTypeKind::Integer {
             let pointee_ty = self.ctx.llvm_type(lhs.ty.inner());

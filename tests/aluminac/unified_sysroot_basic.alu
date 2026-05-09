@@ -270,6 +270,13 @@ fn main() -> i32 {
     let neg: i128 = -50i128;
     if neg + 75i128 != 25i128 { return 74; }
 
+    // Array equality — uses element-wise compare folded with AND/OR.
+    let arr_a: [i32; 3] = [10i32, 20i32, 30i32];
+    let arr_b: [i32; 3] = [10i32, 20i32, 30i32];
+    let arr_c: [i32; 3] = [10i32, 20i32, 99i32];
+    if arr_a != arr_b { return 75; }
+    if arr_a == arr_c { return 76; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert

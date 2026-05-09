@@ -248,7 +248,7 @@ Missing:
 
 - [TODO] **Macro expansion type inference for if/else expressions.** Sysroot's `fmt::format!` macro expands to an if/else where both arms return `Result<StringBuf, Error>`; aluminac infers the result as void without an explicit type annotation. Workaround: annotate `let r: Result<StringBuf, Error> = format!(...)` works. Likely a per-branch typecheck that doesn't unify with the alternate branch's type during macro expansion. Investigate aluminac's if-expression mono path for the case where a branch's value-expression has a fully-resolved type but the other doesn't.
 
-- [TODO] **Array equality (`==` / `!=` on `[T; N]` value types).** Codegen emits `icmp ne [N x T]` directly which LLVM rejects ("Invalid operand types for ICmp instruction"). Need to either lower to element-wise comparison or memcmp at codegen, or have mono dispatch through a slice-equality helper. Not currently triggered by the milestone test or sysroot itself, but will surface once user code or further sysroot integration uses array literals in equality position.
+- [DONE] **Array equality (`==` / `!=` on `[T; N]` value types).** Codegen unrolls into element-wise `icmp` (or `fcmp` for float elements) folded with AND (for ==) or OR (for !=). Verified via the milestone test.
 
 - [TODO] **switch on bool / enum produces malformed phi nodes.** Codegen's switch with non-integer discriminant (bool, enum) sometimes emits a phi with multiple entries from a single predecessor block. LLVM verification fails: "PHINode should have one entry for each predecessor". The integer-switch path works correctly. Affects `switch some_bool { ... }` and `switch some_enum { ... }` where each arm produces a value.
 
