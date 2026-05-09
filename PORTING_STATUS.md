@@ -34,7 +34,7 @@ Missing:
 *(Parser/AST/type system features in alumina-boot but not aluminac.)*
 
 - [TODO] **`dyn` / dynamic dispatch.** No `Ty::Dyn` in aluminac AST; `dyn_*` lang items unimplemented (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`. Largest single language gap.
-- [TODO] **`when` for types (`when_type`).** Grammar supports it (`when_type` node); aluminac parses `when` only as a runtime conditional. Needed by sysroot `std/cmp.alu`, `std/fmt/mod.alu`, `std/math.alu` (when-dispatch on float vs int).
+- [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
 - [TODO] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** alumina-boot uses these for type-level metadata; absent in aluminac. Confirm whether sysroot actually requires them (may be internal to boot).
 - [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.
 - [TODO] **Attribute: `#[transparent]`.** alumina-boot recognizes; aluminac's `AttrTag` doesn't. Used in sysroot to mark layout-equivalent newtypes.
@@ -45,10 +45,16 @@ Missing:
 - [TODO] **Attribute: `#[must_use]` / `Diagnostic(MustUse)`.** alumina-boot warns on dropped values; aluminac doesn't model the diagnostic.
 - [TODO] **Attribute: `Inline::Never` / `Inline::DuringMono`.** aluminac has `Inline` and `AlwaysInline` only; missing the `never` and `during_mono` variants.
 - [TODO] **Custom attributes (`Attribute::Custom`).** alumina-boot stores arbitrary `#[name(args…)]` on AST items so intrinsics like `attributed(...)` can find them. aluminac drops anything not in its `AttrTag` enum.
-- [TODO] **u128 / i128 codegen + const-eval coverage.** Types parse and have layout entries; verify arithmetic / comparison / formatting all work end-to-end (no test in `tests/aluminac/` directly exercises 128-bit arithmetic).
-- [TODO] **Operator-overload lang items (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`).** sysroot defines them; aluminac never queries them, so user-defined `==` / `<` etc. on structs do not dispatch through the protocol path.
+- [PARTIAL] **u128 / i128 codegen + const-eval coverage.** Runtime arithmetic, comparison and casts verified by `tests/aluminac/u128_i128_basic.alu`. LLVM 128-bit integer codegen works; integer-literal parser is u64-bounded so values needing >64 bits must be constructed via shifts / wrapping arithmetic.
+  Missing:
+  - 128-bit integer literals beyond u64 range (e.g. `170141183460469231731687303715884105727i128`) — `parse_int_with_suffix` stores in u64. Consider a u128-internal representation.
+  - Const-evaluation of u128/i128 arithmetic — `const_eval.alu` may still represent integer values as 64-bit; verify and extend.
+  - Formatting (`fmt`) — sysroot-aluminac's u128/i128 lang stubs don't implement `fmt`; values can't be printed without precision-loss-causing cast to u64.
+- [PARTIAL] **Operator-overload dispatch.** Operator overloading works in aluminac, but via method-name matching (`try_operator_overload` in `mono/lower.alu`), not via the `operator_*` lang items. User-defined `equals` / `compare` etc. on structs is dispatched through `==` / `<` correctly (verified by `tests/aluminac/operator_overload.alu`). The unused `binop_lang_name` helper is dead code.
+  Missing:
+  - Wire actual `operator_eq` / `operator_neq` / `operator_lt` / `operator_lte` / `operator_gt` / `operator_gte` lang-item queries so impls can be tagged with `#[lang(operator_…)]` and resolved through the lang item indirection (matches alumina-boot's mechanism). Lower priority — method-name dispatch covers the same functional ground for now.
 - [TODO] **`Lang::EntrypointGlue`.** sysroot defines an entrypoint-glue lang item; aluminac uses a hardcoded entrypoint. Push the glue into the sysroot once practical.
-- [TODO] **Verify `ProtoZeroSized` is enforced.** Lang item is defined in both sysroots but aluminac never queries it; confirm whether code that bounds on `ProtoZeroSized` actually checks ZST-ness.
+- [TODO] **Verify `ProtoZeroSized` is enforced as a generic-bound at typecheck (not just `is`-check).** The `proto_zero_sized` lang item is queried in the `t is Proto` runtime/typecheck path (good); confirm it's also enforced when used in a `where` clause / generic bound (e.g. rejecting `unit::<i32>()` where `i32: ZeroSized` is false). Test by writing a function bounded on `ZeroSized` and instantiating with a non-ZST.
 
 ## Const evaluation
 
@@ -99,7 +105,7 @@ Missing:
   Missing:
   - `builtin_never` is still unregistered. The compiler's `register_builtins` array (`src/aluminac/main.alu`) and `parse_builtin_type` (`src/aluminac/ast.alu`) don't recognize the named `never` keyword, so a `#[lang(builtin_never)]` stub has no scope to link to. Currently aluminac handles `!` as a syntactic form only. Wire `never` as a named builtin and add a `#[lang(builtin_never)]` stub. (Sysroot doesn't reference the named form today, so this is parity-with-`sysroot/std/builtins.alu` work for when the unified sysroot lands.)
 - [DONE] **Protocol lang items** for: `proto_primitive`, `proto_numeric`, `proto_integer`, `proto_floating_point`, `proto_signed`, `proto_unsigned`, `proto_pointer`, `proto_array`, `proto_tuple`, `proto_struct`, `proto_enum`, `proto_union`, `proto_range`, `proto_named_function`, `proto_function_pointer`, `proto_closure`, `proto_callable`, `proto_any`, `proto_none`. Verified by tests/aluminac/protocol_conformance.alu.
-- [TODO] **`proto_zero_sized`.** Defined in both sysroots; aluminac never queries. Wire query so ZST-bound code actually checks ZST-ness.
+- [DONE] **`proto_zero_sized`.** Queried in `mono/lower.alu` (line 2909) inside the `t is Protocol` lowering path. Audit was wrong on this one.
 - [TODO] **`proto_const`, `proto_static`, `proto_array_of`, `proto_pointer_of`, `proto_range_of`, `proto_meta`, `proto_same_base_as`, `proto_same_layout_as`.** Defined in `sysroot/std/builtins.alu`, missing in `sysroot-aluminac/`. Required for the full `where` clause vocabulary the unified sysroot uses.
 - [TODO] **Slice operation lang items** (`slice_new`, `slice_const_coerce`, `slice_const_cast`, `slice_index`, `slice_range_index`, `slice_slicify`). aluminac open-codes slice operations today instead of going through these; sysroot uses them. Wire queries so the unified sysroot's `impl Slice` blocks are reached.
 - [TODO] **Range constructor lang items** (`range_full_new`, `range_from_new`, `range_to_new`, `range_to_inclusive_new`, `range_new`, `range_inclusive_new`). aluminac inlines range construction. Query so user-written range literals dispatch through them.
