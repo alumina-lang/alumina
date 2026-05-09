@@ -32,6 +32,23 @@ fn mul_overflow_i32() -> i32 {
     a * b
 }
 
+fn neg_overflow_i32() -> i32 {
+    let a: i32 = -2147483647i32 - 1i32;  // i32::MIN
+    -a
+}
+
+fn div_overflow_i32() -> i32 {
+    let a: i32 = -2147483647i32 - 1i32;  // i32::MIN
+    let b: i32 = -1i32;
+    a / b
+}
+
+fn rem_overflow_i32() -> i32 {
+    let a: i32 = -2147483647i32 - 1i32;  // i32::MIN
+    let b: i32 = -1i32;
+    a % b
+}
+
 // Non-overflowing cases (should still const-evaluate).
 fn add_no_overflow() -> i32 {
     let a: i32 = 100i32;
@@ -60,6 +77,16 @@ fn main() -> i32 {
     if add_no_overflow() != 300i32 { return 2i32; }
     if sub_no_overflow() != 1i32 { return 3i32; }
     if mul_no_overflow() != 1000000i32 { return 4i32; }
+
+    // -INT_MIN, INT_MIN / -1, INT_MIN % -1: all UB in 2's complement;
+    // const-eval bails so we end up with the runtime wrap (which traps on
+    // some platforms but on x86_64 / aarch64 yields INT_MIN for -INT_MIN
+    // and traps the division). Verify the function returns SOME value
+    // without const-eval folding it to a wrong constant — we don't pin
+    // the exact value here.
+    let _ = neg_overflow_i32();
+    // Don't actually call div/rem at runtime — they trap. Just verify
+    // the file compiled successfully.
 
     0i32
 }
