@@ -176,7 +176,7 @@ Missing:
 - [TODO] **Operator overload lang items** (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`). See Language features.
 - [TODO] **Reflection lang items** (`format_arg`, `enum_variant_new`, `field_descriptor_new`, `field_descriptor_new_unnamed`, `type_descriptor_new`). Required by `enum_variants` / `fields` intrinsics.
 - [TODO] **`entrypoint_glue`.** See Language features.
-- [TODO] **`static_for_iter`, `static_for_next`.** Recent commit `a6b71e0c` reworked static-for to a const-evaluated iterator protocol; verify these lang items are wired or punt them entirely if the protocol is implicit.
+- [DONE] **`static_for_iter`, `static_for_next`.** Aluminac's `lower_static_for` directly calls the type's `.iter()` and `.next()` methods (per the const-evaluated iterator protocol added in `a6b71e0c`). The sysroot's `static_for_iter` / `static_for_next` lang items are thin wrappers around exactly those calls, so the observable behavior matches alumina-boot. Going through the lang-item indirection would add a layer of inlining without functional change.
 - [TODO] **Coroutine lang items** (`coroutine`, `coroutine_new`, `coroutine_yield`). Out of scope; keep noted.
 
 ## Stdlib modules
