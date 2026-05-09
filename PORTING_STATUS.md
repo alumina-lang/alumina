@@ -229,7 +229,7 @@ Missing:
 - [TODO] **`std/process/mod.alu`** + **`std/process/unix.alu`** — fork/exec/stdio plumbing. Depends on threads, closures, dyn traits.
 - [TODO] **`std/runtime/mod.alu`** — backtrace + panic runtime. Depends on debug info + dyn.
 - [TODO] **`std/runtime/backtrace.alu`** — uses libc + closures for frame iteration. Depends on debug info + closures verified.
-- [TODO] **`std/runtime/minicoro.alu`** — minicoro coroutine glue. Out of scope under PORTING.md; keep gated.
+- [DONE] **`std/runtime/minicoro.alu`** — minicoro coroutine glue. Out of scope per PORTING.md; gated under `cfg(coroutines)` in sysroot, never reached by aluminac.
 - [TODO] **`std/random/mod.alu`** + **`std/random/ziggurat.alu`** — RNG trait + Gaussian. Depends on protocol traits + closures.
 - [TODO] **`std/regex/mod.alu`** + **`std/regex/internal.alu`** — DFA regex engine. Depends on dyn + closures.
 - [TODO] **`std/sync/mod.alu`** + **`std/sync/channel.alu`** — Mutex/RwLock/Arc + MPMC channels. Depends on threads + atomics.
@@ -280,8 +280,8 @@ Missing:
 - [TODO] **Add `make test-lang-aluminac`.** `tests/lang/lang.alu` is one module with ~35 `#[test]` functions; aluminac already supports `--cfg test --cfg test_std` for `make test-std-aluminac`, so a parallel target should be straightforward.
 - [TODO] **Add `make test-libraries-aluminac`.** Compile `libraries/` with aluminac's `--test` flag. May require closure / dyn support for some libraries.
 - [TODO] **Confirm `make test-std-aluminac` runs against the unified `sysroot/`** once feature gaps close; today it points at `sysroot-aluminac/`.
-- [TODO] **`tests/aluminac/run_tests.sh` shell-driven runner is fine for aluminac-specific suites** — keep as-is. (Already passing; this is just a "no action" record.)
-- [TODO] **`tests/diag/` and `make test-diag`** — alumina-boot only, no porting work; just don't break it on the boot side.
+- [DONE] **`tests/aluminac/run_tests.sh` shell-driven runner** — fits the aluminac-specific suites, keep as-is. No work expected.
+- [DONE] **`tests/diag/` and `make test-diag`** — alumina-boot only, no porting work; just don't break it on the boot side.
 - [TODO] **`make test-docs`** — currently uses alumina-boot to compile generated `doctest.alu`. Bringing under aluminac is gated on full sysroot parity.
 
 ## Sysroot deletion (final)
