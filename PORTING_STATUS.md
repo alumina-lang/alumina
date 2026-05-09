@@ -27,7 +27,7 @@ Missing:
 - Side-by-side AST node coverage: enumerate every `ExprKind` / `Ty` / `Statement` variant in `src/alumina-boot/src/ast/mod.rs` and verify aluminac's `ast.alu` covers it (or note the gap).
 - Side-by-side macro support: `src/alumina-boot/src/ast/macros.rs` is ~800 LoC; map each capability (universal-call macros, `et cetera` packs, named-arg expansion, hygiene, recursion limits) to the aluminac equivalent or a `[TODO]`.
 - Side-by-side mixin support: alumina-boot's mixin substitution rules vs aluminac's; verify with deliberately tricky cases (mixin with generics, mixin referencing Self, mixin chaining).
-- Closure capture: aluminac has tests/aluminac/closures.alu so the basic case works, but capture-by-reference, closure-of-closure, and ProtoClosure conformance need confirming.
+- Closure features extended audit done: capture-by-value, capture-by-reference, mixed captures, multi-arg closures, closure-of-closure (a function returning a captured-closure value), and Fn-protocol-bounded generic args all work. Verified by `tests/aluminac/closures.alu` (existing) and `tests/aluminac/closure_features.alu`. Remaining concern: ProtoClosure conformance under `where` clauses isn't separately exercised and aluminac's bound-enforcement is generally weak (already noted as a soundness gap).
 - Custom attributes (Attribute::Custom): still missing. Tracked individually below.
 
 ---
