@@ -3793,6 +3793,39 @@ impl Mono {
         if resolved_ty.tag == IrTyTag::Pointer {
             resolved_ty = resolved_ty.inner();
         }
+
+        // Dyn-method dispatch shim: if the receiver is the lang(dyn) struct,
+        // look up the method on the protocol(s) referenced by the Protos
+        // type-arg and emit an Unreachable typed as the method's return
+        // type. The vtable is null in aluminac's current dyn-coercion shim,
+        // so a real dispatch would crash anyway — Unreachable lets mono
+        // complete and signals the not-yet-implemented runtime.
+        if resolved_ty.tag == IrTyTag::Struct {
+            let dyn_lang_id = self.ctx.get_lang_item("dyn");
+            if dyn_lang_id.is_some() && resolved_ty.struct_ref().id._value == dyn_lang_id.unwrap() {
+                let dyn_args = resolved_ty.struct_ref().type_args;
+                if dyn_args.len() >= 1 && (dyn_args[0] as &void as usize) != 0 && dyn_args[0].tag == IrTyTag::Tuple {
+                    let protos = dyn_args[0].elems();
+                    for pi in 0usize..protos.len() {
+                        let p = protos[pi];
+                        if (p as &void as usize) == 0 || p.tag != IrTyTag::Protocol { continue; }
+                        let proto_def_opt = self.ctx.protocol_defs.get(&p.proto_id());
+                        if proto_def_opt.is_none() { continue; }
+                        let proto = proto_def_opt.unwrap();
+                        for mi in 0usize..proto.methods.len() {
+                            let m = &proto.methods[mi];
+                            if m.name.len() == method_name.len() && (m.name.len() == 0 || libc::memcmp(&m.name[0] as &libc::c_void, &method_name[0] as &libc::c_void, m.name.len()) == 0i32) {
+                                let ret_ir = self.resolve_type(m.return_type);
+                                let result = IrExpr::void_expr(ret_ir);
+                                result.tag = IrTag::Unreachable;
+                                return Option::some(self.ctx.arena.alloc(result) as &IrExpr);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if resolved_ty.tag == IrTyTag::Struct {
             scope_idx = resolved_ty.struct_ref().scope_idx;
             method_type_args = resolved_ty.struct_ref().type_args;
