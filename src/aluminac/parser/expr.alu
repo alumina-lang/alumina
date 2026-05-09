@@ -201,6 +201,7 @@ impl ExprParser {
             let functions_start = self.ctx.pending_functions.len();
             let type_aliases_start = self.ctx.pending_type_aliases.len();
             let statics_start = self.ctx.pending_statics.len();
+            let macros_start = self.ctx.pending_macros.len();
 
             let pre_cursor = node.walk();
             defer pre_cursor.free();
@@ -248,6 +249,10 @@ impl ExprParser {
                 type_aliases_start,
                 statics_start,
             );
+            // Inner-block macros also need their bodies pre-parsed before
+            // the rest of the block's statements are walked, otherwise their
+            // invocations resolve to a name with no body and silently no-op.
+            pass2.process_macros_from(node, macros_start);
         }
 
         let stmts: Vector<&Expr> = Vector::new();

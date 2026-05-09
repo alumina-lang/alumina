@@ -137,11 +137,15 @@ impl Pass2 {
     }
 
     fn process_macros(self: &mut Pass2, root: Node) {
+        self.process_macros_from(root, 0usize);
+    }
+
+    fn process_macros_from(self: &mut Pass2, root: Node, start: usize) {
         let mac_len = self.ctx.pending_macros.len();
-        if mac_len == 0usize {
+        if mac_len == 0usize || start >= mac_len {
             return;
         }
-        for i in 0usize..mac_len {
+        for i in start..mac_len {
             let pending = &self.ctx.pending_macros[i];
             let node = self.find_node_at(root, pending.node_start, pending.node_end);
 

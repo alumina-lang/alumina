@@ -1,0 +1,28 @@
+// Verify that macros defined inside a function (or any block) get their
+// bodies pre-parsed and are expandable from later statements in the same
+// block. Sysroot's std/string/unicode.alu uses this pattern: decode_utf8
+// declares a `check_length!` macro inside its body and invokes it from
+// switch arms.
+
+fn use_inner() -> i32 {
+    macro emit_99() {
+        return 99i32;
+    }
+    emit_99!();
+    0i32
+}
+
+fn check_arg(x: i32) -> i32 {
+    macro fail_if_neg($val) {
+        if $val < 0i32 { return 88i32; }
+    }
+    fail_if_neg!(x);
+    fail_if_neg!(2i32 - 5i32);  // expands to negative; should return 88
+    x * 2i32
+}
+
+fn main() -> i32 {
+    if use_inner() != 99i32 { return 1i32; }
+    if check_arg(5i32) != 88i32 { return 2i32; }
+    0i32
+}
