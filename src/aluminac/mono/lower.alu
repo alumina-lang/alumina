@@ -977,8 +977,21 @@ impl Mono {
             ExprTag::TupleLit => {
                 let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                 let elem_types = self.ctx.arena.alloc_slice::<&IrTy>(expr.args().len());
-                for i in 0usize..expr.args().len() {
-                    ir_elems[i] = self.lower_expr(expr.args()[i]);
+                // Propagate expected element types into the per-component
+                // lowering so that integer / float literals pick up the right
+                // type (e.g. `(u32_val, 1)` returning `(u32, usize)` should
+                // see the second arm as usize, not the i32 default).
+                let expected_tuple: &IrTy = self.expected_type;
+                let n = expr.args().len();
+                let has_tuple_hint = expected_tuple as &void as usize != 0usize
+                    && expected_tuple.tag == IrTyTag::Tuple
+                    && expected_tuple.elems().len() == n;
+                for i in 0usize..n {
+                    ir_elems[i] = if has_tuple_hint {
+                        self.lower_expr_coerced(expr.args()[i], expected_tuple.elems()[i])
+                    } else {
+                        self.lower_expr(expr.args()[i])
+                    };
                     elem_types[i] = ir_elems[i].ty;
                 }
                 let tuple_ty = self.ctx.make_tuple_ty(elem_types);
