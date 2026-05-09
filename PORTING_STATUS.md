@@ -51,8 +51,9 @@ Missing:
 - [PARTIAL] **Attribute: `#[transparent]`.** AttrTag::Transparent + parser recognition. Codegen doesn't yet apply transparent semantics (LLVM struct still wraps, no ABI difference). Sysroot files using `#[transparent]` now parse via the explicit dispatch instead of the catch-all silent-drop.
 - [DONE] **Attribute: `#[link_name("…")]`.** Wired through pass1 → AttrTag::LinkName → mono mangled-name override. `tests/aluminac/link_name_attr.alu` declares `extern "C" fn c_string_len` pointing at libc `strlen` and verifies the call resolves correctly (and the negative — without the attribute it link-fails on `c_string_len`). The previous mis-routing to `AttrTag::Extern` is fixed.
 - [PARTIAL] **Attribute: `#[packed(N)]` / `#[packed]`.** AttrTag::Packed with int_val for alignment. Parser handles both forms. Codegen doesn't yet pass `packed=1` to LLVMStructTypeInContext, so packing isn't actually applied. Used in libc bindings and FFI structs.
-- [TODO] **Attribute: `#[tuple_call]`.** alumina-boot's `Attribute::TupleCall`; missing in aluminac.
-- [TODO] **Attribute: `#[const_only]` / `#[no_const]`.** alumina-boot has both; aluminac has neither. Used in `sysroot/std/intrinsics.alu` to mark functions that must / must-not run at const time.
+- [PARTIAL] **Attribute: `#[tuple_call]`.** AttrTag::TupleCall + parser recognition. Semantics not yet wired (would let a fn taking a tuple be called with positional args).
+
+- [PARTIAL] **Attribute: `#[const_only]` / `#[no_const]`.** AttrTag::ConstOnly / AttrTag::NoConst + parser recognition. alumina-boot uses these to gate functions to / from const context; aluminac stores the attribute but doesn't yet enforce.
 - [PARTIAL] **Attribute: `#[must_use]`.** AttrTag::MustUse + parser recognition. alumina-boot warns when a #[must_use] return value is dropped; aluminac stores the attribute but doesn't yet emit the warning. Used in sysroot for Result-returning APIs.
 
 - [DONE] **Attribute: `#[no_mangle]`.** Wired through pass1 → AttrTag::NoMangle → mono's mangled_name decision. Behaves like #[export] for naming purposes (keeps `def.name` as the LLVM symbol). Verified by `tests/aluminac/no_mangle_attr.alu`.
