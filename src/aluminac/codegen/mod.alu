@@ -852,6 +852,8 @@ impl CodegenCtx {
                 self.add_fn_attribute(llvm_fn, "cold");
             } else if attr.tag == AttrTag::ReturnsTwice {
                 self.add_fn_attribute(llvm_fn, "returns_twice");
+            } else if attr.tag == AttrTag::Align {
+                LLVMSetAlignment(llvm_fn, attr.int_val() as u32);
             }
         }
 
@@ -905,6 +907,8 @@ impl CodegenCtx {
                 LLVMSetThreadLocal(global, 1i32);
             } else if attr.tag == AttrTag::Export {
                 LLVMSetLinkage(global, LLVMLinkage::External);
+            } else if attr.tag == AttrTag::Align {
+                LLVMSetAlignment(global, attr.int_val() as u32);
             }
         }
 

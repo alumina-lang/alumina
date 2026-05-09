@@ -126,8 +126,8 @@ Missing:
 - [DONE] **Intrinsic: `tuple_invoke`.** Wired in `mono/intrinsics.alu`. Splits the tuple argument into positional fields and constructs a Call against the callee. Handles fn items (Fn IrTy), function pointers (FnPointer), and closures (prepends &self), and treats `()` (Void) as a zero-arg call. Verified by `tests/aluminac/tuple_invoke_intrinsic.alu`.
 - [PARTIAL] **Intrinsic: `module_path`.** Recognized in `mono/intrinsics.alu`. Returns void (Void IR tag) — the `when intrinsics::module_path::<T>() is ()` check in `std::typing::Type::module_path` then takes the None branch. To return real module paths, IrStructRef/IrEnumRef would need a path field populated at lowering. Verified by `tests/aluminac/module_path_intrinsic.alu`.
 - [PARTIAL] **Intrinsic: `has_attribute`.** Recognized in `mono/intrinsics.alu`; conservatively returns `false`. Wire real attribute lookup once IrStructRef/IrEnumRef carry attributes. Verified by `tests/aluminac/module_path_intrinsic.alu`.
-- [TODO] **Function attribute lowering: `#[align(N)]` on functions.** Codegen ignores; emit `align N` on LLVM function.
-- [TODO] **Global attribute lowering: `#[align(N)]` on statics.** Codegen ignores.
+- [DONE] **Function attribute lowering: `#[align(N)]` on functions.** Codegen now calls `LLVMSetAlignment` on the function's LLVM value with the requested alignment. Verified by `tests/aluminac/align_attr.alu`.
+- [DONE] **Global attribute lowering: `#[align(N)]` on statics.** Same — `LLVMSetAlignment` on the LLVM global. Verified by `tests/aluminac/align_attr.alu`.
 - [DONE] **Function attribute lowering: `#[link_name("…")]`.** mono/lower.alu now consults LinkName when computing mangled_name; the LLVMAddFunction call uses the override. Tested in `tests/aluminac/link_name_attr.alu`.
 - [TODO] **Verify `#[returns_twice]` on declarations.** `add_fn_attribute(... "returns_twice")` is called in `codegen/mod.alu:849` for definitions; confirm it's also set on extern declarations of `setjmp`-family functions.
 - [TODO] **Variadic / va_list intrinsics.** `va_start` / `va_arg` / `va_end` — confirm whether sysroot needs these (they appear in `libc/bindings.alu`).

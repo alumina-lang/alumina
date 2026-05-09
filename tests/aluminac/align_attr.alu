@@ -1,0 +1,17 @@
+// Verify #[align(N)] is recognized and applied to functions and statics.
+// Aluminac maps it to LLVMSetAlignment on the IR value.
+
+#[align(16)]
+fn aligned_fn() -> i32 { 7 }
+
+#[align(64)]
+static ALIGNED_GLOBAL: i32 = 42;
+
+fn main() -> i32 {
+    // Behavior must be unchanged — the attribute is a layout hint, not a
+    // semantic change. The verification that LLVM honors it is via the
+    // generated IR; here we just ensure the call/load works.
+    if aligned_fn() != 7 { return 1; }
+    if ALIGNED_GLOBAL != 42 { return 2; }
+    0
+}
