@@ -258,6 +258,18 @@ fn main() -> i32 {
     if std::intrinsics::type_id::<i32>() == std::intrinsics::type_id::<u32>() { return 69; }
     if std::intrinsics::type_id::<i32>() != std::intrinsics::type_id::<i32>() { return 70; }
 
+    // mem::zeroed for a user struct.
+    let zero_pt: Point = std::mem::zeroed::<Point>();
+    if zero_pt.x != 0 { return 71; }
+    if zero_pt.y != 0 { return 72; }
+
+    // 128-bit arithmetic through sysroot's facade — exercises the u128/i128
+    // builtin lang items.
+    let big_sum: u128 = 100u128 + 200u128;
+    if big_sum != 300u128 { return 73; }
+    let neg: i128 = -50i128;
+    if neg + 75i128 != 25i128 { return 74; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
