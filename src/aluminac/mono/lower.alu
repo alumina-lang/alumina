@@ -2965,6 +2965,28 @@ impl Mono {
                         is_match = true;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_none") {
                         is_match = false;
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_array_of") {
+                        // ArrayOf<T>: val_ty is an array whose element type is T.
+                        if val_ty.tag == IrTyTag::Array && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                            is_match = val_ty.inner() as &void == arg_ty as &void;
+                        }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer_of") {
+                        // PointerOf<T>: val_ty is a pointer (any mutability) whose pointee is T.
+                        if val_ty.tag == IrTyTag::Pointer && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                            is_match = val_ty.inner() as &void == arg_ty as &void;
+                        }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_same_layout_as") {
+                        // SameLayoutAs<T>: val_ty has the same size and alignment as T.
+                        if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                            let val_size = layout::compute_type_size(val_ty, self.ctx.pointer_size);
+                            let arg_size = layout::compute_type_size(arg_ty, self.ctx.pointer_size);
+                            let val_align = layout::compute_type_align(val_ty, self.ctx.pointer_size);
+                            let arg_align = layout::compute_type_align(arg_ty, self.ctx.pointer_size);
+                            is_match = val_size == arg_size && val_align == arg_align;
+                        }
                     } else {
                         // User-defined protocol: check if type has all required methods
                         is_match = self.check_protocol_conformance(val_ty, proto);
