@@ -86,7 +86,11 @@ Missing:
 
 ## Const evaluation
 
-- [TODO] **Signed-integer overflow detection.** alumina-boot rejects signed overflow as UB at const time; aluminac silently wraps. Affects correctness of `const FOO: i32 = …` that overflows.
+- [PARTIAL] **Signed-integer overflow detection.** `const_eval.alu`'s `int_bin_op` now detects signed Add/Sub/Mul overflow and bails with `ConstEvalError::overflow()`, matching alumina-boot's "reject const-time UB" stance. Verified by `tests/aluminac/signed_overflow_const.alu`.
+  Missing:
+  - Negation (`-x` for `x = INT_MIN`) overflow detection — currently the unary-neg path silently wraps.
+  - Division (`INT_MIN / -1`) overflow detection.
+  - Shift (`x << bitwidth`) is already rejected.
 - [TODO] **`checked_add` / `checked_sub` / `checked_mul` / `checked_div` intrinsics.** Used by `std::math` and various sysroot bounds checks. tests/aluminac/checked_arithmetic.alu exists — confirm whether it exercises the const path.
 - [TODO] **`checked_shl` / `checked_shr` intrinsics.** Reject shift ≥ bitwidth at const time.
 - [TODO] **`const_panic` intrinsic.** Halts compilation with a message during const eval. aluminac currently no-ops; needed for `static_assert`-style patterns.

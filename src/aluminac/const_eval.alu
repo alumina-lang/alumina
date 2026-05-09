@@ -424,13 +424,33 @@ impl ConstEvaluator {
         _ => {}
         }
 
-        // Arithmetic - compute then mask to width
+        // Arithmetic - compute then mask to width.
+        //
+        // For signed Add / Sub / Mul we detect overflow at this point and bail
+        // with ConstEvalError::overflow() so callers fall back to runtime
+        // emission. Matches alumina-boot which rejects const-time signed
+        // overflow (UB at runtime) rather than silently wrapping.
         let result: u64 = 0;
 
         switch op {
-        BinOp::Add => result = a + b,
-        BinOp::Sub => result = a - b,
-        BinOp::Mul => result = a * b,
+        BinOp::Add => {
+            if is_signed && self.detect_signed_add_overflow(a, b, width) {
+                return ConstResult::fail(ConstEvalError::overflow());
+            }
+            result = a + b;
+        },
+        BinOp::Sub => {
+            if is_signed && self.detect_signed_sub_overflow(a, b, width) {
+                return ConstResult::fail(ConstEvalError::overflow());
+            }
+            result = a - b;
+        },
+        BinOp::Mul => {
+            if is_signed && self.detect_signed_mul_overflow(a, b, width) {
+                return ConstResult::fail(ConstEvalError::overflow());
+            }
+            result = a * b;
+        },
         BinOp::Div => {
             if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
             result = if is_signed { ((a as i64) / (b as i64)) as u64 } else { a / b };
@@ -461,6 +481,54 @@ impl ConstEvaluator {
         result = self.mask_to_width(result, width);
 
         ConstResult::success(ConstValue::make_int(result, bt))
+    }
+
+    fn detect_signed_add_overflow(self: &ConstEvaluator, a: u64, b: u64, width: u32) -> bool {
+        // Signed addition overflows iff inputs share a sign bit but the
+        // truncated result has the opposite sign bit. Operates on the bit-width
+        // of the source type — for width == 64 we use the full u64.
+        if width < 1 || width > 64 { return false; }
+        let sign_bit_mask = if width >= 64 { 1u64 << 63 } else { 1u64 << (width - 1) };
+        let mask = self.mask_to_width(0xFFFFFFFFFFFFFFFFu64, width);
+        let result = (a + b) & mask;
+        let a_sign = (a & sign_bit_mask) != 0u64;
+        let b_sign = (b & sign_bit_mask) != 0u64;
+        let r_sign = (result & sign_bit_mask) != 0u64;
+        a_sign == b_sign && a_sign != r_sign
+    }
+
+    fn detect_signed_sub_overflow(self: &ConstEvaluator, a: u64, b: u64, width: u32) -> bool {
+        // Signed subtraction overflows iff the operands have different sign
+        // bits AND the result's sign bit differs from the minuend's.
+        if width < 1 || width > 64 { return false; }
+        let sign_bit_mask = if width >= 64 { 1u64 << 63 } else { 1u64 << (width - 1) };
+        let mask = self.mask_to_width(0xFFFFFFFFFFFFFFFFu64, width);
+        let result = (a - b) & mask;
+        let a_sign = (a & sign_bit_mask) != 0u64;
+        let b_sign = (b & sign_bit_mask) != 0u64;
+        let r_sign = (result & sign_bit_mask) != 0u64;
+        a_sign != b_sign && r_sign != a_sign
+    }
+
+    fn detect_signed_mul_overflow(self: &ConstEvaluator, a: u64, b: u64, width: u32) -> bool {
+        // Sign-extend a and b to i64, multiply in i64 (which can overflow for
+        // i64 inputs but not for narrower), and verify the result fits in
+        // [-(1<<(width-1)), (1<<(width-1)) - 1]. For i64 inputs, we fall back
+        // to dividing and comparing — this is correctness-preserving.
+        if width < 1 || width > 64 { return false; }
+        let sa = self.sign_extend(a, width);
+        let sb = self.sign_extend(b, width);
+        if sa == 0i64 || sb == 0i64 { return false; }
+        if width < 64 {
+            let prod = sa * sb;
+            let signed_max = (1i64 << (width - 1)) - 1i64;
+            let signed_min = -(1i64 << (width - 1));
+            return prod < signed_min || prod > signed_max;
+        }
+        // 64-bit: detect via division round-trip.
+        let prod = sa * sb;
+        if prod / sa != sb { return true; }
+        false
     }
 
     fn mask_to_width(self: &ConstEvaluator, val: u64, width: u32) -> u64 {
