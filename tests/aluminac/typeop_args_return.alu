@@ -1,0 +1,32 @@
+// Test: typeop_arguments_of<F> and typeop_return_type_of<F> resolve
+// to F's parameter tuple and return type respectively when F is a
+// fn item or fn pointer.
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+extern "intrinsic" fn type_id<T>() -> usize;
+
+#[lang(typeop_arguments_of)]
+type arguments_of<F>;
+
+#[lang(typeop_return_type_of)]
+type return_type_of<F>;
+
+fn add(a: i32, b: u32) -> u64 { a as u64 + b as u64 }
+fn no_args() -> bool { true }
+
+fn main() -> i32 {
+    // arguments_of: tuple of parameter types
+    if type_id::<arguments_of<add>>() != type_id::<(i32, u32)>() { return 1; }
+    if type_id::<arguments_of<no_args>>() != type_id::<()>() { return 2; }
+
+    // return_type_of: just the return type
+    if type_id::<return_type_of<add>>() != type_id::<u64>() { return 3; }
+    if type_id::<return_type_of<no_args>>() != type_id::<bool>() { return 4; }
+
+    // FnPointer variant
+    let fp: fn(i32, u32) -> u64 = add;
+    if type_id::<arguments_of<typeof(fp)>>() != type_id::<(i32, u32)>() { return 5; }
+    if type_id::<return_type_of<typeof(fp)>>() != type_id::<u64>() { return 6; }
+
+    0
+}

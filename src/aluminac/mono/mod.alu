@@ -207,6 +207,12 @@ impl MonoCtx {
                 }
             } else if self.items[i].tag == ItemTag::TypeAlias {
                 self.type_aliases.insert(self.items[i].type_alias().id._value, self.items[i].type_alias());
+                for attr in self.items[i].type_alias().attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val());
+                        self.lang_items.insert(hash, self.items[i].type_alias().id._value);
+                    }
+                }
             } else if self.items[i].tag == ItemTag::Protocol {
                 self.protocol_defs.insert(self.items[i].protocol_def().id._value, self.items[i].protocol_def());
                 for attr in self.items[i].protocol_def().attributes {

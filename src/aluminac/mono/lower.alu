@@ -401,6 +401,52 @@ impl Mono {
                     self.type_map.insert(alias.generic_params[i].id._value, type_args[i]);
                 }
             }
+
+            // Compiler-evaluated typeop type aliases (e.g. arguments_of<F>,
+            // return_type_of<F>) have an opaque target — recognize them by
+            // their #[lang(typeop_…)] attribute and dispatch.
+            for attr in alias.attributes {
+                if attr.tag == AttrTag::Lang {
+                    let lang = attr.str_val();
+                    if lang == "typeop_arguments_of" && type_args.len() >= 1 {
+                        let f = type_args[0];
+                        if f.tag == IrTyTag::Fn {
+                            let fn_ref = f.fn_item_ref();
+                            for i in 0usize..self.ctx.ir_functions.len() {
+                                if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                                    let params = self.ctx.ir_functions[i].params;
+                                    let elems = self.ctx.arena.alloc_slice::<&IrTy>(params.len());
+                                    for j in 0usize..params.len() {
+                                        elems[j] = params[j].ty;
+                                    }
+                                    return self.ctx.make_tuple_ty(elems);
+                                }
+                            }
+                        } else if f.tag == IrTyTag::FnPointer {
+                            // FnPointer stores params in elems and return type separately.
+                            let params = f.elems();
+                            let elems = self.ctx.arena.alloc_slice::<&IrTy>(params.len());
+                            for j in 0usize..params.len() {
+                                elems[j] = params[j];
+                            }
+                            return self.ctx.make_tuple_ty(elems);
+                        }
+                    } else if lang == "typeop_return_type_of" && type_args.len() >= 1 {
+                        let f = type_args[0];
+                        if f.tag == IrTyTag::Fn {
+                            let fn_ref = f.fn_item_ref();
+                            for i in 0usize..self.ctx.ir_functions.len() {
+                                if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                                    return self.ctx.ir_functions[i].return_type;
+                                }
+                            }
+                        } else if f.tag == IrTyTag::FnPointer {
+                            return f.ret_ty();
+                        }
+                    }
+                }
+            }
+
             let result = self.resolve_type(alias.target);
             return result;
         }
