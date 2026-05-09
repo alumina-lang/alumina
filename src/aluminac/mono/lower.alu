@@ -443,6 +443,26 @@ impl Mono {
                         } else if f.tag == IrTyTag::FnPointer {
                             return f.ret_ty();
                         }
+                    } else if lang == "typeop_function_pointer_of" && type_args.len() >= 1 {
+                        // function_pointer_of<Args: Tuple, Ret = ()>: produce fn(Args...) -> Ret.
+                        let args_ty = type_args[0];
+                        let ret_ty = if type_args.len() >= 2 { type_args[1] } else { self.ctx.void_ty };
+                        if args_ty.tag == IrTyTag::Tuple {
+                            return self.ctx.make_fn_ptr_ty(args_ty.elems(), ret_ty);
+                        }
+                    } else if lang == "typeop_underlying_type_of" && type_args.len() >= 1 {
+                        let t = type_args[0];
+                        if t.tag == IrTyTag::Enum {
+                            return t.enum_ref().underlying;
+                        }
+                    } else if lang == "typeop_pointer_with_mut_of" && type_args.len() >= 2 {
+                        // pointer_with_mut_of<Ptr, RefForMutability>: produce a pointer to
+                        // Ptr's pointee with the mutability of the second arg.
+                        let p = type_args[0];
+                        let m = type_args[1];
+                        if p.tag == IrTyTag::Pointer && m.tag == IrTyTag::Pointer {
+                            return self.ctx.make_ptr_ty(p.inner(), m.is_const());
+                        }
                     }
                 }
             }

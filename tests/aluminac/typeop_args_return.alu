@@ -1,6 +1,8 @@
-// Test: typeop_arguments_of<F> and typeop_return_type_of<F> resolve
-// to F's parameter tuple and return type respectively when F is a
-// fn item or fn pointer.
+// Test: typeop_arguments_of, typeop_return_type_of, typeop_function_pointer_of,
+// typeop_pointer_with_mut_of.
+// (typeop_underlying_type_of works for enums but aluminac doesn't support
+// declaring an enum's underlying type from the variant value types yet, so
+// it's not exercised here — separate slice.)
 // ALUMINAC_FLAGS: --sysroot sysroot-aluminac
 
 extern "intrinsic" fn type_id<T>() -> usize;
@@ -10,6 +12,12 @@ type arguments_of<F>;
 
 #[lang(typeop_return_type_of)]
 type return_type_of<F>;
+
+#[lang(typeop_function_pointer_of)]
+type function_pointer_of<Args, Ret>;
+
+#[lang(typeop_pointer_with_mut_of)]
+type pointer_with_mut_of<P, M>;
 
 fn add(a: i32, b: u32) -> u64 { a as u64 + b as u64 }
 fn no_args() -> bool { true }
@@ -27,6 +35,14 @@ fn main() -> i32 {
     let fp: fn(i32, u32) -> u64 = add;
     if type_id::<arguments_of<typeof(fp)>>() != type_id::<(i32, u32)>() { return 5; }
     if type_id::<return_type_of<typeof(fp)>>() != type_id::<u64>() { return 6; }
+
+    // function_pointer_of: build fn pointer from args tuple + return type
+    if type_id::<function_pointer_of<(i32, u32), u64>>() != type_id::<fn(i32, u32) -> u64>() { return 7; }
+    if type_id::<function_pointer_of<(bool,), i32>>() != type_id::<fn(bool) -> i32>() { return 8; }
+
+    // pointer_with_mut_of: take a pointer, get one with the mutability of the second arg
+    if type_id::<pointer_with_mut_of<&u32, &mut u8>>() != type_id::<&mut u32>() { return 9; }
+    if type_id::<pointer_with_mut_of<&mut u32, &u8>>() != type_id::<&u32>() { return 10; }
 
     0
 }
