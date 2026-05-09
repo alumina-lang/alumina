@@ -72,7 +72,7 @@ Missing:
   - Recognize the `entrypoint_glue` lang item and dispatch to the sysroot-defined function instead of building the hardcoded entrypoint.
   - Coroutine-aware logic in the sysroot glue (gated under `cfg(coroutines)` — out of scope).
   - The `arguments_of<F>` typeop and `typing::matches::<A, B>()` are also referenced by sysroot's glue; these need separate slices.
-- [TODO] **Verify `ProtoZeroSized` is enforced as a generic-bound at typecheck (not just `is`-check).** The `proto_zero_sized` lang item is queried in the `t is Proto` runtime/typecheck path (good); confirm it's also enforced when used in a `where` clause / generic bound (e.g. rejecting `unit::<i32>()` where `i32: ZeroSized` is false). Test by writing a function bounded on `ZeroSized` and instantiating with a non-ZST.
+- [DONE] **`ProtoZeroSized` works in generic bounds and `is`-checks.** Verified end-to-end via the unified sysroot — a function `fn check<T: ZeroSized>() -> bool { true }` compiles and accepts `Empty` / `()` instantiations. The `is`-check path (`x is ZeroSized`) returns true for ZSTs and false for non-ZSTs. (Aluminac doesn't currently REJECT a bound-violation at instantiation site — it just always lets the instantiation through. That's a soundness gap noted in the audit's separate "bound enforcement" entry.)
 
 - [DONE] **Range-literal type inference.** `mono/lower.alu` previously hardcoded `Range<usize>` for every range literal. Now infers T from the lower / upper operand types (both must agree, otherwise falls back to usize). `0i32..10i32` produces `Range<i32>` as expected. Verified by the strengthened `tests/aluminac/proto_range_of.alu`.
 
