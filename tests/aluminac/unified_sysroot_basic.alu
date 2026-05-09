@@ -214,6 +214,14 @@ fn main() -> i32 {
     h.push(5i32);
     if h.len() != 5usize { return 52; }
 
+    // String operations: starts_with / ends_with / contains. These
+    // dispatch via slice equality, which calls slice::equals — a method
+    // with two generic params (T, Ptr) that needed proper dispatch.
+    if !std::string::starts_with("hello world", "hello") { return 53; }
+    if std::string::starts_with("hello world", "world") { return 54; }
+    if !std::string::ends_with("hello world", "world") { return 55; }
+    if std::string::ends_with("hello world", "hello") { return 56; }
+
     0
 }
 

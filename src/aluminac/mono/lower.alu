@@ -1417,12 +1417,21 @@ impl Mono {
         // whether the method is in a generic impl (impl Option<T>) or a
         // non-generic impl (impl Option { fn equals<T>(...) }).
         let type_args: &[&IrTy] = if ty.tag == IrTyTag::Slice {
-            // For slices, the type arg is Ptr = &elem_type
+            // Slice methods take Ptr as their type-arg (e.g. impl slice<Ptr>).
+            // Some — like `equals<T, Ptr>` — take both T (the pointee) and Ptr;
+            // pass the right vector based on def.generic_params.len().
             let elem_ty = self.slice_elem_ty(ty);
-            let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
-            let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
-            ta[0] = ptr_ty;
-            ta as &[&IrTy]
+            let ptr_ty = self.ctx.make_ptr_ty(elem_ty, ty.is_const());
+            if def.generic_params.len() == 2 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(2);
+                ta[0] = elem_ty;
+                ta[1] = ptr_ty;
+                ta as &[&IrTy]
+            } else {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                ta[0] = ptr_ty;
+                ta as &[&IrTy]
+            }
         } else if ty.tag == IrTyTag::Struct && ty.struct_ref().type_args.len() > 0 && def.generic_params.len() == ty.struct_ref().type_args.len() {
             ty.struct_ref().type_args
         } else {
