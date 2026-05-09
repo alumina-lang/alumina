@@ -107,5 +107,20 @@ fn main() -> i32 {
     defer cs.free();
     if cs.ptr == null { return 23; }
 
+    // std::collections::Vector — exercises the slice<Ptr> ↔ &[T] type
+    // inference (Vector::new initializes _data with slice::empty(),
+    // which returns slice<Ptr>; aluminac's expected-type inference now
+    // figures out Ptr from the &mut [T] field type).
+    use std::collections::Vector;
+    let vec: Vector<i32> = Vector::new();
+    defer vec.free();
+    vec.push(10i32);
+    vec.push(20i32);
+    vec.push(30i32);
+    if vec.len() != 3usize { return 24; }
+    if vec[0] != 10i32 { return 25; }
+    if vec[1] != 20i32 { return 26; }
+    if vec[2] != 30i32 { return 27; }
+
     0
 }

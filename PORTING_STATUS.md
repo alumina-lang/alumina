@@ -219,6 +219,8 @@ Missing:
 - [TODO] **`libc/bindings.alu`** — net-new for aluminac (823 KB pure FFI declarations). No language blockers; just volume.
 - [TODO] **`libc/prelude.alu`** — net-new, tiny. Trivial.
 
+- [DONE] **Type-arg inference: `slice<Ptr>` from expected `&[T]` / `&mut [T]`.** Aluminac's expected-return-type inference path was Struct-only; now also handles the case where the function returns `slice<Ptr>` (the lang slice struct) and the call-site expects `IrTy::Slice`. Lets `slice::empty()` resolve `Ptr` from context. Verified via the unified-sysroot Vector usage in `tests/aluminac/unified_sysroot_basic.alu`.
+
 ## Unified sysroot probe
 
 - [PARTIAL] **Aluminac compiles dyn-free programs against `sysroot/`.** The slices in this branch (typeop dispatch, slice pseudo-fields, range type inference, fn-item type resolution, generic-fn skip-on-export, etc.) collectively let aluminac swallow non-trivial code against the unified sysroot — verified by `tests/aluminac/unified_sysroot_basic.alu`. The test exercises generics, Ordering, comparison-operator overload dispatch on a user struct, and works as a regression guard.

@@ -475,6 +475,7 @@ impl Mono {
                         if t.tag == IrTyTag::Enum {
                             return t.enum_ref().underlying;
                         }
+                        // Closure / Static / Const variants: not yet wired.
                     } else if lang == "typeop_pointer_with_mut_of" && type_args.len() >= 2 {
                         // pointer_with_mut_of<Ptr, RefForMutability>: produce a pointer to
                         // Ptr's pointee with the mutability of the second arg.
@@ -4463,6 +4464,14 @@ impl Mono {
                                     ctx_ta[0] = self.expected_type.struct_ref().type_args[0];
                                     call_ta = ctx_ta;
                                 }
+                            } else if self.expected_type.tag == IrTyTag::Slice && def.generic_params.len() == 1usize {
+                                // For single-generic functions whose declared return type is
+                                // `slice<Ptr>` (the lang slice struct), the expected `&[T]` /
+                                // `&mut [T]` lets us infer Ptr = `&T` / `&mut T`.
+                                let ptr_ty = self.ctx.make_ptr_ty(self.expected_type.inner(), self.expected_type.is_const());
+                                let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
+                                ctx_ta[0] = ptr_ty;
+                                call_ta = ctx_ta;
                             }
                         }
                         if call_ta.len() > 0usize {
