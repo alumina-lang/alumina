@@ -221,6 +221,8 @@ Missing:
 
 - [DONE] **Type-arg inference: `slice<Ptr>` from expected `&[T]` / `&mut [T]`.** Aluminac's expected-return-type inference path was Struct-only; now also handles the case where the function returns `slice<Ptr>` (the lang slice struct) and the call-site expects `IrTy::Slice`. Lets `slice::empty()` resolve `Ptr` from context. Verified via the unified-sysroot Vector usage in `tests/aluminac/unified_sysroot_basic.alu`.
 
+- [DONE] **Protocol identity through generic-fn substitution.** `resolve_named_type` previously returned `void_ty` when the named item was a protocol, which collapsed protocol type-args at generic call sites — `typing::matches::<i32, Integer>()` mono'd to `i32 is void` and returned false. Now wraps protocols in a new `IrTyTag::Protocol` variant carrying the def-id; the TypeCheck handler recognises this when the AST `check_ty` is a Placeholder substituting to a Protocol IrTy. Verified by `tests/aluminac/unified_sysroot_basic.alu` (typing::matches against Integer / FloatingPoint / Signed).
+
 ## Unified sysroot probe
 
 - [PARTIAL] **Aluminac compiles dyn-free programs against `sysroot/`.** The slices in this branch (typeop dispatch, slice pseudo-fields, range type inference, fn-item type resolution, generic-fn skip-on-export, etc.) collectively let aluminac swallow non-trivial code against the unified sysroot — verified by `tests/aluminac/unified_sysroot_basic.alu`. The test exercises generics, Ordering, comparison-operator overload dispatch on a user struct, and works as a regression guard.

@@ -160,5 +160,14 @@ fn main() -> i32 {
     if err_int.is_ok() { return 39; }
     if !err_int.is_err() { return 40; }
 
+    // typing::matches with a protocol type-arg goes through aluminac's
+    // IrTyTag::Protocol marker so the placeholder substitution preserves
+    // protocol identity at the `is`-check site.
+    if !std::typing::matches::<i32, std::builtins::Integer>() { return 41; }
+    if std::typing::matches::<f32, std::builtins::Integer>() { return 42; }
+    if !std::typing::matches::<f64, std::builtins::FloatingPoint>() { return 43; }
+    if std::typing::matches::<u32, std::builtins::Signed>() { return 44; }
+    if !std::typing::matches::<i64, std::builtins::Signed>() { return 45; }
+
     0
 }

@@ -547,6 +547,15 @@ impl Mono {
             return self.ctx.arena.alloc(IrTy::mk_fn(fn_ref));
         }
 
+        // Protocols don't have a runtime representation, but their identity
+        // matters for `is`-checks (e.g. `x is Integer`) when the protocol is
+        // passed as a generic type-arg. Wrap the protocol's def-id so the
+        // TypeCheck path can recover it after substitution.
+        let proto_def = self.ctx.protocol_defs.get(&item_ref.id._value);
+        if proto_def.is_some() {
+            return self.ctx.arena.alloc(IrTy::mk_protocol(item_ref.id._value));
+        }
+
         self.ctx.void_ty
     }
 
@@ -3071,8 +3080,10 @@ impl Mono {
             let check_ty = expr.ty(); // The protocol type (TyTag::Named)
             let is_match = false;
 
-            // Resolve the protocol name to check specific protocols
-            // Extract protocol ID from TyTag::Named or TyTag::Generic(TyTag::Named)
+            // Resolve the protocol name to check specific protocols.
+            // Extract protocol ID from TyTag::Named, TyTag::Generic(TyTag::Named),
+            // or TyTag::Placeholder when the placeholder substitutes to a
+            // Protocol IrTy (carries proto_id).
             let proto_id_value: usize = 0usize;
             let has_proto_id = false;
             if check_ty.tag == TyTag::Named {
@@ -3081,6 +3092,18 @@ impl Mono {
             } else if check_ty.tag == TyTag::Generic && check_ty.inner().tag == TyTag::Named {
                 proto_id_value = check_ty.inner().id()._value;
                 has_proto_id = true;
+            } else if check_ty.tag == TyTag::Placeholder {
+                // Generic-call-site substitution: the AST-level type-arg may have
+                // been a protocol. resolve_named_type wraps protocols as
+                // IrTyTag::Protocol carrying the proto_id; recover it here.
+                let resolved = self.type_map.get(&check_ty.id()._value);
+                if resolved.is_some() {
+                    let r = resolved.unwrap();
+                    if r.tag == IrTyTag::Protocol {
+                        proto_id_value = r.proto_id();
+                        has_proto_id = true;
+                    }
+                }
             }
             if has_proto_id {
                 let protocol = self.ctx.protocol_defs.get(&proto_id_value);

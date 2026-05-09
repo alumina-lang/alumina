@@ -847,6 +847,7 @@ enum IrTyTag {
     Slice = 9i32,       // fat pointer: (data_ptr, len) - tracks element type
     Closure = 10i32,    // closure: struct of captures + associated function
     Fn = 11i32,         // function item: ZST representing a specific function
+    Protocol = 12i32,   // protocol marker: carries the protocol's def-id for `is`-checks
 }
 
 // Slice struct field indices (fat pointer layout: {data_ptr, len})
@@ -894,6 +895,7 @@ union _IrTyData {
     closure: _IrTyClosureData,      // Closure
     slice: _IrTySliceData,          // Slice
     fn_item: _IrTyFnData,          // Fn
+    proto_id: usize,                // Protocol
 }
 
 struct IrTy {
@@ -963,6 +965,12 @@ impl IrTy {
     fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
         IrTy { tag: IrTyTag::Slice, _data: _IrTyData { slice: _IrTySliceData { inner: elem, is_const: is_const, elems: &[] } } }
     }
+
+    fn mk_protocol(proto_id: usize) -> IrTy {
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto_id: proto_id } }
+    }
+
+    fn proto_id(self: &IrTy) -> usize { self._data.proto_id }
 
     fn is_void(self: &IrTy) -> bool {
         self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void)
