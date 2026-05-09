@@ -56,7 +56,7 @@ Missing:
 - [PARTIAL] **Attribute: `#[tuple_call]`.** AttrTag::TupleCall + parser recognition. Semantics not yet wired (would let a fn taking a tuple be called with positional args).
 
 - [PARTIAL] **Attribute: `#[const_only]` / `#[no_const]`.** AttrTag::ConstOnly / AttrTag::NoConst + parser recognition. alumina-boot uses these to gate functions to / from const context; aluminac stores the attribute but doesn't yet enforce.
-- [PARTIAL] **Attribute: `#[must_use]`.** AttrTag::MustUse + parser recognition. alumina-boot warns when a #[must_use] return value is dropped; aluminac stores the attribute but doesn't yet emit the warning. Used in sysroot for Result-returning APIs.
+- [DONE] **Attribute: `#[must_use]`.** AttrTag::MustUse + parser recognition + warning enforcement. `mono/lower.alu`'s `lower_block` now checks each non-trailing block expression: if it's a direct Call to a function tagged `#[must_use]` returning a non-void/non-never value, emits a `generic_warning` diagnostic. The diagnostic context tracks `has_warnings` and `main.alu` flushes them on success too. Verified by `tests/aluminac/must_use_warn.alu` (binary exit unchanged; warning text confirmed manually).
 
 - [DONE] **Attribute: `#[no_mangle]`.** Wired through pass1 → AttrTag::NoMangle → mono's mangled_name decision. Behaves like #[export] for naming purposes (keeps `def.name` as the LLVM symbol). Verified by `tests/aluminac/no_mangle_attr.alu`.
 - [PARTIAL] **Attribute: `#[inline(...)]` modes.** Pass1 parses the meta-item argument and dispatches to `Inline` / `AlwaysInline` / `NeverInline` / `InlineIr`. NeverInline lowers to LLVM `noinline`. Verified by `tests/aluminac/inline_attr_modes.alu`.

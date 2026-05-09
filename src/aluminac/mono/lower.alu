@@ -4796,11 +4796,32 @@ impl Mono {
     }
 
     // Lower block-like expressions: ExprTag::Block, ExprTag::Let, ExprTag::Defer
+    fn check_must_use_dropped(self: &mut Mono, ir_expr: &IrExpr, span: Span) {
+        if ir_expr.tag != IrTag::Call { return; }
+        if ir_expr.ty.is_void() || ir_expr.ty.is_never() { return; }
+        if ir_expr._data.call.call_target.tag != CallKind::Direct { return; }
+        let fn_ref = ir_expr._data.call.call_target.fn_ref;
+        let def_opt = self.ctx.fn_defs.get(&fn_ref.id._value);
+        if def_opt.is_none() { return; }
+        let def = def_opt.unwrap();
+        for j in 0usize..def.attributes.len() {
+            if def.attributes[j].tag == AttrTag::MustUse {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(
+                    span, "result of #[must_use] function is dropped"));
+                return;
+            }
+        }
+    }
+
     fn lower_block(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Block {
-            let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
-            for i in 0usize..expr.args().len() {
+            let n = expr.args().len();
+            let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(n);
+            for i in 0usize..n {
                 ir_stmts[i] = self.lower_expr(expr.args()[i]);
+                if i + 1 < n {
+                    self.check_must_use_dropped(ir_stmts[i], expr.args()[i].span);
+                }
             }
             self.mk_block(ir_stmts)
         } else if expr.tag == ExprTag::Let {

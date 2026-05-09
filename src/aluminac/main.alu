@@ -445,6 +445,12 @@ impl Compiler {
             return false;
         }
 
+        // Flush warnings on success too — they don't fail compilation but
+        // should still surface (notably #[must_use] dropped-result warnings).
+        if self.diag.has_warnings {
+            self.diag.emit_all();
+        }
+
         if self.options.dump_ir {
             ctx.dump();
         }

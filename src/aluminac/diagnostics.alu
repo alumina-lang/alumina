@@ -297,6 +297,7 @@ struct DiagnosticContext {
     files: std::collections::Vector<SourceFile>,
     errors: std::collections::Vector<CodeDiagnostic>,
     has_errors: bool,
+    has_warnings: bool,
 }
 
 impl DiagnosticContext {
@@ -305,6 +306,7 @@ impl DiagnosticContext {
             files: std::collections::Vector::new(),
             errors: std::collections::Vector::new(),
             has_errors: false,
+            has_warnings: false,
         }
     }
 
@@ -322,6 +324,7 @@ impl DiagnosticContext {
     fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
         switch diag.level {
             DiagLevel::Error => { self.has_errors = true; },
+            DiagLevel::Warning => { self.has_warnings = true; },
             _ => {},
         };
         self.errors.push(diag);
