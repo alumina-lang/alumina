@@ -46,6 +46,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "tuple_invoke" => lower_tuple_invoke(m, expr),
         "stop_iteration" => lower_stop_iteration(m),
         "with_span_of" => lower_with_span_of(m, expr),
+        "attributed" => lower_attributed(m, ir_type_args),
         _ => lower_unknown(m, name, expr),
     }
 }
@@ -541,6 +542,30 @@ fn lower_with_span_of(m: &mut Mono, expr: &Expr) -> &IrExpr {
     }
     let result = IrExpr::void_expr(m.ctx.void_ty);
     result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // attributed<Args: Tuple>(name: &[u8]) -> &[fn(Args) -> Ret] — returns
+    // a slice of function pointers whose signature matches Args and whose
+    // declarations carry the named (Custom) attribute. Building this requires
+    // const-time slice allocation that aluminac doesn't support yet
+    // (tracked under const_alloc / const_bake). For now we return an empty
+    // slice so callers compile.
+    //
+    // Sysroot's main use is `attributed::<()>("test")` for test discovery;
+    // aluminac has its own test runner (test_cases!() builtin), so the
+    // empty-slice return is workable for that path.
+    let void_ty = m.ctx.void_ty;
+    // Element type: a function pointer with no args, void return — the most
+    // generic stand-in. Caller's expected type may not match, but for the
+    // cfg(test) path this is unused.
+    let fn_ptr_ty = m.ctx.make_fn_ptr_ty(&[], void_ty);
+    let slice_ty = m.ctx.make_slice_ty(fn_ptr_ty, true);
+    let empty_str: &[u8] = "";
+    let result = IrExpr::void_expr(slice_ty);
+    result.tag = IrTag::StringLit;
+    result._data.lit.str_val = empty_str;
     m.ctx.arena.alloc(result)
 }
 
