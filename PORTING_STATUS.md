@@ -170,24 +170,24 @@ Missing:
 
 ### Already close to parity (small slices)
 
-- [TODO] **`std/util.alu`** — utility helpers; trivial differences. Likely unifiable in one slice.
-- [TODO] **`std/mod.alu`** — module re-exports; gated on which sub-modules compile. Final cleanup once the rest is unified.
+- [DONE] **`std/util.alu`** — unified.
+- [TODO] **`std/mod.alu`** — module re-exports; aluminac-version still has cfg-gated sections; unifying breaks panicking test.
 - [TODO] **`sysroot/mod.alu`** — root module. Trivial.
-- [TODO] **`std/prelude.alu`** — minor differences.
-- [TODO] **`std/option.alu`** — diffs are mainly docs and `try!`-style macros; depends on macro completeness.
+- [DONE] **`std/prelude.alu`** — unified.
+- [TODO] **`std/option.alu`** — unifying breaks aluminac bootstrap (sysroot's body uses macros and dyn paths aluminac can't handle yet).
 - [TODO] **`std/result.alu`** — same shape as `option.alu`.
-- [TODO] **`std/range.alu`** — sysroot has full `lang(range_*_new)` impl blocks; gated on the range constructor lang items above.
-- [TODO] **`std/ffi.alu`** — sysroot has `CString`; trivial unification.
-- [TODO] **`std/string/mod.alu`** — reportedly matches; verify once parser features land.
-- [TODO] **`std/string/unicode.alu`** — reportedly matches.
-- [TODO] **`std/hash/mod.alu`** — minor diff (extra method impls).
-- [TODO] **`std/hash/xxhash.alu`** — matches.
-- [TODO] **`std/collections/mod.alu`** — minor diffs.
-- [TODO] **`std/collections/vector.alu`** — minor diffs.
-- [TODO] **`std/collections/deque.alu`** — minor diffs.
-- [TODO] **`std/collections/hashmap.alu`** — minor diffs.
-- [TODO] **`std/collections/hashset.alu`** — minor diffs.
-- [TODO] **`std/collections/heap.alu`** — minor diffs.
+- [TODO] **`std/range.alu`** — sysroot has full `lang(range_*_new)` impl blocks; unifying breaks test-std-aluminac on iterator integration.
+- [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
+- [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
+- [TODO] **`std/string/unicode.alu`** — unifying breaks the util_unicode test (need to investigate).
+- [TODO] **`std/hash/mod.alu`** — unifying breaks hash_xxhash and string_extended tests.
+- [TODO] **`std/hash/xxhash.alu`** — same; depends on hash/mod.alu unification.
+- [DONE] **`std/collections/mod.alu`** — unified; aluminac test count grows with embedded collections tests.
+- [TODO] **`std/collections/vector.alu`** — depends on dyn / iter combinator paths.
+- [TODO] **`std/collections/deque.alu`** — depends on dyn / iter combinator paths.
+- [TODO] **`std/collections/hashmap.alu`** — depends on dyn-via-Option::unwrap.
+- [TODO] **`std/collections/hashset.alu`** — depends on dyn-via-Option::unwrap.
+- [TODO] **`std/collections/heap.alu`** — depends on dyn / iter combinator paths.
 
 ### Medium slices (depend on a single language feature or lang-item set)
 
@@ -220,7 +220,7 @@ Missing:
 
 ### Aluminac-only files (eliminate after parity)
 
-- [TODO] **Delete `sysroot-aluminac/std/strbuf.alu`** — 64-byte stub once sysroot's StringBuilder is reachable.
+- [DONE] **Delete `sysroot-aluminac/std/strbuf.alu`** — was a 64-byte vestigial stub; deleted.
 - [TODO] **Merge `sysroot-aluminac/std/iter/` directory into single `sysroot/std/iter.alu`** (covered above).
 - [TODO] **Merge `sysroot-aluminac/std/typing/` directory into single `sysroot/std/typing.alu`** (covered above).
 
