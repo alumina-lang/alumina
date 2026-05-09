@@ -25,6 +25,9 @@ type array_with_length_of<T, Arr>;
 #[lang(typeop_generic_args_of)]
 type generic_args_of<T>;
 
+#[lang(typeop_replace_generic_args_of)]
+type replace_generic_args_of<T, Args>;
+
 struct Pair<A, B> { a: A, b: B }
 struct Empty {}
 
@@ -60,6 +63,10 @@ fn main() -> i32 {
     // generic_args_of: tuple of T's generic arguments.
     if type_id::<generic_args_of<Pair<i32, bool>>>() != type_id::<(i32, bool)>() { return 13; }
     if type_id::<generic_args_of<Empty>>() != type_id::<()>() { return 14; }
+
+    // replace_generic_args_of: re-mono with new type args.
+    if type_id::<replace_generic_args_of<Pair<i32, bool>, (u8, u16)>>() != type_id::<Pair<u8, u16>>() { return 15; }
+    if type_id::<replace_generic_args_of<Pair<i32, bool>, (i32, bool)>>() != type_id::<Pair<i32, bool>>() { return 16; }
 
     0
 }

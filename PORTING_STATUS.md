@@ -140,9 +140,9 @@ Missing:
   - `typeop_array_with_length_of<T, Arr: Array>` — produces `[T; len(Arr)]`.
   - `typeop_generic_args_of<T>` — tuple of T's struct generic args (empty tuple for non-struct).
   - `typeop_underlying_function_of<T: Closure>` — closure's underlying Fn item.
+  - `typeop_replace_generic_args_of<T, Args>` — re-mono'd struct/enum with `Args`' tuple components as new type-args.
   Verified by `tests/aluminac/typeop_args_return.alu`.
   Missing:
-  - `typeop_replace_generic_args_of<T, Args>` — generic-arg substitution; needs re-resolution path.
   - `typeop_underlying_type_of` for Static / Const / Closure (currently enum-only).
   - `typeop_arguments_of` / `typeop_return_type_of` for `IrTyTag::Closure`.
   - `typeop_generic_args_of` for enums.
