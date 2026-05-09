@@ -3327,6 +3327,36 @@ impl Mono {
             return self.ctx.arena.alloc(result);
         }
 
+        // Coerce &T (or any pointer) to a dyn struct (`&dyn Proto` resolved
+        // to the lang(dyn) struct). Aluminac doesn't yet build proper vtables,
+        // so the vtable slot is a null pointer — this lets type-check and
+        // mono succeed for sysroot signatures, but actual dyn dispatch will
+        // crash at runtime if exercised. Method dispatch on dyn values is
+        // tracked separately in PORTING_STATUS.md.
+        if expected_ty.tag == IrTyTag::Struct && val.ty.tag == IrTyTag::Pointer {
+            let dyn_lang_id = self.ctx.get_lang_item("dyn");
+            if dyn_lang_id.is_some() && expected_ty.struct_ref().id._value == dyn_lang_id.unwrap() {
+                // Build dyn fat pointer: { _ptr: val (cast to &void), _vtable: null }
+                let void_ty = self.ctx.void_ty;
+                let void_ptr_ty = self.ctx.make_ptr_ty(void_ty, val.ty.is_const());
+                let data_cast = self.mk_cast(val, void_ptr_ty);
+                // _vtable field type: per sysroot, `&fn()` (a fn pointer to
+                // a no-arg function). We approximate with a generic pointer
+                // and cast at the codegen level.
+                let null_vtable = IrExpr::void_expr(void_ptr_ty);
+                null_vtable.tag = IrTag::NullLit;
+                let vtable_cast = self.ctx.arena.alloc(null_vtable) as &IrExpr;
+                let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                items[0] = data_cast;
+                items[1] = vtable_cast;
+                let result = IrExpr::void_expr(expected_ty);
+                result.tag = IrTag::StructLit;
+                result._data.struct_lit.ir_ty = expected_ty;
+                result._data.struct_lit.items = items;
+                return self.ctx.arena.alloc(result);
+            }
+        }
+
         // Incompatible
         0usize as &IrExpr
     }
