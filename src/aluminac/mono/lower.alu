@@ -3800,6 +3800,21 @@ impl Mono {
 
 
         if resolved_ty.tag == IrTyTag::Struct {
+            // Detect a `&dyn Proto` value: the resolved struct is the lang(dyn)
+            // struct. Aluminac doesn't yet build vtables — for any method call
+            // through a dyn value, lower the args (so side effects survive) and
+            // emit Unreachable typed as never. Never coerces to any expected
+            // return, letting the caller compile (and trap-on-execute if ever
+            // reached at runtime).
+            let dyn_lang_id = self.ctx.get_lang_item("dyn");
+            if dyn_lang_id.is_some() && resolved_ty.struct_ref().id._value == dyn_lang_id.unwrap() {
+                for i in 0usize..expr.args().len() {
+                    self.lower_expr(expr.args()[i]);
+                }
+                let unreach = IrExpr::void_expr(self.ctx.never_ty);
+                unreach.tag = IrTag::Unreachable;
+                return Option::some(self.ctx.arena.alloc(unreach) as &IrExpr);
+            }
             scope_idx = resolved_ty.struct_ref().scope_idx;
             method_type_args = resolved_ty.struct_ref().type_args;
         } else if resolved_ty.tag == IrTyTag::Enum {

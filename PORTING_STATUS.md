@@ -33,13 +33,15 @@ Missing:
 
 *(Parser/AST/type system features in alumina-boot but not aluminac.)*
 
-- [PARTIAL] **`dyn` / dynamic dispatch.** Aluminac now PARSES `&dyn Proto` and `&mut dyn Proto` and COERCES `&T` to `&dyn Proto` (fat pointer with null vtable). Sysroot signatures using dyn type-check; the previous "could not resolve method 'fmt' on type ''" error mutates into the call-site error when something tries to method-dispatch through a dyn value.
+- [PARTIAL] **`dyn` / dynamic dispatch.** Three behaviors are wired enough for sysroot signatures to compile end-to-end (without actually executing dyn dispatch):
+  1. Parse `&dyn Proto` / `&mut dyn Proto` (capturing the first protocol; multi-protocol `&dyn (A + B)` still narrows to the first).
+  2. Coerce `&T` → `&dyn Proto` to a `lang(dyn) { _ptr: void*, _vtable: null }` fat-pointer struct lit.
+  3. Method calls on dyn values lower to `Unreachable` (typed as `never`, which coerces to any expected return). Args are still lowered for side-effect preservation. Verified by `tests/aluminac/dyn_dispatch_compiles.alu`.
 
-  A dyn-method dispatch shim was attempted (mono of the call emits Unreachable typed as the protocol method's return type) but had non-deterministic segfaults in the iteration over `protocol_defs` mid-resolve_type — the underlying ProtocolDef pointers occasionally invalidated. Reverted the shim until the lifetime issue is understood; sysroot paths reaching dyn method calls (Option::unwrap → panic_impl → arg.fmt) still fail at "could not resolve method".
+  This unblocks compilation of sysroot signatures that take or return `&dyn ...` parameters, but actual dispatch traps at runtime if reached. Works for sysroot code paths that are gated behind dead branches (e.g. format args that won't be reached for non-panic flows) but breaks when execution actually flows through a dyn call.
 
   Missing (real dyn semantics):
-  - Stable method dispatch: look up the method on the protocol(s) referenced by the Protos type-arg and emit a vtable-indexed call. A stub Unreachable was attempted; need to investigate why repeated protocol_defs accesses race or invalidate.
-  - Vtable construction at `&x as &dyn Proto`: build a static array of fn pointers for each method in Proto.
+  - Vtable construction at `&x as &dyn Proto`: build a static array of fn pointers for each method in Proto. Required for `panic_impl`'s arg.fmt(...) path to actually format on panic.
   - dyn_vtable_index runtime path: emit `dyn_vtable_index(dyn_val, idx)(dyn_data(dyn_val), args...)`.
   - Multi-protocol bounds: `&dyn (A + B)` is parsed but only the first protocol is captured.
   - dyn_self lang item — Self substitution in protocol method signatures inside dyn context.
