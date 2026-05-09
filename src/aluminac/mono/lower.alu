@@ -463,6 +463,28 @@ impl Mono {
                         if p.tag == IrTyTag::Pointer && m.tag == IrTyTag::Pointer {
                             return self.ctx.make_ptr_ty(p.inner(), m.is_const());
                         }
+                    } else if lang == "typeop_array_with_length_of" && type_args.len() >= 2 {
+                        // array_with_length_of<T, Arr: Array>: produce [T; len(Arr)].
+                        let elem = type_args[0];
+                        let len_holder = type_args[1];
+                        if len_holder.tag == IrTyTag::Array {
+                            return self.ctx.make_array_ty(elem, len_holder.array_size());
+                        }
+                    } else if lang == "typeop_generic_args_of" && type_args.len() >= 1 {
+                        // generic_args_of<T>: tuple of T's struct/enum generic args.
+                        let t = type_args[0];
+                        if t.tag == IrTyTag::Struct {
+                            return self.ctx.make_tuple_ty(t.struct_ref().type_args);
+                        }
+                        // Non-struct: empty tuple.
+                        return self.ctx.make_tuple_ty(&[]);
+                    } else if lang == "typeop_underlying_function_of" && type_args.len() >= 1 {
+                        // underlying_function_of<T: Closure>: the closure's underlying Fn.
+                        let t = type_args[0];
+                        if t.tag == IrTyTag::Closure {
+                            let fn_ref = t.closure_fn();
+                            return self.ctx.arena.alloc(IrTy::mk_fn(fn_ref));
+                        }
                     }
                 }
             }

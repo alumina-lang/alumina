@@ -127,18 +127,20 @@ Missing:
 - [TODO] **Slice operation lang items** (`slice_new`, `slice_const_coerce`, `slice_const_cast`, `slice_index`, `slice_range_index`, `slice_slicify`). aluminac open-codes slice operations today instead of going through these; sysroot uses them. Wire queries so the unified sysroot's `impl Slice` blocks are reached.
 - [TODO] **Range constructor lang items** (`range_full_new`, `range_from_new`, `range_to_new`, `range_to_inclusive_new`, `range_new`, `range_inclusive_new`). aluminac inlines range construction. Query so user-written range literals dispatch through them.
 - [TODO] **`range_full`, `range_from`, `range_to`, `range_to_inclusive`.** Type-level lang items. aluminac queries `range` and `range_inclusive` only; add the rest.
-- [PARTIAL] **Typeop lang items.** Wired in `mono/lower.alu`'s `resolve_named_type` (TypeAlias path now consults the lang attribute):
+- [PARTIAL] **Typeop lang items.** Wired in `mono/lower.alu`'s `resolve_named_type` (TypeAlias path consults the lang attribute):
   - `typeop_arguments_of` / `typeop_return_type_of` — for Fn and FnPointer.
   - `typeop_function_pointer_of<Args, Ret>` — builds an FnPointer from a tuple of arg types and a return type.
   - `typeop_pointer_with_mut_of<Ptr, M>` — produces a pointer to Ptr's pointee with the mutability of M.
   - `typeop_underlying_type_of` — for enums (returns the underlying integer).
+  - `typeop_array_with_length_of<T, Arr: Array>` — produces `[T; len(Arr)]`.
+  - `typeop_generic_args_of<T>` — tuple of T's struct generic args (empty tuple for non-struct).
+  - `typeop_underlying_function_of<T: Closure>` — closure's underlying Fn item.
   Verified by `tests/aluminac/typeop_args_return.alu`.
   Missing:
-  - `typeop_array_with_length_of` — needs const-evaluable length.
-  - `typeop_generic_args_of`, `typeop_replace_generic_args_of` — generic-arg reflection / substitution.
-  - `typeop_underlying_function_of` — closure → fn item.
+  - `typeop_replace_generic_args_of<T, Args>` — generic-arg substitution; needs re-resolution path.
   - `typeop_underlying_type_of` for Static / Const / Closure (currently enum-only).
   - `typeop_arguments_of` / `typeop_return_type_of` for `IrTyTag::Closure`.
+  - `typeop_generic_args_of` for enums.
 - [TODO] **Dyn lang items** (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Blocks `dyn` support generally — see Language features.
 - [TODO] **Operator overload lang items** (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`). See Language features.
 - [TODO] **Reflection lang items** (`format_arg`, `enum_variant_new`, `field_descriptor_new`, `field_descriptor_new_unnamed`, `type_descriptor_new`). Required by `enum_variants` / `fields` intrinsics.
