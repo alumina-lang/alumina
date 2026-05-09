@@ -548,6 +548,20 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::DynOf => {
+                // `&dyn P` (or `&mut dyn P`, `&dyn (P + Q)`). Aluminac
+                // currently captures only the FIRST inner protocol — the
+                // grammar permits multiple via `(A + B + ...)`. Resolves
+                // to the lang(dyn) struct; method dispatch is not yet
+                // implemented (see PORTING_STATUS.md).
+                let inner = child_by!(node, FieldKind::Inner);
+                let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+                if !inner.is_none() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::dyn_ty(inner_ty, !is_mut));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             NodeKind::SliceOf => {
                 let inner = child_by!(node, FieldKind::Inner);
                 let is_mut = !child_by!(node, FieldKind::Mut).is_none();

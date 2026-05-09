@@ -279,6 +279,34 @@ impl Mono {
                     self.ctx.void_ty
                 }
             }
+            TyTag::Dyn => {
+                // `&dyn Proto` — resolve to the lang(dyn) struct from sysroot
+                // (`struct dyn<Protos, Ptr>`). Aluminac currently captures only
+                // the first protocol; multi-protocol forms `&dyn (A + B)` are
+                // a future slice. The Ptr type-arg is `&void` (or `&mut void`
+                // depending on mutability) since dyn erases the underlying
+                // pointee type. Method dispatch through this type is not yet
+                // implemented — calls will fail at mono with a clear error.
+                let dyn_lang_id = self.ctx.get_lang_item("dyn");
+                if dyn_lang_id.is_none() {
+                    return self.ctx.void_ty;
+                }
+                let sd = self.ctx.struct_defs.get(&dyn_lang_id.unwrap());
+                if sd.is_none() {
+                    return self.ctx.void_ty;
+                }
+                let inner_ir = self.resolve_type(ty.inner());
+                let void_ty = self.ctx.void_ty;
+                let ptr_ty = self.ctx.make_ptr_ty(void_ty, ty.is_const());
+                // Build a 1-tuple for Protos = (Proto,).
+                let protos = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                protos[0] = inner_ir;
+                let protos_tuple = self.ctx.make_tuple_ty(protos);
+                let dyn_args = self.ctx.arena.alloc_slice::<&IrTy>(2);
+                dyn_args[0] = protos_tuple;
+                dyn_args[1] = ptr_ty;
+                self.mono_struct(sd.unwrap(), dyn_args)
+            }
             TyTag::Typeof => {
                 let result = self.lower_expr(ty.typeof_expr());
                 result.ty

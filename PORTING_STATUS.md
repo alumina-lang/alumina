@@ -33,7 +33,15 @@ Missing:
 
 *(Parser/AST/type system features in alumina-boot but not aluminac.)*
 
-- [TODO] **`dyn` / dynamic dispatch.** No `Ty::Dyn` in aluminac AST; `dyn_*` lang items unimplemented (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`. Largest single language gap.
+- [PARTIAL] **`dyn` / dynamic dispatch.** Aluminac now PARSES `&dyn Proto` and `&mut dyn Proto`: pass2 produces a `Ty::Dyn` AST variant, resolve_type translates that to the lang(dyn) struct (`struct dyn<Protos, Ptr>` with `Protos = (Proto,)`, `Ptr = &void` or `&mut void`). Sysroot signatures using dyn now type-check; the previous "could not resolve method 'fmt' on type ''" error mutates into "expected 'dyn', got '...'" when something tries to construct or method-dispatch through a dyn value.
+  Missing:
+  - Dyn-construction: `x as &dyn Proto` / `&x as &dyn Proto` should build the fat pointer (data ptr + vtable). Sysroot's `dyn_new` lang item is the place to plug in.
+  - Method dispatch: `dyn_value.method(args)` should look up `method` in the protocol's method-set, find its index, and emit `dyn_vtable_index(dyn_value, idx)(dyn_data(dyn_value), args...)`. Aluminac currently fails at method lookup since dyn isn't recognized as a method-receiver shape.
+  - Multi-protocol bounds: `&dyn (A + B)` is parsed but only the first protocol is captured.
+  - dyn_self lang item — `Self` in protocol method signatures inside dyn context.
+  - Vtable construction at the dyn-creation site: build a static array of fn pointers from the concrete type's method table.
+
+  Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and (most blocking) `sysroot/std/panicking.alu`'s `panic_impl` which takes `&[&dyn Formattable<Self, F>]`. The unified-sysroot probe still trips on dyn-construction inside fmt::dyn_format_arg as soon as anything pulls `panic_impl` (Option::unwrap chain).
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
 - [TODO] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** alumina-boot uses these for type-level metadata; absent in aluminac. Confirm whether sysroot actually requires them (may be internal to boot).
 - [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.

@@ -140,6 +140,7 @@ enum TyTag {
     Unresolved = 11i32,
     When = 12i32,
     DerefOf = 13i32,    // *T in type position — pointee of T
+    Dyn = 14i32,        // &dyn Proto — fat pointer with vtable; resolves to lang(dyn) struct
 }
 
 struct _TyPointerData { inner: &Ty, is_const: bool }
@@ -170,7 +171,7 @@ impl Ty {
     fn builtin(self: &Ty) -> BuiltinType { self._data.builtin }
     fn id(self: &Ty) -> Id { self._data.id }
     fn inner(self: &Ty) -> &Ty {
-        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf { self._data.pointer.inner }
+        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf || self.tag == TyTag::Dyn { self._data.pointer.inner }
         else if self.tag == TyTag::Array { self._data.array.inner }
         else if self.tag == TyTag::Generic { self._data.generic.inner }
         else { self._data.when.inner } // When
@@ -236,6 +237,11 @@ impl Ty {
         // pointee P, resolves to P. When T is a placeholder, resolves
         // after substitution.
         Ty { tag: TyTag::DerefOf, _data: _TyData { pointer: _TyPointerData { inner: inner, is_const: false } } }
+    }
+    fn dyn_ty(inner: &Ty, is_const: bool) -> Ty {
+        // `&dyn Foo` — fat pointer with vtable. Resolves to the lang(dyn)
+        // struct; inner is the protocol type.
+        Ty { tag: TyTag::Dyn, _data: _TyData { pointer: _TyPointerData { inner: inner, is_const: is_const } } }
     }
     fn unresolved() -> Ty {
         Ty { tag: TyTag::Unresolved, _data: _TyData { builtin: BuiltinType::Void } }
