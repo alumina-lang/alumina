@@ -142,7 +142,7 @@ Missing:
 - [DONE] **`#[link("…")]` / linker-arg attributes.** Audited sysroot/ — no `#[link(...)]` annotations exist. Aluminac's `--link-args` (and the Makefile's `-ltree-sitter -L/usr/lib/llvm-14/lib -lLLVM-14`) covers the needed libs for the bootstrap. If sysroot grows linker dependencies, migrate then.
 - [TODO] **Debug info (DWARF).** alumina-boot emits `#line` directives in C; aluminac emits no DWARF. Required for `std/runtime/backtrace.alu` to produce useful traces.
 - [TODO] **Panic location capture.** Compiler intrinsic that yields the caller `(file, line)` pair for `panic!`. Verify aluminac path matches alumina-boot's.
-- [TODO] **ZST elision pass.** alumina-boot has `codegen/elide_zst.rs`; aluminac generates LLVM IR for ZST loads/stores anyway. LLVM may eliminate them — not a correctness issue, just IR quality.
+- [DONE] **ZST elision pass.** Not in scope for parity — alumina-boot's `codegen/elide_zst.rs` is a C-codegen quality pass that deletes loads/stores of zero-sized structs to keep the emitted C clean. Aluminac emits LLVM IR; LLVM's optimizer handles ZST cleanup, and the unoptimized output is functionally correct (LLVM's struct/array-of-zero-fields are well-defined empty). No correctness gap, no future work expected.
 
 ## Lang items
 
