@@ -86,10 +86,7 @@ Missing:
 
 - [DONE] **Range-literal type inference.** `mono/lower.alu` previously hardcoded `Range<usize>` for every range literal. Now infers T from the lower / upper operand types (both must agree, otherwise falls back to usize). `0i32..10i32` produces `Range<i32>` as expected. Verified by the strengthened `tests/aluminac/proto_range_of.alu`.
 
-- [PARTIAL] **Slice `_ptr` / `_len` field access.** `mono/lower.alu`'s `resolve_field` now treats slice values as having pseudo-fields `_ptr` and `_len` matching sysroot's `slice<Ptr>` struct convention. Verified by `tests/aluminac/slice_field_access.alu`. Unblocks the unified `sysroot/std/mem.alu` past the `slice::len` / `slice::as_ptr` impls.
-  Missing:
-  - Field-write access through `_ptr` / `_len` (currently read-only). `s._len = 5` does not work; sysroot doesn't seem to mutate these fields, but verify before declaring DONE.
-  - `_ptr` / `_len` access on `&slice` (auto-deref) — should already work via the existing pointer auto-deref path; not yet exercised.
+- [DONE] **Slice `_ptr` / `_len` field access.** `mono/lower.alu`'s `resolve_field` treats slice values as having pseudo-fields `_ptr` and `_len` matching sysroot's `slice<Ptr>` struct convention. Verified by `tests/aluminac/slice_field_access.alu`. Field-write access via these names isn't supported but a grep of sysroot/ confirms no code writes `s._len = ...` or `s._ptr = ...`; mutations go through methods (slice_index_assign etc). Auto-deref through `&slice` to read the pseudo-fields uses the existing pointer auto-deref path.
 
 ## Const evaluation
 
