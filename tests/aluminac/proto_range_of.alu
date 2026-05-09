@@ -1,0 +1,31 @@
+// Test: RangeOf<T> matches ranges whose endpoint type is T.
+//
+// NOTE: aluminac's range-literal lowering currently forces the element
+// type to `usize` regardless of the operand types (see lower.alu's
+// ExprTag::Range branch, which hardcodes `usize_ty` into type_args).
+// That is a separate parity gap tracked in PORTING_STATUS.md. This
+// test exercises proto_range_of's structural query against what
+// aluminac actually produces today.
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+use std::builtins::RangeOf;
+
+fn main() -> i32 {
+    let r = 0usize..100usize;
+    if !(r is RangeOf<usize>) { return 1; }
+    if r is RangeOf<u64> { return 2; }
+    if r is RangeOf<i32> { return 3; }
+
+    let r_inclusive = 0usize..=99usize;
+    if !(r_inclusive is RangeOf<usize>) { return 4; }
+    if r_inclusive is RangeOf<u64> { return 5; }
+
+    // A non-range value never matches RangeOf<T>.
+    let scalar: usize = 42usize;
+    if scalar is RangeOf<usize> { return 6; }
+
+    let arr: [usize; 3] = [1usize, 2usize, 3usize];
+    if arr is RangeOf<usize> { return 7; }
+
+    0
+}

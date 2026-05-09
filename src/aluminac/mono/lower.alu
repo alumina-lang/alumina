@@ -2987,6 +2987,16 @@ impl Mono {
                             let arg_align = layout::compute_type_align(arg_ty, self.ctx.pointer_size);
                             is_match = val_size == arg_size && val_align == arg_align;
                         }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_range_of") {
+                        // RangeOf<T>: val_ty is a Range<T> / RangeInclusive<T> / etc.
+                        // RangeFull has no type parameter and never matches.
+                        if self.is_range_ty(val_ty) && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                            let ta = val_ty.struct_ref().type_args;
+                            if ta.len() >= 1 {
+                                is_match = ta[0] as &void == arg_ty as &void;
+                            }
+                        }
                     } else {
                         // User-defined protocol: check if type has all required methods
                         is_match = self.check_protocol_conformance(val_ty, proto);

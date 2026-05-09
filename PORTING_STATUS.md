@@ -59,6 +59,8 @@ Missing:
 - [TODO] **`Lang::EntrypointGlue`.** sysroot defines an entrypoint-glue lang item; aluminac uses a hardcoded entrypoint. Push the glue into the sysroot once practical.
 - [TODO] **Verify `ProtoZeroSized` is enforced as a generic-bound at typecheck (not just `is`-check).** The `proto_zero_sized` lang item is queried in the `t is Proto` runtime/typecheck path (good); confirm it's also enforced when used in a `where` clause / generic bound (e.g. rejecting `unit::<i32>()` where `i32: ZeroSized` is false). Test by writing a function bounded on `ZeroSized` and instantiating with a non-ZST.
 
+- [TODO] **Range-literal lowering forces `usize` element type.** `mono/lower.alu`'s `ExprTag::Range` branch hardcodes `usize_ty` for the type arg of `Range<T>` / `RangeInclusive<T>` regardless of the lower / upper operand types, then casts the operands to `usize`. So `0i32..10i32` produces `Range<usize>` rather than `Range<i32>`. alumina-boot infers T from the operand types. Update lower.alu to take T from the unified type of the operands (with usize as the inference fallback for an open-ended range like `..`).
+
 ## Const evaluation
 
 - [TODO] **Signed-integer overflow detection.** alumina-boot rejects signed overflow as UB at const time; aluminac silently wraps. Affects correctness of `const FOO: i32 = …` that overflows.
@@ -116,7 +118,7 @@ Missing:
   Missing:
   - `proto_const` / `proto_static`: item-vs-type bound semantics (the bound applies to a named const/static, not to a value's type). Aluminac currently treats them as trivially-true empty protocols. Needs a separate machinery to distinguish.
   - `proto_meta`: should match types that are protocols themselves. Aluminac's IrTy doesn't currently expose protocol-ness reflectively; trivially-true today.
-  - `proto_range_of<T>`: should match a range whose endpoint type is T (`Range<T>`, `RangeInclusive<T>`, ...). Generic over the integer type. Trivially-true today.
+  - ~~`proto_range_of<T>`: should match a range whose endpoint type is T~~ — done in commit following this entry. Verified by `tests/aluminac/proto_range_of.alu`. Caveat: aluminac's range-literal lowering separately forces the element type to `usize` regardless of operand types — see new entry below.
   - `proto_same_base_as<T>`: should match types that are monomorphizations of the same base generic as T. Trivially-true today.
 - [TODO] **Slice operation lang items** (`slice_new`, `slice_const_coerce`, `slice_const_cast`, `slice_index`, `slice_range_index`, `slice_slicify`). aluminac open-codes slice operations today instead of going through these; sysroot uses them. Wire queries so the unified sysroot's `impl Slice` blocks are reached.
 - [TODO] **Range constructor lang items** (`range_full_new`, `range_from_new`, `range_to_new`, `range_to_inclusive_new`, `range_new`, `range_inclusive_new`). aluminac inlines range construction. Query so user-written range literals dispatch through them.
