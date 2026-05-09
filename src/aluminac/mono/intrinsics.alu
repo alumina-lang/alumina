@@ -44,6 +44,8 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "tag" => lower_tag(m, expr),
         "expect" => lower_expect(m, expr),
         "tuple_invoke" => lower_tuple_invoke(m, expr),
+        "stop_iteration" => lower_stop_iteration(m),
+        "with_span_of" => lower_with_span_of(m, expr),
         _ => lower_unknown(m, name, expr),
     }
 }
@@ -519,6 +521,27 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
 
     m.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
     m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty))
+}
+
+fn lower_stop_iteration(m: &mut Mono) -> &IrExpr {
+    // stop_iteration() -> !  Used by sysroot's static_for_next to bail when
+    // the iterator is exhausted. The const evaluator detects Unreachable and
+    // bails the static-for loop. At runtime (shouldn't be reached) we trap.
+    let result = IrExpr::void_expr(m.ctx.never_ty);
+    result.tag = IrTag::Unreachable;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_with_span_of(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // with_span_of<T, E>(expr: E) -> E: identity at the value level. alumina-boot
+    // attaches the span of T to E for diagnostics; aluminac doesn't track that
+    // separately so just return the value unchanged.
+    if expr.args().len() > 0 {
+        return m.lower_expr(expr.args()[0]);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
 }
 
 fn lower_unknown(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
