@@ -665,21 +665,30 @@ impl Mono {
         // Resolve return type
         self.return_type = self.resolve_type(def.return_type);
 
-        // Determine mangled name
-        let mangled = if def.abi.is_some() {
-            // Extern functions keep their name
+        // Determine mangled name. Precedence:
+        // 1. #[link_name("foo")] always wins — overrides every other choice.
+        // 2. extern functions keep their declared name (looked up by that name at link time).
+        // 3. #[export] or #[main] keeps the declared name.
+        // 4. Otherwise, run name-mangling.
+        let link_name: Option<&[u8]> = Option::none();
+        let keep_name = false;
+        for attr in def.attributes {
+            if attr.tag == AttrTag::LinkName {
+                link_name = Option::some(attr.str_val());
+            } else if attr.tag == AttrTag::Export {
+                keep_name = true;
+            } else if attr.tag == AttrTag::Main {
+                keep_name = true;
+            }
+        }
+        let mangled = if link_name.is_some() {
+            link_name.unwrap()
+        } else if def.abi.is_some() {
+            def.name
+        } else if keep_name {
             def.name
         } else {
-            // Check for export or main attribute
-            let keep_name = false;
-            for attr in def.attributes {
-                if attr.tag == AttrTag::Export {
-                    keep_name = true;
-                } else if attr.tag == AttrTag::Main {
-                    keep_name = true;
-                }
-            }
-            if keep_name { def.name } else { self.ctx.mangle_name(def.name) }
+            self.ctx.mangle_name(def.name)
         };
 
         // Reserve index and cache it BEFORE lowering the body

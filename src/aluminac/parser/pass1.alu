@@ -157,11 +157,16 @@ impl Pass1 {
                             let args_node = child_by!(meta, FieldKind::Arguments);
                             if !args_node.is_none() {
                                 let link_name = self.ctx.node_text(args_node.unwrap());
-                                if link_name.len() >= 2 && link_name[0] == '"' as u8 {
-                                    attrs.push(Attribute::extern_attr(
-                                        self.ctx.intern_str(link_name[1..link_name.len()-1])
-                                    ));
+                                // Strip outer parens and one pair of surrounding quotes:
+                                // raw text is `("strlen")`.
+                                let inner = link_name;
+                                if inner.len() >= 2 && inner[0] == '(' as u8 && inner[inner.len() - 1] == ')' as u8 {
+                                    inner = inner[1..inner.len() - 1];
                                 }
+                                if inner.len() >= 2 && inner[0] == '"' as u8 && inner[inner.len() - 1] == '"' as u8 {
+                                    inner = inner[1..inner.len() - 1];
+                                }
+                                attrs.push(Attribute::link_name(self.ctx.intern_str(inner)));
                             }
                         }
                         "lang" => {

@@ -38,7 +38,7 @@ Missing:
 - [TODO] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** alumina-boot uses these for type-level metadata; absent in aluminac. Confirm whether sysroot actually requires them (may be internal to boot).
 - [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.
 - [TODO] **Attribute: `#[transparent]`.** alumina-boot recognizes; aluminac's `AttrTag` doesn't. Used in sysroot to mark layout-equivalent newtypes.
-- [TODO] **Attribute: `#[link_name("…")]`.** alumina-boot variant `LinkName(&str)`; aluminac parser parses the form (pass1.alu line 156) but does not lower it onto the AST attribute set or propagate to codegen. Required to interoperate with C symbols whose names can't be Alumina identifiers.
+- [DONE] **Attribute: `#[link_name("…")]`.** Wired through pass1 → AttrTag::LinkName → mono mangled-name override. `tests/aluminac/link_name_attr.alu` declares `extern "C" fn c_string_len` pointing at libc `strlen` and verifies the call resolves correctly (and the negative — without the attribute it link-fails on `c_string_len`). The previous mis-routing to `AttrTag::Extern` is fixed.
 - [TODO] **Attribute: `#[packed(N)]`.** alumina-boot's `Attribute::Packed(usize)`; missing in aluminac. Affects struct layout for FFI structs.
 - [TODO] **Attribute: `#[tuple_call]`.** alumina-boot's `Attribute::TupleCall`; missing in aluminac.
 - [TODO] **Attribute: `#[const_only]` / `#[no_const]`.** alumina-boot has both; aluminac has neither. Used in `sysroot/std/intrinsics.alu` to mark functions that must / must-not run at const time.
@@ -91,7 +91,7 @@ Missing:
 - [TODO] **Intrinsic: `has_attribute`.** Already partially needed for the `attributed` intrinsic above.
 - [TODO] **Function attribute lowering: `#[align(N)]` on functions.** Codegen ignores; emit `align N` on LLVM function.
 - [TODO] **Global attribute lowering: `#[align(N)]` on statics.** Codegen ignores.
-- [TODO] **Function attribute lowering: `#[link_name("…")]`.** Override LLVM symbol name. Parsing partial (see Language features); codegen unwired.
+- [DONE] **Function attribute lowering: `#[link_name("…")]`.** mono/lower.alu now consults LinkName when computing mangled_name; the LLVMAddFunction call uses the override. Tested in `tests/aluminac/link_name_attr.alu`.
 - [TODO] **Verify `#[returns_twice]` on declarations.** `add_fn_attribute(... "returns_twice")` is called in `codegen/mod.alu:849` for definitions; confirm it's also set on extern declarations of `setjmp`-family functions.
 - [TODO] **Variadic / va_list intrinsics.** `va_start` / `va_arg` / `va_end` — confirm whether sysroot needs these (they appear in `libc/bindings.alu`).
 - [TODO] **`#[link("…")]` / linker-arg attributes.** alumina-boot threads `-llib` flags from `#[link]`; aluminac currently relies on `--link-args`. Migrate to attributes so sysroot doesn't need the Makefile to know what to link.
