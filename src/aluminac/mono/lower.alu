@@ -3794,28 +3794,40 @@ impl Mono {
             resolved_ty = resolved_ty.inner();
         }
 
-        // Dyn-method dispatch shim: if the receiver is the lang(dyn) struct,
+        // Dyn-method dispatch shim: when the receiver is the lang(dyn) struct,
         // look up the method on the protocol(s) referenced by the Protos
-        // type-arg and emit an Unreachable typed as the method's return
-        // type. The vtable is null in aluminac's current dyn-coercion shim,
-        // so a real dispatch would crash anyway — Unreachable lets mono
-        // complete and signals the not-yet-implemented runtime.
+        // type-arg and emit Unreachable typed as the method's declared
+        // return type. The vtable in aluminac's current dyn-coercion shim
+        // is null, so a real dispatch would crash anyway. Unreachable lets
+        // mono complete and signals that real dyn dispatch isn't wired yet.
         if resolved_ty.tag == IrTyTag::Struct {
             let dyn_lang_id = self.ctx.get_lang_item("dyn");
             if dyn_lang_id.is_some() && resolved_ty.struct_ref().id._value == dyn_lang_id.unwrap() {
                 let dyn_args = resolved_ty.struct_ref().type_args;
-                if dyn_args.len() >= 1 && (dyn_args[0] as &void as usize) != 0 && dyn_args[0].tag == IrTyTag::Tuple {
-                    let protos = dyn_args[0].elems();
-                    for pi in 0usize..protos.len() {
-                        let p = protos[pi];
-                        if (p as &void as usize) == 0 || p.tag != IrTyTag::Protocol { continue; }
-                        let proto_def_opt = self.ctx.protocol_defs.get(&p.proto_id());
-                        if proto_def_opt.is_none() { continue; }
-                        let proto = proto_def_opt.unwrap();
-                        for mi in 0usize..proto.methods.len() {
-                            let m = &proto.methods[mi];
-                            if m.name.len() == method_name.len() && (m.name.len() == 0 || libc::memcmp(&m.name[0] as &libc::c_void, &method_name[0] as &libc::c_void, m.name.len()) == 0i32) {
-                                let ret_ir = self.resolve_type(m.return_type);
+                if dyn_args.len() >= 1 {
+                    let protos_ty = dyn_args[0];
+                    if (protos_ty as &void as usize) != 0 && protos_ty.tag == IrTyTag::Tuple {
+                        let protos = protos_ty.elems();
+                        for pi in 0usize..protos.len() {
+                            let p = protos[pi];
+                            if (p as &void as usize) == 0 { continue; }
+                            if p.tag != IrTyTag::Protocol { continue; }
+                            let proto_def_opt = self.ctx.protocol_defs.get(&p.proto_id());
+                            if proto_def_opt.is_none() { continue; }
+                            let proto = proto_def_opt.unwrap();
+                            let n_methods = proto.methods.len();
+                            for mi in 0usize..n_methods {
+                                let m = &proto.methods[mi];
+                                let mn = m.name;
+                                if mn.len() != method_name.len() { continue; }
+                                let names_equal = mn.len() == 0;
+                                if !names_equal {
+                                    names_equal = libc::memcmp(&mn[0] as &libc::c_void, &method_name[0] as &libc::c_void, mn.len()) == 0i32;
+                                }
+                                if !names_equal { continue; }
+                                let ret_ty_ast = m.return_type;
+                                if (ret_ty_ast as &void as usize) == 0 { continue; }
+                                let ret_ir = self.resolve_type(ret_ty_ast);
                                 let result = IrExpr::void_expr(ret_ir);
                                 result.tag = IrTag::Unreachable;
                                 return Option::some(self.ctx.arena.alloc(result) as &IrExpr);
