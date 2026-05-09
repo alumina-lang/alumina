@@ -99,7 +99,7 @@ Missing:
   - Shift (`x << bitwidth`) was already rejected.
   In all cases the const evaluator bails with `ConstEvalError::overflow()` so callers fall back to runtime emission, matching alumina-boot. Verified by `tests/aluminac/signed_overflow_const.alu`.
 - [TODO] **`checked_add` / `checked_sub` / `checked_mul` / `checked_div` intrinsics.** Used by `std::math` and various sysroot bounds checks. tests/aluminac/checked_arithmetic.alu exists — confirm whether it exercises the const path.
-- [TODO] **`checked_shl` / `checked_shr` intrinsics.** Reject shift ≥ bitwidth at const time.
+- [PARTIAL] **`checked_shl` / `checked_shr` intrinsics.** Const-eval already rejects shift ≥ bitwidth (`int_bin_op` returns `ConstEvalError::overflow()` for that case). The named `checked_shl`/`checked_shr` intrinsics that return `Option<T>` aren't wired since they live behind `codegen_func` in sysroot — see PORTING.md "Out of scope".
 - [TODO] **`const_panic` intrinsic.** Halts compilation with a message during const eval. aluminac currently no-ops; needed for `static_assert`-style patterns.
 - [PARTIAL] **`compile_fail` / `compile_warn` / `compile_note` intrinsics.** Now emit real compile-time diagnostics via `m.emit_diag` with the call-site span and the literal-string argument. Verified by `tests/aluminac/compile_fail_intrinsic.alu`. compile_fail correctly aborts the build.
   Missing:
