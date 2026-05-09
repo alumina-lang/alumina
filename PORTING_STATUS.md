@@ -144,7 +144,7 @@ Missing:
   Verified by `tests/aluminac/typeop_args_return.alu`.
   Missing:
   - `typeop_underlying_type_of` for Static / Const / Closure (currently enum-only).
-  - `typeop_arguments_of` / `typeop_return_type_of` for `IrTyTag::Closure`.
+  - ~~`typeop_arguments_of` / `typeop_return_type_of` for `IrTyTag::Closure`.~~ Done in commit following this entry. Skips the env-pointer first parameter.
   - `typeop_generic_args_of` for enums.
 - [TODO] **Dyn lang items** (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Blocks `dyn` support generally — see Language features.
 - [TODO] **Operator overload lang items** (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`). See Language features.

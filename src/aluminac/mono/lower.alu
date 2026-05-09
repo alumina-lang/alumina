@@ -410,14 +410,26 @@ impl Mono {
                     let lang = attr.str_val();
                     if lang == "typeop_arguments_of" && type_args.len() >= 1 {
                         let f = type_args[0];
+                        let fn_id_for_args: usize = 0;
+                        let have_fn = false;
                         if f.tag == IrTyTag::Fn {
-                            let fn_ref = f.fn_item_ref();
+                            fn_id_for_args = f.fn_item_ref().id._value;
+                            have_fn = true;
+                        } else if f.tag == IrTyTag::Closure {
+                            // Closure's first IR-fn parameter is the env pointer; the
+                            // user-visible argument tuple skips it.
+                            fn_id_for_args = f.closure_fn().id._value;
+                            have_fn = true;
+                        }
+                        if have_fn {
                             for i in 0usize..self.ctx.ir_functions.len() {
-                                if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                                if self.ctx.ir_functions[i].id._value == fn_id_for_args {
                                     let params = self.ctx.ir_functions[i].params;
-                                    let elems = self.ctx.arena.alloc_slice::<&IrTy>(params.len());
-                                    for j in 0usize..params.len() {
-                                        elems[j] = params[j].ty;
+                                    let skip: usize = if f.tag == IrTyTag::Closure { 1 } else { 0 };
+                                    let n = if params.len() >= skip { params.len() - skip } else { 0 };
+                                    let elems = self.ctx.arena.alloc_slice::<&IrTy>(n);
+                                    for j in 0usize..n {
+                                        elems[j] = params[j + skip].ty;
                                     }
                                     return self.ctx.make_tuple_ty(elems);
                                 }
@@ -433,10 +445,18 @@ impl Mono {
                         }
                     } else if lang == "typeop_return_type_of" && type_args.len() >= 1 {
                         let f = type_args[0];
+                        let fn_id_for_ret: usize = 0;
+                        let have_fn = false;
                         if f.tag == IrTyTag::Fn {
-                            let fn_ref = f.fn_item_ref();
+                            fn_id_for_ret = f.fn_item_ref().id._value;
+                            have_fn = true;
+                        } else if f.tag == IrTyTag::Closure {
+                            fn_id_for_ret = f.closure_fn().id._value;
+                            have_fn = true;
+                        }
+                        if have_fn {
                             for i in 0usize..self.ctx.ir_functions.len() {
-                                if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                                if self.ctx.ir_functions[i].id._value == fn_id_for_ret {
                                     return self.ctx.ir_functions[i].return_type;
                                 }
                             }
