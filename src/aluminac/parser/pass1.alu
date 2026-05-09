@@ -129,7 +129,36 @@ impl Pass1 {
                 if !name_node.is_none() {
                     let name = self.ctx.node_text(name_node.unwrap());
                     switch name {
-                        "inline" => attrs.push(Attribute::inline_attr()),
+                        "inline" => {
+                            // #[inline] = hint. #[inline(always)] / #[inline(never)] /
+                            // #[inline(ir)] override with the explicit kind.
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            let mode: &[u8] = if args_node.is_none() {
+                                ""
+                            } else {
+                                let raw = self.ctx.node_text(args_node.unwrap());
+                                let inner = raw;
+                                if inner.len() >= 2 && inner[0] == '(' as u8 && inner[inner.len() - 1] == ')' as u8 {
+                                    inner = inner[1..inner.len() - 1];
+                                }
+                                while inner.len() > 0 && (inner[0] == ' ' as u8 || inner[0] == '\t' as u8) {
+                                    inner = inner[1..];
+                                }
+                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' as u8 || inner[inner.len() - 1] == '\t' as u8) {
+                                    inner = inner[0..inner.len() - 1];
+                                }
+                                inner
+                            };
+                            if mode == "always" {
+                                attrs.push(Attribute::always_inline());
+                            } else if mode == "never" {
+                                attrs.push(Attribute::never_inline());
+                            } else if mode == "ir" {
+                                attrs.push(Attribute::inline_ir());
+                            } else {
+                                attrs.push(Attribute::inline_attr());
+                            }
+                        }
                         "cold" => attrs.push(Attribute::cold()),
                         "export" => attrs.push(Attribute::export()),
                         "test" => attrs.push(Attribute::test()),

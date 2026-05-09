@@ -43,7 +43,10 @@ Missing:
 - [TODO] **Attribute: `#[tuple_call]`.** alumina-boot's `Attribute::TupleCall`; missing in aluminac.
 - [TODO] **Attribute: `#[const_only]` / `#[no_const]`.** alumina-boot has both; aluminac has neither. Used in `sysroot/std/intrinsics.alu` to mark functions that must / must-not run at const time.
 - [TODO] **Attribute: `#[must_use]` / `Diagnostic(MustUse)`.** alumina-boot warns on dropped values; aluminac doesn't model the diagnostic.
-- [TODO] **Attribute: `Inline::Never` / `Inline::DuringMono`.** aluminac has `Inline` and `AlwaysInline` only; missing the `never` and `during_mono` variants.
+- [PARTIAL] **Attribute: `#[inline(...)]` modes.** Pass1 now parses the meta-item argument and dispatches to `Inline` / `AlwaysInline` / `NeverInline` / `InlineIr`. NeverInline lowers to LLVM `noinline`. Verified by `tests/aluminac/inline_attr_modes.alu`.
+  Missing:
+  - `Inline::DuringMono` (alumina-boot variant) — schedules inlining during the mono pass rather than at LLVM time. aluminac has no analogous monomorphization-time inliner; treat `#[inline(mono)]` (or whatever sysroot uses) as a synonym for `#[inline]` until that infrastructure exists. Confirm whether sysroot relies on the distinction.
+  - The redundant `#[always_inline]` standalone attribute name is still parsed for backwards-compat with sysroot-aluminac code; consider deprecating once the sysroot uses the canonical `#[inline(always)]` form.
 - [TODO] **Custom attributes (`Attribute::Custom`).** alumina-boot stores arbitrary `#[name(args…)]` on AST items so intrinsics like `attributed(...)` can find them. aluminac drops anything not in its `AttrTag` enum.
 - [PARTIAL] **u128 / i128 codegen + const-eval coverage.** Runtime arithmetic, comparison and casts verified by `tests/aluminac/u128_i128_basic.alu`. LLVM 128-bit integer codegen works; integer-literal parser is u64-bounded so values needing >64 bits must be constructed via shifts / wrapping arithmetic.
   Missing:
