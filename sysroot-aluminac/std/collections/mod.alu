@@ -1,7 +1,29 @@
-// Re-export collection types for convenient access
+//! Heap-allocating collections.
+
 use vector::Vector;
 use hashmap::HashMap;
-use hashmap::HashMapIterator;
 use hashset::HashSet;
 use deque::Deque;
 use heap::BinaryHeap;
+
+
+#[cfg(all(test_std, test))]
+#[docs(hide)]
+mod tests {
+
+    #[test]
+    fn test_free_all() {
+        struct Free { counter: &mut usize }
+        impl Free { fn free(self: &mut Free) { *self.counter += 1; } }
+
+        let free_count = 0usize;
+        let f: Vector<Free> = Vector::new();
+
+        for _ in 0..42 {
+            f.push(Free { counter: &free_count });
+        }
+        f.free_all();
+
+        assert_eq!(free_count, 42);
+    }
+}
