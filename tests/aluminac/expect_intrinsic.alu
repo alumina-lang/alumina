@@ -1,0 +1,30 @@
+// Test: `expect` intrinsic is recognized.
+//
+// Used by sysroot's likely!/unlikely! macros. alumina-boot lowers it to
+// llvm.expect.i1; aluminac currently lowers as identity (the intrinsic
+// is a branch-prediction hint, not a semantic operation). The test
+// verifies the call compiles and returns the expected value, NOT that
+// any LLVM hint is emitted.
+
+extern "intrinsic" fn expect(value: bool, to_be: bool) -> bool;
+
+fn likely_path(x: i32) -> i32 {
+    if expect(x > 0, true) { x * 2 } else { -x }
+}
+
+fn unlikely_path(x: i32) -> i32 {
+    if expect(x == 0, false) { 999 } else { x + 1 }
+}
+
+fn main() -> i32 {
+    if likely_path(5) != 10 { return 1; }
+    if likely_path(-3) != 3 { return 2; }
+    if unlikely_path(0) != 999 { return 3; }
+    if unlikely_path(7) != 8 { return 4; }
+
+    // expect returns its first argument unchanged.
+    if !expect(true, true) { return 5; }
+    if expect(false, true) { return 6; }
+
+    0
+}

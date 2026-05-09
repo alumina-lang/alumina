@@ -88,7 +88,9 @@ Missing:
 - [TODO] **Intrinsic: `codegen_func`.** alumina-boot calls arbitrary C builtins by name. aluminac has the lower-level `llvm<>()` escape but no by-name dispatch. Either expose a similar lowering path or migrate sysroot to use `llvm<>()` directly (see `PORTING.md` "Out of scope" — this is the intrinsic explicitly called out).
 - [TODO] **Intrinsic: `codegen_const`.** Reference C macro / linker constants by name.
 - [TODO] **Intrinsic: `codegen_type_func`.** Type-level compiler functions beyond `size_of` / `align_of`.
-- [TODO] **Intrinsic: `expect`.** LLVM `llvm.expect` branch hint. aluminac doesn't expose; maps to a no-op today.
+- [PARTIAL] **Intrinsic: `expect`.** Recognized in `mono/intrinsics.alu`; lowered as identity (returns its value-argument unchanged). Verified by `tests/aluminac/expect_intrinsic.alu`. Sysroot `likely!` / `unlikely!` macros now compile under aluminac.
+  Missing:
+  - Lower to actual `llvm.expect.i1` for branch-prediction benefit. Requires bool-as-i8 ↔ i1 conversion sandwich (aluminac stores bools as i8 in memory to avoid i1-load UB).
 - [TODO] **Intrinsic: `tuple_invoke`.** Apply a callable to a tuple of args. Used in macro-heavy code paths.
 - [TODO] **Intrinsic: `module_path`.** Returns the module path string of an item.
 - [TODO] **Intrinsic: `has_attribute`.** Already partially needed for the `attributed` intrinsic above.

@@ -40,6 +40,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "length_of" => lower_length_of(m, type_args, ir_type_args, expr),
         "asm" => lower_asm(m, expr),
         "tag" => lower_tag(m, expr),
+        "expect" => lower_expect(m, expr),
         _ => lower_unknown(m, name, expr),
     }
 }
@@ -362,6 +363,21 @@ fn lower_tag(m: &mut Mono, expr: &Expr) -> &IrExpr {
     }
     let result = IrExpr::void_expr(m.ctx.void_ty);
     result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_expect(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // expect(value, to_be) -> value: branch-prediction hint, identity at runtime.
+    // alumina-boot lowers to llvm.expect.i1; aluminac stores bools as i8 (to avoid
+    // i1 load UB on misaligned reads), so a faithful llvm.expect.i1 lowering would
+    // need a trunc-i8-to-i1 / zext-i1-to-i8 sandwich. Identity is correct (the
+    // intrinsic is a hint), and matches the no-op result that sysroot would
+    // observe — wire the real LLVM intrinsic when the i1 conversion is built out.
+    if expr.args().len() > 0 {
+        return m.lower_expr(expr.args()[0]);
+    }
+    let result = IrExpr::void_expr(m.ctx.bool_ty);
+    result.tag = IrTag::Undef;
     m.ctx.arena.alloc(result)
 }
 
