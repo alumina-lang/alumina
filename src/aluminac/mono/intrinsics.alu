@@ -29,7 +29,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "llvm" => lower_llvm(m, ir_type_args, expr),
         "const_alloc", "const_free", "const_panic",
             "const_note", "const_warning", "const_bake" =>
-            lower_const_runtime_noop(m),
+            lower_const_runtime_noop(m, ir_type_args, name),
         "compile_fail", "compile_warn", "compile_note" =>
             lower_compile_diag(m, name, expr),
         "volatile" => lower_volatile(m, ir_type_args, expr),
@@ -230,10 +230,27 @@ fn lower_llvm(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
     m.ctx.arena.alloc(result)
 }
 
-fn lower_const_runtime_noop(m: &mut Mono) -> &IrExpr {
-    // const_alloc, const_free, const_panic, const_note, const_warning, const_bake
+fn lower_const_runtime_noop(m: &mut Mono, ir_type_args: &[&IrTy], name: &[u8]) -> &IrExpr {
+    // const_alloc, const_free, const_panic, const_note, const_warning, const_bake.
     // These should only be reached in const context. At runtime, emit unreachable.
-    let result = IrExpr::void_expr(m.ctx.void_ty);
+    //
+    // Even though the runtime path is dead, aluminac's eager monomorphization
+    // walks the body, so the typed-result matters: e.g. const_alloc::<T>(len)
+    // returning Unreachable with void_ty makes any subsequent `*(ptr + i)`
+    // fail with "cannot dereference non-pointer type". So we shape the
+    // Unreachable's type after the intrinsic's declared return type.
+    let result_ty = if name == "const_alloc" && ir_type_args.len() >= 1 {
+        // const_alloc<T>(usize) -> &mut T
+        m.ctx.make_ptr_ty(ir_type_args[0], false)
+    } else if name == "const_bake" && ir_type_args.len() >= 1 {
+        // const_bake<T>(T) -> T
+        ir_type_args[0]
+    } else {
+        // const_free, const_panic, const_note, const_warning return void / never
+        // and don't drive subsequent pointer arithmetic.
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(result_ty);
     result.tag = IrTag::Unreachable;
     m.ctx.arena.alloc(result)
 }
