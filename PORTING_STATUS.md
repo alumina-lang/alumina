@@ -244,6 +244,8 @@ Missing:
   - Stdlib code that uses `dyn` directly (regex internal DFA, runtime backtrace, typing reflection, io/fs Read/Write protocols).
   - Macros that expand to references to coroutines / threading / panicking.
 
+- [TODO] **Macro expansion type inference for if/else expressions.** Sysroot's `fmt::format!` macro expands to an if/else where both arms return `Result<StringBuf, Error>`; aluminac infers the result as void without an explicit type annotation. Workaround: annotate `let r: Result<StringBuf, Error> = format!(...)` works. Likely a per-branch typecheck that doesn't unify with the alternate branch's type during macro expansion. Investigate aluminac's if-expression mono path for the case where a branch's value-expression has a fully-resolved type but the other doesn't.
+
 ## Test infrastructure
 
 *(Running the alumina-boot test suites through aluminac. `tests/diag/` is **not** in scope — keep it passing under alumina-boot only.)*
