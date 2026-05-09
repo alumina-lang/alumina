@@ -4673,6 +4673,20 @@ impl Mono {
         } else if ty.tag == IrTyTag::Pointer {
             // Auto-deref
             self.resolve_field(ty.inner(), field_name)
+        } else if ty.tag == IrTyTag::Slice {
+            // Slices have pseudo-fields `_ptr` and `_len` matching the names
+            // used by sysroot/std/mem.alu's `slice<Ptr>` definition. The IR
+            // representation is a fat pointer with SLICE_DATA_FIELD/SLICE_LEN_FIELD
+            // indices.
+            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+            if field_name == "_len" {
+                return (SLICE_LEN_FIELD, usize_ty, true);
+            }
+            if field_name == "_ptr" {
+                let data_ptr_ty = self.ctx.make_ptr_ty(ty.inner(), ty.is_const());
+                return (SLICE_DATA_FIELD, data_ptr_ty, true);
+            }
+            (0u32, self.ctx.void_ty, false)
         } else {
             (0u32, self.ctx.void_ty, false)
         }

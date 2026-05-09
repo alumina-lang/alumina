@@ -1,0 +1,31 @@
+// Test: slice values expose `_ptr` and `_len` pseudo-fields, matching
+// the convention used by sysroot/std/mem.alu's `slice<Ptr>` definition.
+// Aluminac removed the actual struct fields when slices became built-in
+// fat pointers; these accessors restore field-style read access for
+// unified-sysroot compatibility.
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn main() -> i32 {
+    let data: [i32; 5] = [10i32, 20i32, 30i32, 40i32, 50i32];
+    let s: &[i32] = data.as_slice();
+
+    if s._len != 5usize { return 1; }
+    if *s._ptr != 10i32 { return 2; }
+
+    // Walk the slice via _ptr arithmetic.
+    let p = s._ptr;
+    if *(p + 0usize) != 10i32 { return 3; }
+    if *(p + 1usize) != 20i32 { return 4; }
+    if *(p + 4usize) != 50i32 { return 5; }
+
+    // _ptr type carries through correctly.
+    let q: &i32 = s._ptr;
+    if *q != 10i32 { return 6; }
+
+    // Empty slice case — _ptr/_len still resolve.
+    let empty: [i32; 0] = [];
+    let es: &[i32] = empty.as_slice();
+    if es._len != 0usize { return 7; }
+
+    0
+}
