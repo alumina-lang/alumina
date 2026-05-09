@@ -117,8 +117,8 @@ Missing:
   Missing:
   - Lower to actual `llvm.expect.i1` for branch-prediction benefit. Requires bool-as-i8 ↔ i1 conversion sandwich (aluminac stores bools as i8 in memory to avoid i1-load UB).
 - [TODO] **Intrinsic: `tuple_invoke`.** Apply a callable to a tuple of args. Used in macro-heavy code paths.
-- [TODO] **Intrinsic: `module_path`.** Returns the module path string of an item.
-- [TODO] **Intrinsic: `has_attribute`.** Already partially needed for the `attributed` intrinsic above.
+- [PARTIAL] **Intrinsic: `module_path`.** Recognized in `mono/intrinsics.alu`. Returns void (Void IR tag) — the `when intrinsics::module_path::<T>() is ()` check in `std::typing::Type::module_path` then takes the None branch. To return real module paths, IrStructRef/IrEnumRef would need a path field populated at lowering. Verified by `tests/aluminac/module_path_intrinsic.alu`.
+- [PARTIAL] **Intrinsic: `has_attribute`.** Recognized in `mono/intrinsics.alu`; conservatively returns `false`. Wire real attribute lookup once IrStructRef/IrEnumRef carry attributes. Verified by `tests/aluminac/module_path_intrinsic.alu`.
 - [TODO] **Function attribute lowering: `#[align(N)]` on functions.** Codegen ignores; emit `align N` on LLVM function.
 - [TODO] **Global attribute lowering: `#[align(N)]` on statics.** Codegen ignores.
 - [DONE] **Function attribute lowering: `#[link_name("…")]`.** mono/lower.alu now consults LinkName when computing mangled_name; the LLVMAddFunction call uses the override. Tested in `tests/aluminac/link_name_attr.alu`.

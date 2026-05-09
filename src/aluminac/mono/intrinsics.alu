@@ -37,6 +37,8 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "type_id" => lower_type_id(m, ir_type_args),
         "type_name" => lower_type_name(m, ir_type_args, false),
         "named_type_name" => lower_type_name(m, ir_type_args, true),
+        "module_path" => lower_module_path(m),
+        "has_attribute" => lower_has_attribute(m),
         "length_of" => lower_length_of(m, type_args, ir_type_args, expr),
         "asm" => lower_asm(m, expr),
         "tag" => lower_tag(m, expr),
@@ -344,6 +346,25 @@ fn lower_type_name(m: &mut Mono, ir_type_args: &[&IrTy], named_only: bool) -> &I
     result.tag = IrTag::StringLit;
     result._data.lit.str_val = type_str;
     m.ctx.arena.alloc(result)
+}
+
+fn lower_module_path(m: &mut Mono) -> &IrExpr {
+    // module_path<T>() -> &[u8]: alumina-boot returns the module path of T's
+    // declaration. aluminac doesn't track module paths on IrStructRef/IrEnumRef
+    // yet, so return void — std::typing::Type::module_path uses
+    // `when module_path::<T>() is () { Option::none() } else { ... }` to
+    // gracefully fall back to None.
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_has_attribute(m: &mut Mono) -> &IrExpr {
+    // has_attribute<T>(name: &[u8]) -> bool: aluminac doesn't yet propagate
+    // attributes onto IrStructRef so we conservatively return false. When
+    // custom-attribute support lands, query the type's attributes against
+    // the literal name argument here.
+    m.mk_bool_lit(false)
 }
 
 fn lower_length_of(m: &mut Mono, type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {

@@ -1,0 +1,21 @@
+// Verify the module_path and has_attribute intrinsics behave per the no-info
+// contract: module_path<T>() returns void (so Type::module_path falls back to
+// None via the `is ()` when-check), has_attribute<T>(_) returns false.
+
+extern "intrinsic" fn module_path<T>() -> &[u8];
+extern "intrinsic" fn has_attribute<T>(name: &[u8]) -> bool;
+
+struct Foo {}
+
+fn main() -> i32 {
+    when module_path::<Foo>() is () {
+        // expected branch
+    } else {
+        return 1;
+    }
+
+    if has_attribute::<Foo>("test::ignore") { return 2; }
+    if has_attribute::<i32>("anything") { return 3; }
+
+    0
+}
