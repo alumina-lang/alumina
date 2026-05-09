@@ -3238,6 +3238,10 @@ impl Mono {
                             let arg_align = layout::compute_type_align(arg_ty, self.ctx.pointer_size);
                             is_match = val_size == arg_size && val_align == arg_align;
                         }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_meta") {
+                        // Meta: val_ty is itself a protocol (declared as such in source).
+                        // Aluminac wraps protocols as IrTyTag::Protocol so the check is direct.
+                        is_match = val_ty.tag == IrTyTag::Protocol;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_range_of") {
                         // RangeOf<T>: val_ty is a Range<T> / RangeInclusive<T> / etc.
                         // RangeFull has no type parameter and never matches.
