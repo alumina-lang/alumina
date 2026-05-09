@@ -47,6 +47,8 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "stop_iteration" => lower_stop_iteration(m),
         "with_span_of" => lower_with_span_of(m, expr),
         "attributed" => lower_attributed(m, ir_type_args),
+        "enum_variants" => lower_empty_descriptor_slice(m, "enum_variant"),
+        "fields" => lower_empty_descriptor_slice(m, "field_descriptor"),
         _ => lower_unknown(m, name, expr),
     }
 }
@@ -542,6 +544,22 @@ fn lower_with_span_of(m: &mut Mono, expr: &Expr) -> &IrExpr {
     }
     let result = IrExpr::void_expr(m.ctx.void_ty);
     result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_empty_descriptor_slice(m: &mut Mono, _kind: &[u8]) -> &IrExpr {
+    // enum_variants<T> / fields<T> — return empty slices. The expected slice
+    // element type is `EnumVariant<T>` / `Field<T, F>` etc. respectively, all
+    // of which are sysroot structs we can't reconstruct without const-time
+    // allocation. Caller code that iterates these slices does nothing on
+    // empty input, which is wrong for reflection-driven code but lets
+    // signatures type-check through the usual void-coerce path.
+    let void_ty = m.ctx.void_ty;
+    let slice_ty = m.ctx.make_slice_ty(void_ty, true);
+    let empty_str: &[u8] = "";
+    let result = IrExpr::void_expr(slice_ty);
+    result.tag = IrTag::StringLit;
+    result._data.lit.str_val = empty_str;
     m.ctx.arena.alloc(result)
 }
 
