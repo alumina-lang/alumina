@@ -706,6 +706,7 @@ enum AttrTag {
     ConstOnly = 23i32,
     NoConst = 24i32,
     TupleCall = 25i32,
+    Custom = 26i32,        // unrecognized #[name(...)]; str_val = name
 }
 
 union _AttributeData {
@@ -750,6 +751,7 @@ impl Attribute {
     fn const_only() -> Attribute { Attribute { tag: AttrTag::ConstOnly, _data: Attribute::_no_data() } }
     fn no_const() -> Attribute { Attribute { tag: AttrTag::NoConst, _data: Attribute::_no_data() } }
     fn tuple_call() -> Attribute { Attribute { tag: AttrTag::TupleCall, _data: Attribute::_no_data() } }
+    fn custom(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Custom, _data: _AttributeData { str_val: name } } }
 }
 
 struct FnDef {

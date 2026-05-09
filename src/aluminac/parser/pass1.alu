@@ -227,7 +227,18 @@ impl Pass1 {
                                 attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
                             }
                         }
-                        _ => {}
+                        // Anything else falls through to a Custom attribute so
+                        // tools (and the `has_attribute` intrinsic) can find it
+                        // by name. We deliberately ignore attribute names that
+                        // are reserved for diagnostics-only contexts (e.g. the
+                        // sysroot's `#[allow(...)]` and `#[docs(...)]` which
+                        // alumina-boot warns on but doesn't store on items).
+                        _ => {
+                            if name != "allow" && name != "docs" && name != "deny"
+                                && name != "warn" && name != "cfg_attr" {
+                                attrs.push(Attribute::custom(self.ctx.intern_str(name)));
+                            }
+                        }
                     }
                 }
             }

@@ -1,0 +1,19 @@
+// Verify Custom attribute support: unrecognized #[name(...)] attributes get
+// stored as AttrTag::Custom, and `has_attribute<T>(name)` finds them on Fn
+// items.
+
+extern "intrinsic" fn has_attribute<T>(name: &[u8]) -> bool;
+
+#[my_marker]
+#[other_marker]
+fn marked_fn() -> i32 { 1 }
+
+fn unmarked_fn() -> i32 { 2 }
+
+fn main() -> i32 {
+    if !has_attribute::<typeof(marked_fn)>("my_marker") { return 1; }
+    if !has_attribute::<typeof(marked_fn)>("other_marker") { return 2; }
+    if has_attribute::<typeof(marked_fn)>("nonexistent") { return 3; }
+    if has_attribute::<typeof(unmarked_fn)>("my_marker") { return 4; }
+    0
+}
