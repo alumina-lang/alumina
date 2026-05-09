@@ -53,7 +53,9 @@ Missing:
 - [PARTIAL] **Attribute: `#[packed(N)]` / `#[packed]`.** AttrTag::Packed with int_val for alignment. Parser handles both forms. Codegen doesn't yet pass `packed=1` to LLVMStructTypeInContext, so packing isn't actually applied. Used in libc bindings and FFI structs.
 - [TODO] **Attribute: `#[tuple_call]`.** alumina-boot's `Attribute::TupleCall`; missing in aluminac.
 - [TODO] **Attribute: `#[const_only]` / `#[no_const]`.** alumina-boot has both; aluminac has neither. Used in `sysroot/std/intrinsics.alu` to mark functions that must / must-not run at const time.
-- [TODO] **Attribute: `#[must_use]` / `Diagnostic(MustUse)`.** alumina-boot warns on dropped values; aluminac doesn't model the diagnostic.
+- [PARTIAL] **Attribute: `#[must_use]`.** AttrTag::MustUse + parser recognition. alumina-boot warns when a #[must_use] return value is dropped; aluminac stores the attribute but doesn't yet emit the warning. Used in sysroot for Result-returning APIs.
+
+- [DONE] **Attribute: `#[no_mangle]`.** Wired through pass1 → AttrTag::NoMangle → mono's mangled_name decision. Behaves like #[export] for naming purposes (keeps `def.name` as the LLVM symbol). Verified by `tests/aluminac/no_mangle_attr.alu`.
 - [PARTIAL] **Attribute: `#[inline(...)]` modes.** Pass1 parses the meta-item argument and dispatches to `Inline` / `AlwaysInline` / `NeverInline` / `InlineIr`. NeverInline lowers to LLVM `noinline`. Verified by `tests/aluminac/inline_attr_modes.alu`.
   Missing:
   - alumina-boot's `Inline::DuringMono` is what `#[inline(ir)]` maps to in alumina-boot — a mono-time inliner. Aluminac maps `#[inline(ir)]` to `AttrTag::InlineIr` (parsed correctly) but doesn't *act* on it: the mono pass doesn't inline marked functions before codegen. Many sysroot helpers (e.g. `mem.alu`'s slice constructors, util.alu's `cast`/`coerce`/`transmute`) rely on this for correctness when the body uses generics that would otherwise become unresolved at runtime. Wiring a real IR-level inliner is a substantial slice — aluminac currently emits a regular call and trusts LLVM to inline.
