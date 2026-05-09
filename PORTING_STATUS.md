@@ -26,7 +26,7 @@ Done since first pass:
 Missing:
 - Side-by-side AST node coverage: enumerate every `ExprKind` / `Ty` / `Statement` variant in `src/alumina-boot/src/ast/mod.rs` and verify aluminac's `ast.alu` covers it (or note the gap).
 - Side-by-side macro support: `src/alumina-boot/src/ast/macros.rs` is ~800 LoC; map each capability (universal-call macros, `et cetera` packs, named-arg expansion, hygiene, recursion limits) to the aluminac equivalent or a `[TODO]`.
-- Side-by-side mixin support: alumina-boot's mixin substitution rules vs aluminac's; verify with deliberately tricky cases (mixin with generics, mixin referencing Self, mixin chaining).
+- Mixin behavior audit done: mixin referencing Self (`tests/aluminac/mixin_self_subst.alu`), mixin chaining (Pair mixes in both Equatable and Comparable, defaults from each call back to the type's own methods), and protocol-default referring to other protocol method, all work end-to-end. Verified by `tests/aluminac/mixin_features.alu`. Remaining concern: mixin instantiation with generic arguments referencing a generic param of the protocol (e.g. `Equatable<MyVec<T>>`) hasn't been deliberately stressed.
 - Closure features extended audit done: capture-by-value, capture-by-reference, mixed captures, multi-arg closures, closure-of-closure (a function returning a captured-closure value), and Fn-protocol-bounded generic args all work. Verified by `tests/aluminac/closures.alu` (existing) and `tests/aluminac/closure_features.alu`. Remaining concern: ProtoClosure conformance under `where` clauses isn't separately exercised and aluminac's bound-enforcement is generally weak (already noted as a soundness gap).
 - Custom attributes (Attribute::Custom): still missing. Tracked individually below.
 

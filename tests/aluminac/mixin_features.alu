@@ -1,0 +1,59 @@
+// Exercise mixin substitution under several variations:
+//   1. Mixin referencing Self (already in mixin_self_subst.alu — repeat
+//      to keep coverage in one place).
+//   2. Mixin with the protocol's generic referenced from the default body.
+//   3. Mixin chaining: a struct mixes in two protocols, both of whose
+//      defaults call into a method declared on the receiver.
+
+protocol Equatable<Self> {
+    fn equals(lhs: &Self, rhs: &Self) -> bool;
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        !Equatable::equals(lhs, rhs)
+    }
+}
+
+protocol Comparable<Self> {
+    fn compare(lhs: &Self, rhs: &Self) -> i32;
+    fn less_than(lhs: &Self, rhs: &Self) -> bool {
+        Comparable::compare(lhs, rhs) < 0i32
+    }
+}
+
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+impl Pair {
+    fn equals(lhs: &Pair, rhs: &Pair) -> bool {
+        lhs.a == rhs.a && lhs.b == rhs.b
+    }
+
+    fn compare(lhs: &Pair, rhs: &Pair) -> i32 {
+        if lhs.a != rhs.a {
+            if lhs.a < rhs.a { -1i32 } else { 1i32 }
+        } else {
+            if lhs.b < rhs.b { -1i32 } else if lhs.b > rhs.b { 1i32 } else { 0i32 }
+        }
+    }
+
+    mixin Equatable<Pair>;
+    mixin Comparable<Pair>;
+}
+
+fn main() -> i32 {
+    let p1 = Pair { a: 1i32, b: 2i32 };
+    let p2 = Pair { a: 1i32, b: 2i32 };
+    let p3 = Pair { a: 3i32, b: 4i32 };
+
+    if !Pair::equals(&p1, &p2) { return 1i32; }
+    if Pair::not_equals(&p1, &p2) { return 2i32; }
+    if !Pair::not_equals(&p1, &p3) { return 3i32; }
+
+    if Pair::compare(&p1, &p3) >= 0i32 { return 4i32; }
+    if !Pair::less_than(&p1, &p3) { return 5i32; }
+    if Pair::less_than(&p3, &p1) { return 6i32; }
+    if Pair::less_than(&p1, &p2) { return 7i32; }
+
+    0i32
+}
