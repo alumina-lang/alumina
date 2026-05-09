@@ -3422,11 +3422,17 @@ impl Mono {
     fn is_range_ty(self: &Mono, ty: &IrTy) -> bool {
         if ty.tag != IrTyTag::Struct { return false; }
         let id = ty.struct_ref().id._value;
-        self.ctx.is_lang_item(id, "range") || self.ctx.is_lang_item(id, "range_inclusive") || {
-            // Fallback to name-based check for range types not yet lang-item'd
-            let name = ty.struct_ref().name;
-            name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
-        }
+        self.ctx.is_lang_item(id, "range")
+            || self.ctx.is_lang_item(id, "range_inclusive")
+            || self.ctx.is_lang_item(id, "range_full")
+            || self.ctx.is_lang_item(id, "range_from")
+            || self.ctx.is_lang_item(id, "range_to")
+            || self.ctx.is_lang_item(id, "range_to_inclusive")
+            || {
+                // Fallback to name-based check for range types not yet lang-item'd
+                let name = ty.struct_ref().name;
+                name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
+            }
     }
 
     // Get the element type of a slice

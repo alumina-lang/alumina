@@ -157,7 +157,7 @@ Missing:
   - `proto_const` / `proto_static`: item-vs-type bound semantics (the bound applies to a named const/static, not to a value's type). Aluminac currently treats them as trivially-true empty protocols. Needs item-as-type-arg generic support.
 - [TODO] **Slice operation lang items** (`slice_new`, `slice_const_coerce`, `slice_const_cast`, `slice_index`, `slice_range_index`, `slice_slicify`). aluminac open-codes slice operations today instead of going through these; sysroot uses them. Wire queries so the unified sysroot's `impl Slice` blocks are reached.
 - [TODO] **Range constructor lang items** (`range_full_new`, `range_from_new`, `range_to_new`, `range_to_inclusive_new`, `range_new`, `range_inclusive_new`). aluminac inlines range construction. Query so user-written range literals dispatch through them.
-- [TODO] **`range_full`, `range_from`, `range_to`, `range_to_inclusive`.** Type-level lang items. aluminac queries `range` and `range_inclusive` only; add the rest.
+- [DONE] **`range_full`, `range_from`, `range_to`, `range_to_inclusive`.** Type-level lang items. `is_range_ty` now consults all four (in addition to `range` and `range_inclusive`) when classifying a struct as a range. The name-based fallback covering pre-lang-item code stays for safety. No behavior change — `is_range_ty` was already returning true for these types via the name check; the lang-item path now matches alumina-boot's mechanism.
 - [PARTIAL] **Typeop lang items.** Wired in `mono/lower.alu`'s `resolve_named_type` (TypeAlias path consults the lang attribute):
   - `typeop_arguments_of` / `typeop_return_type_of` — for Fn and FnPointer.
   - `typeop_function_pointer_of<Args, Ret>` — builds an FnPointer from a tuple of arg types and a return type.
