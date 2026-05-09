@@ -496,7 +496,12 @@ fn monomorphize(
                     is_root = true;
                 }
             }
-            if is_root {
+            // Skip generic functions: mono needs concrete type args to make
+            // sense of the body. For example, sysroot's `entrypoint<UserMain>`
+            // is `#[export]` but only meaningful once UserMain is the user's
+            // main function (handled via the entrypoint_glue lang item, not
+            // the generic export root).
+            if is_root && fn_def.generic_params.len() == 0 {
                 let mono = Mono::new(&ctx);
                 mono.mono_function(fn_def, &[]);
                 mono.free();
