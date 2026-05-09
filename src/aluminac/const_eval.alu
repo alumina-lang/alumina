@@ -453,11 +453,19 @@ impl ConstEvaluator {
         },
         BinOp::Div => {
             if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
-            result = if is_signed { ((a as i64) / (b as i64)) as u64 } else { a / b };
+            // Signed INT_MIN / -1 overflows.
+            if is_signed && self.detect_signed_div_overflow(a, b, width) {
+                return ConstResult::fail(ConstEvalError::overflow());
+            }
+            result = if is_signed { (self.sign_extend(a, width) / self.sign_extend(b, width)) as u64 } else { a / b };
         }
         BinOp::Rem => {
             if b == 0u64 { return ConstResult::fail(ConstEvalError::div_zero()); }
-            result = if is_signed { ((a as i64) % (b as i64)) as u64 } else { a % b };
+            // Signed INT_MIN % -1 also overflows in C / LLVM-UB terms.
+            if is_signed && self.detect_signed_div_overflow(a, b, width) {
+                return ConstResult::fail(ConstEvalError::overflow());
+            }
+            result = if is_signed { (self.sign_extend(a, width) % self.sign_extend(b, width)) as u64 } else { a % b };
         }
         BinOp::BitAnd => result = a & b,
         BinOp::BitOr => result = a | b,
@@ -508,6 +516,15 @@ impl ConstEvaluator {
         let b_sign = (b & sign_bit_mask) != 0u64;
         let r_sign = (result & sign_bit_mask) != 0u64;
         a_sign != b_sign && r_sign != a_sign
+    }
+
+    fn detect_signed_div_overflow(self: &ConstEvaluator, a: u64, b: u64, width: u32) -> bool {
+        // INT_MIN / -1 overflows: the result is +(1<<(width-1)) which is
+        // outside the signed range.
+        if width < 1 || width > 64 { return false; }
+        let sign_bit = if width >= 64 { 1u64 << 63 } else { 1u64 << (width - 1) };
+        let mask = self.mask_to_width(0xFFFFFFFFFFFFFFFFu64, width);
+        (a & mask) == sign_bit && (b & mask) == mask
     }
 
     fn detect_signed_mul_overflow(self: &ConstEvaluator, a: u64, b: u64, width: u32) -> bool {
@@ -629,9 +646,19 @@ impl ConstEvaluator {
             }
         } else if inner.tag == CValTag::Int {
             if expr.un_op() == UnOp::Neg {
+                let bt = inner.builtin_type();
+                let width = bt.bit_width();
+                // Signed: negating INT_MIN overflows (2's complement asymmetry).
+                if bt.is_signed() && width >= 1u32 && width <= 64u32 {
+                    let sign_bit = if width >= 64u32 { 1u64 << 63 } else { 1u64 << (width - 1u32) };
+                    let mask = self.mask_to_width(0xFFFFFFFFFFFFFFFFu64, width);
+                    if (inner.int_val() & mask) == sign_bit {
+                        return ConstResult::fail(ConstEvalError::overflow());
+                    }
+                }
                 let result = (0u64 - inner.int_val());
-                let result = self.mask_to_width(result, inner.builtin_type().bit_width());
-                return ConstResult::success(ConstValue::make_int(result, inner.builtin_type()));
+                let result = self.mask_to_width(result, width);
+                return ConstResult::success(ConstValue::make_int(result, bt));
             } else if expr.un_op() == UnOp::BitNot {
                 let result = ~inner.int_val();
                 let result = self.mask_to_width(result, inner.builtin_type().bit_width());
