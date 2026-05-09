@@ -256,7 +256,7 @@ Missing:
   - Stdlib code that uses `dyn` directly (regex internal DFA, runtime backtrace, typing reflection, io/fs Read/Write protocols).
   - Macros that expand to references to coroutines / threading / panicking.
 
-- [TODO] **Macro expansion type inference for if/else expressions.** Sysroot's `fmt::format!` macro expands to an if/else where both arms return `Result<StringBuf, Error>`; aluminac infers the result as void without an explicit type annotation. Workaround: annotate `let r: Result<StringBuf, Error> = format!(...)` works. Likely a per-branch typecheck that doesn't unify with the alternate branch's type during macro expansion. Investigate aluminac's if-expression mono path for the case where a branch's value-expression has a fully-resolved type but the other doesn't.
+- [PARTIAL] **Macro expansion type inference for if/else expressions.** The reduced repro of "if-else where both arms produce Result<...>" (`let r = make_result(true); if b { Result::ok(...) } else { Result::err(...) }`) passes under aluminac — see `/tmp/test_if2.alu`-style coverage. Direct uses of sysroot-aluminac's `format!` macro (which wraps the if/else in `_finish_format` so the function's declared return type pins both arms) compile fine. The original concern was about sysroot's format! macro that returns the if/else inline; that's blocked behind sysroot/std/fmt/mod.alu unification (which itself blocks on more than just inference) so we can't isolate the case. Re-investigate when fmt unification is attempted.
 
 - [DONE] **Array equality (`==` / `!=` on `[T; N]` value types).** Codegen unrolls into element-wise `icmp` (or `fcmp` for float elements) folded with AND (for ==) or OR (for !=). Verified via the milestone test.
 
