@@ -241,6 +241,12 @@ fn main() -> i32 {
     if line!() == 0u32 { return 63; }
     if column!() == 0u32 { return 64; }
 
+    // intrinsics::expect (the branch-prediction hint) is identity in
+    // aluminac — the value passes through unchanged.
+    let v: i32 = 5;
+    if !std::intrinsics::expect(v > 0, true) { return 65; }
+    if std::intrinsics::expect(v < 0, false) { return 66; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
