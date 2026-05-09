@@ -384,9 +384,9 @@ fn lower_has_attribute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &Ir
         let fn_ref = t.fn_item_ref();
         let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
         if def_opt.is_some() { def_opt.unwrap().attributes } else { &[] }
+    } else if t.tag == IrTyTag::Struct {
+        t.struct_ref().attributes
     } else {
-        // Struct / enum attributes aren't propagated onto IrStructRef yet;
-        // return false for those types.
         &[]
     };
     for i in 0usize..attrs.len() {
