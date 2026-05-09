@@ -245,6 +245,27 @@ impl u64 {
     }
 }
 
+#[lang(builtin_u128)]
+struct u128 {}
+impl u128 {
+    fn min_value() -> u128 { 0u128 }
+    fn max_value() -> u128 { 0u128 - 1u128 }
+    fn equals(lhs: &u128, rhs: &u128) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &u128, rhs: &u128) -> bool { *lhs != *rhs }
+    fn compare(lhs: &u128, rhs: &u128) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &u128, rhs: &u128) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &u128, rhs: &u128) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &u128, rhs: &u128) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &u128, rhs: &u128) -> bool { *lhs >= *rhs }
+    fn hash<H: std::hash::Hasher<H>>(self: &u128, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 16usize));
+    }
+}
+
 #[lang(builtin_usize)]
 struct usize {}
 impl usize {
@@ -448,6 +469,26 @@ impl i64 {
     }
     fn hash<H: std::hash::Hasher<H>>(self: &i64, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 8usize));
+    }
+}
+
+#[lang(builtin_i128)]
+struct i128 {}
+impl i128 {
+    fn abs(self: &i128) -> i128 { if *self < 0i128 { -*self } else { *self } }
+    fn equals(lhs: &i128, rhs: &i128) -> bool { *lhs == *rhs }
+    fn not_equals(lhs: &i128, rhs: &i128) -> bool { *lhs != *rhs }
+    fn compare(lhs: &i128, rhs: &i128) -> std::cmp::Ordering {
+        if *lhs < *rhs { std::cmp::Ordering::Less }
+        else if *lhs == *rhs { std::cmp::Ordering::Equal }
+        else { std::cmp::Ordering::Greater }
+    }
+    fn less_than(lhs: &i128, rhs: &i128) -> bool { *lhs < *rhs }
+    fn less_than_or_equal(lhs: &i128, rhs: &i128) -> bool { *lhs <= *rhs }
+    fn greater_than(lhs: &i128, rhs: &i128) -> bool { *lhs > *rhs }
+    fn greater_than_or_equal(lhs: &i128, rhs: &i128) -> bool { *lhs >= *rhs }
+    fn hash<H: std::hash::Hasher<H>>(self: &i128, hasher: &mut H) {
+        hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 16usize));
     }
 }
 
