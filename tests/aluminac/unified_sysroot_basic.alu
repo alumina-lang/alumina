@@ -1,0 +1,59 @@
+// Test: aluminac compiles a non-trivial program against the unified
+// `sysroot/` (the alumina-boot sysroot, not `sysroot-aluminac/`).
+// Exercises comparison method dispatch, generics, Ordering — everything
+// here works as long as no path through sysroot's panicking machinery
+// (which uses `dyn Formattable`) gets monomorphized. Specifically,
+// avoid Option::unwrap (and friends) — they transitively force
+// const_panic_impl which uses dyn.
+//
+// This is the milestone test for: "aluminac can swallow some of the
+// unified sysroot." Failure modes that trigger here are real parity
+// regressions — investigate before degrading the test.
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+use std::cmp::Ordering;
+
+struct Point { x: i32, y: i32 }
+
+impl Point {
+    fn equals(lhs: &Point, rhs: &Point) -> bool {
+        lhs.x == rhs.x && lhs.y == rhs.y
+    }
+    fn compare(lhs: &Point, rhs: &Point) -> Ordering {
+        if lhs.x < rhs.x { return Ordering::Less; }
+        if lhs.x > rhs.x { return Ordering::Greater; }
+        if lhs.y < rhs.y { return Ordering::Less; }
+        if lhs.y > rhs.y { return Ordering::Greater; }
+        Ordering::Equal
+    }
+}
+
+fn passthrough<T>(x: T) -> T { x }
+
+fn main() -> i32 {
+    // Generic identity through the unified sysroot.
+    if passthrough::<i32>(5) != 5 { return 1; }
+
+    // Comparison ops on builtin types resolve through sysroot.
+    if !(1i32 < 2i32) { return 2; }
+    if 5u64 < 4u64 { return 3; }
+
+    // Operator overload dispatching on user struct.
+    let p = Point { x: 1, y: 2 };
+    let q = Point { x: 1, y: 2 };
+    let r = Point { x: 5, y: 0 };
+    if p != q { return 4; }
+    if p == r { return 5; }
+    if p >= r { return 6; }
+
+    // Ordering enum from sysroot: build, compare, match.
+    let ord = Point::compare(&p, &r);
+    if ord != Ordering::Less { return 7; }
+
+    // Bigger struct chain.
+    let s = Point { x: -1, y: -2 };
+    if s == p { return 8; }
+    if s >= p { return 9; }
+
+    0
+}

@@ -219,6 +219,14 @@ Missing:
 - [TODO] **`libc/bindings.alu`** — net-new for aluminac (823 KB pure FFI declarations). No language blockers; just volume.
 - [TODO] **`libc/prelude.alu`** — net-new, tiny. Trivial.
 
+## Unified sysroot probe
+
+- [PARTIAL] **Aluminac compiles dyn-free programs against `sysroot/`.** The slices in this branch (typeop dispatch, slice pseudo-fields, range type inference, fn-item type resolution, generic-fn skip-on-export, etc.) collectively let aluminac swallow non-trivial code against the unified sysroot — verified by `tests/aluminac/unified_sysroot_basic.alu`. The test exercises generics, Ordering, comparison-operator overload dispatch on a user struct, and works as a regression guard.
+  Missing:
+  - Anything reaching `Option::unwrap` / `Result::unwrap` / `panic!` triggers `const_panic_impl` which uses `dyn Formattable` — a hard `dyn`-blocker.
+  - Stdlib code that uses `dyn` directly (regex internal DFA, runtime backtrace, typing reflection, io/fs Read/Write protocols).
+  - Macros that expand to references to coroutines / threading / panicking.
+
 ## Test infrastructure
 
 *(Running the alumina-boot test suites through aluminac. `tests/diag/` is **not** in scope — keep it passing under alumina-boot only.)*
