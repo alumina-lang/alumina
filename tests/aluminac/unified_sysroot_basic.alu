@@ -234,6 +234,13 @@ fn main() -> i32 {
     const ALIGN: usize = std::mem::align_of::<i64>();
     if ALIGN != 8usize { return 61; }
 
+    // Built-in source-location macros — file!/line!/column! produce the
+    // expected types and non-empty values.
+    let fname: &[u8] = file!();
+    if fname.len() == 0usize { return 62; }
+    if line!() == 0u32 { return 63; }
+    if column!() == 0u32 { return 64; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
