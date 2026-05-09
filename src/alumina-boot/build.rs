@@ -13,7 +13,7 @@ use syn::{parse_quote, TraitItem};
 struct Item {
     name: String,
     id: i32,
-}
+} 
 
 #[derive(Deserialize)]
 struct LanguageInfo {
