@@ -43,6 +43,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "asm" => lower_asm(m, expr),
         "tag" => lower_tag(m, expr),
         "expect" => lower_expect(m, expr),
+        "tuple_invoke" => lower_tuple_invoke(m, expr),
         _ => lower_unknown(m, name, expr),
     }
 }
@@ -417,6 +418,84 @@ fn lower_expect(m: &mut Mono, expr: &Expr) -> &IrExpr {
     let result = IrExpr::void_expr(m.ctx.bool_ty);
     result.tag = IrTag::Undef;
     m.ctx.arena.alloc(result)
+}
+
+fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // tuple_invoke<Fun, Args, Ret>(f: Fun, args: Args) -> Ret
+    // Lowers to a call to f with each tuple-element of args as a positional arg.
+    // Mirrors alumina-boot's intr_tuple_invoke.
+    if expr.args().len() < 2 {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+            "tuple_invoke requires (callee, tuple) arguments"));
+        return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+    }
+    let ir_callee = m.lower_expr(expr.args()[0]);
+    let ir_tuple = m.lower_expr(expr.args()[1]);
+
+    let n: usize = 0;
+    if ir_tuple.ty.tag == IrTyTag::Tuple {
+        n = ir_tuple.ty.elems().len();
+    } else if ir_tuple.ty.tag == IrTyTag::Struct {
+        // Non-trivial tuples may be lowered as anonymous structs.
+        n = ir_tuple.ty.struct_ref().fields.len();
+    } else if ir_tuple.ty.tag == IrTyTag::Void {
+        n = 0;
+    } else {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+            "tuple_invoke: second argument must be a tuple"));
+        return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+    }
+
+    let split_args = m.ctx.arena.alloc_slice::<&IrExpr>(n);
+    for i in 0usize..n {
+        let elem_ty = if ir_tuple.ty.tag == IrTyTag::Tuple {
+            ir_tuple.ty.elems()[i]
+        } else {
+            ir_tuple.ty.struct_ref().fields[i].ty
+        };
+        split_args[i] = m.mk_field(ir_tuple, i as u32, elem_ty);
+    }
+
+    if ir_callee.ty.tag == IrTyTag::Fn {
+        let fn_ref = ir_callee.ty.fn_item_ref();
+        let ret_ty = m.ctx.void_ty;
+        for i in 0usize..m.ctx.ir_functions.len() {
+            if m.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                ret_ty = m.ctx.ir_functions[i].return_type;
+            }
+        }
+        return m.mk_call(fn_ref, split_args, ret_ty);
+    } else if ir_callee.ty.tag == IrTyTag::FnPointer {
+        let ret_ty = ir_callee.ty.ret_ty();
+        let result = IrExpr::void_expr(ret_ty);
+        result.tag = IrTag::Call;
+        result._data.call.call_target = IrCallTarget {
+            tag: CallKind::Indirect,
+            fn_ref: IrFnRef::empty(),
+            callee: ir_callee,
+        };
+        result._data.call.items = split_args;
+        return m.ctx.arena.alloc(result);
+    } else if ir_callee.ty.tag == IrTyTag::Closure {
+        let closure_ty = ir_callee.ty;
+        let fn_ref = closure_ty.closure_fn();
+        let ret_ty = m.ctx.void_ty;
+        for i in 0usize..m.ctx.ir_functions.len() {
+            if m.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                ret_ty = m.ctx.ir_functions[i].return_type;
+            }
+        }
+        let ref_expr = m.mk_ref(ir_callee, false);
+        let all_args = m.ctx.arena.alloc_slice::<&IrExpr>(n + 1usize);
+        all_args[0] = ref_expr;
+        for i in 0usize..n {
+            all_args[i + 1usize] = split_args[i];
+        }
+        return m.mk_call(fn_ref, all_args, ret_ty);
+    }
+
+    m.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
+    m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty))
 }
 
 fn lower_unknown(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {

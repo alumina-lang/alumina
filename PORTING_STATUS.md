@@ -116,7 +116,7 @@ Missing:
 - [PARTIAL] **Intrinsic: `expect`.** Recognized in `mono/intrinsics.alu`; lowered as identity (returns its value-argument unchanged). Verified by `tests/aluminac/expect_intrinsic.alu`. Sysroot `likely!` / `unlikely!` macros now compile under aluminac.
   Missing:
   - Lower to actual `llvm.expect.i1` for branch-prediction benefit. Requires bool-as-i8 ↔ i1 conversion sandwich (aluminac stores bools as i8 in memory to avoid i1-load UB).
-- [TODO] **Intrinsic: `tuple_invoke`.** Apply a callable to a tuple of args. Used in macro-heavy code paths.
+- [DONE] **Intrinsic: `tuple_invoke`.** Wired in `mono/intrinsics.alu`. Splits the tuple argument into positional fields and constructs a Call against the callee. Handles fn items (Fn IrTy), function pointers (FnPointer), and closures (prepends &self), and treats `()` (Void) as a zero-arg call. Verified by `tests/aluminac/tuple_invoke_intrinsic.alu`.
 - [PARTIAL] **Intrinsic: `module_path`.** Recognized in `mono/intrinsics.alu`. Returns void (Void IR tag) — the `when intrinsics::module_path::<T>() is ()` check in `std::typing::Type::module_path` then takes the None branch. To return real module paths, IrStructRef/IrEnumRef would need a path field populated at lowering. Verified by `tests/aluminac/module_path_intrinsic.alu`.
 - [PARTIAL] **Intrinsic: `has_attribute`.** Recognized in `mono/intrinsics.alu`; conservatively returns `false`. Wire real attribute lookup once IrStructRef/IrEnumRef carry attributes. Verified by `tests/aluminac/module_path_intrinsic.alu`.
 - [TODO] **Function attribute lowering: `#[align(N)]` on functions.** Codegen ignores; emit `align N` on LLVM function.
