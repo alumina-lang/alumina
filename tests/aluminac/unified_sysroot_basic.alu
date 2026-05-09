@@ -87,5 +87,25 @@ fn main() -> i32 {
     h.write("the quick brown fox\0");
     if h.finish() == 0u64 { return 17; }
 
+    // mem::size_of / align_of (compile-time intrinsics through unified
+    // std::mem facade).
+    if std::mem::size_of::<i32>() != 4usize { return 18; }
+    if std::mem::align_of::<u64>() != 8usize { return 19; }
+
+    // slice::alloc + free + index-write — runtime allocation through sysroot.
+    let buf: &mut [u32] = std::mem::slice::alloc::<u32>(8);
+    defer std::mem::slice::free(buf);
+    if buf.len() != 8usize { return 20; }
+    for i in 0usize..8usize {
+        buf[i] = (i * 11) as u32;
+    }
+    if buf[0] != 0u32 { return 21; }
+    if buf[7] != 77u32 { return 22; }
+
+    // ffi::CString round-trip.
+    let cs = std::ffi::CString::from_slice("ok");
+    defer cs.free();
+    if cs.ptr == null { return 23; }
+
     0
 }
