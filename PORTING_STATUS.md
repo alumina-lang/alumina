@@ -182,7 +182,7 @@ Missing:
 
 - [DONE] **`std/util.alu`** — unified.
 - [TODO] **`std/mod.alu`** — module re-exports; aluminac-version still has cfg-gated sections; unifying breaks panicking test.
-- [TODO] **`sysroot/mod.alu`** — root module. Trivial.
+- [DONE] **`sysroot/mod.alu`** — root module. Identical content in both sysroots; verified via diff.
 - [DONE] **`std/prelude.alu`** — unified.
 - [TODO] **`std/option.alu`** — unifying breaks aluminac bootstrap (sysroot's body uses macros and dyn paths aluminac can't handle yet).
 - [TODO] **`std/result.alu`** — same shape as `option.alu`.
