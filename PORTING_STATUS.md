@@ -12,30 +12,20 @@ Live source of truth for the aluminac → alumina-boot parity work. See `PORTING
 
 ---
 
-## [TODO] Initial audit
-
-The first porting session must populate the categories below.
-
-Audit covers:
-
-- **Language features.** Compare `src/alumina-boot/src/` against `src/aluminac/`. Catalog parser/AST/type-system features that alumina-boot supports and aluminac doesn't (closures, full generic protocols, dyn, macros, mixins, etc. — see `docs/lang_guide.md` for the surface).
-- **Const evaluation.** What const operations alumina-boot evaluates that aluminac doesn't.
-- **Codegen.** Compare codegen surface — intrinsics, ABI edge cases, attributes (`#[align]`, `#[link_name]`, `#[thread_local]`, ...), debug info, panic/backtrace integration.
-- **Lang items.** Compiler-known items in `sysroot/std/builtins.alu` and elsewhere.
-- **Stdlib modules.** Files in `sysroot/std/` not yet in `sysroot-aluminac/`, plus files in both that need to converge.
-- **Existing specialization gates.** `grep -rn 'cfg(boot)' sysroot/` and `grep -rn 'cfg(coroutines)' sysroot/` — these mark the natural specialization points.
-- **Test infrastructure.** What it takes to run `make test-lang` / `make test-std` / `make test-libraries` through aluminac. `tests/diag/` is out of scope (alumina-boot only) — see `PORTING.md`.
-
-Produce 30–60 concrete entries across the categories below. Each entry must be specific enough that "done" is unambiguous (e.g. *"Port `sysroot/std/string.alu` to compile under aluminac and pass `tests/std/string.alu`"*, not *"port stdlib"*).
-
-When the audit is done, replace this section with a `[DONE]` marker like:
-
-```
 ## [DONE] Initial audit
-Completed YYYY-MM-DD. Categories below populated; see git log for the audit commit.
-```
 
-The audit may itself span more than one session — if so, keep it as `[PARTIAL]` with a `Missing:` listing of which categories still need to be enumerated.
+Completed 2026-05-09. Categories below populated by parallel audit of `src/alumina-boot/src/` vs `src/aluminac/`, the two sysroots, the Makefile and existing test runners. The audit is intentionally non-exhaustive in spots (especially language features — see the `[PARTIAL]` extension below); future sessions should grow the lists as gaps surface.
+
+## [PARTIAL] Audit extension — language-feature deep dive
+
+The first audit pass produced only ~7 language-feature gaps. That's almost certainly low: aluminac is roughly 1/3 the LoC of alumina-boot and the boot AST has machinery (closures' captured-env lowering, mixin substitution, full macro hygiene, etc.) that one short audit doesn't enumerate.
+
+Missing:
+- Side-by-side AST node coverage: enumerate every `ExprKind` / `Ty` / `Statement` variant in `src/alumina-boot/src/ast/mod.rs` and verify aluminac's `ast.alu` covers it (or note the gap).
+- Side-by-side macro support: `src/alumina-boot/src/ast/macros.rs` is ~800 LoC; map each capability (universal-call macros, `et cetera` packs, named-arg expansion, hygiene, recursion limits) to the aluminac equivalent or a `[TODO]`.
+- Side-by-side mixin support: alumina-boot's mixin substitution rules vs aluminac's; verify with deliberately tricky cases (mixin with generics, mixin referencing Self, mixin chaining).
+- Closure capture: aluminac has tests/aluminac/closures.alu so the basic case works, but capture-by-reference, closure-of-closure, and ProtoClosure conformance need confirming.
+- Attribute parity: walk every variant of `enum Attribute<'ast>` in `src/alumina-boot/src/ast/mod.rs` (Packed, TupleCall, ConstOnly, NoConst, Transparent, MustUse, LinkName, Coroutine, Custom) and add a `[TODO]` per gap.
 
 ---
 
@@ -43,21 +33,159 @@ The audit may itself span more than one session — if so, keep it as `[PARTIAL]
 
 *(Parser/AST/type system features in alumina-boot but not aluminac.)*
 
+- [TODO] **`dyn` / dynamic dispatch.** No `Ty::Dyn` in aluminac AST; `dyn_*` lang items unimplemented (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`. Largest single language gap.
+- [TODO] **`when` for types (`when_type`).** Grammar supports it (`when_type` node); aluminac parses `when` only as a runtime conditional. Needed by sysroot `std/cmp.alu`, `std/fmt/mod.alu`, `std/math.alu` (when-dispatch on float vs int).
+- [TODO] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** alumina-boot uses these for type-level metadata; absent in aluminac. Confirm whether sysroot actually requires them (may be internal to boot).
+- [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.
+- [TODO] **Attribute: `#[transparent]`.** alumina-boot recognizes; aluminac's `AttrTag` doesn't. Used in sysroot to mark layout-equivalent newtypes.
+- [TODO] **Attribute: `#[link_name("…")]`.** alumina-boot variant `LinkName(&str)`; aluminac parser parses the form (pass1.alu line 156) but does not lower it onto the AST attribute set or propagate to codegen. Required to interoperate with C symbols whose names can't be Alumina identifiers.
+- [TODO] **Attribute: `#[packed(N)]`.** alumina-boot's `Attribute::Packed(usize)`; missing in aluminac. Affects struct layout for FFI structs.
+- [TODO] **Attribute: `#[tuple_call]`.** alumina-boot's `Attribute::TupleCall`; missing in aluminac.
+- [TODO] **Attribute: `#[const_only]` / `#[no_const]`.** alumina-boot has both; aluminac has neither. Used in `sysroot/std/intrinsics.alu` to mark functions that must / must-not run at const time.
+- [TODO] **Attribute: `#[must_use]` / `Diagnostic(MustUse)`.** alumina-boot warns on dropped values; aluminac doesn't model the diagnostic.
+- [TODO] **Attribute: `Inline::Never` / `Inline::DuringMono`.** aluminac has `Inline` and `AlwaysInline` only; missing the `never` and `during_mono` variants.
+- [TODO] **Custom attributes (`Attribute::Custom`).** alumina-boot stores arbitrary `#[name(args…)]` on AST items so intrinsics like `attributed(...)` can find them. aluminac drops anything not in its `AttrTag` enum.
+- [TODO] **u128 / i128 codegen + const-eval coverage.** Types parse and have layout entries; verify arithmetic / comparison / formatting all work end-to-end (no test in `tests/aluminac/` directly exercises 128-bit arithmetic).
+- [TODO] **Operator-overload lang items (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`).** sysroot defines them; aluminac never queries them, so user-defined `==` / `<` etc. on structs do not dispatch through the protocol path.
+- [TODO] **`Lang::EntrypointGlue`.** sysroot defines an entrypoint-glue lang item; aluminac uses a hardcoded entrypoint. Push the glue into the sysroot once practical.
+- [TODO] **Verify `ProtoZeroSized` is enforced.** Lang item is defined in both sysroots but aluminac never queries it; confirm whether code that bounds on `ProtoZeroSized` actually checks ZST-ness.
+
 ## Const evaluation
+
+- [TODO] **Signed-integer overflow detection.** alumina-boot rejects signed overflow as UB at const time; aluminac silently wraps. Affects correctness of `const FOO: i32 = …` that overflows.
+- [TODO] **`checked_add` / `checked_sub` / `checked_mul` / `checked_div` intrinsics.** Used by `std::math` and various sysroot bounds checks. tests/aluminac/checked_arithmetic.alu exists — confirm whether it exercises the const path.
+- [TODO] **`checked_shl` / `checked_shr` intrinsics.** Reject shift ≥ bitwidth at const time.
+- [TODO] **`const_panic` intrinsic.** Halts compilation with a message during const eval. aluminac currently no-ops; needed for `static_assert`-style patterns.
+- [TODO] **`const_warning` / `const_note` intrinsics.** Emit diagnostic at const-eval time. aluminac no-ops.
+- [TODO] **`const_alloc` / `const_free` / `const_bake` intrinsics.** Needed to let const evaluation build heap-allocated descriptors that get baked into rodata. Big lift; required for `enum_variants`, `fields`, etc. to return slices.
+- [TODO] **Const-evaluable function calls.** alumina-boot has a full interpreter (`ir/const_eval.rs` ≈2000 LoC) that evaluates arbitrary pure functions. aluminac's interpreter (`const_eval.alu` ≈1400 LoC) is narrower — characterize and close the gap. (Bang-for-buck task; many other items depend on it.)
+- [TODO] **`enum_variants` intrinsic.** Returns slice of variant descriptors. Depends on `const_alloc` / `const_bake` and on lang item `enum_variant_new`.
+- [TODO] **`fields` intrinsic.** Returns slice of field descriptors. Depends on lang items `field_descriptor_new` / `field_descriptor_new_unnamed`.
+- [TODO] **`vtable` intrinsic.** Builds a protocol vtable at const time. Blocks `dyn`.
+- [TODO] **`attributed` intrinsic.** Finds items by attribute name. Depends on custom-attribute support landing first.
+- [TODO] **`value_of` intrinsic.** Yields the runtime lvalue of a const/static.
+- [TODO] **`named_type_name` intrinsic.** Short form of `type_name` (struct/enum simple name only).
+- [TODO] **Float classification (`is_finite` / `is_nan` / `is_infinite` / `is_normal`) at const time.** alumina-boot supports; aluminac runtime-only.
+- [TODO] **Bit-twiddling intrinsics: `count_ones` / `count_zeros` / `leading_zeros` / `trailing_zeros` / `swap_bytes`.** Both at const-eval and codegen. alumina-boot maps to `__builtin_popcount` etc.; aluminac should map to the corresponding LLVM intrinsics.
+- [TODO] **Const-evaluable indexing into string / byte-string / array literals.** Re-confirm behavior matches alumina-boot for OOB and for negative indices via wrapping arithmetic.
 
 ## Codegen
 
 *(LLVM IR coverage: intrinsics, ABI, attributes, debug info, panic/backtrace.)*
 
+- [TODO] **Intrinsic: `codegen_func`.** alumina-boot calls arbitrary C builtins by name. aluminac has the lower-level `llvm<>()` escape but no by-name dispatch. Either expose a similar lowering path or migrate sysroot to use `llvm<>()` directly (see `PORTING.md` "Out of scope" — this is the intrinsic explicitly called out).
+- [TODO] **Intrinsic: `codegen_const`.** Reference C macro / linker constants by name.
+- [TODO] **Intrinsic: `codegen_type_func`.** Type-level compiler functions beyond `size_of` / `align_of`.
+- [TODO] **Intrinsic: `expect`.** LLVM `llvm.expect` branch hint. aluminac doesn't expose; maps to a no-op today.
+- [TODO] **Intrinsic: `tuple_invoke`.** Apply a callable to a tuple of args. Used in macro-heavy code paths.
+- [TODO] **Intrinsic: `module_path`.** Returns the module path string of an item.
+- [TODO] **Intrinsic: `has_attribute`.** Already partially needed for the `attributed` intrinsic above.
+- [TODO] **Function attribute lowering: `#[align(N)]` on functions.** Codegen ignores; emit `align N` on LLVM function.
+- [TODO] **Global attribute lowering: `#[align(N)]` on statics.** Codegen ignores.
+- [TODO] **Function attribute lowering: `#[link_name("…")]`.** Override LLVM symbol name. Parsing partial (see Language features); codegen unwired.
+- [TODO] **Verify `#[returns_twice]` on declarations.** `add_fn_attribute(... "returns_twice")` is called in `codegen/mod.alu:849` for definitions; confirm it's also set on extern declarations of `setjmp`-family functions.
+- [TODO] **Variadic / va_list intrinsics.** `va_start` / `va_arg` / `va_end` — confirm whether sysroot needs these (they appear in `libc/bindings.alu`).
+- [TODO] **`#[link("…")]` / linker-arg attributes.** alumina-boot threads `-llib` flags from `#[link]`; aluminac currently relies on `--link-args`. Migrate to attributes so sysroot doesn't need the Makefile to know what to link.
+- [TODO] **Debug info (DWARF).** alumina-boot emits `#line` directives in C; aluminac emits no DWARF. Required for `std/runtime/backtrace.alu` to produce useful traces.
+- [TODO] **Panic location capture.** Compiler intrinsic that yields the caller `(file, line)` pair for `panic!`. Verify aluminac path matches alumina-boot's.
+- [TODO] **ZST elision pass.** alumina-boot has `codegen/elide_zst.rs`; aluminac generates LLVM IR for ZST loads/stores anyway. LLVM may eliminate them — not a correctness issue, just IR quality.
+
 ## Lang items
+
+*(Names from `src/alumina-boot/src/ast/lang.rs`. "Defined" = declared via `#[lang(…)]` in the sysroot. "Queried" = the compiler actually looks the name up.)*
+
+- [DONE] **Builtin types** (`builtin_bool`, `builtin_u8…u64`, `builtin_usize`, `builtin_i8…i64`, `builtin_isize`, `builtin_f32`, `builtin_f64`, `builtin_array`, `builtin_tuple`, `builtin_callable`). Defined and queried in aluminac. Verified by tests/aluminac/lang_builtin.alu.
+- [TODO] **`builtin_never`, `builtin_u128`, `builtin_i128`.** Defined in `sysroot/std/builtins.alu` but not in `sysroot-aluminac/std/builtins.alu`. aluminac never queries. Add definitions and queries; confirm types lower correctly.
+- [DONE] **Protocol lang items** for: `proto_primitive`, `proto_numeric`, `proto_integer`, `proto_floating_point`, `proto_signed`, `proto_unsigned`, `proto_pointer`, `proto_array`, `proto_tuple`, `proto_struct`, `proto_enum`, `proto_union`, `proto_range`, `proto_named_function`, `proto_function_pointer`, `proto_closure`, `proto_callable`, `proto_any`, `proto_none`. Verified by tests/aluminac/protocol_conformance.alu.
+- [TODO] **`proto_zero_sized`.** Defined in both sysroots; aluminac never queries. Wire query so ZST-bound code actually checks ZST-ness.
+- [TODO] **`proto_const`, `proto_static`, `proto_array_of`, `proto_pointer_of`, `proto_range_of`, `proto_meta`, `proto_same_base_as`, `proto_same_layout_as`.** Defined in `sysroot/std/builtins.alu`, missing in `sysroot-aluminac/`. Required for the full `where` clause vocabulary the unified sysroot uses.
+- [TODO] **Slice operation lang items** (`slice_new`, `slice_const_coerce`, `slice_const_cast`, `slice_index`, `slice_range_index`, `slice_slicify`). aluminac open-codes slice operations today instead of going through these; sysroot uses them. Wire queries so the unified sysroot's `impl Slice` blocks are reached.
+- [TODO] **Range constructor lang items** (`range_full_new`, `range_from_new`, `range_to_new`, `range_to_inclusive_new`, `range_new`, `range_inclusive_new`). aluminac inlines range construction. Query so user-written range literals dispatch through them.
+- [TODO] **`range_full`, `range_from`, `range_to`, `range_to_inclusive`.** Type-level lang items. aluminac queries `range` and `range_inclusive` only; add the rest.
+- [TODO] **Typeop lang items** (`typeop_return_type_of`, `typeop_arguments_of`, `typeop_pointer_with_mut_of`, `typeop_array_with_length_of`, `typeop_generic_args_of`, `typeop_replace_generic_args_of`, `typeop_function_pointer_of`, `typeop_underlying_type_of`, `typeop_underlying_function_of`). Sysroot relies on these for generic type construction; aluminac unimplemented.
+- [TODO] **Dyn lang items** (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Blocks `dyn` support generally — see Language features.
+- [TODO] **Operator overload lang items** (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`). See Language features.
+- [TODO] **Reflection lang items** (`format_arg`, `enum_variant_new`, `field_descriptor_new`, `field_descriptor_new_unnamed`, `type_descriptor_new`). Required by `enum_variants` / `fields` intrinsics.
+- [TODO] **`entrypoint_glue`.** See Language features.
+- [TODO] **`static_for_iter`, `static_for_next`.** Recent commit `a6b71e0c` reworked static-for to a const-evaluated iterator protocol; verify these lang items are wired or punt them entirely if the protocol is implicit.
+- [TODO] **Coroutine lang items** (`coroutine`, `coroutine_new`, `coroutine_yield`). Out of scope; keep noted.
 
 ## Stdlib modules
 
-*(Goal: unify each `sysroot-aluminac/` file with its `sysroot/` counterpart into a single file under `sysroot/`. Track per-file.)*
+*(Goal: unify each `sysroot-aluminac/` file with its `sysroot/` counterpart into a single file under `sysroot/`. Track per-file. Files only in `sysroot/` are net-new for aluminac. Files only in `sysroot-aluminac/` are aluminac-local accommodations to be merged back.)*
+
+### Already close to parity (small slices)
+
+- [TODO] **`std/util.alu`** — utility helpers; trivial differences. Likely unifiable in one slice.
+- [TODO] **`std/mod.alu`** — module re-exports; gated on which sub-modules compile. Final cleanup once the rest is unified.
+- [TODO] **`sysroot/mod.alu`** — root module. Trivial.
+- [TODO] **`std/prelude.alu`** — minor differences.
+- [TODO] **`std/option.alu`** — diffs are mainly docs and `try!`-style macros; depends on macro completeness.
+- [TODO] **`std/result.alu`** — same shape as `option.alu`.
+- [TODO] **`std/range.alu`** — sysroot has full `lang(range_*_new)` impl blocks; gated on the range constructor lang items above.
+- [TODO] **`std/ffi.alu`** — sysroot has `CString`; trivial unification.
+- [TODO] **`std/string/mod.alu`** — reportedly matches; verify once parser features land.
+- [TODO] **`std/string/unicode.alu`** — reportedly matches.
+- [TODO] **`std/hash/mod.alu`** — minor diff (extra method impls).
+- [TODO] **`std/hash/xxhash.alu`** — matches.
+- [TODO] **`std/collections/mod.alu`** — minor diffs.
+- [TODO] **`std/collections/vector.alu`** — minor diffs.
+- [TODO] **`std/collections/deque.alu`** — minor diffs.
+- [TODO] **`std/collections/hashmap.alu`** — minor diffs.
+- [TODO] **`std/collections/hashset.alu`** — minor diffs.
+- [TODO] **`std/collections/heap.alu`** — minor diffs.
+
+### Medium slices (depend on a single language feature or lang-item set)
+
+- [TODO] **`std/iter.alu` (and merge `sysroot-aluminac/std/iter/` directory back into the single file).** sysroot's iter.alu is large and uses the full iterator protocol; aluminac's has a reduced subset split into a directory. Recent commits worked on iterator protocol — confirm what's still missing.
+- [TODO] **`std/typing.alu` (and merge `sysroot-aluminac/std/typing/` back).** Depends on dyn + reflection lang items.
+- [TODO] **`std/cmp.alu`** — sysroot uses `DefaultEquatable` mixin + when-based type reflection. Depends on `when_type` and operator-overload lang items.
+- [TODO] **`std/math.alu`** — uses when-dispatch. Depends on `when_type` and `checked_*` intrinsics.
+- [TODO] **`std/macros.alu`** — diff in defined macros; gated on macro feature parity.
+- [TODO] **`std/intrinsics.alu`** — sysroot exposes attributed/fields/enum_variants/vtable/etc. Gated on those intrinsics being implemented.
+- [TODO] **`std/builtins.alu`** — sysroot has 3× more impls + typeop lang items + type_descriptor lang item. Gated on the typeop and reflection lang items above.
+- [TODO] **`std/mem.alu`** — sysroot has full slice ops + dyn casting. Gated on dyn + slice lang items.
+- [TODO] **`std/fmt/mod.alu`** — sysroot has full formatting infrastructure (when-based dispatch on type). Gated on when_type, mixin, protocol bounds.
+
+### Large slices (multiple blockers)
+
+- [TODO] **`std/fmt/ryu/`** — float formatting (10 files). Needs full bit-twiddling intrinsics, when-dispatch, and large const tables. Net-new for aluminac.
+- [TODO] **`std/panicking.alu`** — sysroot uses `panic!` macro + setjmp/longjmp via `jmp_buf`; aluminac has a different shape. Reconcile.
+- [TODO] **`std/time.alu`** — sysroot uses `clock_gettime` directly; aluminac has minimal `Duration`. Depends on libc bindings.
+- [TODO] **`std/fs/mod.alu`** + **`std/fs/unix.alu`** — file abstraction + Unix syscall layer. Depends on closure traits for iteration, libc.
+- [TODO] **`std/io/mod.alu`** + **`std/io/unix.alu`** — Read/Write traits + stdio. Depends on protocol design.
+- [TODO] **`std/process/mod.alu`** + **`std/process/unix.alu`** — fork/exec/stdio plumbing. Depends on threads, closures, dyn traits.
+- [TODO] **`std/runtime/mod.alu`** — backtrace + panic runtime. Depends on debug info + dyn.
+- [TODO] **`std/runtime/backtrace.alu`** — uses libc + closures for frame iteration. Depends on debug info + closures verified.
+- [TODO] **`std/runtime/minicoro.alu`** — minicoro coroutine glue. Out of scope under PORTING.md; keep gated.
+- [TODO] **`std/random/mod.alu`** + **`std/random/ziggurat.alu`** — RNG trait + Gaussian. Depends on protocol traits + closures.
+- [TODO] **`std/regex/mod.alu`** + **`std/regex/internal.alu`** — DFA regex engine. Depends on dyn + closures.
+- [TODO] **`std/sync/mod.alu`** + **`std/sync/channel.alu`** — Mutex/RwLock/Arc + MPMC channels. Depends on threads + atomics.
+- [TODO] **`std/thread/mod.alu`** + **`std/thread/pool.alu`** + **`std/thread/parker/`** — pthread-backed threads + thread pool + futex/pthread parking. Depends on closures for thread bodies.
+- [TODO] **`std/net/mod.alu`** + **`std/net/address.alu`** + **`std/net/unix.alu`** — sockets + address parsing + syscall layer. Depends on closures, threads, complex address ops.
+
+### Aluminac-only files (eliminate after parity)
+
+- [TODO] **Delete `sysroot-aluminac/std/strbuf.alu`** — 64-byte stub once sysroot's StringBuilder is reachable.
+- [TODO] **Merge `sysroot-aluminac/std/iter/` directory into single `sysroot/std/iter.alu`** (covered above).
+- [TODO] **Merge `sysroot-aluminac/std/typing/` directory into single `sysroot/std/typing.alu`** (covered above).
+
+### Libc
+
+- [TODO] **`libc/mod.alu`** — sysroot has full bindings; aluminac has a small subset. Unify.
+- [TODO] **`libc/bindings.alu`** — net-new for aluminac (823 KB pure FFI declarations). No language blockers; just volume.
+- [TODO] **`libc/prelude.alu`** — net-new, tiny. Trivial.
 
 ## Test infrastructure
 
 *(Running the alumina-boot test suites through aluminac. `tests/diag/` is **not** in scope — keep it passing under alumina-boot only.)*
+
+- [TODO] **Add `make test-lang-aluminac`.** `tests/lang/lang.alu` is one module with ~35 `#[test]` functions; aluminac already supports `--cfg test --cfg test_std` for `make test-std-aluminac`, so a parallel target should be straightforward.
+- [TODO] **Add `make test-libraries-aluminac`.** Compile `libraries/` with aluminac's `--test` flag. May require closure / dyn support for some libraries.
+- [TODO] **Confirm `make test-std-aluminac` runs against the unified `sysroot/`** once feature gaps close; today it points at `sysroot-aluminac/`.
+- [TODO] **`tests/aluminac/run_tests.sh` shell-driven runner is fine for aluminac-specific suites** — keep as-is. (Already passing; this is just a "no action" record.)
+- [TODO] **`tests/diag/` and `make test-diag`** — alumina-boot only, no porting work; just don't break it on the boot side.
+- [TODO] **`make test-docs`** — currently uses alumina-boot to compile generated `doctest.alu`. Bringing under aluminac is gated on full sysroot parity.
 
 ## Sysroot deletion (final)
 
