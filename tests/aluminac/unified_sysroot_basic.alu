@@ -222,6 +222,12 @@ fn main() -> i32 {
     if !std::string::ends_with("hello world", "world") { return 55; }
     if std::string::ends_with("hello world", "hello") { return 56; }
 
+    // iter().count() — an IteratorExt combinator that doesn't pull
+    // unwrap → panic → dyn.
+    use std::iter::IteratorExt;
+    let count_arr: [i32; 5] = [1i32, 2i32, 3i32, 4i32, 5i32];
+    if count_arr.iter().count() != 5usize { return 57; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets that mono complete via an
     // Unreachable, but the path is non-deterministic enough to exclude
