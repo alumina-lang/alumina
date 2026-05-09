@@ -32,6 +32,12 @@ struct CodegenCtx {
     // Set of extern C function hashes (for byval handling at call sites)
     extern_c_fns: HashMap<u64, bool>,
 
+    // Extern C functions that use the sret return convention; maps the
+    // function name hash to its (original) struct return type so call sites
+    // can alloca a buffer of the right type and reload the value after the
+    // call. Populated when the function is declared (see `declare_function`).
+    extern_c_sret_fns: HashMap<u64, LLVMTypeRef>,
+
     // Global declarations
     global_decls: HashMap<u64, LLVMValueRef>,
 
@@ -57,6 +63,11 @@ struct CodegenCtx {
 
     // Pointer size in bytes
     pointer_size: u32,
+
+    // Whether the target is x86_64 (for ABI-specific byval lowering).
+    // On other targets (e.g. aarch64), large structs are passed by-value at
+    // the LLVM IR level and the backend handles the indirect-arg ABI.
+    is_x86_64: bool,
 
     // Optimization level
     opt_level: main::OptLevel,
@@ -123,6 +134,19 @@ impl CodegenCtx {
         let dl_str = LLVMCopyStringRepOfTargetData(target_data);
         LLVMSetDataLayout(module, dl_str);
         LLVMDisposeMessage(dl_str);
+
+        // Detect target arch from the triple ("x86_64-..." vs "aarch64-...")
+        let triple_str = std::ffi::CString::from_raw(triple).as_slice();
+        let prefix = "x86_64";
+        let is_x86_64 = triple_str.len() >= prefix.len();
+        if is_x86_64 {
+            for i in 0usize..prefix.len() {
+                if triple_str[i] != prefix[i] {
+                    is_x86_64 = false;
+                    break;
+                }
+            }
+        }
 
         LLVMDisposeMessage(triple);
         LLVMDisposeMessage(cpu);
@@ -197,6 +221,7 @@ impl CodegenCtx {
             struct_type_cache: HashMap::new(),
             fn_decls: HashMap::new(),
             extern_c_fns: HashMap::new(),
+            extern_c_sret_fns: HashMap::new(),
             global_decls: HashMap::new(),
             string_cache: HashMap::new(),
             string_counter: 0,
@@ -213,6 +238,7 @@ impl CodegenCtx {
             ptr_type: ptr_type,
             isize_type: i64_type,  // TODO: use pointer size to pick correct width
             pointer_size: pointer_size,
+            is_x86_64: is_x86_64,
             opt_level: opt_level,
             debug_enabled: debug_enabled,
             di_builder: di_builder,
@@ -421,8 +447,13 @@ impl CodegenCtx {
         }
     }
 
-    /// Check if a param type needs byval passing for extern C ABI.
-    /// On x86-64, structs > 16 bytes are passed on the stack via pointer + byval.
+    /// Check if a param type needs indirect passing for extern C ABI.
+    /// Both x86_64 SysV and aarch64 PCS pass composite types > 16 bytes
+    /// indirectly: caller copies the struct to its stack frame and passes a
+    /// pointer to the callee. At the LLVM IR level we therefore lower the
+    /// parameter to a pointer and alloca+store the value at the call site.
+    /// The platform-specific `byval` attribute is only added on x86_64 (see
+    /// `uses_byval_attr`).
     fn needs_byval(self: &mut CodegenCtx, llvm_ty: LLVMTypeRef) -> bool {
         let kind = LLVMGetTypeKind(llvm_ty);
         if kind == LLVMTypeKind::Struct {
@@ -433,38 +464,80 @@ impl CodegenCtx {
         }
     }
 
+    /// Whether to emit the LLVM `byval` parameter attribute alongside the
+    /// indirect-arg lowering. This is the x86_64-specific lowering used by
+    /// clang; on aarch64 the same indirect ABI is achieved without the
+    /// attribute (clang emits a plain pointer parameter), and adding `byval`
+    /// there produces the wrong call sequence against C callees.
+    fn uses_byval_attr(self: &CodegenCtx) -> bool {
+        self.is_x86_64
+    }
+
+    /// Whether an extern C return type needs explicit sret lowering.
+    ///
+    /// LLVM's x86_64 backend implicitly converts a struct-typed return into
+    /// the SysV sret convention, but the AArch64 backend tries to return the
+    /// struct in registers (w0-w3, x4, x5 for a 32-byte struct), which does
+    /// not match the AArch64 PCS that requires the caller to pass a hidden
+    /// buffer pointer in x8 for composite returns > 16 bytes. So on aarch64
+    /// we materialize the sret convention explicitly: the LLVM function takes
+    /// `void` and a leading `ptr sret` parameter, and call sites alloca a
+    /// buffer and reload the value after the call.
+    fn needs_sret(self: &mut CodegenCtx, llvm_ret_ty: LLVMTypeRef) -> bool {
+        if self.is_x86_64 {
+            return false;
+        }
+        if LLVMGetTypeKind(llvm_ret_ty) != LLVMTypeKind::Struct {
+            return false;
+        }
+        LLVMStoreSizeOfType(self.target_data, llvm_ret_ty) > 16
+    }
+
     fn llvm_fn_type(self: &mut CodegenCtx, ir_fn: &IrFunction) -> LLVMTypeRef {
         self.llvm_fn_type_ext(ir_fn, false)
     }
 
     fn llvm_fn_type_ext(self: &mut CodegenCtx, ir_fn: &IrFunction, is_extern_c: bool) -> LLVMTypeRef {
-        let param_types = self.arena.alloc_slice::<LLVMTypeRef>(ir_fn.params.len());
+        let ret_type = self.llvm_type(ir_fn.return_type);
+        let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
+        let use_sret = is_extern_c && !is_void_ret && self.needs_sret(ret_type);
+
+        let extra = if use_sret { 1usize } else { 0usize };
+        let total_params = ir_fn.params.len() + extra;
+
+        let param_types = if total_params > 0 {
+            self.arena.alloc_slice::<LLVMTypeRef>(total_params)
+        } else {
+            std::mem::zeroed::<&mut [LLVMTypeRef]>()
+        };
+        if use_sret {
+            param_types[0] = LLVMPointerType(ret_type, 0u32);
+        }
         for i in 0usize..ir_fn.params.len() {
             let pty = self.llvm_type(ir_fn.params[i].ty);
             // LLVM doesn't allow void as a param type
             if LLVMGetTypeKind(pty) == LLVMTypeKind::Void {
-                param_types[i] = self.i8_type;
+                param_types[i + extra] = self.i8_type;
             } else if is_extern_c && self.needs_byval(pty) {
                 // For extern C, large structs are passed by pointer with byval attribute
-                param_types[i] = LLVMPointerType(pty, 0u32);
+                param_types[i + extra] = LLVMPointerType(pty, 0u32);
             } else {
-                param_types[i] = pty;
+                param_types[i + extra] = pty;
             }
         }
 
-        let ret_type = self.llvm_type(ir_fn.return_type);
-        // If return type is void-ish, use LLVM void
-        let llvm_ret = if ir_fn.return_type.is_void() || ir_fn.return_type.is_never() {
+        // If return type is void-ish or sret-lowered, use LLVM void
+        let llvm_ret = if is_void_ret || use_sret {
             self.void_type
         } else {
             ret_type
         };
 
-        if ir_fn.params.len() > 0 {
+        if total_params > 0 {
             LLVMFunctionType(
                 llvm_ret,
                 &param_types[0],
-                ir_fn.params.len() as u32,
+                total_params as u32,
                 if ir_fn.is_variadic { 1i32 } else { 0i32 }
             )
         } else {
@@ -705,15 +778,32 @@ impl CodegenCtx {
         let name = self.null_terminate(ir_fn.mangled_name);
         let llvm_fn = LLVMAddFunction(self.module, &name[0] as &libc::c_char, fn_type);
 
-        // Add byval attributes and mark for call-site handling
+        // Mark for call-site handling, and on x86_64 attach the `byval`
+        // parameter attribute that the SysV ABI lowering needs. On aarch64 the
+        // pointer parameter alone gives the right indirect-arg ABI.
         if is_extern_c {
             self.extern_c_fns.insert(hash, true);
-            let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
-            for i in 0usize..ir_fn.params.len() {
-                let orig_ty = self.llvm_type(ir_fn.params[i].ty);
-                if self.needs_byval(orig_ty) {
-                    let byval_attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
-                    LLVMAddAttributeAtIndex(llvm_fn, (i + 1) as u32, byval_attr);
+
+            let ret_ty = self.llvm_type(ir_fn.return_type);
+            let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
+            let use_sret = !is_void_ret && self.needs_sret(ret_ty);
+            let extra = if use_sret { 1u32 } else { 0u32 };
+
+            if use_sret {
+                self.extern_c_sret_fns.insert(hash, ret_ty);
+                let sret_kind = LLVMGetEnumAttributeKindForName(&"sret\0"[0] as &libc::c_char, 4usize);
+                let sret_attr = LLVMCreateTypeAttribute(self.context, sret_kind, ret_ty);
+                LLVMAddAttributeAtIndex(llvm_fn, 1u32, sret_attr);
+            }
+
+            if self.uses_byval_attr() {
+                let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
+                for i in 0usize..ir_fn.params.len() {
+                    let orig_ty = self.llvm_type(ir_fn.params[i].ty);
+                    if self.needs_byval(orig_ty) {
+                        let byval_attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
+                        LLVMAddAttributeAtIndex(llvm_fn, (i as u32) + 1u32 + extra, byval_attr);
+                    }
                 }
             }
         }

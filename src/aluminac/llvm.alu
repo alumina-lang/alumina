@@ -722,15 +722,45 @@ extern "C" fn LLVMValueAsMetadata(val: LLVMValueRef) -> LLVMMetadataRef;
 // === Helper functions ===
 
 fn initialize_native_target() {
+    // Detect host arch from the LLVM default triple ("x86_64-..." vs
+    // "aarch64-...") so we initialize only the actual native backend.
+    // Using runtime detection rather than `#[cfg(target_arch = ...)]` so
+    // that this works under both alumina-boot and aluminac (whose cfg
+    // evaluation differs in scope).
+    let triple = LLVMGetDefaultTargetTriple();
+    let triple_slice = std::ffi::CString::from_raw(triple).as_slice();
+
+    if triple_starts_with(triple_slice, "x86_64") {
+        LLVMInitializeX86TargetInfo();
+        LLVMInitializeX86Target();
+        LLVMInitializeX86TargetMC();
+        LLVMInitializeX86AsmPrinter();
+        LLVMInitializeX86AsmParser();
+    } else if triple_starts_with(triple_slice, "aarch64") {
+        LLVMInitializeAArch64TargetInfo();
+        LLVMInitializeAArch64Target();
+        LLVMInitializeAArch64TargetMC();
+        LLVMInitializeAArch64AsmPrinter();
+        LLVMInitializeAArch64AsmParser();
+    }
+
+    LLVMDisposeMessage(triple);
+}
+
+fn triple_starts_with(triple: &[u8], prefix: &[u8]) -> bool {
+    if triple.len() < prefix.len() { return false; }
+    for i in 0usize..prefix.len() {
+        if triple[i] != prefix[i] { return false; }
+    }
+    true
+}
+
+fn initialize_all_targets() {
     LLVMInitializeX86TargetInfo();
     LLVMInitializeX86Target();
     LLVMInitializeX86TargetMC();
     LLVMInitializeX86AsmPrinter();
     LLVMInitializeX86AsmParser();
-}
-
-fn initialize_all_targets() {
-    initialize_native_target();
     LLVMInitializeAArch64TargetInfo();
     LLVMInitializeAArch64Target();
     LLVMInitializeAArch64TargetMC();

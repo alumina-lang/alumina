@@ -759,8 +759,54 @@ fn print_usage() {
     eprintln!("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O/-O1/-O2/-O3/-Os  Enable optimizations\n  --help, -h    Show this help");
 }
 
+/// Auto-populate ABI-derived cfg flags so that `#[cfg(target_arch = "...")]`
+/// in source files (notably src/aluminac/llvm.alu) evaluates correctly when
+/// aluminac is the compiler. alumina-boot sets these from the host
+/// environment automatically; aluminac historically relied on the user
+/// passing `--cfg`, which bricks the bootstrap on aarch64 because the
+/// target-specific LLVM initializer is gated on this cfg.
+fn populate_host_cfgs(options: &mut CompilerOptions) {
+    let triple_raw = aluminac::llvm::LLVMGetDefaultTargetTriple();
+    let triple = std::ffi::CString::from_raw(triple_raw).as_slice();
+
+    let arch: &[u8] = "";
+    if matches_prefix(triple, "x86_64") {
+        arch = "target_arch=x86_64";
+    } else if matches_prefix(triple, "aarch64") {
+        arch = "target_arch=aarch64";
+    }
+    if arch.len() > 0 && !already_has_key(&options.cfg_flags, "target_arch") {
+        options.cfg_flags.push(arch);
+    }
+
+    aluminac::llvm::LLVMDisposeMessage(triple_raw);
+}
+
+fn matches_prefix(s: &[u8], prefix: &[u8]) -> bool {
+    if s.len() < prefix.len() { return false; }
+    for i in 0usize..prefix.len() {
+        if s[i] != prefix[i] { return false; }
+    }
+    true
+}
+
+fn already_has_key(flags: &Vector<&[u8]>, key: &[u8]) -> bool {
+    for i in 0usize..flags.len() {
+        let f = flags[i];
+        if f.len() > key.len() && f[key.len()] == '=' as u8 {
+            let same = true;
+            for j in 0usize..key.len() {
+                if f[j] != key[j] { same = false; break; }
+            }
+            if same { return true; }
+        }
+    }
+    false
+}
+
 fn main(args: &[&[u8]]) -> i32 {
     let (options, files) = parse_args(args);
+    populate_host_cfgs(&options);
 
     let compiler = Compiler::new(options);
 
