@@ -1123,13 +1123,17 @@ impl FnCodegen {
             return LLVMGetUndef(if self.is_void_type(res_ty) { self.ctx.i64_type } else { res_ty });
         }
 
-        // Eq/Ne on aggregate (Array) operands: LLVM's icmp can't compare
-        // arrays directly, so unroll into element-wise compare folded with
-        // AND/OR. Same approach for both — for Ne we negate at the end.
-        if (op == BinOp::Eq || op == BinOp::Ne) && lhs.ty.tag == IrTyTag::Array {
-            let arr_size = lhs.ty.array_size();
+        // Eq/Ne on aggregate (Array / Tuple) operands: LLVM's icmp can't
+        // compare aggregates directly, so unroll into element-wise compare
+        // folded with AND (==) or OR (!=).
+        if (op == BinOp::Eq || op == BinOp::Ne) && (lhs.ty.tag == IrTyTag::Array || lhs.ty.tag == IrTyTag::Tuple) {
+            let n_elems: u32 = if lhs.ty.tag == IrTyTag::Array {
+                lhs.ty.array_size() as u32
+            } else {
+                lhs.ty.elems().len() as u32
+            };
             let acc: LLVMValueRef = LLVMConstInt(self.ctx.i8_type, if op == BinOp::Eq { 1u64 } else { 0u64 }, 0i32);
-            for i in 0u32..arr_size as u32 {
+            for i in 0u32..n_elems {
                 let a_i = LLVMBuildExtractValue(self.ctx.builder, lhs_val, i, self.temp_cname());
                 let b_i = LLVMBuildExtractValue(self.ctx.builder, rhs_val, i, self.temp_cname());
                 let cmp_kind = LLVMGetTypeKind(LLVMTypeOf(a_i));
