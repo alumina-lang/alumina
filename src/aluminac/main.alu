@@ -780,7 +780,54 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
         options.cfg_flags.push(arch);
     }
 
+    // Pick target_os out of the triple — typically of form arch-vendor-os-env.
+    // We only need to recognize the OSes sysroot/libc/mod.alu cares about.
+    let os: &[u8] = "";
+    if contains_subseq(triple, "linux") {
+        os = "target_os=linux";
+    } else if contains_subseq(triple, "darwin") {
+        os = "target_os=macos";
+    } else if contains_subseq(triple, "android") {
+        os = "target_os=android";
+    } else if contains_subseq(triple, "freebsd") {
+        os = "target_os=freebsd";
+    } else if contains_subseq(triple, "netbsd") {
+        os = "target_os=netbsd";
+    } else if contains_subseq(triple, "openbsd") {
+        os = "target_os=openbsd";
+    } else if contains_subseq(triple, "windows") {
+        os = "target_os=windows";
+    }
+    if os.len() > 0 && !already_has_key(&options.cfg_flags, "target_os") {
+        options.cfg_flags.push(os);
+    }
+
+    // target_pointer_width — needed by sysroot's `count_ones`/etc. when-arms
+    // that branch on `usize`. Default to 64 on the supported architectures.
+    let ptr_width: &[u8] = "";
+    if matches_prefix(triple, "x86_64") || matches_prefix(triple, "aarch64") {
+        ptr_width = "target_pointer_width=\"64\"";
+    } else if matches_prefix(triple, "i686") || matches_prefix(triple, "i386") {
+        ptr_width = "target_pointer_width=\"32\"";
+    }
+    if ptr_width.len() > 0 && !already_has_key(&options.cfg_flags, "target_pointer_width") {
+        options.cfg_flags.push(ptr_width);
+    }
+
     aluminac::llvm::LLVMDisposeMessage(triple_raw);
+}
+
+fn contains_subseq(s: &[u8], needle: &[u8]) -> bool {
+    if needle.len() == 0usize { return true; }
+    if s.len() < needle.len() { return false; }
+    for i in 0usize..(s.len() - needle.len() + 1usize) {
+        let m = true;
+        for j in 0usize..needle.len() {
+            if s[i + j] != needle[j] { m = false; break; }
+        }
+        if m { return true; }
+    }
+    false
 }
 
 fn matches_prefix(s: &[u8], prefix: &[u8]) -> bool {

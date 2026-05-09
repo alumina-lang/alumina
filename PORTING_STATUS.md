@@ -236,7 +236,7 @@ Missing:
 
 ### Libc
 
-- [TODO] **`libc/mod.alu`** — sysroot has full bindings; aluminac has a small subset. Unify.
+- [DONE] **`libc/mod.alu`** — unified. The sysroot version uses `use libc::bindings::*;` to wildcard-import everything, plus a small set of math externs and `errno_location` cfg-dispatched per-OS. Aluminac's `populate_host_cfgs` now sets `target_os` and `target_pointer_width` from the LLVM target triple so the `#[cfg(target_os = "linux")]` arms in sysroot resolve. All quality gates pass.
 - [TODO] **`libc/bindings.alu`** — net-new for aluminac (823 KB pure FFI declarations). No language blockers; just volume.
 - [TODO] **`libc/prelude.alu`** — net-new, tiny. Trivial.
 

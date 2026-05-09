@@ -1,153 +1,16 @@
-//! FFI interfaces to libc.
+//! "FFI" interfaces to libc.
+//!
+//! Bindings are auto-generated from [Rust's libc crate](https://github.com/rust-lang/libc)
+//! using `tools/libc-bindgen`. Common items have no `#[cfg]` guard; platform-specific items
+//! are guarded with appropriate `#[cfg(...)]` attributes.
+//!
+//! Everything from `libc::bindings` is `*`-imported, so use e.g. `libc::write` rather than
+//! `libc::bindings::write`.
 
-type c_char = u8;
 type c_void = void;
-type c_int = i32;
-type c_uint = u32;
-type c_long = i64;
-type c_ulong = u64;
-type intptr_t = isize;
 
-// Standard I/O file descriptor constants
-const STDIN_FILENO: c_int = 0i32;
-const STDOUT_FILENO: c_int = 1i32;
-const STDERR_FILENO: c_int = 2i32;
+// FFI bindings to the standard C math library.
 
-// Memory management
-extern "C" fn malloc(size: usize) -> &mut void;
-extern "C" fn realloc(ptr: &mut void, size: usize) -> &mut void;
-extern "C" fn free(ptr: &mut void);
-
-// File I/O
-extern "C" fn open(path: &c_char, flags: i32) -> i32;
-extern "C" fn close(fd: i32) -> i32;
-extern "C" fn read(fd: i32, buf: &mut c_void, count: usize) -> isize;
-extern "C" fn write(fd: i32, buf: &c_void, count: usize) -> isize;
-extern "C" fn lseek(fd: i32, offset: i64, whence: i32) -> i64;
-extern "C" fn pipe(pipefd: &mut c_int) -> c_int;
-
-// File open flags
-const O_RDONLY: c_int = 0i32;
-const O_WRONLY: c_int = 1i32;
-const O_RDWR: c_int = 2i32;
-const O_CREAT: c_int = 64i32;
-const O_TRUNC: c_int = 512i32;
-const O_APPEND: c_int = 1024i32;
-const O_CLOEXEC: c_int = 524288i32;
-const O_NONBLOCK: c_int = 2048i32;
-
-// fcntl commands
-const F_GETFD: c_int = 1i32;
-const F_SETFD: c_int = 2i32;
-const F_GETFL: c_int = 3i32;
-const F_SETFL: c_int = 4i32;
-const FD_CLOEXEC: c_int = 1i32;
-
-// ioctl constants (Linux)
-const FIONBIO: c_int = 21537i32;
-const FIOCLEX: c_int = 21585i32;
-
-// Pipe
-extern "C" fn pipe2(fds: &mut c_int, flags: c_int) -> c_int;
-
-// Process types
-type pid_t = i32;
-type c_short = i16;
-type nfds_t = c_ulong;
-type ssize_t = isize;
-type size_t = usize;
-
-// Process management
-extern "C" fn system(cmd: &c_char) -> i32;
-extern "C" fn unlink(path: &c_char) -> i32;
-extern "C" fn exit(status: c_int) -> !;
-extern "C" fn abort() -> !;
-extern "C" fn _exit(status: c_int) -> !;
-extern "C" fn getenv(name: &c_char) -> &mut c_char;
-extern "C" fn fork() -> pid_t;
-extern "C" fn waitpid(pid: pid_t, status: &mut c_int, options: c_int) -> pid_t;
-extern "C" fn dup2(src: c_int, dst: c_int) -> c_int;
-extern "C" fn execv(prog: &c_char, argv: &&mut c_char) -> c_int;
-extern "C" fn execve(prog: &c_char, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
-extern "C" fn kill(pid: pid_t, sig: c_int) -> c_int;
-extern "C" fn getcwd(buf: &mut c_char, size: usize) -> &mut c_char;
-extern "C" fn chdir(dir: &c_char) -> c_int;
-extern "C" fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
-extern "C" fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
-extern "C" fn isatty(fd: c_int) -> c_int;
-extern "C" fn getrandom(buf: &mut c_void, buflen: usize, flags: c_uint) -> isize;
-
-// Signals
-const SIGKILL: c_int = 9i32;
-
-// errno values
-const EAGAIN: c_int = 11i32;
-const EWOULDBLOCK: c_int = 11i32;
-const ERANGE: c_int = 34i32;
-const ENOENT: c_int = 2i32;
-
-// poll
-struct pollfd {
-    fd: c_int,
-    events: c_short,
-    revents: c_short,
-}
-const POLLIN: c_short = 1i16;
-extern "C" fn poll(fds: &mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
-
-// Wait status macros (Linux)
-fn WIFEXITED(status: c_int) -> bool {
-    (status & 127i32) == 0i32
-}
-
-fn WEXITSTATUS(status: c_int) -> c_int {
-    (status >> 8i32) & 255i32
-}
-
-fn WIFSIGNALED(status: c_int) -> bool {
-    (((status & 127i32) + 1i32) as i8) >= 2i8
-}
-
-fn WTERMSIG(status: c_int) -> c_int {
-    status & 127i32
-}
-
-fn WCOREDUMP(status: c_int) -> bool {
-    (status & 128i32) != 0i32
-}
-
-// String / memory operations
-extern "C" fn strtod(str: &c_char, endptr: &mut &mut c_char) -> f64;
-extern "C" fn strlen(s: &c_char) -> usize;
-extern "C" fn memcmp(a: &c_void, b: &c_void, n: usize) -> c_int;
-extern "C" fn memcpy(dest: &mut void, src: &void, n: usize) -> &mut void;
-extern "C" fn memset(s: &mut c_void, c: c_int, n: usize) -> &mut c_void;
-extern "C" fn calloc(nmemb: usize, size: usize) -> &mut void;
-extern "C" fn memchr(s: &c_void, c: c_int, n: usize) -> &c_void;
-extern "C" fn memmem(haystack: &c_void, haystacklen: usize, needle: &c_void, needlelen: usize) -> &c_void;
-extern "C" fn memmove(dest: &mut c_void, src: &c_void, n: usize) -> &mut c_void;
-extern "C" fn snprintf(str: &mut c_char, size: usize, fmt: &c_char, ...) -> i32;
-extern "C" fn strerror_r(errnum: c_int, buf: &mut c_char, buflen: usize) -> c_int;
-
-// errno
-extern "C" fn __errno_location() -> &mut c_int;
-
-fn errno_location() -> &mut c_int {
-    __errno_location()
-}
-
-// FILE type (opaque)
-struct FILE {}
-extern "C" fn fdopen(fd: i32, mode: &c_char) -> &mut FILE;
-extern "C" fn fopen(filename: &c_char, mode: &c_char) -> &mut FILE;
-extern "C" fn fclose(stream: &mut FILE) -> i32;
-extern "C" fn fread(ptr: &mut c_void, size: usize, nmemb: usize, stream: &mut FILE) -> usize;
-extern "C" fn fseek(stream: &mut FILE, offset: i64, whence: i32) -> i32;
-extern "C" fn ftell(stream: &mut FILE) -> i64;
-extern "C" fn fprintf(stream: &mut FILE, fmt: &c_char, ...) -> i32;
-extern "C" fn fflush(stream: &mut FILE) -> i32;
-
-// Math library (libm)
 extern "C" fn acos(x: f64) -> f64;
 extern "C" fn acosf(x: f32) -> f32;
 extern "C" fn acosh(x: f64) -> f64;
@@ -240,3 +103,25 @@ extern "C" fn tgamma(x: f64) -> f64;
 extern "C" fn tgammaf(x: f32) -> f32;
 extern "C" fn trunc(x: f64) -> f64;
 extern "C" fn truncf(x: f32) -> f32;
+
+/// Returns a pointer to the thread-local `errno` value.
+/// Platform-specific: wraps `__errno_location` (Linux), `__error` (macOS), or `__errno` (Android).
+#[cfg(target_os = "linux")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __errno_location()
+}
+
+#[cfg(target_os = "macos")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __error()
+}
+
+#[cfg(target_os = "android")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __errno()
+}
+
+use libc::bindings::*;
