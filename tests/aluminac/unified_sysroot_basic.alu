@@ -15,6 +15,12 @@ use std::cmp::Ordering;
 
 struct Point { x: i32, y: i32 }
 
+enum Color {
+    Red = 0i32,
+    Green = 1i32,
+    Blue = 2i32,
+}
+
 impl Point {
     fn equals(lhs: &Point, rhs: &Point) -> bool {
         lhs.x == rhs.x && lhs.y == rhs.y
@@ -290,6 +296,15 @@ fn main() -> i32 {
         false => 2i32,
     };
     if bv2_result != 2i32 { return 78; }
+
+    // switch on enum (the synthetic default fix applies here too).
+    let c = Color::Green;
+    let cv = switch c {
+        Color::Red => 1i32,
+        Color::Green => 2i32,
+        Color::Blue => 3i32,
+    };
+    if cv != 2i32 { return 79; }
 
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
