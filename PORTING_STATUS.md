@@ -116,7 +116,7 @@ Missing:
 - [TODO] **`vtable` intrinsic.** Builds a protocol vtable at const time. Blocks `dyn`.
 - [TODO] **`attributed` intrinsic.** Finds items by attribute name. Depends on custom-attribute support landing first.
 - [TODO] **`value_of` intrinsic.** Yields the runtime lvalue of a const/static.
-- [TODO] **`named_type_name` intrinsic.** Short form of `type_name` (struct/enum simple name only).
+- [DONE] **`named_type_name` intrinsic.** Wired in `mono/intrinsics.alu`'s `lower_type_name(m, ir_type_args, named_only: true)` — returns the struct/enum's short name, or void for unnamed types. Verified by `tests/aluminac/unified_sysroot_basic.alu` (which passes through `std::typing::Type::name`).
 - [TODO] **Float classification (`is_finite` / `is_nan` / `is_infinite` / `is_normal`) at const time.** alumina-boot supports; aluminac runtime-only.
 - [TODO] **Bit-twiddling intrinsics: `count_ones` / `count_zeros` / `leading_zeros` / `trailing_zeros` / `swap_bytes`.** Both at const-eval and codegen. alumina-boot maps to `__builtin_popcount` etc.; aluminac should map to the corresponding LLVM intrinsics.
 - [TODO] **Const-evaluable indexing into string / byte-string / array literals.** Re-confirm behavior matches alumina-boot for OOB and for negative indices via wrapping arithmetic.
