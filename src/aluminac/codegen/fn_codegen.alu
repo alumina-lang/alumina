@@ -1901,13 +1901,20 @@ impl FnCodegen {
             self.ctx.context, self.llvm_fn, &"switch.end\0"[0] as &libc::c_char
         );
 
-        // Find default arm
-        let default_bb = merge_bb;
+        // Always create a real default block — even when there's no
+        // user-supplied default arm, we need a destination distinct from
+        // merge_bb so merge_bb's predecessor set matches the phi's
+        // incoming-block list. Without it, LLVM rejects the phi:
+        // "should have one entry for each predecessor". The synthetic
+        // default block branches to merge_bb (or unreachable for void
+        // results) and contributes a phi entry from there.
+        let default_bb = LLVMAppendBasicBlockInContext(
+            self.ctx.context, self.llvm_fn, &"switch.default\0"[0] as &libc::c_char
+        );
+        let has_user_default = false;
         for i in 0usize..arms.len() {
             if arms[i].is_default {
-                default_bb = LLVMAppendBasicBlockInContext(
-                    self.ctx.context, self.llvm_fn, &"switch.default\0"[0] as &libc::c_char
-                );
+                has_user_default = true;
                 break;
             }
         }
@@ -1974,6 +1981,15 @@ impl FnCodegen {
                     LLVMBuildBr(self.ctx.builder, merge_bb);
                 }
             }
+        }
+
+        // Fill a synthetic default block with `unreachable` if there's no
+        // user-supplied default arm — keeps the LLVM switch well-formed
+        // (default target needs to exist) without making merge_bb appear
+        // as a predecessor of itself.
+        if !has_user_default {
+            LLVMPositionBuilderAtEnd(self.ctx.builder, default_bb);
+            LLVMBuildUnreachable(self.ctx.builder);
         }
 
         LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);

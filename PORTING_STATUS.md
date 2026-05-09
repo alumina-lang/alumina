@@ -250,7 +250,10 @@ Missing:
 
 - [DONE] **Array equality (`==` / `!=` on `[T; N]` value types).** Codegen unrolls into element-wise `icmp` (or `fcmp` for float elements) folded with AND (for ==) or OR (for !=). Verified via the milestone test.
 
-- [TODO] **switch on bool / enum produces malformed phi nodes.** Codegen's switch with non-integer discriminant (bool, enum) sometimes emits a phi with multiple entries from a single predecessor block. LLVM verification fails: "PHINode should have one entry for each predecessor". The integer-switch path works correctly. Affects `switch some_bool { ... }` and `switch some_enum { ... }` where each arm produces a value.
+- [DONE] **switch on bool / enum: phi-node and pattern-value bugs.** Two compounding bugs broke `switch b { true => x, false => y }`:
+  1. Mono's switch-arm value extraction handled IntLit and Cast(IntLit) patterns but missed `BoolLit`, so `true` and `false` patterns both got value 0 — the second arm was deduplicated and dropped.
+  2. Codegen's switch defaulted to merge_bb when there was no user default arm, making merge_bb a predecessor of itself for the LLVM switch instruction; the phi's incoming-block list then disagreed with the predecessor count. Now creates a synthetic `switch.default` block terminating in `unreachable` so merge_bb's predecessors match the arm count.
+  Verified by `tests/aluminac/unified_sysroot_basic.alu` (bool switch with both true and false branches taken on different values).
 
 ## Test infrastructure
 

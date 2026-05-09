@@ -277,6 +277,20 @@ fn main() -> i32 {
     if arr_a != arr_b { return 75; }
     if arr_a == arr_c { return 76; }
 
+    // switch on a bool — synthetic default block keeps the LLVM phi well-formed.
+    let bv: bool = true;
+    let bv_result = switch bv {
+        true => 100i32,
+        false => 200i32,
+    };
+    if bv_result != 100i32 { return 77; }
+    let bv2: bool = false;
+    let bv2_result = switch bv2 {
+        true => 1i32,
+        false => 2i32,
+    };
+    if bv2_result != 2i32 { return 78; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
