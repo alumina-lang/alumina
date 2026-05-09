@@ -228,6 +228,12 @@ fn main() -> i32 {
     let count_arr: [i32; 5] = [1i32, 2i32, 3i32, 4i32, 5i32];
     if count_arr.iter().count() != 5usize { return 57; }
 
+    // const-eval through unified sysroot:
+    const SIZE: usize = std::mem::size_of::<u64>();
+    if SIZE != 8usize { return 60; }
+    const ALIGN: usize = std::mem::align_of::<i64>();
+    if ALIGN != 8usize { return 61; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
