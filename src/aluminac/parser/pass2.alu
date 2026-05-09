@@ -539,6 +539,15 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::DerefOf => {
+                // `*T` in type position — the pointee of T.
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::deref_of_ty(inner_ty));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             NodeKind::SliceOf => {
                 let inner = child_by!(node, FieldKind::Inner);
                 let is_mut = !child_by!(node, FieldKind::Mut).is_none();

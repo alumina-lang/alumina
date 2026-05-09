@@ -139,6 +139,7 @@ enum TyTag {
     Never = 10i32,
     Unresolved = 11i32,
     When = 12i32,
+    DerefOf = 13i32,    // *T in type position — pointee of T
 }
 
 struct _TyPointerData { inner: &Ty, is_const: bool }
@@ -169,7 +170,7 @@ impl Ty {
     fn builtin(self: &Ty) -> BuiltinType { self._data.builtin }
     fn id(self: &Ty) -> Id { self._data.id }
     fn inner(self: &Ty) -> &Ty {
-        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice { self._data.pointer.inner }
+        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf { self._data.pointer.inner }
         else if self.tag == TyTag::Array { self._data.array.inner }
         else if self.tag == TyTag::Generic { self._data.generic.inner }
         else { self._data.when.inner } // When
@@ -229,6 +230,12 @@ impl Ty {
     }
     fn typeof_ty(expr: &Expr) -> Ty {
         Ty { tag: TyTag::Typeof, _data: _TyData { typeof_expr: expr } }
+    }
+    fn deref_of_ty(inner: &Ty) -> Ty {
+        // `*T` in type position — pointee of T. When T is a pointer with
+        // pointee P, resolves to P. When T is a placeholder, resolves
+        // after substitution.
+        Ty { tag: TyTag::DerefOf, _data: _TyData { pointer: _TyPointerData { inner: inner, is_const: false } } }
     }
     fn unresolved() -> Ty {
         Ty { tag: TyTag::Unresolved, _data: _TyData { builtin: BuiltinType::Void } }

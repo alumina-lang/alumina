@@ -223,6 +223,8 @@ Missing:
 
 - [DONE] **Protocol identity through generic-fn substitution.** `resolve_named_type` previously returned `void_ty` when the named item was a protocol, which collapsed protocol type-args at generic call sites — `typing::matches::<i32, Integer>()` mono'd to `i32 is void` and returned false. Now wraps protocols in a new `IrTyTag::Protocol` variant carrying the def-id; the TypeCheck handler recognises this when the AST `check_ty` is a Placeholder substituting to a Protocol IrTy. Verified by `tests/aluminac/unified_sysroot_basic.alu` (typing::matches against Integer / FloatingPoint / Signed).
 
+- [DONE] **`*T` (deref-of) in type position.** Sysroot's `SliceIterator::next` returns `Option<*Ptr>` — `*Ptr` is the pointee type of the generic `Ptr` param. Aluminac's parser previously didn't handle `NodeKind::DerefOf` and silently returned `Ty::unresolved`, collapsing to void after substitution. So the iterator returned `Option<void>` instead of `Option<i32>`, and the for-loop on slices/arrays silently produced 0 iterations. Adds a `Ty::DerefOf` AST variant + parse_type case + resolve_type case (after substitution, derefs through the inner pointer type). Verified by `tests/aluminac/unified_sysroot_basic.alu` for-loops over a slice and an array.
+
 ## Unified sysroot probe
 
 - [PARTIAL] **Aluminac compiles dyn-free programs against `sysroot/`.** The slices in this branch (typeop dispatch, slice pseudo-fields, range type inference, fn-item type resolution, generic-fn skip-on-export, etc.) collectively let aluminac swallow non-trivial code against the unified sysroot — verified by `tests/aluminac/unified_sysroot_basic.alu`. The test exercises generics, Ordering, comparison-operator overload dispatch on a user struct, and works as a regression guard.

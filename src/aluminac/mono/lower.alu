@@ -269,6 +269,16 @@ impl Mono {
                 }
             }
             TyTag::Never => self.ctx.never_ty,
+            TyTag::DerefOf => {
+                // `*T` in type position resolves to T's pointee. After
+                // placeholder substitution, T is a concrete pointer type.
+                let inner_ir = self.resolve_type(ty.inner());
+                if inner_ir.tag == IrTyTag::Pointer {
+                    inner_ir.inner()
+                } else {
+                    self.ctx.void_ty
+                }
+            }
             TyTag::Typeof => {
                 let result = self.lower_expr(ty.typeof_expr());
                 result.ty

@@ -169,5 +169,22 @@ fn main() -> i32 {
     if std::typing::matches::<u32, std::builtins::Signed>() { return 44; }
     if !std::typing::matches::<i64, std::builtins::Signed>() { return 45; }
 
+    // for-loop iteration over a slice — exercises SliceIterator's `Option<*Ptr>`
+    // return type, which depends on the *T deref-of-type form parsing correctly.
+    let nums: [i32; 4] = [11i32, 22i32, 33i32, 44i32];
+    let nums_slice: &[i32] = nums.as_slice();
+    let iter_total: i32 = 0;
+    for n in nums_slice {
+        iter_total = iter_total + n;
+    }
+    if iter_total != 110i32 { return 46; }
+
+    // for-loop directly on an array (array.iter() returns SliceIterator).
+    let arr_total: i32 = 0;
+    for n in nums {
+        arr_total = arr_total + n;
+    }
+    if arr_total != 110i32 { return 47; }
+
     0
 }
