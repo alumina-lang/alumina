@@ -31,6 +31,8 @@ type replace_generic_args_of<T, Args>;
 struct Pair<A, B> { a: A, b: B }
 struct Empty {}
 
+enum NonGeneric { A = 0i32, B = 1i32 }
+
 fn add(a: i32, b: u32) -> u64 { a as u64 + b as u64 }
 fn no_args() -> bool { true }
 
@@ -72,6 +74,9 @@ fn main() -> i32 {
     let lam = |x: i32, y: u32| -> u64 { x as u64 + y as u64 };
     if type_id::<arguments_of<typeof(lam)>>() != type_id::<(i32, u32)>() { return 17; }
     if type_id::<return_type_of<typeof(lam)>>() != type_id::<u64>() { return 18; }
+
+    // generic_args_of on a non-generic enum.
+    if type_id::<generic_args_of<NonGeneric>>() != type_id::<()>() { return 19; }
 
     0
 }

@@ -145,7 +145,7 @@ Missing:
   Missing:
   - `typeop_underlying_type_of` for Static / Const / Closure (currently enum-only).
   - ~~`typeop_arguments_of` / `typeop_return_type_of` for `IrTyTag::Closure`.~~ Done in commit following this entry. Skips the env-pointer first parameter.
-  - `typeop_generic_args_of` for enums.
+  - ~~`typeop_generic_args_of` for enums.~~ Moot — aluminac's grammar doesn't allow generic enum declarations (no `enum Name<T> { … }`). The typeop returns an empty tuple for any enum, which matches the only legal case.
 - [TODO] **Dyn lang items** (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Blocks `dyn` support generally — see Language features.
 - [TODO] **Operator overload lang items** (`operator_eq`, `operator_neq`, `operator_lt`, `operator_lte`, `operator_gt`, `operator_gte`). See Language features.
 - [TODO] **Reflection lang items** (`format_arg`, `enum_variant_new`, `field_descriptor_new`, `field_descriptor_new_unnamed`, `type_descriptor_new`). Required by `enum_variants` / `fields` intrinsics.

@@ -491,12 +491,13 @@ impl Mono {
                             return self.ctx.make_array_ty(elem, len_holder.array_size());
                         }
                     } else if lang == "typeop_generic_args_of" && type_args.len() >= 1 {
-                        // generic_args_of<T>: tuple of T's struct/enum generic args.
+                        // generic_args_of<T>: tuple of T's generic args.
+                        // Aluminac's grammar doesn't (yet) allow generic enums, so the
+                        // only kind that carries type-args is Struct.
                         let t = type_args[0];
                         if t.tag == IrTyTag::Struct {
                             return self.ctx.make_tuple_ty(t.struct_ref().type_args);
                         }
-                        // Non-struct: empty tuple.
                         return self.ctx.make_tuple_ty(&[]);
                     } else if lang == "typeop_underlying_function_of" && type_args.len() >= 1 {
                         // underlying_function_of<T: Closure>: the closure's underlying Fn.
