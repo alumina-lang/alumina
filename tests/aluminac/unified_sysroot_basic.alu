@@ -315,6 +315,19 @@ fn main() -> i32 {
     if 1u32 << 5 != 32u32 { return 84; }
     if 1024u64 >> 4 != 64u64 { return 85; }
 
+    // Closures with explicit capture (aluminac syntax: |=x| for by-value).
+    let cap_a: i32 = 7;
+    let cap_b: i32 = 11;
+    let mul = |=cap_a, =cap_b, x: i32| -> i32 { x * cap_a + cap_b };
+    if mul(3) != 32i32 { return 86; }   // 3*7 + 11 = 32
+
+    // Capture by reference — mutation flows back through the binding.
+    let counter: i32 = 0;
+    let bump = |&counter, delta: i32| { counter = counter + delta; };
+    bump(5);
+    bump(15);
+    if counter != 20 { return 87; }
+
     // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
     // dyn dispatch shim in mono/lower.alu lets the typecheck through but
     // is currently non-deterministic enough to be unsafe in tests; revert
