@@ -48,9 +48,9 @@ Missing:
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
 - [TODO] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** alumina-boot uses these for type-level metadata; absent in aluminac. Confirm whether sysroot actually requires them (may be internal to boot).
 - [TODO] **Coroutines / yield (out of scope per `PORTING.md`).** Grammar has `yield_expression` and the `*`-marked coroutine function form; aluminac never parses either. Keep gated under `cfg(coroutines)` in sysroot. Listed for completeness only — no porting work.
-- [TODO] **Attribute: `#[transparent]`.** alumina-boot recognizes; aluminac's `AttrTag` doesn't. Used in sysroot to mark layout-equivalent newtypes.
+- [PARTIAL] **Attribute: `#[transparent]`.** AttrTag::Transparent + parser recognition. Codegen doesn't yet apply transparent semantics (LLVM struct still wraps, no ABI difference). Sysroot files using `#[transparent]` now parse via the explicit dispatch instead of the catch-all silent-drop.
 - [DONE] **Attribute: `#[link_name("…")]`.** Wired through pass1 → AttrTag::LinkName → mono mangled-name override. `tests/aluminac/link_name_attr.alu` declares `extern "C" fn c_string_len` pointing at libc `strlen` and verifies the call resolves correctly (and the negative — without the attribute it link-fails on `c_string_len`). The previous mis-routing to `AttrTag::Extern` is fixed.
-- [TODO] **Attribute: `#[packed(N)]`.** alumina-boot's `Attribute::Packed(usize)`; missing in aluminac. Affects struct layout for FFI structs.
+- [PARTIAL] **Attribute: `#[packed(N)]` / `#[packed]`.** AttrTag::Packed with int_val for alignment. Parser handles both forms. Codegen doesn't yet pass `packed=1` to LLVMStructTypeInContext, so packing isn't actually applied. Used in libc bindings and FFI structs.
 - [TODO] **Attribute: `#[tuple_call]`.** alumina-boot's `Attribute::TupleCall`; missing in aluminac.
 - [TODO] **Attribute: `#[const_only]` / `#[no_const]`.** alumina-boot has both; aluminac has neither. Used in `sysroot/std/intrinsics.alu` to mark functions that must / must-not run at const time.
 - [TODO] **Attribute: `#[must_use]` / `Diagnostic(MustUse)`.** alumina-boot warns on dropped values; aluminac doesn't model the diagnostic.

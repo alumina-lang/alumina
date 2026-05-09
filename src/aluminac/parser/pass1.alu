@@ -166,6 +166,20 @@ impl Pass1 {
                         "static_ctor" => attrs.push(Attribute::static_ctor()),
                         "always_inline" => attrs.push(Attribute::always_inline()),
                         "no_return" => attrs.push(Attribute::no_return()),
+                        "transparent" => attrs.push(Attribute::transparent()),
+                        "packed" => {
+                            // #[packed] (no arg) defaults to alignment 1.
+                            // #[packed(N)] sets alignment to N.
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let val_text = self.ctx.node_text(args_node.unwrap());
+                                let val = parse_usize(val_text);
+                                if val == 0 { val = 1; }
+                                attrs.push(Attribute::packed(val));
+                            } else {
+                                attrs.push(Attribute::packed(1));
+                            }
+                        }
                         "builtin" => attrs.push(Attribute::builtin()),
                         "returns_twice" => attrs.push(Attribute::returns_twice()),
                         "test_main" => attrs.push(Attribute::test_main()),
