@@ -1,0 +1,38 @@
+// Test: a function name used as a type parameter resolves to that
+// function's zero-sized item type, and a value of that type can be
+// called directly. This is the pattern used by sysroot's entrypoint
+// glue (`unit::<UserMain>()` → `func()`).
+//
+// Two bugs were fixed for this:
+//   - parser/pass2.alu didn't recognize NamedItemTag::Function in a
+//     type position, producing Ty::unresolved() for the type-arg.
+//   - mono/lower.alu's resolve_named_type fell through to void_ty
+//     when the named item was a fn; now produces an IrTy::mk_fn.
+//   - codegen/fn_codegen.alu treated the call result as having a
+//     non-void LLVM type even though Fn lowers to void, leading to
+//     "instruction has a name, but provides a void value".
+
+extern "intrinsic" fn uninitialized<T>() -> T;
+
+fn unit_of<T>() -> T {
+    uninitialized::<T>()
+}
+
+fn the_target() -> i32 { 42 }
+
+fn another_target(x: i32) -> i32 { x * 2 }
+
+fn main() -> i32 {
+    // Zero-arg case: the original repro.
+    let f = unit_of::<the_target>();
+    if f() != 42 { return 1; }
+
+    // One-arg case to confirm calling the Fn-typed value passes args
+    // correctly when the function is non-trivial.
+    let g = unit_of::<another_target>();
+    if g(7) != 14 { return 2; }
+    if g(0) != 0 { return 3; }
+    if g(-3) != -6 { return 4; }
+
+    0
+}

@@ -1398,7 +1398,9 @@ impl FnCodegen {
 
         // Build function type for the call
         let ret_ty = self.ctx.llvm_type(result_ty);
-        let is_void_ret = result_ty.is_void() || result_ty.is_never() || use_sret;
+        // IrTyTag::Fn is a ZST whose llvm_type is void; treat it like a void
+        // return so we don't try to bind a name to the call result.
+        let is_void_ret = result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn || use_sret;
         let llvm_ret = if is_void_ret { self.ctx.void_type } else { ret_ty };
 
         // Total slots in arg_vals (synthetic sret + the user-visible args).
@@ -1702,8 +1704,8 @@ impl FnCodegen {
 
         LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);
 
-        // If result type is void, no phi needed
-        if result_ty.is_void() || result_ty.is_never() {
+        // If result type is void, no phi needed (Fn is a ZST that lowers to void).
+        if result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn {
             return LLVMGetUndef(self.ctx.void_type);
         }
 
@@ -1864,7 +1866,8 @@ impl FnCodegen {
             val = LLVMBuildFPToSI(self.ctx.builder, val, self.ctx.i64_type, self.temp_cname());
             val_ty = self.ctx.i64_type;
         }
-        let is_void_result = result_ty.is_void() || result_ty.is_never();
+        // IrTyTag::Fn is a ZST that lowers to LLVM void.
+        let is_void_result = result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn;
 
         let merge_bb = LLVMAppendBasicBlockInContext(
             self.ctx.context, self.llvm_fn, &"switch.end\0"[0] as &libc::c_char

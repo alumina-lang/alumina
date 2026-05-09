@@ -405,6 +405,18 @@ impl Mono {
             return result;
         }
 
+        // Check if it's a function — a Named type whose item is a fn produces a
+        // zero-sized Fn type (so the function can be passed as a generic arg
+        // and called via the resulting Fn-typed value, e.g. unit::<F>()).
+        let fn_def = self.ctx.fn_defs.get(&item_ref.id._value);
+        if fn_def.is_some() {
+            let def = fn_def.unwrap();
+            let fn_idx = self.mono_function(def, type_args);
+            let ir_fn = &self.ctx.ir_functions[fn_idx];
+            let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+            return self.ctx.arena.alloc(IrTy::mk_fn(fn_ref));
+        }
+
         self.ctx.void_ty
     }
 

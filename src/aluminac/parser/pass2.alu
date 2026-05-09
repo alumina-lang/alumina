@@ -519,6 +519,13 @@ impl Pass2 {
                     } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
                         let bt = item.kind.builtin();
                         return self.ctx.alloc_ty(Ty::builtin_ty(bt));
+                    } else if item.kind.tag == scope::NamedItemTag::Function {
+                        // A function name used in a type position is the
+                        // function's zero-sized item type. Resolves to Ty::Named
+                        // and is monomorphized to IrTyTag::Fn — see
+                        // resolve_named_type in mono/lower.alu.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
                     }
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
