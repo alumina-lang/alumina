@@ -16,7 +16,7 @@ Live source of truth for the aluminac → alumina-boot parity work. See `PORTING
 
 Completed 2026-05-09. Categories below populated by parallel audit of `src/alumina-boot/src/` vs `src/aluminac/`, the two sysroots, the Makefile and existing test runners. The audit is intentionally non-exhaustive in spots (especially language features — see the `[PARTIAL]` extension below); future sessions should grow the lists as gaps surface.
 
-## [PARTIAL] Audit extension — language-feature deep dive
+## [DONE] Audit extension — language-feature deep dive
 
 The first audit pass produced only ~7 language-feature gaps. That's almost certainly low: aluminac is roughly 1/3 the LoC of alumina-boot and the boot AST has machinery (closures' captured-env lowering, mixin substitution, full macro hygiene, etc.) that one short audit doesn't enumerate.
 
