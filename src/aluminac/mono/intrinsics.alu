@@ -31,7 +31,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
             "const_note", "const_warning", "const_bake" =>
             lower_const_runtime_noop(m),
         "compile_fail", "compile_warn", "compile_note" =>
-            lower_compile_diag_noop(m),
+            lower_compile_diag(m, name, expr),
         "volatile" => lower_volatile(m, ir_type_args, expr),
         "slice_len" => lower_slice_len(m, expr),
         "type_id" => lower_type_id(m, ir_type_args),
@@ -237,11 +237,39 @@ fn lower_const_runtime_noop(m: &mut Mono) -> &IrExpr {
     m.ctx.arena.alloc(result)
 }
 
-fn lower_compile_diag_noop(m: &mut Mono) -> &IrExpr {
-    // compile_fail, compile_warn, compile_note - no-op at runtime
-    let result = IrExpr::void_expr(m.ctx.void_ty);
-    result.tag = IrTag::Void;
-    m.ctx.arena.alloc(result)
+fn lower_compile_diag(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
+    // compile_fail (error), compile_warn (warning), compile_note (note) — emit a
+    // diagnostic at compile time using the (string-literal) message argument and
+    // the call-site span. compile_fail aborts the build by raising an error;
+    // compile_warn / compile_note continue.
+    //
+    // A non-string-literal argument is silently treated as an empty message —
+    // lowering the argument here would be premature work since we want the
+    // diagnostic to come from the call site, not from inside a generic body.
+    let msg: &[u8] = if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let span = expr.span;
+
+    if name == "compile_fail" {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, msg));
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Unreachable;
+        m.ctx.arena.alloc(result)
+    } else if name == "compile_warn" {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, msg));
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        m.ctx.arena.alloc(result)
+    } else {
+        // compile_note
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, msg));
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        m.ctx.arena.alloc(result)
+    }
 }
 
 fn lower_volatile(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {

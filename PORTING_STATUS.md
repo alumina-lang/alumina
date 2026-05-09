@@ -62,7 +62,10 @@ Missing:
 - [TODO] **`checked_add` / `checked_sub` / `checked_mul` / `checked_div` intrinsics.** Used by `std::math` and various sysroot bounds checks. tests/aluminac/checked_arithmetic.alu exists — confirm whether it exercises the const path.
 - [TODO] **`checked_shl` / `checked_shr` intrinsics.** Reject shift ≥ bitwidth at const time.
 - [TODO] **`const_panic` intrinsic.** Halts compilation with a message during const eval. aluminac currently no-ops; needed for `static_assert`-style patterns.
-- [TODO] **`const_warning` / `const_note` intrinsics.** Emit diagnostic at const-eval time. aluminac no-ops.
+- [PARTIAL] **`compile_fail` / `compile_warn` / `compile_note` intrinsics.** Now emit real compile-time diagnostics via `m.emit_diag` with the call-site span and the literal-string argument. Verified by `tests/aluminac/compile_fail_intrinsic.alu`. compile_fail correctly aborts the build.
+  Missing:
+  - `const_warning` / `const_note` / `const_panic` (the const-eval-context variants) are still no-ops in `lower_const_runtime_noop`. They should fire when reached through the const evaluator, not when reached at runtime — wire once the const-eval recursive interpreter actually invokes them.
+  - Non-string-literal message argument (e.g. `compile_fail!(format!(...))`) is silently treated as empty. Either accept that limitation explicitly or evaluate the argument as a const-string at compile time.
 - [TODO] **`const_alloc` / `const_free` / `const_bake` intrinsics.** Needed to let const evaluation build heap-allocated descriptors that get baked into rodata. Big lift; required for `enum_variants`, `fields`, etc. to return slices.
 - [TODO] **Const-evaluable function calls.** alumina-boot has a full interpreter (`ir/const_eval.rs` ≈2000 LoC) that evaluates arbitrary pure functions. aluminac's interpreter (`const_eval.alu` ≈1400 LoC) is narrower — characterize and close the gap. (Bang-for-buck task; many other items depend on it.)
 - [TODO] **`enum_variants` intrinsic.** Returns slice of variant descriptors. Depends on `const_alloc` / `const_bake` and on lang item `enum_variant_new`.
