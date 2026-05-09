@@ -143,7 +143,7 @@ Missing:
 - [DONE] **Variadic / va_list intrinsics.** Audited sysroot/ — no references to `va_start` / `va_arg` / `va_end` / `va_list` (also absent from `libc/bindings.alu` despite the prior audit's note). Aluminac doesn't need them; if a future binding reintroduces va_list use, this can be revived.
 - [DONE] **`#[link("…")]` / linker-arg attributes.** Audited sysroot/ — no `#[link(...)]` annotations exist. Aluminac's `--link-args` (and the Makefile's `-ltree-sitter -L/usr/lib/llvm-14/lib -lLLVM-14`) covers the needed libs for the bootstrap. If sysroot grows linker dependencies, migrate then.
 - [TODO] **Debug info (DWARF).** alumina-boot emits `#line` directives in C; aluminac emits no DWARF. Required for `std/runtime/backtrace.alu` to produce useful traces.
-- [TODO] **Panic location capture.** Compiler intrinsic that yields the caller `(file, line)` pair for `panic!`. Verify aluminac path matches alumina-boot's.
+- [DONE] **Panic location capture.** Aluminac's `file!()`, `line!()`, `column!()` macros expand to literals based on the call-site span at parse time (see `src/aluminac/parser/expr.alu`'s "line" / "column" / "file" cases). Sysroot's `panic!` macro uses these to embed the location, matching alumina-boot's mechanism. Verified by `tests/aluminac/unified_sysroot_basic.alu` (file!/line!/column! coverage).
 - [DONE] **ZST elision pass.** Not in scope for parity — alumina-boot's `codegen/elide_zst.rs` is a C-codegen quality pass that deletes loads/stores of zero-sized structs to keep the emitted C clean. Aluminac emits LLVM IR; LLVM's optimizer handles ZST cleanup, and the unoptimized output is functionally correct (LLVM's struct/array-of-zero-fields are well-defined empty). No correctness gap, no future work expected.
 
 ## Lang items
