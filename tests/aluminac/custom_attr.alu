@@ -16,6 +16,11 @@ struct Config { x: i32 }
 
 struct PlainStruct { y: i32 }
 
+#[my_enum_marker]
+enum Tagged { A, B }
+
+enum Plain { X, Y }
+
 fn main() -> i32 {
     // Fn-typed attributes
     if !has_attribute::<typeof(marked_fn)>("my_marker") { return 1; }
@@ -28,6 +33,11 @@ fn main() -> i32 {
     if !has_attribute::<Config>("derive_eq") { return 6; }
     if has_attribute::<Config>("not_there") { return 7; }
     if has_attribute::<PlainStruct>("serde") { return 8; }
+
+    // Enum-typed attributes
+    if !has_attribute::<Tagged>("my_enum_marker") { return 9; }
+    if has_attribute::<Tagged>("nope") { return 10; }
+    if has_attribute::<Plain>("my_enum_marker") { return 11; }
 
     0
 }
