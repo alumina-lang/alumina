@@ -164,7 +164,7 @@ Missing:
   - `typeop_replace_generic_args_of<T, Args>` — re-mono'd struct/enum with `Args`' tuple components as new type-args.
   Verified by `tests/aluminac/typeop_args_return.alu`.
   Missing:
-  - `typeop_underlying_type_of` for Static / Const / Closure (currently enum-only).
+  - `typeop_underlying_type_of` for Static / Const (currently enum + Closure). Closure now resolves to the underlying Fn ZST. Static / Const variants need item-as-type generic support, still TODO.
   - ~~`typeop_arguments_of` / `typeop_return_type_of` for `IrTyTag::Closure`.~~ Done in commit following this entry. Skips the env-pointer first parameter.
   - ~~`typeop_generic_args_of` for enums.~~ Moot — aluminac's grammar doesn't allow generic enum declarations (no `enum Name<T> { … }`). The typeop returns an empty tuple for any enum, which matches the only legal case.
 - [TODO] **Dyn lang items** (`dyn`, `dyn_self`, `dyn_new`, `dyn_const_coerce`, `dyn_const_cast`, `dyn_data`, `dyn_vtable_index`). Blocks `dyn` support generally — see Language features.

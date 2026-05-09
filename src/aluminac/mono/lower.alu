@@ -513,7 +513,13 @@ impl Mono {
                         if t.tag == IrTyTag::Enum {
                             return t.enum_ref().underlying;
                         }
-                        // Closure / Static / Const variants: not yet wired.
+                        if t.tag == IrTyTag::Closure {
+                            // Closure's underlying type is the Fn ZST it carries.
+                            let fn_ref = t.closure_fn();
+                            return self.ctx.make_fn_ty(fn_ref);
+                        }
+                        // Static / Const variants: aluminac doesn't expose item-as-type
+                        // generics yet, so these stay TODO.
                     } else if lang == "typeop_pointer_with_mut_of" && type_args.len() >= 2 {
                         // pointer_with_mut_of<Ptr, RefForMutability>: produce a pointer to
                         // Ptr's pointee with the mutability of the second arg.
