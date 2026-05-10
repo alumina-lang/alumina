@@ -1,171 +1,210 @@
+//! Integer ranges
+//!
+//! Ranges come in different flavors, depending on what kind of bounds they have. For example `0..3` ([Range]) is a range
+//! that contains numbers 0, 1 and 2, `0..=3` ([RangeInclusive]) is a range that contains numbers 0, 1, 2 and 3.
+//!
+//! The most common use of ranges is in `for` loops and in [slice indexing](mem::slice).
+//! ```
+//! for _ in 0..3 {
+//!     // loop body
+//! }
+//! ```
+//! ```
+//! let hw = "hello world";
+//! println!("{}", hw[..5]); // prints "hello"
+//! println!("{}", hw[6..]); // prints "world"
+//! ```
+//! There are also some other places where ranges are used in the standard library (e.g. [random::RngExt::next] for generating random numbers).
+//!
+//! See also [builtins::Range] and [builtins::RangeOf] for protocols that can be used for designing APIs that accept generic ranges.
+
+use builtins::Integer;
+
 /// An unbounded range (`..`)
 #[lang(range_full)]
-struct RangeFull<T: std::builtins::Integer> {
+struct RangeFull<T: Integer> {
 }
 
-impl RangeFull<T: std::builtins::Integer> {
+impl RangeFull<T: Integer> {
+    /// Create a new unbounded range
+    ///
+    /// You usually don't need to call this method directly, use the `..` expression instead.
+    #[inline(ir)]
     #[lang(range_full_new)]
     fn new() -> RangeFull<T> {
         RangeFull {}
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &RangeFull<T>, _other: &RangeFull<T>) -> bool {
         true
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeFull<T>, f: &mut F) -> std::fmt::Result {
-        std::fmt::write!(f, "..")
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeFull<T>, _h: &mut H) {
     }
 
-    fn hash<H: std::hash::Hasher<H>>(self: &RangeFull<T>, _h: &mut H) {
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &RangeFull<T>, f: &mut F) -> fmt::Result {
+        f.write_str("..")
     }
 
-    mixin std::cmp::Equatable<RangeFull<T>>;
-    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeFull<T>, H>;
+    mixin cmp::Equatable<RangeFull<T>>;
 }
 
-/// A range with only a lower bound (`a..`)
+/// A range with a lower bound (`a..`)
 #[lang(range_from)]
-struct RangeFrom<T: std::builtins::Integer> {
+struct RangeFrom<T: Integer> {
     lower: T,
 }
 
-impl RangeFrom<T: std::builtins::Integer> {
+impl RangeFrom<T: Integer> {
+    /// Create a new range with an lower bound.
+    ///
+    /// You usually don't need to call this method directly, use the `a..` expression instead.
+    #[inline(ir)]
     #[lang(range_from_new)]
     fn new(lower: T) -> RangeFrom<T> {
-        RangeFrom { lower: lower }
+        RangeFrom {
+            lower: lower,
+        }
     }
 
-    /// Returns true if value is within the range [lower, ∞).
-    fn contains(self: &RangeFrom<T>, value: T) -> bool {
-        value >= self.lower
-    }
-
-    fn equals(self: &RangeFrom<T>, other: &RangeFrom<T>) -> bool {
-        self.lower == other.lower
-    }
-
-    /// Returns the iterator (self copy) for use in for loops.
+    /// @ iter::Iterable::iter
+    #[inline(always)]
     fn iter(self: &RangeFrom<T>) -> RangeFrom<T> {
         *self
     }
 
-    /// Returns the next value in the range. Always Some — RangeFrom is infinite.
+    /// @ iter::Iterator::next
+    #[inline(always)]
     fn next(self: &mut RangeFrom<T>) -> Option<T> {
         let lower = self.lower;
         self.lower += 1;
         Option::some(lower)
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeFrom<T>, f: &mut F) -> std::fmt::Result {
-        std::fmt::write!(f, "{}..", self.lower)
+    /// @ cmp::Equatable::equals
+    fn equals(self: &RangeFrom<T>, other: &RangeFrom<T>) -> bool {
+        self.lower == other.lower
     }
 
-    fn hash<H: std::hash::Hasher<H>>(self: &RangeFrom<T>, h: &mut H) {
-        self.lower.hash::<H>(h);
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeFrom<T>, h: &mut H) {
+        self.lower.hash(h);
     }
 
-    mixin std::cmp::Equatable<RangeFrom<T>>;
-    mixin std::iter::Iterator<RangeFrom<T>, T>;
-    mixin std::iter::IteratorExt<RangeFrom<T>, T>;
-    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeFrom<T>, H>;
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &RangeFrom<T>, f: &mut F) -> fmt::Result {
+        fmt::write!(f, "{}..", self.lower)
+    }
+
+    mixin cmp::Equatable<RangeFrom<T>>;
+    mixin iter::Iterator<RangeFrom<T>, T>;
+    mixin iter::IteratorExt<RangeFrom<T>, T>;
 }
 
-/// A range with only an upper bound (`..b`)
+/// A range with an upper bound (`..a`)
 #[lang(range_to)]
-struct RangeTo<T: std::builtins::Integer> {
+struct RangeTo<T: Integer> {
     upper: T,
 }
 
-impl RangeTo<T: std::builtins::Integer> {
+
+impl RangeTo<T: Integer> {
+    /// Create a new range with an upper bound.
+    ///
+    /// You usually don't need to call this method directly, use the `..b` expression instead.
+    #[inline(ir)]
     #[lang(range_to_new)]
     fn new(upper: T) -> RangeTo<T> {
-        RangeTo { upper: upper }
+        RangeTo {
+            upper: upper,
+        }
     }
 
-    /// Returns true if value is within the range (-∞, upper).
-    fn contains(self: &RangeTo<T>, value: T) -> bool {
-        value < self.upper
-    }
-
+    /// @ cmp::Equatable::equals
     fn equals(self: &RangeTo<T>, other: &RangeTo<T>) -> bool {
         self.upper == other.upper
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeTo<T>, f: &mut F) -> std::fmt::Result {
-        std::fmt::write!(f, "..{}", self.upper)
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeTo<T>, h: &mut H) {
+        self.upper.hash(h);
     }
 
-    fn hash<H: std::hash::Hasher<H>>(self: &RangeTo<T>, h: &mut H) {
-        self.upper.hash::<H>(h);
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &RangeTo<T>, f: &mut F) -> fmt::Result {
+        fmt::write!(f, "..{}", self.upper)
     }
 
-    mixin std::cmp::Equatable<RangeTo<T>>;
-    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeTo<T>, H>;
+    mixin cmp::Equatable<RangeTo<T>>;
 }
 
-/// A range with only an inclusive upper bound (`..=b`)
+/// A range with an inclusive upper bound (`..=a`)
 #[lang(range_to_inclusive)]
-struct RangeToInclusive<T: std::builtins::Integer> {
+struct RangeToInclusive<T: Integer> {
     upper: T,
 }
 
-impl RangeToInclusive<T: std::builtins::Integer> {
+impl RangeToInclusive<T: Integer> {
+    /// Create a new range with an inclusive upper bound.
+    ///
+    /// You usually don't need to call this method directly, use the `..=b` expression instead.
+    #[inline(ir)]
     #[lang(range_to_inclusive_new)]
     fn new(upper: T) -> RangeToInclusive<T> {
-        RangeToInclusive { upper: upper }
+        RangeToInclusive {
+            upper: upper,
+        }
     }
 
-    /// Returns true if value is within the range (-∞, upper].
-    fn contains(self: &RangeToInclusive<T>, value: T) -> bool {
-        value <= self.upper
-    }
-
+    /// @ cmp::Equatable::equals
     fn equals(self: &RangeToInclusive<T>, other: &RangeToInclusive<T>) -> bool {
         self.upper == other.upper
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeToInclusive<T>, f: &mut F) -> std::fmt::Result {
-        std::fmt::write!(f, "..={}", self.upper)
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeToInclusive<T>, h: &mut H) {
+        self.upper.hash(h);
     }
 
-    fn hash<H: std::hash::Hasher<H>>(self: &RangeToInclusive<T>, h: &mut H) {
-        self.upper.hash::<H>(h);
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &RangeToInclusive<T>, f: &mut F) -> fmt::Result {
+        fmt::write!(f, "..={}", self.upper)
     }
 
-    mixin std::cmp::Equatable<RangeToInclusive<T>>;
-    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeToInclusive<T>, H>;
+    mixin cmp::Equatable<RangeToInclusive<T>>;
 }
 
-/// A range with both lower and upper bounds (a..b)
+/// A range with both lower and upper bounds (`a..b`)
 #[lang(range)]
-struct Range<T: std::builtins::Integer> {
+struct Range<T: Integer> {
     lower: T,
     upper: T,
 }
 
-impl Range<T: std::builtins::Integer> {
+impl Range<T: Integer> {
+    /// Create a new range from the given lower and upper bounds.
+    ///
+    /// You usually don't need to call this method directly, use the `a..b` expression instead.
+    #[inline(ir)]
     #[lang(range_new)]
     fn new(lower: T, upper: T) -> Range<T> {
-        Range { lower: lower, upper: upper }
+        Range {
+            lower: lower,
+            upper: upper,
+        }
     }
 
-    /// Returns true if value is within the range [lower, upper).
-    fn contains(self: &Range<T>, value: T) -> bool {
-        value >= self.lower && value < self.upper
-    }
-
-    /// Returns true if the range is empty (lower >= upper).
-    fn is_empty(self: &Range<T>) -> bool {
-        self.lower >= self.upper
-    }
-
-    /// Returns the iterator (self copy) for use in for loops.
+    /// @ iter::Iterable::iter
+    #[inline(always)]
     fn iter(self: &Range<T>) -> Range<T> {
         *self
     }
 
-    /// Returns the next value in the range, or none if exhausted.
+    /// @ iter::Iterator::next
+    #[inline(always)]
     fn next(self: &mut Range<T>) -> Option<T> {
         if self.lower < self.upper {
             let lower = self.lower;
@@ -176,7 +215,8 @@ impl Range<T: std::builtins::Integer> {
         }
     }
 
-    /// Returns the next value from the back, or none if exhausted.
+    /// @ iter::DoubleEndedIterator::next_back
+    #[inline(always)]
     fn next_back(self: &mut Range<T>) -> Option<T> {
         if self.lower < self.upper {
             self.upper -= 1;
@@ -186,7 +226,7 @@ impl Range<T: std::builtins::Integer> {
         }
     }
 
-    /// Returns the number of remaining elements.
+    /// @ iter::Iterator::size_hint
     fn size_hint(self: &Range<T>) -> Option<usize> {
         if self.lower < self.upper {
             Option::some(self.upper as usize - self.lower as usize)
@@ -195,63 +235,66 @@ impl Range<T: std::builtins::Integer> {
         }
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &Range<T>, other: &Range<T>) -> bool {
         self.lower == other.lower && self.upper == other.upper
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &Range<T>, f: &mut F) -> std::fmt::Result {
-        std::fmt::write!(f, "{}..{}", self.lower, self.upper)
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &Range<T>, h: &mut H) {
+        self.lower.hash(h);
+        self.upper.hash(h);
     }
 
-    fn hash<H: std::hash::Hasher<H>>(self: &Range<T>, h: &mut H) {
-        self.lower.hash::<H>(h);
-        self.upper.hash::<H>(h);
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &Range<T>, f: &mut F) -> fmt::Result {
+        fmt::write!(f, "{}..{}", self.lower, self.upper)
     }
 
-    mixin std::cmp::Equatable<Range<T>>;
-    mixin std::iter::Iterator<Range<T>, T>;
-    mixin std::iter::IteratorExt<Range<T>, T>;
-    mixin std::iter::DoubleEndedIterator<Range<T>, T>;
-    mixin std::iter::DoubleEndedIteratorExt<Range<T>, T>;
-    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<Range<T>, H>;
+    mixin cmp::Equatable<Range<T>>;
+    mixin iter::Iterator<Range<T>, T>;
+    mixin iter::IteratorExt<Range<T>, T>;
+    mixin iter::DoubleEndedIterator<Range<T>, T>;
+    mixin iter::DoubleEndedIteratorExt<Range<T>, T>;
 }
 
-/// An inclusive range with both lower and upper bounds (a..=b)
+/// A inclusive range with both lower and upper bounds (`a..=b`)
 #[lang(range_inclusive)]
-struct RangeInclusive<T: std::builtins::Integer> {
+struct RangeInclusive<T: Integer> {
     lower: T,
     upper: T,
-    _exhausted: bool,
+    _exhausted: bool
 }
 
-impl RangeInclusive<T: std::builtins::Integer> {
+impl RangeInclusive<T: Integer> {
+    /// Create a new inclusive range from the given lower and upper bounds.
+    ///
+    /// You usually don't need to call this method directly, use the `a..=b` expression instead.
+    #[inline(ir)]
     #[lang(range_inclusive_new)]
     fn new(lower: T, upper: T) -> RangeInclusive<T> {
-        RangeInclusive { lower: lower, upper: upper, _exhausted: false }
+        RangeInclusive {
+            lower: lower,
+            upper: upper,
+            _exhausted: false,
+        }
     }
 
-    /// Returns true if value is within the range [lower, upper].
-    fn contains(self: &RangeInclusive<T>, value: T) -> bool {
-        value >= self.lower && value <= self.upper
-    }
-
-    /// Returns true if the range is empty.
-    fn is_empty(self: &RangeInclusive<T>) -> bool {
-        self.lower > self.upper || self._exhausted
-    }
-
-    /// Returns the iterator (self copy) for use in for loops.
+    /// @ iter::Iterable::iter
+    #[inline(always)]
     fn iter(self: &RangeInclusive<T>) -> RangeInclusive<T> {
         *self
     }
 
-    /// Returns the next value in the range, or none if exhausted.
+    /// @ iter::Iterator::next
+    #[inline(always)]
     fn next(self: &mut RangeInclusive<T>) -> Option<T> {
         if self.lower <= self.upper && !self._exhausted {
             let lower = self.lower;
             if self.lower == self.upper {
                 self._exhausted = true;
             } else {
+                // Prevent signed integer overflow.
                 self.lower += 1;
             }
             Option::some(lower)
@@ -260,13 +303,15 @@ impl RangeInclusive<T: std::builtins::Integer> {
         }
     }
 
-    /// Returns the next value from the back, or none if exhausted.
+    /// @ iter::DoubleEndedIterator::next_back
+    #[inline(always)]
     fn next_back(self: &mut RangeInclusive<T>) -> Option<T> {
         if self.lower <= self.upper && !self._exhausted {
             let upper = self.upper;
             if self.lower == self.upper {
                 self._exhausted = true;
             } else {
+                // Prevent signed integer overflow.
                 self.upper -= 1;
             }
             Option::some(upper)
@@ -275,7 +320,7 @@ impl RangeInclusive<T: std::builtins::Integer> {
         }
     }
 
-    /// Returns the number of remaining elements.
+    /// @ iter::Iterator::size_hint
     fn size_hint(self: &RangeInclusive<T>) -> Option<usize> {
         if self.lower <= self.upper && !self._exhausted {
             Option::some(self.upper as usize - self.lower as usize + 1)
@@ -284,23 +329,161 @@ impl RangeInclusive<T: std::builtins::Integer> {
         }
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &RangeInclusive<T>, other: &RangeInclusive<T>) -> bool {
         self.lower == other.lower && self.upper == other.upper
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeInclusive<T>, f: &mut F) -> std::fmt::Result {
-        std::fmt::write!(f, "{}..={}", self.lower, self.upper)
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeInclusive<T>, h: &mut H) {
+        self.lower.hash(h);
+        self.upper.hash(h);
     }
 
-    fn hash<H: std::hash::Hasher<H>>(self: &RangeInclusive<T>, h: &mut H) {
-        self.lower.hash::<H>(h);
-        self.upper.hash::<H>(h);
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &RangeInclusive<T>, f: &mut F) -> fmt::Result {
+        fmt::write!(f, "{}..={}", self.lower, self.upper)
     }
 
-    mixin std::cmp::Equatable<RangeInclusive<T>>;
-    mixin std::iter::Iterator<RangeInclusive<T>, T>;
-    mixin std::iter::IteratorExt<RangeInclusive<T>, T>;
-    mixin std::iter::DoubleEndedIterator<RangeInclusive<T>, T>;
-    mixin std::iter::DoubleEndedIteratorExt<RangeInclusive<T>, T>;
-    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeInclusive<T>, H>;
+    mixin cmp::Equatable<RangeInclusive<T>>;
+    mixin iter::Iterator<RangeInclusive<T>, T>;
+    mixin iter::IteratorExt<RangeInclusive<T>, T>;
+    mixin iter::DoubleEndedIterator<RangeInclusive<T>, T>;
+    mixin iter::DoubleEndedIteratorExt<RangeInclusive<T>, T>;
+}
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_range() {
+        let range = (0..5);
+        assert_eq!(range.size_hint(), Option::some(5usize));
+
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..5).rev();
+        assert_eq!(range.size_hint(), Option::some(5usize));
+
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..0);
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..0).rev();
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..0);
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..0).rev();
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_range_inclusive() {
+        let range = (0..=5);
+        assert_eq!(range.size_hint(), Option::some(6usize));
+
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(5));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..=5).rev();
+        assert_eq!(range.size_hint(), Option::some(6usize));
+
+        assert_eq!(range.next(), Option::some(5));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..=0);
+        assert_eq!(range.size_hint(), Option::some(1usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..=0).rev();
+        assert_eq!(range.size_hint(), Option::some(1usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..=0);
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..=0).rev();
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_range_lower() {
+        let range = (5..);
+        assert_eq!(range.size_hint(), Option::none());
+
+        assert_eq!(range.next(), Option::some(5));
+        assert_eq!(range.next(), Option::some(6));
+        assert_eq!(range.next(), Option::some(7));
+        assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::some(9));
+        assert_eq!(range.next(), Option::some(10));
+        // ...
+    }
+
+    #[test]
+    fn test_equality() {
+        assert_eq!(.., ..);
+
+        assert_eq!(1.., 1..);
+        assert_ne!(1.., 2..);
+
+        assert_eq!(..1, ..1);
+        assert_ne!(..1, ..2);
+
+        assert_eq!(..=1, ..=1);
+        assert_ne!(..=1, ..=2);
+
+        assert_eq!(0..5, 0..5);
+        assert_ne!(0..5, 1..5);
+        assert_ne!(0..5, 0..6);
+
+        assert_eq!(0..=5, 0..=5);
+        assert_ne!(0..=5, 1..=5);
+        assert_ne!(0..=5, 0..=6);
+    }
+
+    #[test]
+    fn test_hash() {
+        use hash::hash_of;
+
+        assert_eq!((..).hash_of(), (()).hash_of());
+        assert_ne!((1..).hash_of(), (2..).hash_of());
+        assert_ne!((..1).hash_of(), (..2).hash_of());
+        assert_ne!((..=1).hash_of(), (..=2).hash_of());
+        assert_ne!((1..2).hash_of(), (1..3).hash_of());
+        assert_ne!((1..2).hash_of(), (0..2).hash_of());
+        assert_ne!((1..=2).hash_of(), (1..=3).hash_of());
+        assert_ne!((1..=2).hash_of(), (0..=2).hash_of());
+    }
 }
