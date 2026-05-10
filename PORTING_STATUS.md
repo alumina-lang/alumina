@@ -197,10 +197,9 @@ Notes on remaining macro audit gaps:
   - Doc comments + embedded tests.
 <!-- std/result.alu PARTIAL entry moved up next to std/option.alu -->
 
-- [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting surface: all six variants with `#[lang(...)]` attrs and `fmt`; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). All variants mix in `cmp::Equatable<...>`. Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, and `range_double_ended.alu` (including .rev() on Range / RangeInclusive and size_hint reporting).
+- [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting / hashing surface: all six variants with `#[lang(...)]` attrs, `T: Integer` bounds, `fmt`, `equals`, `hash`, plus `cmp::Equatable<...>` and `hash::Hashable<...>` mixins on all variants; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, `range_double_ended.alu`, `range_hash.alu`, and `range_as_hashmap_key.alu`.
   Missing for full unification with sysroot's `std/range.alu`:
-  - `T: Integer` bounds on every variant.
-  - Diff-and-unify pass: still pending — sysroot-aluminac and sysroot diverge in `T: Integer` bounds, doc comments, and the embedded test module. The functional surface (methods + mixins) is parity. Literal unification likely requires either keeping fmt impls (sysroot has none) or changing how sysroot-aluminac's assert_eq formats values.
+  - Diff-and-unify pass: pending — sysroot-aluminac and sysroot diverge in doc comments, `#[inline(...)]` annotations (cosmetic in aluminac), and the embedded test module. The functional surface is at parity. The remaining literal-unification blocker is the embedded test_hash test, which uses `(1..).hash_of()` value-form UFCS (see "UFCS auto-ref for methods taking `&T`" PARTIAL above).
 
 - [PARTIAL] **UFCS auto-ref for methods taking `&T`.** Calling a free function with `&T` parameter via UFCS on a value (not a reference) doesn't trigger auto-take-ref. Reproducer:
   - `fn hash_of<T>(val: &T) -> u64 { ... }`
