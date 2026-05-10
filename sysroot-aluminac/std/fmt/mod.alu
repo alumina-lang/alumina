@@ -180,6 +180,38 @@ mod internal {
         }
     }
 
+    /// 128-bit unsigned formatting (decimal). u128 max needs up to 39 digits.
+    fn format_integer_unsigned_128<F: Formatter<F>>(val: u128, fmt: &mut F) -> Result {
+        let buf: [u8; 39];
+        let i: usize = 0;
+        let v = val;
+        if v == 0u128 {
+            return fmt.write_byte('0' as u8);
+        }
+        while v > 0u128 {
+            buf[38usize - i] = (v % 10u128) as u8 + '0' as u8;
+            v = v / 10u128;
+            i = i + 1usize;
+        }
+        fmt.write_str(buf[39usize - i .. 39usize])
+    }
+
+    /// 128-bit signed formatting (decimal). i128 min needs the same trick as i64.
+    fn format_integer_signed_128<F: Formatter<F>>(val: i128, fmt: &mut F) -> Result {
+        if val < 0i128 {
+            fmt.write_byte('-' as u8)?;
+            // i128::MIN: -2^127 cannot be negated. Hard-code the magnitude.
+            // Compare via bit-pattern equality with the wrapping lower bound.
+            let i128_min: i128 = 1i128 << 127i128;
+            if val == i128_min {
+                return fmt.write_str("170141183460469231731687303715884105728");
+            }
+            format_integer_unsigned_128::<F>((0i128 - val) as u128, fmt)
+        } else {
+            format_integer_unsigned_128::<F>(val as u128, fmt)
+        }
+    }
+
     /// Integer formatting helper (unsigned, arbitrary radix)
     fn format_integer_radix<F: Formatter<F>>(val: u64, radix: u64, fmt: &mut F) -> Result {
         let digits = "0123456789abcdef0123456789ABCDEF";
