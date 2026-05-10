@@ -192,10 +192,10 @@ Notes on remaining macro audit gaps:
 
   Caveat: `Option::not_equals::<T>(...)` no longer matches the sysroot-aluminac signature with method-level T (since sysroot only has the protocol-mixin'd version with `Self: Option<T>`). `tests/aluminac/protocol_bound_debug.alu` updated to use the natural method-call form `o1.not_equals(&o2)`.
 
-- [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt`. Newly added `mixin Equatable<Result<T, E>>`, `hash<...>` + `mixin Hashable<Result<T, E>, H>`, plus `AnyResult` type alias (`tests/aluminac/option_result_equatable.alu`, `option_result_hash.alu`, `option_result_any.alu`).
+- [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt`. Newly added `mixin Equatable<Result<T, E>>`, `hash<...>` + `mixin Hashable<Result<T, E>, H>`, plus `AnyResult` type alias (`tests/aluminac/option_result_equatable.alu`, `option_result_hash.alu`, `option_result_any.alu`). `fmt::debug<T>` + `DebugAdapter` stub now landed (defers to T's own fmt for Formattable, type name otherwise).
   Missing for unification with sysroot's `std/result.alu`:
-  - Sysroot's `unwrap_err` / `unwrap` use `when ok is Formattable<T, PanicFormatter> { panic!("...{}", ok) } else { panic!("...{}", ok.debug()) }`. The when path now resolves correctly for builtins (fixed alongside builtin protocol-conformance — `tests/aluminac/builtin_protocol_conformance.alu`), but the else branch is still reached for non-Formattable types, and `.debug()` dispatches via free fn `fmt::debug<T>(value: T) -> DebugAdapter<T>` which doesn't exist in sysroot-aluminac. Need to port `fmt::debug` + `DebugAdapter` for the panic-message richness path to compile.
-  - Panic-message richness: same gap as Option (sysroot includes `.debug()` of the value, sysroot-aluminac uses literal type-level text).
+  - Sysroot's `unwrap` body declares a nested `fn unwrap_panic_err(err: E) -> !` that references the *outer* impl's E. Aluminac's nested-fn generic-param inheritance doesn't propagate the impl's generics through, so the call `unwrap_panic_err(self._inner.err)` mis-types `err`. Repro: copy `sysroot/std/result.alu` over `sysroot-aluminac/`'s and bootstrap fails with "type mismatch: expected 'Error', got 'i32'" at the call site (Error here is fmt::Error in scope, i.e. whatever name resolves when E is unbound).
+  - Panic-message richness: full version uses DebugAdapter walking through reflection. Stub is in place but limited.
   - Doc comments + embedded tests.
 <!-- std/result.alu PARTIAL entry moved up next to std/option.alu -->
 
