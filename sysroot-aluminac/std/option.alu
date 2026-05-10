@@ -243,7 +243,22 @@ impl Option {
         !Option::equals::<T>(lhs, rhs)
     }
 
+    /// Compare two options. None < Some, and Some<a> compares to Some<b>
+    /// via the inner type's compare.
+    fn compare<T: std::cmp::Comparable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> std::cmp::Ordering {
+        if lhs._is_some && rhs._is_some {
+            lhs._inner.compare(&rhs._inner)
+        } else if !lhs._is_some && !rhs._is_some {
+            std::cmp::Ordering::Equal
+        } else if lhs._is_some {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Less
+        }
+    }
+
     mixin<T: Equatable<T>> std::cmp::Equatable<Option<T>>;
+    mixin<T: std::cmp::Comparable<T>> std::cmp::Comparable<Option<T>>;
 }
 
 #[cfg(all(test, test_std))]

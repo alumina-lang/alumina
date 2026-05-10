@@ -1,0 +1,33 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Option<T> mixes in Comparable<Option<T>> when T is Comparable, so
+// options participate in <, <=, >, >= and sort. None < Some by convention.
+
+use std::cmp::{Comparable, Ordering};
+
+fn check_cmp<T: Comparable<T>>(a: &T, b: &T) -> Ordering {
+    a.compare(b)
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = Option::some(1i32);
+    let b = Option::some(2i32);
+    let n: Option<i32> = Option::none();
+
+    // Direct compare via protocol
+    if check_cmp(&a, &a) != Ordering::Equal { return 1i32; }
+    if check_cmp(&a, &b) != Ordering::Less { return 2i32; }
+    if check_cmp(&b, &a) != Ordering::Greater { return 3i32; }
+    if check_cmp(&n, &n) != Ordering::Equal { return 4i32; }
+    if check_cmp(&n, &a) != Ordering::Less { return 5i32; }
+    if check_cmp(&a, &n) != Ordering::Greater { return 6i32; }
+
+    // Operators (<, >, <=, >=) dispatch through compare
+    if !(a < b) { return 7i32; }
+    if !(b > a) { return 8i32; }
+    if !(n < a) { return 9i32; }
+    if !(a >= a) { return 10i32; }
+    if !(n <= n) { return 11i32; }
+    if (a < n) { return 12i32; }
+
+    0i32
+}
