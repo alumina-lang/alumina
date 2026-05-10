@@ -1032,27 +1032,24 @@ impl Mono {
                 }
             }
             ExprTag::Range => {
-                // Lower a..b / a..=b to Range<T> / RangeInclusive<T> struct.
+                // Lower range literals to one of six structs based on which
+                // endpoints are present and inclusivity:
                 //
-                // T is inferred from the operands: if both lower and upper are
-                // present they must agree (else fallback to usize); if only one
-                // is present its type is T; if neither is present (full range)
-                // T defaults to usize.
-                let lang_name: &[u8] = if expr.flag() { "range_inclusive" } else { "range" };
-                let lang_id = self.ctx.get_lang_item(lang_name);
-                if lang_id.is_none() {
-                    let r = IrExpr::void_expr(self.ctx.void_ty);
-                    return self.ctx.arena.alloc(r);
-                }
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_none() {
-                    let r = IrExpr::void_expr(self.ctx.void_ty);
-                    return self.ctx.arena.alloc(r);
-                }
+                //   ..       -> RangeFull<T>          (lang item: range_full)
+                //   a..      -> RangeFrom<T>          (lang item: range_from)
+                //   ..b      -> RangeTo<T>            (lang item: range_to)
+                //   ..=b     -> RangeToInclusive<T>   (lang item: range_to_inclusive)
+                //   a..b     -> Range<T>              (lang item: range)
+                //   a..=b    -> RangeInclusive<T>     (lang item: range_inclusive)
+                //
+                // The element type T is inferred from the present operand. When
+                // both are present they must agree (else fallback to usize); when
+                // neither is present (RangeFull), T defaults to usize.
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
 
                 let has_lower = expr.lhs() as &void as usize != 0;
                 let has_upper = expr.rhs() as &void as usize != 0;
+                let is_inclusive = expr.flag();
 
                 let raw_lower = if has_lower { self.lower_expr(expr.lhs()) } else { null as &IrExpr };
                 let raw_upper = if has_upper { self.lower_expr(expr.rhs()) } else { null as &IrExpr };
@@ -1071,31 +1068,91 @@ impl Mono {
                     usize_ty
                 };
 
-                let ir_lower = if has_lower {
-                    self.mk_cast(raw_lower, elem_ty)
+                let lang_name: &[u8] = if has_lower && has_upper {
+                    if is_inclusive { "range_inclusive" } else { "range" }
+                } else if has_lower {
+                    "range_from"
+                } else if has_upper {
+                    if is_inclusive { "range_to_inclusive" } else { "range_to" }
                 } else {
-                    // Open-ended range (..) — start at zero of the element type.
-                    self.mk_int_lit(elem_ty, 0u64)
-                };
-                let ir_upper = if has_upper {
-                    self.mk_cast(raw_upper, elem_ty)
-                } else {
-                    // Open-ended upper (a..) — sentinel = max value of the element type.
-                    // For now use all-ones in the element width; this is correct for usize/u*
-                    // and acceptable as a sentinel for signed integers since the range iterator
-                    // reaches it before overflow.
-                    self.mk_int_lit(elem_ty, 18446744073709551615u64)
+                    "range_full"
                 };
 
+                let lang_id = self.ctx.get_lang_item(lang_name);
+                let sd_opt = if lang_id.is_some() {
+                    self.ctx.struct_defs.get(&lang_id.unwrap())
+                } else {
+                    Option::none()
+                };
+
+                // Fallback: lang item missing (sysroot doesn't define this
+                // range variant yet, e.g. sysroot-aluminac without RangeFull).
+                // Synthesize as Range<elem_ty>{0, max} matching the prior
+                // behavior so existing aluminac sysroot stays compatible.
+                if sd_opt.is_none() {
+                    let fallback_id = self.ctx.get_lang_item(if is_inclusive { "range_inclusive" } else { "range" });
+                    if fallback_id.is_none() {
+                        let r = IrExpr::void_expr(self.ctx.void_ty);
+                        return self.ctx.arena.alloc(r);
+                    }
+                    let fallback_sd = self.ctx.struct_defs.get(&fallback_id.unwrap());
+                    if fallback_sd.is_none() {
+                        let r = IrExpr::void_expr(self.ctx.void_ty);
+                        return self.ctx.arena.alloc(r);
+                    }
+                    let ir_lower = if has_lower {
+                        self.mk_cast(raw_lower, elem_ty)
+                    } else {
+                        self.mk_int_lit(elem_ty, 0u64)
+                    };
+                    let ir_upper = if has_upper {
+                        self.mk_cast(raw_upper, elem_ty)
+                    } else {
+                        self.mk_int_lit(elem_ty, 18446744073709551615u64)
+                    };
+                    let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                    type_args[0] = elem_ty;
+                    let range_ty = self.mono_struct(fallback_sd.unwrap(), type_args);
+                    let fields = self.ctx.arena.alloc_slice::<&IrExpr>(if is_inclusive { 3usize } else { 2usize });
+                    fields[0] = ir_lower;
+                    fields[1] = ir_upper;
+                    if is_inclusive {
+                        fields[2] = self.mk_bool_lit(false);
+                    }
+                    let result = IrExpr::void_expr(range_ty);
+                    result.tag = IrTag::StructLit;
+                    result._data.struct_lit.ir_ty = range_ty;
+                    result._data.struct_lit.items = fields;
+                    return self.ctx.arena.alloc(result);
+                }
+
+                let sd = sd_opt.unwrap();
                 let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
                 type_args[0] = elem_ty;
-                let range_ty = self.mono_struct(sd.unwrap(), type_args);
-                let fields = self.ctx.arena.alloc_slice::<&IrExpr>(if expr.flag() { 3usize } else { 2usize });
-                fields[0] = ir_lower;
-                fields[1] = ir_upper;
-                if expr.flag() {
-                    // RangeInclusive has a third field: _exhausted
-                    fields[2] = self.mk_bool_lit(false);
+                let range_ty = self.mono_struct(sd, type_args);
+
+                // Determine field count by lang variant. RangeFull = 0 fields,
+                // RangeInclusive = 3 (lower, upper, _exhausted), others vary.
+                let field_count: usize = if has_lower && has_upper {
+                    if is_inclusive { 3usize } else { 2usize }
+                } else if has_lower || has_upper {
+                    1usize
+                } else {
+                    0usize
+                };
+
+                let fields = self.ctx.arena.alloc_slice::<&IrExpr>(field_count);
+                let fi: usize = 0;
+                if has_lower {
+                    fields[fi] = self.mk_cast(raw_lower, elem_ty);
+                    fi = fi + 1;
+                }
+                if has_upper {
+                    fields[fi] = self.mk_cast(raw_upper, elem_ty);
+                    fi = fi + 1;
+                }
+                if is_inclusive && has_lower && has_upper {
+                    fields[fi] = self.mk_bool_lit(false);
                 }
                 let result = IrExpr::void_expr(range_ty);
                 result.tag = IrTag::StructLit;
@@ -3176,29 +3233,56 @@ impl Mono {
             let indexee = self.coerce_to_indexable(derefed);
 
             if self.is_range_ty(ir_index.ty) {
-                // Range indexing (sub-slicing): extract lower/upper from range struct
+                // Range indexing (sub-slicing): extract lower/upper bounds from
+                // the appropriate fields of each range variant.
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                let ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                let ir_end = if ir_index.ty.struct_ref().fields.len() > 1 {
-                    // Check for MAX_USIZE sentinel (open-ended range a..)
-                    // by inspecting the IR expression tree directly. When the range
-                    // was constructed by our Range lowering, the upper bound is a
-                    // struct literal field that may contain a literal sentinel.
-                    let is_sentinel = false;
-                    if ir_index.tag == IrTag::StructLit {
-                        let upper_item = ir_index._data.struct_lit.items[1];
-                        if upper_item.tag == IrTag::IntLit && upper_item.int_val() == 18446744073709551615u64 {
-                            is_sentinel = true;
+                let range_struct_id = ir_index.ty.struct_ref().id._value;
+                let len_expr = self.get_indexee_len(indexee);
+                let zero_lit = self.mk_int_lit(usize_ty, 0u64);
+
+                let ir_start: &IrExpr = zero_lit;
+                let ir_end: &IrExpr = len_expr;
+
+                if self.ctx.is_lang_item(range_struct_id, "range_full") {
+                    // .. — full slice. start = 0, end = len.
+                } else if self.ctx.is_lang_item(range_struct_id, "range_from") {
+                    // a.. — start = lower, end = len.
+                    ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                } else if self.ctx.is_lang_item(range_struct_id, "range_to") {
+                    // ..b — start = 0, end = upper.
+                    ir_end = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                } else if self.ctx.is_lang_item(range_struct_id, "range_to_inclusive") {
+                    // ..=b — start = 0, end = upper + 1.
+                    let upper = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                    let one_lit = self.mk_int_lit(usize_ty, 1u64);
+                    ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
+                } else if self.ctx.is_lang_item(range_struct_id, "range_inclusive") {
+                    // a..=b — start = lower, end = upper + 1.
+                    ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                    let upper = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
+                    let one_lit = self.mk_int_lit(usize_ty, 1u64);
+                    ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
+                } else {
+                    // Fallback: legacy Range<T> { lower, upper } shape.
+                    // Aluminac sysroot uses this for `..` (no RangeFull lang item),
+                    // emitting Range<usize>{0, MAX_USIZE} as a sentinel. Detect the
+                    // sentinel and use the indexee's length.
+                    ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                    if ir_index.ty.struct_ref().fields.len() > 1 {
+                        let is_sentinel = false;
+                        if ir_index.tag == IrTag::StructLit {
+                            let upper_item = ir_index._data.struct_lit.items[1];
+                            if upper_item.tag == IrTag::IntLit && upper_item.int_val() == 18446744073709551615u64 {
+                                is_sentinel = true;
+                            }
+                        }
+                        if is_sentinel {
+                            ir_end = len_expr;
+                        } else {
+                            ir_end = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
                         }
                     }
-                    if is_sentinel {
-                        self.get_indexee_len(indexee)
-                    } else {
-                        self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty)
-                    }
-                } else {
-                    self.get_indexee_len(indexee)
-                };
+                }
                 return self.lower_subslice_ir(indexee, ir_start, ir_end);
             }
 
