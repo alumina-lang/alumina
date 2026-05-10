@@ -280,13 +280,13 @@ impl Mono {
                 }
             }
             TyTag::Dyn => {
-                // `&dyn Proto` — resolve to the lang(dyn) struct from sysroot
-                // (`struct dyn<Protos, Ptr>`). Aluminac currently captures only
-                // the first protocol; multi-protocol forms `&dyn (A + B)` are
-                // a future slice. The Ptr type-arg is `&void` (or `&mut void`
-                // depending on mutability) since dyn erases the underlying
-                // pointee type. Method dispatch through this type is not yet
-                // implemented — calls will fail at mono with a clear error.
+                // `&dyn Proto` (or `&dyn (A + B + ...)`) — resolve to the
+                // lang(dyn) struct from sysroot (`struct dyn<Protos, Ptr>`).
+                // The Ptr type-arg is `&void` (or `&mut void` depending on
+                // mutability) since dyn erases the underlying pointee type.
+                // Multi-protocol bounds: parser passes a Tuple Ty whose
+                // elements are the individual protocols; we unwrap to build
+                // a Protos tuple.
                 let dyn_lang_id = self.ctx.get_lang_item("dyn");
                 if dyn_lang_id.is_none() {
                     return self.ctx.void_ty;
@@ -295,13 +295,23 @@ impl Mono {
                 if sd.is_none() {
                     return self.ctx.void_ty;
                 }
-                let inner_ir = self.resolve_type(ty.inner());
+                let inner_ast = ty.inner();
                 let void_ty = self.ctx.void_ty;
                 let ptr_ty = self.ctx.make_ptr_ty(void_ty, ty.is_const());
-                // Build a 1-tuple for Protos = (Proto,).
-                let protos = self.ctx.arena.alloc_slice::<&IrTy>(1);
-                protos[0] = inner_ir;
-                let protos_tuple = self.ctx.make_tuple_ty(protos);
+                let protos_tuple: &IrTy;
+                if inner_ast.tag == TyTag::Tuple {
+                    let n = inner_ast.elems().len();
+                    let protos = self.ctx.arena.alloc_slice::<&IrTy>(n);
+                    for pi in 0usize..n {
+                        protos[pi] = self.resolve_type(inner_ast.elems()[pi]);
+                    }
+                    protos_tuple = self.ctx.make_tuple_ty(protos);
+                } else {
+                    let inner_ir = self.resolve_type(inner_ast);
+                    let protos = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                    protos[0] = inner_ir;
+                    protos_tuple = self.ctx.make_tuple_ty(protos);
+                }
                 let dyn_args = self.ctx.arena.alloc_slice::<&IrTy>(2);
                 dyn_args[0] = protos_tuple;
                 dyn_args[1] = ptr_ty;

@@ -47,6 +47,22 @@ fn calc_mul(c: &dyn Calc<Self>, n: i32) -> i32 {
     c.mul(n)
 }
 
+// Multi-protocol bound — `&dyn (A + B)`. Vtable concatenates A's
+// methods then B's; dispatch indices are summed across protos.
+struct Combo {
+    g: i32,
+    a_offset: i32,
+}
+impl Combo {
+    fn greet(self: &Combo) -> i32 { self.g }
+    fn add(self: &Combo, n: i32) -> i32 { self.a_offset + n }
+    fn mul(self: &Combo, n: i32) -> i32 { self.a_offset * n }
+}
+
+fn combo_greet_then_add(x: &dyn (Greeter<Self> + Calc<Self>)) -> i32 {
+    x.greet() + x.add(5i32)
+}
+
 fn main(args: &[&[u8]]) -> i32 {
     let a = A {};
     let b = B {};
@@ -57,6 +73,9 @@ fn main(args: &[&[u8]]) -> i32 {
     let c = C { base: 10i32 };
     if calc_add(&c, 5i32) != 15i32 { return 3i32; }
     if calc_mul(&c, 5i32) != 50i32 { return 4i32; }
+
+    let combo = Combo { g: 100i32, a_offset: 7i32 };
+    if combo_greet_then_add(&combo) != 112i32 { return 5i32; }
 
     0i32
 }

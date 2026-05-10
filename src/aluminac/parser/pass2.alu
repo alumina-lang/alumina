@@ -553,18 +553,30 @@ impl Pass2 {
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             NodeKind::DynOf => {
-                // `&dyn P` (or `&mut dyn P`, `&dyn (P + Q)`). Aluminac
-                // currently captures only the FIRST inner protocol — the
-                // grammar permits multiple via `(A + B + ...)`. Resolves
-                // to the lang(dyn) struct; method dispatch is not yet
-                // implemented (see PORTING_STATUS.md).
-                let inner = child_by!(node, FieldKind::Inner);
+                // `&dyn P` (or `&mut dyn P`, `&dyn (P + Q + ...)`). The
+                // grammar emits one or more `inner` fields. For the
+                // single-inner case we keep the inner Ty as-is; for the
+                // multi-protocol case we synthesize a TupleTy containing
+                // each protocol — resolve_type's Dyn branch unpacks it
+                // back into the dyn struct's Protos type-arg.
                 let is_mut = !child_by!(node, FieldKind::Mut).is_none();
-                if !inner.is_none() {
-                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
-                    return self.ctx.alloc_ty(Ty::dyn_ty(inner_ty, !is_mut));
+                let cursor = node.walk();
+                defer cursor.free();
+                let inner_tys: Vector<&Ty> = Vector::new();
+                defer inner_tys.free();
+                for inner_node in children_by!(node, FieldKind::Inner, &cursor) {
+                    inner_tys.push(self.parse_type(inner_node, scope_idx));
                 }
-                self.ctx.alloc_ty(Ty::unresolved())
+                if inner_tys.len() == 0usize {
+                    return self.ctx.alloc_ty(Ty::unresolved());
+                }
+                let combined: &Ty = if inner_tys.len() == 1usize {
+                    inner_tys[0]
+                } else {
+                    let elems = self.ctx.arena.alloc_slice_copy::<&Ty>(inner_tys.as_slice());
+                    self.ctx.alloc_ty(Ty::tuple_ty(elems))
+                };
+                self.ctx.alloc_ty(Ty::dyn_ty(combined, !is_mut))
             },
             NodeKind::SliceOf => {
                 let inner = child_by!(node, FieldKind::Inner);
