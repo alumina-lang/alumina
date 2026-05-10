@@ -1,0 +1,81 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+// Verify is_finite / is_nan / is_infinite const-evaluate.
+//
+// Each pair below has both the const initializer and a runtime check.
+// The array-length form (CHECK_ARR_LEN) wedges a const-required usage
+// in: if `(1.0f64).is_finite()` doesn't const-fold, building the
+// fixed-size array fails compilation.
+
+const FINITE_1: bool = (1.0f64).is_finite();
+const FINITE_NEG_1: bool = (-1.0f64).is_finite();
+const FINITE_ZERO: bool = (0.0f64).is_finite();
+const FINITE_NEG_ZERO: bool = (-0.0f64).is_finite();
+const FINITE_TINY: bool = (1.0e-320f64).is_finite();   // subnormal
+const FINITE_NAN: bool = f64::nan().is_finite();
+const FINITE_INF: bool = f64::infinity().is_finite();
+const FINITE_NEG_INF: bool = f64::neg_infinity().is_finite();
+
+const NAN_1: bool = (1.0f64).is_nan();
+const NAN_ZERO: bool = (0.0f64).is_nan();
+const NAN_TINY: bool = (1.0e-320f64).is_nan();
+const NAN_NAN: bool = f64::nan().is_nan();
+const NAN_INF: bool = f64::infinity().is_nan();
+
+const INF_1: bool = (1.0f64).is_infinite();
+const INF_ZERO: bool = (0.0f64).is_infinite();
+const INF_NAN: bool = f64::nan().is_infinite();
+const INF_INF: bool = f64::infinity().is_infinite();
+const INF_NEG_INF: bool = f64::neg_infinity().is_infinite();
+
+// f32 spot-check: same operations on a 32-bit float.
+const FINITE_F32_1: bool = (1.0f32).is_finite();
+const FINITE_F32_NAN: bool = f32::nan().is_finite();
+const NAN_F32_NAN: bool = f32::nan().is_nan();
+const INF_F32_INF: bool = f32::infinity().is_infinite();
+
+// Const-required usage: array length depends on a const-folded float check.
+// If the float method doesn't const-evaluate, the array type fails to resolve.
+const ARR_FINITE_LEN: usize = if (1.0f64).is_finite() { 4usize } else { 99usize };
+const ARR_NAN_LEN: usize = if f64::nan().is_nan() { 5usize } else { 99usize };
+const ARR_INF_LEN: usize = if f64::infinity().is_infinite() { 6usize } else { 99usize };
+const ARR_F32_LEN: usize = if f32::nan().is_nan() && !f32::infinity().is_finite() { 7usize } else { 99usize };
+
+fn main(args: &[&[u8]]) -> i32 {
+    if !FINITE_1 { return 1i32; }
+    if !FINITE_NEG_1 { return 2i32; }
+    if !FINITE_ZERO { return 3i32; }
+    if !FINITE_NEG_ZERO { return 4i32; }
+    if !FINITE_TINY { return 5i32; }
+    if FINITE_NAN { return 6i32; }
+    if FINITE_INF { return 7i32; }
+    if FINITE_NEG_INF { return 8i32; }
+
+    if NAN_1 { return 10i32; }
+    if NAN_ZERO { return 11i32; }
+    if NAN_TINY { return 12i32; }
+    if !NAN_NAN { return 13i32; }
+    if NAN_INF { return 14i32; }
+
+    if INF_1 { return 20i32; }
+    if INF_ZERO { return 21i32; }
+    if INF_NAN { return 22i32; }
+    if !INF_INF { return 23i32; }
+    if !INF_NEG_INF { return 24i32; }
+
+    if !FINITE_F32_1 { return 30i32; }
+    if FINITE_F32_NAN { return 31i32; }
+    if !NAN_F32_NAN { return 32i32; }
+    if !INF_F32_INF { return 33i32; }
+
+    let arr_finite: [u8; ARR_FINITE_LEN];
+    if arr_finite.len() != 4usize { return 40i32; }
+    let arr_nan: [u8; ARR_NAN_LEN];
+    if arr_nan.len() != 5usize { return 41i32; }
+    let arr_inf: [u8; ARR_INF_LEN];
+    if arr_inf.len() != 6usize { return 42i32; }
+    let arr_f32: [u8; ARR_F32_LEN];
+    if arr_f32.len() != 7usize { return 43i32; }
+
+    0i32
+}
