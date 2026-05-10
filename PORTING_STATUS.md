@@ -199,9 +199,16 @@ Notes on remaining macro audit gaps:
 
 - [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting surface: all six variants with `#[lang(...)]` attrs and `fmt`; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). All variants mix in `cmp::Equatable<...>`. Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, and `range_double_ended.alu` (including .rev() on Range / RangeInclusive and size_hint reporting).
   Missing for full unification with sysroot's `std/range.alu`:
-  - `T: Integer` bounds on every variant. sysroot-aluminac's lookups would tighten — likely fine, but the bound-violation enforcement in aluminac is weak so simply adding the bound may not actually reject misuse. Needs a smoke test against any sysroot code that ranges a non-integer (none currently).
-  - `hash::Hashable` impls (sysroot has them; sysroot-aluminac's hash module is bare — gated on hash module unification).
-  - Diff-and-unify pass: at this point sysroot-aluminac/std/range.alu and sysroot/std/range.alu diverge mainly in the `T: Integer` bound and Hashable. A "literally unify the file" slice may now be small enough to attempt.
+  - `T: Integer` bounds on every variant.
+  - `hash` method + `Hashable` mixin. Initially attempted in this session but ran into a real aluminac bug (see "Generic method dispatch on lang-item structs" below) — `val.hash::<H>(&hasher)` from inside `hash_of<T>(val: &T)` returns the empty-hash sentinel instead of dispatching to Range::hash, even though direct calls (`r1.hash::<H>(&h)` outside generic context) work and the same pattern works for non-lang-item structs (verified by a `MyRange<T>` reproducer). The hash method bodies and mixins were reverted; the gap is now blocked on the underlying compiler bug.
+  - Diff-and-unify pass: still pending — currently blocked by the same hash-dispatch bug since sysroot's range.alu has hash methods.
+
+- [PARTIAL] **Generic method dispatch on `#[lang(...)]` structs.** Calling a method with its own type-param via generic dispatch fails to find the method on lang-item-tagged structs. Concretely: `fn hash_of<T>(val: &T) -> u64 { val.hash::<DefaultHash>(&hasher); ... }` correctly dispatches to `Foo<T>::hash` for a user struct `Foo<T>` (verified) but returns the empty-hash sentinel when T = `Range<i32>` (even with all mixins stripped and the `T: Integer` bound removed — see investigation in PORTING_STATUS.md history at commit-time). The issue is reproducible with both implicit and explicit type-arg forms (`val.hash(&h)` and `val.hash::<H>(&h)`), and both inside `std::hash::hash_of` and a user's analog `my_hash_of<T>`. Same code on a non-lang-item struct works.
+  Missing:
+  - Investigate `try_lower_method_call` in `mono/lower.alu` for any path that special-cases struct refs by lang attributes during method lookup.
+  - Investigate whether the IrTy interning / scope_idx for lang-item structs differs from regular structs in a way that breaks method lookup at instantiation time.
+  - Add a focused regression test once root-caused.
+  - This blocks Hashable on ranges and the literal unification of `std/range.alu`.
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
 - [TODO] **`std/string/unicode.alu`** — unifying breaks the util_unicode test (need to investigate).
