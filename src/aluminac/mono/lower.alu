@@ -637,6 +637,7 @@ impl Mono {
 
         let mangled = self.ctx.mangle_name(def.name);
 
+
         // Use scope_idx directly from StructDef
         let scope_idx = def.scope_idx;
 
@@ -851,6 +852,24 @@ impl Mono {
         if def.generic_params.len() > 0 && type_args.len() > 0 {
             for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
                 self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
+            }
+        }
+        // Fill in defaults for any generic param whose type-arg slot is missing
+        // (caller supplied fewer than declared) or void (inference couldn't bind
+        // it). Required for sysroot signatures like
+        // `fn hash_of<T, H = DefaultHash>(val: &T)` — H is never an explicit arg
+        // and has no inference path from the value's type.
+        for i in 0usize..def.generic_params.len() {
+            let needs_default = if i >= type_args.len() {
+                true
+            } else {
+                type_args[i].is_void()
+            };
+            if needs_default && def.generic_params[i].default_ty.is_some() {
+                let default_ir = self.resolve_type(def.generic_params[i].default_ty.unwrap());
+                if !default_ir.is_void() {
+                    self.type_map.insert(def.generic_params[i].id._value, default_ir);
+                }
             }
         }
 
