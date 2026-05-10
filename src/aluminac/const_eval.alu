@@ -317,6 +317,7 @@ impl ConstEvaluator {
         IrTag::Continue => ConstResult::fail(ConstEvalError::continue_err()),
         IrTag::Switch => self.eval_switch(expr),
         IrTag::Transmute => self.eval_transmute(expr),
+        IrTag::LlvmIntrinsic => self.eval_llvm_intrinsic(expr),
         _ => ConstResult::fail(ConstEvalError::unsupported()),
         }
     }
@@ -1301,6 +1302,76 @@ impl ConstEvaluator {
             return ConstResult::success(ConstValue::make_int(result, target_bt));
         }
 
+        ConstResult::fail(ConstEvalError::unsupported())
+    }
+
+    // ========== LLVM intrinsic interpretation ==========
+    //
+    // Folds `intrinsics::llvm("llvm.{ctpop,ctlz,cttz,bswap}", ...)` calls at
+    // const time so the bit-twiddling methods on integer types compose with
+    // const items and array sizes. Anything else falls through to Unsupported
+    // and the caller (e.g. const-item lowering) keeps the runtime IR.
+    fn eval_llvm_intrinsic(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
+        let name = expr.str_val();
+        let items = expr.items();
+        if items.len() == 0 {
+            return ConstResult::fail(ConstEvalError::unsupported());
+        }
+        let arg_r = self.eval(items[0]);
+        if !arg_r.ok { return arg_r; }
+        if arg_r.value.tag != CValTag::Int {
+            return ConstResult::fail(ConstEvalError::unsupported());
+        }
+        let bt = arg_r.value.builtin_type();
+        let width = bt.bit_width();
+        let val = self.mask_to_width(arg_r.value.int_val(), width);
+        if name == "llvm.ctpop" {
+            let count: u64 = 0;
+            let v = val;
+            while v != 0u64 {
+                count = count + (v & 1u64);
+                v = v >> 1u64;
+            }
+            // ctpop returns iN matching input; the caller's `as u32` cast
+            // narrows it. We return the same width here.
+            return ConstResult::success(ConstValue::make_int(count, bt));
+        } else if name == "llvm.ctlz" {
+            // Second arg is is_zero_undef i1; we ignore it (alumina's
+            // leading_zeros wrapper always passes false → defined for zero).
+            if val == 0u64 {
+                return ConstResult::success(ConstValue::make_int(width as u64, bt));
+            }
+            let count: u64 = 0;
+            let mask = 1u64 << ((width - 1) as u64);
+            while (val & mask) == 0u64 && count < width as u64 {
+                count = count + 1u64;
+                mask = mask >> 1u64;
+            }
+            return ConstResult::success(ConstValue::make_int(count, bt));
+        } else if name == "llvm.cttz" {
+            if val == 0u64 {
+                return ConstResult::success(ConstValue::make_int(width as u64, bt));
+            }
+            let count: u64 = 0;
+            let v = val;
+            while (v & 1u64) == 0u64 && count < width as u64 {
+                count = count + 1u64;
+                v = v >> 1u64;
+            }
+            return ConstResult::success(ConstValue::make_int(count, bt));
+        } else if name == "llvm.bswap" {
+            // Reverse byte order within `width` bits. width is a multiple of 16
+            // for valid bswap calls; an 8-bit caller would have been lowered
+            // as identity by the sysroot wrapper, not as bswap.
+            let bytes = (width / 8) as u64;
+            let result: u64 = 0;
+            let v = val;
+            for i in 0u64..bytes {
+                result = (result << 8u64) | (v & 0xFFu64);
+                v = v >> 8u64;
+            }
+            return ConstResult::success(ConstValue::make_int(result, bt));
+        }
         ConstResult::fail(ConstEvalError::unsupported())
     }
 
