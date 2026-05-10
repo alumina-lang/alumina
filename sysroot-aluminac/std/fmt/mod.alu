@@ -280,6 +280,34 @@ mod internal {
             fmt.write_str("false")
         }
     }
+
+    /// Stub-level debug adapter — defers to T's own `fmt` method when
+    /// available, otherwise writes the type name. Sysroot's full version
+    /// walks struct fields / enum variants via the typing reflection module
+    /// (not yet ported); this minimal form is enough to compile sysroot's
+    /// `Result::unwrap_err` panic-message path.
+    struct DebugAdapter<T> {
+        _value: T,
+    }
+
+    impl DebugAdapter<T> {
+        fn fmt<F: Formatter<F>>(self: &DebugAdapter<T>, f: &mut F) -> Result {
+            when self._value is Formattable<T, F> {
+                self._value.fmt(f)
+            } else {
+                f.write_str(std::intrinsics::type_name::<T>())
+            }
+        }
+    }
+}
+
+/// Wrap a value so `{}` formats it via the debug adapter.
+///
+/// Stub: forwards to T's own `fmt` for Formattable types, otherwise just
+/// writes the type name. Sysroot's full version handles structs / enums /
+/// arrays / etc by walking reflection metadata.
+fn debug<T>(value: T) -> internal::DebugAdapter<T> {
+    internal::DebugAdapter::<T> { _value: value }
 }
 
 /// Adapter for formatting integers in hexadecimal.
@@ -404,3 +432,4 @@ fn zero_pad(val: i64, width: usize) -> ZeroPadAdapter {
 fn zero_pad_unsigned(val: u64, width: usize) -> ZeroPadAdapter {
     ZeroPadAdapter { _value: val, _width: width, _signed: false, _negative: false }
 }
+
