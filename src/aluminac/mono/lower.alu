@@ -3967,6 +3967,23 @@ impl Mono {
                 }
                 return Option::none();
             }
+        } else if resolved_ty.tag == IrTyTag::Void {
+            // The unit type `()` collapses to void_ty in `make_tuple_ty`.
+            // Treat it as a zero-tuple for method-dispatch so e.g. `().len()`
+            // routes to builtin_tuple's impl.
+            let lang_id = self.ctx.get_lang_item("builtin_tuple");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
+            if scope_idx == 0 {
+                if field_expr.id2()._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
+                }
+                return Option::none();
+            }
         } else {
             if field_expr.id2()._value != 0 {
                 return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
