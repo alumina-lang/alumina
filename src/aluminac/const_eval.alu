@@ -223,6 +223,16 @@ impl ConstEvaluator {
             } else {
                 ConstResult::fail(ConstEvalError::index_oob())
             }
+        } else if val.tag == CValTag::Bytes {
+            // String / byte-string literal: bytes-buffer with running offset.
+            // Indexing reads the byte at offset+idx; usize::MAX (from a wrapping
+            // 0usize-1) trips the OOB check via the >= len comparison.
+            let off = val.bytes_offset() + idx;
+            if off >= val.bytes().len() {
+                ConstResult::fail(ConstEvalError::index_oob())
+            } else {
+                ConstResult::success(ConstValue::make_int(val.bytes()[off] as u64, BuiltinType::U8))
+            }
         } else {
             ConstResult::fail(ConstEvalError::unsupported())
         }
@@ -949,6 +959,18 @@ impl ConstEvaluator {
         if base.tag == CValTag::Tuple {
             return self.access_tuple_index(base, expr.field_idx() as usize);
         }
+        // Slice fat-pointer fields on a string/byte-string Bytes value:
+        // mono lowers `slice[i]` as `Index(slice._ptr, i)`, which we eval as
+        // FieldAccess(SLICE_DATA_FIELD=0) → byte pointer, then Index → byte.
+        // Also serve `_len` for completeness.
+        if base.tag == CValTag::Bytes {
+            if expr.field_idx() == 0u32 {
+                return ConstResult::success(base);
+            } else if expr.field_idx() == 1u32 {
+                let len = base.bytes().len() - base.bytes_offset();
+                return ConstResult::success(ConstValue::make_int(len as u64, BuiltinType::USize));
+            }
+        }
 
         ConstResult::fail(ConstEvalError::unsupported())
     }
@@ -970,7 +992,7 @@ impl ConstEvaluator {
             let new_lv = self.arena.alloc(ConstLValue::mk_index(base.lvalue(), idx_val));
             return ConstResult::success(ConstValue::make_lvalue(new_lv));
         }
-        if base.tag == CValTag::Array {
+        if base.tag == CValTag::Array || base.tag == CValTag::Bytes {
             return self.access_index(base, idx_val);
         }
         ConstResult::fail(ConstEvalError::unsupported())
