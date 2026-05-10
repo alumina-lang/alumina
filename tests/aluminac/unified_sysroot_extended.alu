@@ -1,0 +1,38 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Smoke test exercising dyn-free pieces of the unified sysroot/.
+// Complements unified_sysroot_basic.alu — adds tuple compare, default
+// type-arg substitution, and grouped-use nested paths (all closed gaps
+// in the recent slice).
+
+use std::cmp::{Equatable, Comparable, Ordering};
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Tuple comparisons (Comparable<Tup> mixin'd on lang `tuple`)
+    let t1 = (1i32, 2i32);
+    let t2 = (1i32, 3i32);
+    if !(t1 < t2) { return 1i32; }
+    if !(t2 > t1) { return 2i32; }
+    if t1.compare(&t2) != Ordering::Less { return 3i32; }
+
+    // Tuple equals via UFCS
+    let t3 = (1i32, 2i32);
+    if !t1.equals(&t3) { return 4i32; }
+
+    // Option ordering — sysroot's compare returns Equal for None vs None
+    // (the bug-fix that landed alongside the option.alu port).
+    let n: Option<i32> = Option::none();
+    if n.compare(&n) != Ordering::Equal { return 5i32; }
+
+    // Range
+    let sum: i32 = 0i32;
+    for i in 0i32..10i32 {
+        sum += i;
+    }
+    if sum != 45i32 { return 6i32; }
+
+    // String slice equals
+    let a: &[u8] = "hello";
+    if a.len() != 5usize { return 7i32; }
+
+    0i32
+}
