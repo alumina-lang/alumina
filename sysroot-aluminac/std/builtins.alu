@@ -339,6 +339,21 @@ struct u128 {}
 impl u128 {
     fn min_value() -> u128 { 0u128 }
     fn max_value() -> u128 { 0u128 - 1u128 }
+    fn count_ones(self: u128) -> u32 {
+        std::intrinsics::llvm::<u128>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: u128) -> u32 {
+        (~self).count_ones()
+    }
+    fn leading_zeros(self: u128) -> u32 {
+        std::intrinsics::llvm::<u128>("llvm.ctlz", self, false) as u32
+    }
+    fn trailing_zeros(self: u128) -> u32 {
+        std::intrinsics::llvm::<u128>("llvm.cttz", self, false) as u32
+    }
+    fn swap_bytes(self: u128) -> u128 {
+        std::intrinsics::llvm::<u128>("llvm.bswap", self)
+    }
     fn equals(lhs: &u128, rhs: &u128) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &u128, rhs: &u128) -> bool { *lhs != *rhs }
     fn compare(lhs: &u128, rhs: &u128) -> std::cmp::Ordering {
@@ -639,6 +654,21 @@ impl i64 {
 struct i128 {}
 impl i128 {
     fn abs(self: &i128) -> i128 { if *self < 0i128 { -*self } else { *self } }
+    fn count_ones(self: i128) -> u32 {
+        std::intrinsics::llvm::<i128>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: i128) -> u32 {
+        (~self).count_ones()
+    }
+    fn leading_zeros(self: i128) -> u32 {
+        std::intrinsics::llvm::<i128>("llvm.ctlz", self, false) as u32
+    }
+    fn trailing_zeros(self: i128) -> u32 {
+        std::intrinsics::llvm::<i128>("llvm.cttz", self, false) as u32
+    }
+    fn swap_bytes(self: i128) -> i128 {
+        std::intrinsics::llvm::<i128>("llvm.bswap", self)
+    }
     fn equals(lhs: &i128, rhs: &i128) -> bool { *lhs == *rhs }
     fn not_equals(lhs: &i128, rhs: &i128) -> bool { *lhs != *rhs }
     fn compare(lhs: &i128, rhs: &i128) -> std::cmp::Ordering {
