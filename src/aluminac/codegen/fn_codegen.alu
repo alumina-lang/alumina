@@ -1787,6 +1787,15 @@ impl FnCodegen {
         if result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn {
             return LLVMGetUndef(self.ctx.void_type);
         }
+        // Skip phi for any zero-sized result. Empty-struct phis (e.g. for
+        // Result<i32, ()> where E = unit `()` lowers to a `{}` LLVM type)
+        // crash LLVM 14's GlobalISel pipeline at
+        // `IRTranslator::finishPendingPhis`. Since both branches must
+        // produce the same ZST value, return undef of that type — observe-
+        // ably equivalent to the phi output.
+        if result_ty.is_zero_sized() {
+            return LLVMGetUndef(self.ctx.llvm_type(result_ty));
+        }
 
         // Create phi if both branches reach merge, or return the one that does
         if has_else {
