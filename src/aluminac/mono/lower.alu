@@ -3075,6 +3075,11 @@ impl Mono {
             self.mk_field(actual_obj, field_idx, field_ty)
         } else if expr.tag == ExprTag::TupleIndex {
             let ir_obj = self.lower_expr(expr.lhs());
+            // Auto-deref through pointer layers — `t.0` / `t.(i)` on a `&T`
+            // should reach into the pointee tuple, mirroring FieldAccess.
+            while ir_obj.ty.tag == IrTyTag::Pointer {
+                ir_obj = self.mk_deref(ir_obj, ir_obj.ty.inner());
+            }
             // Resolve index: either from literal index_val or from const-evaluated expression
             let idx: usize = if expr.opt_expr().is_some() {
                 let ir_idx = self.lower_expr(expr.opt_expr().unwrap());
