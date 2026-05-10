@@ -19,16 +19,16 @@ protocol Hashable<Self, H: Hasher<H>> {
 /// The default hashing algorithm used for hash-based collections.
 type DefaultHash = xxhash::Xxh64;
 
-/// Calculate the hash of a value using a fresh DefaultHash hasher.
-fn hash_of<T>(val: &T) -> u64 {
-    let hasher = DefaultHash::new();
-    val.hash::<DefaultHash>(&hasher);
+/// Calculate the hash of a value using a fresh `H` hasher (defaults to `DefaultHash`).
+fn hash_of<T: Hashable<T, H>, H: Hasher<H> = DefaultHash>(val: &T) -> u64 {
+    let hasher = H::new();
+    val.hash(&hasher);
     hasher.finish()
 }
 
-/// Calculate the hash of a value using a fresh DefaultHash hasher with custom seed.
-fn hash_of_with_seed<T>(val: &T, seed: u64) -> u64 {
+/// Calculate the hash of a value using a fresh `DefaultHash` hasher with custom seed.
+fn hash_of_with_seed<T: Hashable<T, DefaultHash>>(val: &T, seed: u64) -> u64 {
     let hasher = DefaultHash::with_seed(seed);
-    val.hash::<DefaultHash>(&hasher);
+    val.hash(&hasher);
     hasher.finish()
 }
