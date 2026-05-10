@@ -816,6 +816,14 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
     } else if matches_prefix(triple, "i686") || matches_prefix(triple, "i386") {
         ptr_width = "target_pointer_width=\"32\"";
     }
+
+    // target_endian — sysroot's `to_le` / `to_be` / etc. branch on this. Both
+    // x86_64 and aarch64 (Linux) are little-endian; aarch64-be exists but is
+    // not a target we currently support.
+    let endian: &[u8] = "target_endian=\"little\"";
+    if endian.len() > 0 && !already_has_key(&options.cfg_flags, "target_endian") {
+        options.cfg_flags.push(endian);
+    }
     if ptr_width.len() > 0 && !already_has_key(&options.cfg_flags, "target_pointer_width") {
         options.cfg_flags.push(ptr_width);
     }
