@@ -16,6 +16,8 @@ impl RangeFull<T> {
     fn fmt<F: std::fmt::Formatter<F>>(self: &RangeFull<T>, f: &mut F) -> std::fmt::Result {
         std::fmt::write!(f, "..")
     }
+
+    mixin std::cmp::Equatable<RangeFull<T>>;
 }
 
 /// A range with only a lower bound (`a..`)
@@ -54,6 +56,8 @@ impl RangeFrom<T> {
     fn fmt<F: std::fmt::Formatter<F>>(self: &RangeFrom<T>, f: &mut F) -> std::fmt::Result {
         std::fmt::write!(f, "{}..", self.lower)
     }
+
+    mixin std::cmp::Equatable<RangeFrom<T>>;
 }
 
 /// A range with only an upper bound (`..b`)
@@ -80,6 +84,8 @@ impl RangeTo<T> {
     fn fmt<F: std::fmt::Formatter<F>>(self: &RangeTo<T>, f: &mut F) -> std::fmt::Result {
         std::fmt::write!(f, "..{}", self.upper)
     }
+
+    mixin std::cmp::Equatable<RangeTo<T>>;
 }
 
 /// A range with only an inclusive upper bound (`..=b`)
@@ -106,6 +112,8 @@ impl RangeToInclusive<T> {
     fn fmt<F: std::fmt::Formatter<F>>(self: &RangeToInclusive<T>, f: &mut F) -> std::fmt::Result {
         std::fmt::write!(f, "..={}", self.upper)
     }
+
+    mixin std::cmp::Equatable<RangeToInclusive<T>>;
 }
 
 /// A range with both lower and upper bounds (a..b)
@@ -147,9 +155,15 @@ impl Range<T> {
         }
     }
 
+    fn equals(self: &Range<T>, other: &Range<T>) -> bool {
+        self.lower == other.lower && self.upper == other.upper
+    }
+
     fn fmt<F: std::fmt::Formatter<F>>(self: &Range<T>, f: &mut F) -> std::fmt::Result {
         std::fmt::write!(f, "{}..{}", self.lower, self.upper)
     }
+
+    mixin std::cmp::Equatable<Range<T>>;
 }
 
 /// An inclusive range with both lower and upper bounds (a..=b)
@@ -196,7 +210,13 @@ impl RangeInclusive<T> {
         }
     }
 
+    fn equals(self: &RangeInclusive<T>, other: &RangeInclusive<T>) -> bool {
+        self.lower == other.lower && self.upper == other.upper
+    }
+
     fn fmt<F: std::fmt::Formatter<F>>(self: &RangeInclusive<T>, f: &mut F) -> std::fmt::Result {
         std::fmt::write!(f, "{}..={}", self.lower, self.upper)
     }
+
+    mixin std::cmp::Equatable<RangeInclusive<T>>;
 }
