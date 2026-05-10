@@ -38,18 +38,14 @@ Notes on remaining macro audit gaps:
 
 *(Parser/AST/type system features in alumina-boot but not aluminac.)*
 
-- [PARTIAL] **`dyn` / dynamic dispatch.** Three behaviors are wired enough for sysroot signatures to compile end-to-end (without actually executing dyn dispatch):
-  1. Parse `&dyn Proto` / `&mut dyn Proto` (capturing the first protocol; multi-protocol `&dyn (A + B)` still narrows to the first).
-  2. Coerce `&T` → `&dyn Proto` to a `lang(dyn) { _ptr: void*, _vtable: null }` fat-pointer struct lit.
-  3. Method calls on dyn values lower to `Unreachable` (typed as `never`, which coerces to any expected return). Args are still lowered for side-effect preservation. Verified by `tests/aluminac/dyn_dispatch_compiles.alu`.
+- [PARTIAL] **`dyn` / dynamic dispatch.** Real dispatch wired end-to-end for single- and multi-protocol bounds. `&T as &dyn Proto` now emits a private const global vtable (`[fn(); N]`) populated with `T`'s typed method pointers (cast to opaque `fn()`), and threads its address into the dyn fat pointer's `_vtable` slot. Method calls on dyn values load `_vtable[idx]`, cast to the typed fn pointer, and invoke with `(_ptr, args...)`. Multi-protocol bounds `&dyn (A + B + ...)` are captured (parser iterates `inner` fields, synthesizes a TupleTy; resolve_type unpacks back into the dyn struct's `Protos` type-arg). Verified by `tests/aluminac/dyn_dispatch.alu` (single-method + multi-method protocols, plus a `&dyn (A + B)` bound).
 
-  This unblocks compilation of sysroot signatures that take or return `&dyn ...` parameters, but actual dispatch traps at runtime if reached. Works for sysroot code paths that are gated behind dead branches (e.g. format args that won't be reached for non-panic flows) but breaks when execution actually flows through a dyn call.
+  `#[lang(dyn)]` and `#[lang(dyn_self)]` structs now exist in `sysroot-aluminac/std/builtins.alu` (sysroot puts them in `std/typing.alu`; aluminac's sysroot puts them under builtins until typing.alu is ported).
 
-  Missing (real dyn semantics):
-  - Vtable construction at `&x as &dyn Proto`: build a static array of fn pointers for each method in Proto. Required for `panic_impl`'s arg.fmt(...) path to actually format on panic.
-  - dyn_vtable_index runtime path: emit `dyn_vtable_index(dyn_val, idx)(dyn_data(dyn_val), args...)`.
-  - Multi-protocol bounds: `&dyn (A + B)` is parsed but only the first protocol is captured.
-  - dyn_self lang item — Self substitution in protocol method signatures inside dyn context.
+  Still missing (smaller follow-ups):
+  - Method dispatch with explicit type args on dyn methods (e.g. `d.method::<X>()` — currently dispatches without honoring turbofish args).
+  - Mutability cast through dyn: `&mut dyn Proto` → `&dyn Proto` should route through `dyn_const_coerce` lang item; aluminac currently relies on the compiler's normal pointer-mutability coercion.
+  - The `dyn_data` / `dyn_vtable_index` lang items aren't wired (aluminac builds the dispatch IR directly), so calling them as plain functions wouldn't work — but sysroot's only callers go through `dyn` magic anyway.
 
   Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and `sysroot/std/panicking.alu`'s `panic_impl`.
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
