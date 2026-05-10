@@ -243,6 +243,13 @@ impl Option {
         !Option::equals::<T>(lhs, rhs)
     }
 
+    /// Hash the option. None hashes to nothing-extra; Some hashes the inner.
+    fn hash<T: std::hash::Hashable<T, H>, H: std::hash::Hasher<H>>(self: &Option<T>, hasher: &mut H) {
+        if self._is_some {
+            self._inner.hash(hasher);
+        }
+    }
+
     /// Compare two options. None < Some, and Some<a> compares to Some<b>
     /// via the inner type's compare.
     fn compare<T: std::cmp::Comparable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> std::cmp::Ordering {
@@ -259,6 +266,7 @@ impl Option {
 
     mixin<T: Equatable<T>> std::cmp::Equatable<Option<T>>;
     mixin<T: std::cmp::Comparable<T>> std::cmp::Comparable<Option<T>>;
+    mixin<T: std::hash::Hashable<T, H>, H: std::hash::Hasher<H>> std::hash::Hashable<Option<T>, H>;
 }
 
 #[cfg(all(test, test_std))]

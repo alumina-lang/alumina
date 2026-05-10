@@ -181,5 +181,20 @@ impl Result {
         !Result::equals::<T, E>(lhs, rhs)
     }
 
+    /// Hash the result. The Ok / Err discriminator and the payload both hash.
+    fn hash<T: std::hash::Hashable<T, H>, E: std::hash::Hashable<E, H>, H: std::hash::Hasher<H>>(self: &Result<T, E>, hasher: &mut H) {
+        if self._is_ok {
+            // Discriminator byte for Ok.
+            (1u8).hash(hasher);
+            self._ok.hash(hasher);
+        } else {
+            // Discriminator byte for Err.
+            (0u8).hash(hasher);
+            self._err.hash(hasher);
+        }
+    }
+
     mixin<T: Equatable<T>, E: Equatable<E>> std::cmp::Equatable<Result<T, E>>;
+    mixin<T: std::hash::Hashable<T, H>, E: std::hash::Hashable<E, H>, H: std::hash::Hasher<H>>
+        std::hash::Hashable<Result<T, E>, H>;
 }
