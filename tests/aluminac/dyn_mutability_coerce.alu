@@ -1,0 +1,35 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// `&mut dyn Proto` → `&dyn Proto` should coerce implicitly (drop mut),
+// and `&dyn Proto as &mut dyn Proto` should round-trip via an explicit
+// cast. Sysroot's test_dyn (in std::typing) does both; this is the
+// minimal regression for the same shape.
+
+protocol Greeter<Self> {
+    fn greet(self: &Self) -> i32;
+}
+
+struct A {}
+impl A {
+    fn greet(self: &A) -> i32 { 42i32 }
+}
+
+fn shout_imm(g: &dyn Greeter<Self>) -> i32 { g.greet() }
+fn shout_mut(g: &mut dyn Greeter<Self>) -> i32 { g.greet() }
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = A {};
+
+    // &mut dyn → &dyn (implicit, via assignment to a less-mutable type).
+    let m: &mut dyn Greeter<Self> = &a;
+    let s: &dyn Greeter<Self> = m;
+    if shout_imm(s) != 42i32 { return 1i32; }
+    if shout_mut(m) != 42i32 { return 2i32; }
+
+    // &dyn → &mut dyn (explicit `as`-cast).
+    let imm: &dyn Greeter<Self> = &a;
+    let cast = imm as &mut dyn Greeter<Self>;
+    if shout_mut(cast) != 42i32 { return 3i32; }
+    if shout_imm(imm) != 42i32 { return 4i32; }
+
+    0i32
+}

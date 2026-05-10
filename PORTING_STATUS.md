@@ -43,8 +43,10 @@ Notes on remaining macro audit gaps:
   `#[lang(dyn)]` and `#[lang(dyn_self)]` structs now exist in `sysroot-aluminac/std/builtins.alu` (sysroot puts them in `std/typing.alu`; aluminac's sysroot puts them under builtins until typing.alu is ported).
 
   Still missing (smaller follow-ups):
-  - Mutability cast through dyn: `&mut dyn Proto` → `&dyn Proto` should route through `dyn_const_coerce` lang item; aluminac currently relies on the compiler's normal pointer-mutability coercion.
+  - Mutability cast through dyn: `&mut dyn Proto` → `&dyn Proto` (and the reverse via explicit `as`-cast) works *behaviorally* — aluminac routes through the compiler's normal pointer-mutability coercion rather than the `dyn_const_coerce` / `dyn_const_cast` lang items, but the observable result on sysroot's test_dyn shape is identical. Verified by `tests/aluminac/dyn_mutability_coerce.alu`.
   - The `dyn_data` / `dyn_vtable_index` lang items aren't wired (aluminac builds the dispatch IR directly), so calling them as plain functions wouldn't work — but sysroot's only callers go through `dyn` magic anyway.
+
+  Multi-protocol bound order matters for vtable layout: `&dyn (Foo + Bar)` and `&dyn (Bar + Foo)` produce distinct const globals keyed by the protocol-tuple type-arg, with per-method dispatch indices resolved against the bound's declaration order. Verified by `tests/aluminac/dyn_proto_order.alu`.
 
   Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and `sysroot/std/panicking.alu`'s `panic_impl`.
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
