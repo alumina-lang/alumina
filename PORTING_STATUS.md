@@ -43,7 +43,6 @@ Notes on remaining macro audit gaps:
   `#[lang(dyn)]` and `#[lang(dyn_self)]` structs now exist in `sysroot-aluminac/std/builtins.alu` (sysroot puts them in `std/typing.alu`; aluminac's sysroot puts them under builtins until typing.alu is ported).
 
   Still missing (smaller follow-ups):
-  - Method dispatch with explicit type args on dyn methods (e.g. `d.method::<X>()` — currently dispatches without honoring turbofish args).
   - Mutability cast through dyn: `&mut dyn Proto` → `&dyn Proto` should route through `dyn_const_coerce` lang item; aluminac currently relies on the compiler's normal pointer-mutability coercion.
   - The `dyn_data` / `dyn_vtable_index` lang items aren't wired (aluminac builds the dispatch IR directly), so calling them as plain functions wouldn't work — but sysroot's only callers go through `dyn` magic anyway.
 
