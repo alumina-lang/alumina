@@ -190,13 +190,11 @@ Notes on remaining macro audit gaps:
   Missing for unification with sysroot's `std/option.alu`:
   - `unwrap` / `unwrap_or_else` / `unwrap_err` should panic with a descriptive message; sysroot's path uses `panic!` + `lhs.debug()` (DebugAdapter). sysroot-aluminac calls `libc::abort()` silently. Gated on a sysroot-aluminac `debug()` shim or DebugAdapter equivalent.
   - `as_nullable_ptr<T: Pointer>` (sysroot has bound-restricted overload aluminac doesn't yet enforce).
-  - `AnyOption` type alias (`builtins::SameBaseAs<Option<()>>`) — depends on `proto_same_base_as` lang item.
   - Doc comments and embedded test module — additive once the above land.
 
-- [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt`. Newly added `mixin Equatable<Result<T, E>>` and `hash<...>` + `mixin Hashable<Result<T, E>, H>` (`tests/aluminac/option_result_equatable.alu`, `option_result_hash.alu`).
+- [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt`. Newly added `mixin Equatable<Result<T, E>>`, `hash<...>` + `mixin Hashable<Result<T, E>, H>`, plus `AnyResult` type alias (`tests/aluminac/option_result_equatable.alu`, `option_result_hash.alu`, `option_result_any.alu`).
   Missing for unification with sysroot's `std/result.alu`:
   - Descriptive panic on unwrap/unwrap_err — same blocker as Option.
-  - `AnyResult` type alias.
   - Doc comments + embedded tests.
 <!-- std/result.alu PARTIAL entry moved up next to std/option.alu -->
 

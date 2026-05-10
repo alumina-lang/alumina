@@ -3316,6 +3316,28 @@ impl Mono {
             let check_ty = expr.ty(); // The protocol type (TyTag::Named)
             let is_match = false;
 
+            // Follow non-generic TypeAlias indirections so that
+            // `type AnyOption = SameBaseAs<Option<()>>;` followed by
+            // `value is AnyOption` routes through the SameBaseAs branch
+            // below. Generic aliases (those with their own type-args) need
+            // substitution and are left to resolve_type.
+            let alias_steps: usize = 0;
+            loop {
+                if alias_steps >= 8 { break; }
+                let named: &Ty = if check_ty.tag == TyTag::Named {
+                    check_ty
+                } else {
+                    null as &Ty
+                };
+                if named as &void == null { break; }
+                let alias_opt = self.ctx.type_aliases.get(&named.id()._value);
+                if alias_opt.is_none() { break; }
+                let alias = alias_opt.unwrap();
+                if alias.generic_params.len() > 0 { break; }
+                check_ty = alias.target;
+                alias_steps = alias_steps + 1;
+            }
+
             // Resolve the protocol name to check specific protocols.
             // Extract protocol ID from TyTag::Named, TyTag::Generic(TyTag::Named),
             // or TyTag::Placeholder when the placeholder substitutes to a
