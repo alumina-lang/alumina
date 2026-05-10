@@ -649,9 +649,24 @@ impl Pass1 {
         switch kind {
             NodeKind::ScopedIdentifier => {
                 // use a::b::c; - import c from path a::b
-                let segments = self.collect_path_segments(node);
-                if segments.len() > 0 {
-                    let name = segments[segments.len() - 1];
+                // Inside a grouped list (`use outer::{a::b, ...}`), prefix
+                // carries [outer]; combine it with our own segments so the
+                // alias path becomes [outer, a, b] not [a, b].
+                let own_segments = self.collect_path_segments(node);
+                if own_segments.len() > 0 {
+                    let name = own_segments[own_segments.len() - 1];
+                    let segments = if prefix.len() > 0 {
+                        let combined = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + own_segments.len());
+                        for i in 0usize..prefix.len() {
+                            combined[i] = prefix[i];
+                        }
+                        for i in 0usize..own_segments.len() {
+                            combined[prefix.len() + i] = own_segments[i];
+                        }
+                        combined as &[&[u8]]
+                    } else {
+                        own_segments
+                    };
                     self.ctx.scopes.add_item(self.current_scope, NamedItem {
                         name: name,
                         kind: NamedItemKind::use_alias(self.current_scope, segments),
