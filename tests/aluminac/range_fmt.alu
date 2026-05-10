@@ -1,0 +1,22 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// `{}` formatting for Range and RangeInclusive — sysroot-aluminac's range types
+// got `fmt` impls so `println!("{}", 1..5)` works as `1..5`.
+
+use std::fmt::format;
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = format!("{}", 1..5);
+    defer r.unwrap().free();
+    if r.unwrap().as_slice() != "1..5" { return 1i32; }
+
+    let ri = format!("{}", 1..=5);
+    defer ri.unwrap().free();
+    if ri.unwrap().as_slice() != "1..=5" { return 2i32; }
+
+    // Format inside a larger string.
+    let s = format!("range = {}", 0..3);
+    defer s.unwrap().free();
+    if s.unwrap().as_slice() != "range = 0..3" { return 3i32; }
+
+    0i32
+}
