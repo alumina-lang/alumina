@@ -1,3 +1,113 @@
+/// An unbounded range (`..`)
+#[lang(range_full)]
+struct RangeFull<T> {
+}
+
+impl RangeFull<T> {
+    #[lang(range_full_new)]
+    fn new() -> RangeFull<T> {
+        RangeFull {}
+    }
+
+    fn equals(self: &RangeFull<T>, _other: &RangeFull<T>) -> bool {
+        true
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeFull<T>, f: &mut F) -> std::fmt::Result {
+        std::fmt::write!(f, "..")
+    }
+}
+
+/// A range with only a lower bound (`a..`)
+#[lang(range_from)]
+struct RangeFrom<T> {
+    lower: T,
+}
+
+impl RangeFrom<T> {
+    #[lang(range_from_new)]
+    fn new(lower: T) -> RangeFrom<T> {
+        RangeFrom { lower: lower }
+    }
+
+    /// Returns true if value is within the range [lower, ∞).
+    fn contains(self: &RangeFrom<T>, value: T) -> bool {
+        value >= self.lower
+    }
+
+    fn equals(self: &RangeFrom<T>, other: &RangeFrom<T>) -> bool {
+        self.lower == other.lower
+    }
+
+    /// Returns the iterator (self copy) for use in for loops.
+    fn iter(self: &RangeFrom<T>) -> RangeFrom<T> {
+        *self
+    }
+
+    /// Returns the next value in the range. Always Some — RangeFrom is infinite.
+    fn next(self: &mut RangeFrom<T>) -> Option<T> {
+        let lower = self.lower;
+        self.lower += 1;
+        Option::some(lower)
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeFrom<T>, f: &mut F) -> std::fmt::Result {
+        std::fmt::write!(f, "{}..", self.lower)
+    }
+}
+
+/// A range with only an upper bound (`..b`)
+#[lang(range_to)]
+struct RangeTo<T> {
+    upper: T,
+}
+
+impl RangeTo<T> {
+    #[lang(range_to_new)]
+    fn new(upper: T) -> RangeTo<T> {
+        RangeTo { upper: upper }
+    }
+
+    /// Returns true if value is within the range (-∞, upper).
+    fn contains(self: &RangeTo<T>, value: T) -> bool {
+        value < self.upper
+    }
+
+    fn equals(self: &RangeTo<T>, other: &RangeTo<T>) -> bool {
+        self.upper == other.upper
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeTo<T>, f: &mut F) -> std::fmt::Result {
+        std::fmt::write!(f, "..{}", self.upper)
+    }
+}
+
+/// A range with only an inclusive upper bound (`..=b`)
+#[lang(range_to_inclusive)]
+struct RangeToInclusive<T> {
+    upper: T,
+}
+
+impl RangeToInclusive<T> {
+    #[lang(range_to_inclusive_new)]
+    fn new(upper: T) -> RangeToInclusive<T> {
+        RangeToInclusive { upper: upper }
+    }
+
+    /// Returns true if value is within the range (-∞, upper].
+    fn contains(self: &RangeToInclusive<T>, value: T) -> bool {
+        value <= self.upper
+    }
+
+    fn equals(self: &RangeToInclusive<T>, other: &RangeToInclusive<T>) -> bool {
+        self.upper == other.upper
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &RangeToInclusive<T>, f: &mut F) -> std::fmt::Result {
+        std::fmt::write!(f, "..={}", self.upper)
+    }
+}
+
 /// A range with both lower and upper bounds (a..b)
 #[lang(range)]
 struct Range<T> {
