@@ -1,0 +1,74 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+// Bit-twiddling intrinsics: count_ones / count_zeros / swap_bytes lower to
+// llvm.ctpop / llvm.bswap on each integer width. 8-bit swap_bytes is identity
+// (LLVM's bswap requires width >= 16); count_ones/count_zeros work for all
+// widths.
+
+fn test_count_ones() -> i32 {
+    if (0u8).count_ones() != 0u32 { return 1i32; }
+    if (255u8).count_ones() != 8u32 { return 2i32; }
+    if (0b10101000u8).count_ones() != 3u32 { return 3i32; }
+
+    if (0u16).count_ones() != 0u32 { return 10i32; }
+    if (65535u16).count_ones() != 16u32 { return 11i32; }
+    if (0xF0F0u16).count_ones() != 8u32 { return 12i32; }
+
+    if (0u32).count_ones() != 0u32 { return 20i32; }
+    if (4294967295u32).count_ones() != 32u32 { return 21i32; }
+    if (0xAAAAAAAAu32).count_ones() != 16u32 { return 22i32; }
+
+    if (0u64).count_ones() != 0u32 { return 30i32; }
+    if (18446744073709551615u64).count_ones() != 64u32 { return 31i32; }
+
+    if (0i32).count_ones() != 0u32 { return 40i32; }
+    if (-1i32).count_ones() != 32u32 { return 41i32; }
+
+    0i32
+}
+
+fn test_count_zeros() -> i32 {
+    if (0u8).count_zeros() != 8u32 { return 1i32; }
+    if (255u8).count_zeros() != 0u32 { return 2i32; }
+    if (0u32).count_zeros() != 32u32 { return 3i32; }
+    if (4294967295u32).count_zeros() != 0u32 { return 4i32; }
+    if (0u64).count_zeros() != 64u32 { return 5i32; }
+
+    0i32
+}
+
+fn test_swap_bytes() -> i32 {
+    // 8-bit: identity
+    if (0xABu8).swap_bytes() != 0xABu8 { return 1i32; }
+    if (0xABi8 as u8).swap_bytes() != 0xABu8 { return 2i32; }
+
+    // 16-bit
+    if (0x0123u16).swap_bytes() != 0x2301u16 { return 10i32; }
+    if (0xFF00u16).swap_bytes() != 0x00FFu16 { return 11i32; }
+
+    // 32-bit
+    if (0x01234567u32).swap_bytes() != 0x67452301u32 { return 20i32; }
+
+    // 64-bit
+    if (0x0123456789ABCDEFu64).swap_bytes() != 0xEFCDAB8967452301u64 { return 30i32; }
+
+    // signed
+    if (0x0123i16).swap_bytes() != 0x2301i16 { return 40i32; }
+    if (0x01234567i32).swap_bytes() != 0x67452301i32 { return 41i32; }
+
+    // usize is 64-bit on this host.
+    if (0x0123456789ABCDEFusize).swap_bytes() != 0xEFCDAB8967452301usize { return 50i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_count_ones();
+    if r != 0 { return r; }
+    let r = test_count_zeros();
+    if r != 0 { return r + 100; }
+    let r = test_swap_bytes();
+    if r != 0 { return r + 200; }
+
+    0i32
+}

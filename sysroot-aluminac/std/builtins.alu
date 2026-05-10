@@ -126,6 +126,14 @@ struct u8 {}
 impl u8 {
     fn min_value() -> u8 { 0u8 }
     fn max_value() -> u8 { 255u8 }
+    fn count_ones(self: u8) -> u32 {
+        std::intrinsics::llvm::<u8>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: u8) -> u32 {
+        (~self).count_ones()
+    }
+    /// Single-byte swap_bytes is identity (LLVM bswap requires width >= 16).
+    fn swap_bytes(self: u8) -> u8 { self }
     /// Add with overflow check.
     fn checked_add(lhs: u8, rhs: u8) -> Option<u8> {
         let r = lhs as u16 + rhs as u16;
@@ -164,6 +172,15 @@ struct u16 {}
 impl u16 {
     fn min_value() -> u16 { 0u16 }
     fn max_value() -> u16 { 65535u16 }
+    fn count_ones(self: u16) -> u32 {
+        std::intrinsics::llvm::<u16>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: u16) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: u16) -> u16 {
+        std::intrinsics::llvm::<u16>("llvm.bswap", self)
+    }
     fn checked_add(lhs: u16, rhs: u16) -> Option<u16> {
         let r = lhs as u32 + rhs as u32;
         if r > 65535u32 { Option::none() } else { Option::some(r as u16) }
@@ -199,6 +216,15 @@ struct u32 {}
 impl u32 {
     fn min_value() -> u32 { 0u32 }
     fn max_value() -> u32 { 4294967295u32 }
+    fn count_ones(self: u32) -> u32 {
+        std::intrinsics::llvm::<u32>("llvm.ctpop", self)
+    }
+    fn count_zeros(self: u32) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: u32) -> u32 {
+        std::intrinsics::llvm::<u32>("llvm.bswap", self)
+    }
     fn checked_add(lhs: u32, rhs: u32) -> Option<u32> {
         let r = lhs as u64 + rhs as u64;
         if r > 4294967295u64 { Option::none() } else { Option::some(r as u32) }
@@ -234,6 +260,15 @@ struct u64 {}
 impl u64 {
     fn min_value() -> u64 { 0u64 }
     fn max_value() -> u64 { 18446744073709551615u64 }
+    fn count_ones(self: u64) -> u32 {
+        std::intrinsics::llvm::<u64>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: u64) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: u64) -> u64 {
+        std::intrinsics::llvm::<u64>("llvm.bswap", self)
+    }
     fn checked_add(lhs: u64, rhs: u64) -> Option<u64> {
         let r = lhs + rhs; // wraps in LLVM IR
         if r < lhs { Option::none() } else { Option::some(r) }
@@ -301,6 +336,15 @@ struct usize {}
 impl usize {
     fn min_value() -> usize { 0usize }
     fn max_value() -> usize { 18446744073709551615usize }
+    fn count_ones(self: usize) -> u32 {
+        std::intrinsics::llvm::<usize>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: usize) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: usize) -> usize {
+        std::intrinsics::llvm::<usize>("llvm.bswap", self)
+    }
     fn checked_add(lhs: usize, rhs: usize) -> Option<usize> {
         let r = lhs + rhs;
         if r < lhs { Option::none() } else { Option::some(r) }
@@ -338,6 +382,14 @@ impl i8 {
     fn min_value() -> i8 { -128i8 }
     fn max_value() -> i8 { 127i8 }
     fn abs(self: &i8) -> i8 { if *self < 0i8 { -*self } else { *self } }
+    fn count_ones(self: i8) -> u32 {
+        std::intrinsics::llvm::<i8>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: i8) -> u32 {
+        (~self).count_ones()
+    }
+    /// Single-byte swap_bytes is identity.
+    fn swap_bytes(self: i8) -> i8 { self }
     fn checked_add(lhs: i8, rhs: i8) -> Option<i8> {
         let r = lhs as i16 + rhs as i16;
         if r < -128i16 || r > 127i16 { Option::none() } else { Option::some(r as i8) }
@@ -375,6 +427,15 @@ impl i16 {
     fn min_value() -> i16 { -32768i16 }
     fn max_value() -> i16 { 32767i16 }
     fn abs(self: &i16) -> i16 { if *self < 0i16 { -*self } else { *self } }
+    fn count_ones(self: i16) -> u32 {
+        std::intrinsics::llvm::<i16>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: i16) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: i16) -> i16 {
+        std::intrinsics::llvm::<i16>("llvm.bswap", self)
+    }
     fn checked_add(lhs: i16, rhs: i16) -> Option<i16> {
         let r = lhs as i32 + rhs as i32;
         if r < -32768i32 || r > 32767i32 { Option::none() } else { Option::some(r as i16) }
@@ -412,6 +473,15 @@ impl i32 {
     fn min_value() -> i32 { -2147483648i32 }
     fn max_value() -> i32 { 2147483647i32 }
     fn abs(self: &i32) -> i32 { if *self < 0i32 { -*self } else { *self } }
+    fn count_ones(self: i32) -> u32 {
+        std::intrinsics::llvm::<i32>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: i32) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: i32) -> i32 {
+        std::intrinsics::llvm::<i32>("llvm.bswap", self)
+    }
     fn checked_add(lhs: i32, rhs: i32) -> Option<i32> {
         let r = lhs as i64 + rhs as i64;
         if r < -2147483648i64 || r > 2147483647i64 { Option::none() } else { Option::some(r as i32) }
@@ -449,6 +519,15 @@ impl i64 {
     fn min_value() -> i64 { -9223372036854775808i64 }
     fn max_value() -> i64 { 9223372036854775807i64 }
     fn abs(self: &i64) -> i64 { if *self < 0i64 { -*self } else { *self } }
+    fn count_ones(self: i64) -> u32 {
+        std::intrinsics::llvm::<i64>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: i64) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: i64) -> i64 {
+        std::intrinsics::llvm::<i64>("llvm.bswap", self)
+    }
     fn checked_add(lhs: i64, rhs: i64) -> Option<i64> {
         // Use unsigned arithmetic to avoid UB
         let ua = lhs as u64;
@@ -528,6 +607,15 @@ impl isize {
     fn min_value() -> isize { -9223372036854775808isize }
     fn max_value() -> isize { 9223372036854775807isize }
     fn abs(self: &isize) -> isize { if *self < 0isize { -*self } else { *self } }
+    fn count_ones(self: isize) -> u32 {
+        std::intrinsics::llvm::<isize>("llvm.ctpop", self) as u32
+    }
+    fn count_zeros(self: isize) -> u32 {
+        (~self).count_ones()
+    }
+    fn swap_bytes(self: isize) -> isize {
+        std::intrinsics::llvm::<isize>("llvm.bswap", self)
+    }
     fn checked_add(lhs: isize, rhs: isize) -> Option<isize> {
         let r = (lhs as u64 + rhs as u64) as isize;
         if rhs >= 0isize {
