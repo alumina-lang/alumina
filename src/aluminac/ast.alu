@@ -1120,6 +1120,7 @@ enum IrTag {
     StackAlloc = 41i32,   // stack allocation; lhs holds size expr, ty holds return pointer type
     InlineAsm = 45i32,    // inline assembly; str_val holds asm string
     LlvmIntrinsic = 46i32, // generic LLVM intrinsic call; str_val=intrinsic name, items=args, ty=return type
+    ConstPanic = 47i32,   // const_panic intrinsic — str_val holds the panic message; const_eval surfaces it as a compile error, codegen treats as unreachable
 }
 
 // Call target tags
@@ -1258,7 +1259,7 @@ impl IrExpr {
     }
 
     fn str_val(self: &IrExpr) -> &[u8] {
-        if self.tag == IrTag::InlineAsm || self.tag == IrTag::LlvmIntrinsic { self._data.codegen.str_val }
+        if self.tag == IrTag::InlineAsm || self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::ConstPanic { self._data.codegen.str_val }
         else { self._data.lit.str_val }  // StringLit
     }
 

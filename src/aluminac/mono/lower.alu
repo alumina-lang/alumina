@@ -1280,7 +1280,12 @@ impl Mono {
                         // For consts, const-evaluate the init so codegen
                         // gets simple literals instead of arbitrary IR.
                         if def.is_const {
-                            let cv = self.try_const_eval(init_ir);
+                            let (cv, panic_msg) = self.try_const_eval_with_panic(init_ir);
+                            if panic_msg.len() > 0 {
+                                // const_panic fired during eval — surface as a
+                                // compile error at the const item's span.
+                                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.init.unwrap().span, panic_msg));
+                            }
                             if cv.is_some() {
                                 self.ctx.const_values.insert(def.id._value, cv.unwrap());
                                 Option::some(self.constvalue_to_ir(cv.unwrap(), ty))
@@ -2297,6 +2302,18 @@ impl Mono {
 
     fn try_const_eval(self: &mut Mono, expr: &IrExpr) -> Option<ConstValue> {
         const_eval::try_eval(
+            self.ctx.arena,
+            self.ctx.id_gen,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.ir_globals.as_slice(),
+            &self.ctx.const_values,
+            self.ctx.pointer_size,
+            expr,
+        )
+    }
+
+    fn try_const_eval_with_panic(self: &mut Mono, expr: &IrExpr) -> (Option<ConstValue>, &[u8]) {
+        const_eval::try_eval_with_panic(
             self.ctx.arena,
             self.ctx.id_gen,
             self.ctx.ir_functions.as_slice(),

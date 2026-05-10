@@ -788,7 +788,12 @@ impl FnCodegen {
         IrTag::Void => {
             LLVMGetUndef(self.ctx.void_type)
         }
-        IrTag::Unreachable => {
+        IrTag::Unreachable, IrTag::ConstPanic => {
+            // ConstPanic shouldn't be reachable at runtime — it only fires
+            // through const_eval, which surfaces the message as a compile
+            // error. If the call is somehow reached at runtime (e.g. inside
+            // a generic body that wasn't const-evaluated), fall through to
+            // unreachable just like alumina-boot does.
             LLVMBuildUnreachable(self.ctx.builder);
             LLVMGetUndef(self.ctx.void_type)
         }

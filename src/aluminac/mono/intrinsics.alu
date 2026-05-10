@@ -27,7 +27,8 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "transmute" => lower_transmute(m, ir_type_args, expr),
         "stack_alloc" => lower_stack_alloc(m, ir_type_args, expr),
         "llvm" => lower_llvm(m, ir_type_args, expr),
-        "const_alloc", "const_free", "const_panic",
+        "const_panic" => lower_const_panic(m, expr),
+        "const_alloc", "const_free",
             "const_note", "const_warning", "const_bake" =>
             lower_const_runtime_noop(m, ir_type_args, name),
         "compile_fail", "compile_warn", "compile_note" =>
@@ -236,6 +237,24 @@ fn lower_llvm(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
     result.tag = IrTag::LlvmIntrinsic;
     result._data.codegen.str_val = intrinsic_name;
     result._data.codegen.items = ir_args;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_const_panic(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // const_panic(msg) -> !: triggers a compile error if reached during const
+    // evaluation, traps if reached at runtime. The message argument must be a
+    // string literal; non-literal forms (e.g. format!(...) results) are
+    // captured as the empty string — the const evaluator only stores the
+    // emitted text on a successful pre-runtime fold, which doesn't (yet)
+    // support const-time string building.
+    let msg: &[u8] = if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::ConstPanic;
+    result._data.codegen.str_val = msg;
     m.ctx.arena.alloc(result)
 }
 

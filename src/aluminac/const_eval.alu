@@ -112,6 +112,8 @@ struct ConstEvaluator {
     steps_remaining: usize,
     // Type layout
     pointer_size: usize,
+    // Last const_panic message, if one fired during eval. Empty otherwise.
+    panic_msg: &[u8],
 }
 
 impl ConstEvaluator {
@@ -137,6 +139,7 @@ impl ConstEvaluator {
             remaining_depth: MAX_RECURSION_DEPTH,
             steps_remaining: MAX_ITERATIONS,
             pointer_size: pointer_size,
+            panic_msg: "",
         }
     }
 
@@ -300,6 +303,10 @@ impl ConstEvaluator {
         IrTag::Ref => self.eval_ref(expr),
         IrTag::Deref => self.eval_deref(expr),
         IrTag::Unreachable, IrTag::Trap => ConstResult::fail(ConstEvalError::unreachable_err()),
+        IrTag::ConstPanic => {
+            self.panic_msg = expr.str_val();
+            ConstResult::fail(ConstEvalError::const_panic())
+        }
         IrTag::Undef => ConstResult::success(ConstValue::make_uninitialized()),
         IrTag::Zeroed => ConstResult::success(self.make_zeroed(expr.ty)),
         IrTag::FnRef => ConstResult::success(ConstValue::make_fn_ptr(*expr.fn_ref())),
@@ -1227,6 +1234,7 @@ impl ConstEvaluator {
             remaining_depth: self.remaining_depth - 1,
             steps_remaining: self.steps_remaining,
             pointer_size: self.pointer_size,
+            panic_msg: "",
         };
 
         // Evaluate function body
@@ -1234,6 +1242,11 @@ impl ConstEvaluator {
 
         // Propagate remaining steps back
         self.steps_remaining = child.steps_remaining;
+        // Propagate panic message — a const_panic in callee should surface to
+        // the outermost try_const_eval caller.
+        if child.panic_msg.len() > 0 {
+            self.panic_msg = child.panic_msg;
+        }
 
         if result.ok {
             return result;
@@ -1402,6 +1415,25 @@ fn try_eval(
     } else {
         Option::none()
     }
+}
+
+/// Like `try_eval` but also reports the const_panic message (if any) the
+/// evaluator captured on the failing path. Empty `panic_msg` means no
+/// const_panic fired (the eval may still have failed for some other reason).
+fn try_eval_with_panic(
+    arena: &mut Arena,
+    id_gen: &mut IdGen,
+    ir_functions: &[IrFunction],
+    ir_globals: &[IrGlobal],
+    const_values: &HashMap<usize, ConstValue>,
+    pointer_size: usize,
+    expr: &IrExpr,
+) -> (Option<ConstValue>, &[u8]) {
+    let vars: HashMap<usize, ConstValue> = HashMap::new();
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
+    let result = evaluator.eval(expr);
+    let val = if result.ok { Option::some(result.value) } else { Option::none() };
+    (val, evaluator.panic_msg)
 }
 
 /// Materialize a ConstValue back into an IrExpr for embedding in IR.

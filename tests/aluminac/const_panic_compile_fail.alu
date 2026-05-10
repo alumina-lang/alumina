@@ -1,0 +1,15 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+// const_panic during a const item's initialization must surface as a hard
+// compile error. The static_assert pattern uses this: when the condition
+// fails, the call expands to const_panic!("msg"), and the compile fails.
+
+extern "intrinsic" fn const_panic(msg: &[u8]) -> !;
+
+const TRIGGER: i32 = {
+    const_panic("static_assert: this is intentional");
+};
+
+fn main(args: &[&[u8]]) -> i32 {
+    TRIGGER
+}
