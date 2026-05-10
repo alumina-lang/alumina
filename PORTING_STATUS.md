@@ -210,7 +210,7 @@ Notes on remaining macro audit gaps:
 - [TODO] **`std/typing.alu` (and merge `sysroot-aluminac/std/typing/` back).** Depends on dyn + reflection lang items.
 - [TODO] **`std/cmp.alu`** — sysroot uses `DefaultEquatable` mixin + when-based type reflection. Depends on `when_type` and operator-overload lang items.
 - [TODO] **`std/math.alu`** — uses when-dispatch. Depends on `when_type` and `checked_*` intrinsics.
-- [TODO] **`std/macros.alu`** — diff in defined macros; gated on macro feature parity.
+- [PARTIAL] **`std/macros.alu`** — sysroot now declares `concat`, `format_args` (always) and `test_cases` (`#[cfg(not(boot))]`) as `#[builtin]` macros, so both compilers see consistent decls. Replacing `sysroot-aluminac/std/macros.alu` with the unified file works for `make test-aluminac` but breaks `make test-std-aluminac`: the sysroot file's `tests::test_bind_reduce` exercises `map!(sum, bind!(times, 3), 1, 2, 3)` whose nested `bind!()` invocation result aluminac doesn't fully resolve at the inner method-dispatch position (fmt lookup gets `''`). Fix the bind/reduce composition first, then swap.
 - [TODO] **`std/intrinsics.alu`** — sysroot exposes attributed/fields/enum_variants/vtable/etc. Gated on those intrinsics being implemented.
 - [TODO] **`std/builtins.alu`** — sysroot has 3× more impls + typeop lang items + type_descriptor lang item. Gated on the typeop and reflection lang items above.
 - [TODO] **`std/mem.alu`** — sysroot has full slice ops + dyn casting. Gated on dyn + slice lang items.
