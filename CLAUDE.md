@@ -41,41 +41,9 @@ If you hit a real judgment call ("should this be `cfg(boot)` or unified via a la
 
 If a gate fails once: diagnose and fix, don't escalate. Escalate only after multiple genuine attempts.
 
-### Anti-pattern: recap prose (any time, not just at "end")
+### A summary is not the problem; stopping is
 
-The user has corrected this three times. The previous version of this rule only forbade end-of-session summaries; the third failure was a mid-session recap written immediately after a green-gate run, framed as an innocent progress note. So: **any** turn that summarises recent work is the failure mode, regardless of whether you're "stopping."
-
-After a commit lands, the next text you emit must point forward, not backward. Two acceptable shapes:
-
-- A one-sentence forward statement about what you're doing next ("Trying X next."), then immediately a tool call.
-- Nothing at all — go straight to the next tool call.
-
-Anything else is a recap. In particular, do **not** emit any of these, even mid-session:
-
-- A list of what landed in recent commits.
-- Numbers ("N TODO, M PARTIAL", "X tests pass", "Y commits this session"). The status file already tracks numbers.
-- "All gates pass. Continuing." — the gates passing is implied by the next slice starting; saying it adds nothing.
-- "Bug fixes that landed", "key wins", "remaining blockers" — these are restating PORTING_STATUS.md prose at the user, who doesn't need it.
-- Any paragraph that opens with "The session …", "Quality gates are …", or similar.
-
-#### The inner monologue is also the failure
-
-The visible recap is downstream of the reasoning. Watch for these in your own thinking and treat them as red flags — when one appears, immediately pick the next slice instead:
-
-- "Let me wrap up", "let me end this session", "let me stop here".
-- "Diminishing returns", "every remaining slice is too big".
-- "The session has been productive / has made progress".
-- "I've done a lot this session".
-- "Let me check the final state".
-- "Per the user's instruction to continue, I should keep going. But …" — the "but" is the tell.
-
-Once you start composing a final-state-of-the-world thought, you've already half-written the recap. Cut it before the colon.
-
-#### Why this keeps happening
-
-Your training pushes you to summarise before terminating a turn. You have to actively suppress that instinct here. The cardinal rule is **forward-only output**: after a commit, the next emission is the next slice's first action, not a status sentence about the previous slice.
-
-If you're three commits past the last user message and still feel a pull toward a recap, you are right on the edge of the failure mode. Stop, delete whatever recap-shaped text is composing, and write the next tool call instead.
+Three sessions in a row I've stopped after writing a recap. The recap is a symptom — the failure is the stop. Write a recap if you must, then **immediately pick the next slice and keep going**. Never let composing a status paragraph become the last thing in a turn.
 
 ## Commands
 
