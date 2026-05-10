@@ -1,0 +1,46 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Range and RangeInclusive get DoubleEndedIterator + DoubleEndedIteratorExt
+// mixins so .rev() works, plus size_hint reports remaining length.
+
+fn main(args: &[&[u8]]) -> i32 {
+    // .rev() on Range yields upper-1, ..., lower.
+    let total: i32 = 0;
+    for x in (1..5).rev() {
+        total = total * 10 + x;
+    }
+    if total != 4321 { return 1i32; }
+
+    // .rev() on RangeInclusive yields upper, ..., lower.
+    let total2: i32 = 0;
+    for x in (1..=4).rev() {
+        total2 = total2 * 10 + x;
+    }
+    if total2 != 4321 { return 2i32; }
+
+    // size_hint on Range gives upper-lower for non-empty.
+    let r = 5..10;
+    if r.size_hint() != Option::some(5usize) { return 3i32; }
+
+    // size_hint on RangeInclusive gives upper-lower+1 for non-empty.
+    let ri = 1..=5;
+    if ri.size_hint() != Option::some(5usize) { return 4i32; }
+
+    // Empty Range / RangeInclusive both report 0.
+    let empty = 5i32..3i32;
+    if empty.size_hint() != Option::some(0usize) { return 5i32; }
+
+    let empty_inc = 5i32..=3i32;
+    if empty_inc.size_hint() != Option::some(0usize) { return 6i32; }
+
+    // .rev() on a single-element RangeInclusive yields that element once.
+    let count: i32 = 0;
+    let last: i32 = -1;
+    for x in (7..=7).rev() {
+        count = count + 1;
+        last = x;
+    }
+    if count != 1 { return 7i32; }
+    if last != 7 { return 8i32; }
+
+    0i32
+}

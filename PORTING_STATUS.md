@@ -188,11 +188,11 @@ Notes on remaining macro audit gaps:
 - [DONE] **`std/prelude.alu`** — unified.
 - [TODO] **`std/option.alu`** — unifying breaks aluminac bootstrap (sysroot's body uses macros and dyn paths aluminac can't handle yet).
 - [TODO] **`std/result.alu`** — same shape as `option.alu`.
-- [PARTIAL] **`std/range.alu`** — sysroot-aluminac now declares all six range variants with `#[lang(...)]` attrs, `fmt` impls, `equals` methods, `mixin std::cmp::Equatable<...>`, and (on Range / RangeFrom / RangeInclusive) `mixin std::iter::Iterator<...>` + `IteratorExt<...>` so chained combinators (`.map`, `.filter`, `.take`, `.enumerate`, …) work directly on range literals and for-loops drive them. Range literals lower to the right variant unconditionally. Verified by `tests/aluminac/range_fmt.alu` (fmt), `tests/aluminac/range_equatable.alu` (== / != / protocol conformance), and `tests/aluminac/range_iter_combinators.alu` (combinator chaining + for-loop).
+- [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting surface: all six variants with `#[lang(...)]` attrs and `fmt`; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). All variants mix in `cmp::Equatable<...>`. Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, and `range_double_ended.alu` (including .rev() on Range / RangeInclusive and size_hint reporting).
   Missing for full unification with sysroot's `std/range.alu`:
-  - `next_back` / `size_hint` / `DoubleEndedIterator` mixin on Range and RangeInclusive (sysroot has these; needed for `.rev()` on a range).
-  - `T: Integer` bounds on every variant. sysroot-aluminac's lookups would tighten and likely break code that ranges over non-Integer types (none in practice, but worth verifying).
-  - `hash::Hashable` impls (sysroot has them; sysroot-aluminac's hash module is bare).
+  - `T: Integer` bounds on every variant. sysroot-aluminac's lookups would tighten — likely fine, but the bound-violation enforcement in aluminac is weak so simply adding the bound may not actually reject misuse. Needs a smoke test against any sysroot code that ranges a non-integer (none currently).
+  - `hash::Hashable` impls (sysroot has them; sysroot-aluminac's hash module is bare — gated on hash module unification).
+  - Diff-and-unify pass: at this point sysroot-aluminac/std/range.alu and sysroot/std/range.alu diverge mainly in the `T: Integer` bound and Hashable. A "literally unify the file" slice may now be small enough to attempt.
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
 - [TODO] **`std/string/unicode.alu`** — unifying breaks the util_unicode test (need to investigate).

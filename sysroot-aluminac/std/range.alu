@@ -157,6 +157,25 @@ impl Range<T> {
         }
     }
 
+    /// Returns the next value from the back, or none if exhausted.
+    fn next_back(self: &mut Range<T>) -> Option<T> {
+        if self.lower < self.upper {
+            self.upper -= 1;
+            Option::some(self.upper)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Returns the number of remaining elements.
+    fn size_hint(self: &Range<T>) -> Option<usize> {
+        if self.lower < self.upper {
+            Option::some(self.upper as usize - self.lower as usize)
+        } else {
+            Option::some(0usize)
+        }
+    }
+
     fn equals(self: &Range<T>, other: &Range<T>) -> bool {
         self.lower == other.lower && self.upper == other.upper
     }
@@ -168,6 +187,8 @@ impl Range<T> {
     mixin std::cmp::Equatable<Range<T>>;
     mixin std::iter::Iterator<Range<T>, T>;
     mixin std::iter::IteratorExt<Range<T>, T>;
+    mixin std::iter::DoubleEndedIterator<Range<T>, T>;
+    mixin std::iter::DoubleEndedIteratorExt<Range<T>, T>;
 }
 
 /// An inclusive range with both lower and upper bounds (a..=b)
@@ -214,6 +235,30 @@ impl RangeInclusive<T> {
         }
     }
 
+    /// Returns the next value from the back, or none if exhausted.
+    fn next_back(self: &mut RangeInclusive<T>) -> Option<T> {
+        if self.lower <= self.upper && !self._exhausted {
+            let upper = self.upper;
+            if self.lower == self.upper {
+                self._exhausted = true;
+            } else {
+                self.upper -= 1;
+            }
+            Option::some(upper)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Returns the number of remaining elements.
+    fn size_hint(self: &RangeInclusive<T>) -> Option<usize> {
+        if self.lower <= self.upper && !self._exhausted {
+            Option::some(self.upper as usize - self.lower as usize + 1)
+        } else {
+            Option::some(0usize)
+        }
+    }
+
     fn equals(self: &RangeInclusive<T>, other: &RangeInclusive<T>) -> bool {
         self.lower == other.lower && self.upper == other.upper
     }
@@ -225,4 +270,6 @@ impl RangeInclusive<T> {
     mixin std::cmp::Equatable<RangeInclusive<T>>;
     mixin std::iter::Iterator<RangeInclusive<T>, T>;
     mixin std::iter::IteratorExt<RangeInclusive<T>, T>;
+    mixin std::iter::DoubleEndedIterator<RangeInclusive<T>, T>;
+    mixin std::iter::DoubleEndedIteratorExt<RangeInclusive<T>, T>;
 }
