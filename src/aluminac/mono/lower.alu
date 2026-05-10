@@ -3240,7 +3240,9 @@ impl Mono {
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_array") {
                         is_match = val_ty.tag == IrTyTag::Array;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_tuple") {
-                        is_match = val_ty.tag == IrTyTag::Tuple;
+                        // `()` collapses to void_ty in make_tuple_ty; treat
+                        // Void as the zero-tuple for protocol-conformance too.
+                        is_match = val_ty.tag == IrTyTag::Tuple || val_ty.tag == IrTyTag::Void;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_closure") {
                         is_match = val_ty.tag == IrTyTag::Closure;
                     } else if self.ctx.is_lang_item(proto_id_value, "proto_function_pointer") {
