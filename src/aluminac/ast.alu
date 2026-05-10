@@ -913,6 +913,11 @@ struct _IrTyFnData {
     fn_ref: IrFnRef,
 }
 
+struct _IrTyProtocolData {
+    proto_id: usize,
+    type_args: &[&IrTy],
+}
+
 union _IrTyData {
     builtin: BuiltinType,           // Builtin, Never
     pointer: _IrTyPointerData,      // Pointer
@@ -924,7 +929,7 @@ union _IrTyData {
     closure: _IrTyClosureData,      // Closure
     slice: _IrTySliceData,          // Slice
     fn_item: _IrTyFnData,          // Fn
-    proto_id: usize,                // Protocol
+    proto: _IrTyProtocolData,       // Protocol
 }
 
 struct IrTy {
@@ -996,10 +1001,15 @@ impl IrTy {
     }
 
     fn mk_protocol(proto_id: usize) -> IrTy {
-        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto_id: proto_id } }
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto: _IrTyProtocolData { proto_id: proto_id, type_args: &[] } } }
     }
 
-    fn proto_id(self: &IrTy) -> usize { self._data.proto_id }
+    fn mk_protocol_with_args(proto_id: usize, type_args: &[&IrTy]) -> IrTy {
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto: _IrTyProtocolData { proto_id: proto_id, type_args: type_args } } }
+    }
+
+    fn proto_id(self: &IrTy) -> usize { self._data.proto.proto_id }
+    fn proto_type_args(self: &IrTy) -> &[&IrTy] { self._data.proto.type_args }
 
     fn is_void(self: &IrTy) -> bool {
         self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void)

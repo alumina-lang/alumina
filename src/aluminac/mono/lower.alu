@@ -602,12 +602,14 @@ impl Mono {
         }
 
         // Protocols don't have a runtime representation, but their identity
-        // matters for `is`-checks (e.g. `x is Integer`) when the protocol is
-        // passed as a generic type-arg. Wrap the protocol's def-id so the
-        // TypeCheck path can recover it after substitution.
+        // (and type-args) matter for `is`-checks (e.g. `x is Integer`) and
+        // for the dyn-vtable builder, which needs the protocol's non-Self
+        // type-args to mono each impl-method. Capture the def-id and the
+        // resolved type-args so the TypeCheck path and the vtable builder
+        // can recover them after substitution.
         let proto_def = self.ctx.protocol_defs.get(&item_ref.id._value);
         if proto_def.is_some() {
-            return self.ctx.arena.alloc(IrTy::mk_protocol(item_ref.id._value));
+            return self.ctx.arena.alloc(IrTy::mk_protocol_with_args(item_ref.id._value, type_args));
         }
 
         self.ctx.void_ty
@@ -1030,10 +1032,32 @@ impl Mono {
                 self.ctx.arena.alloc(result)
             }
             ExprTag::ArrayLit => {
+                // Propagate the expected element type into per-element
+                // lowering so call inference can solve generics from the
+                // expected dyn / struct shape (e.g. an array of
+                // `&dyn Formattable<Self, F>` infers F at each call site).
+                // Also handle the common shape `&[T]` (pointer-to-slice)
+                // since `&[arr_lit]` coerces from `*[T; N]` to `&[T]`.
+                let expected_elem_ty: &IrTy = self.ctx.void_ty;
+                if self.expected_type.tag == IrTyTag::Array {
+                    expected_elem_ty = self.expected_type.inner();
+                } else if self.expected_type.tag == IrTyTag::Slice {
+                    expected_elem_ty = self.expected_type.inner();
+                } else if self.expected_type.tag == IrTyTag::Pointer
+                    && self.expected_type.inner().tag == IrTyTag::Slice {
+                    expected_elem_ty = self.expected_type.inner().inner();
+                } else if self.expected_type.tag == IrTyTag::Pointer
+                    && self.expected_type.inner().tag == IrTyTag::Array {
+                    expected_elem_ty = self.expected_type.inner().inner();
+                }
                 let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                 let elem_ty = self.ctx.void_ty;
                 for i in 0usize..expr.args().len() {
-                    ir_elems[i] = self.lower_expr(expr.args()[i]);
+                    if !expected_elem_ty.is_void() {
+                        ir_elems[i] = self.lower_expr_coerced(expr.args()[i], expected_elem_ty);
+                    } else {
+                        ir_elems[i] = self.lower_expr(expr.args()[i]);
+                    }
                     if i == 0 { elem_ty = ir_elems[i].ty; }
                 }
                 let arr_ty = self.ctx.make_array_ty(elem_ty, expr.args().len());
@@ -3771,14 +3795,44 @@ impl Mono {
                 }
                 let fn_def = fn_def_opt.unwrap();
 
-                // Mono the impl method. For struct impls with the impl's own
-                // generics matching the method's generic_params (e.g. `impl
-                // Option<T> { fn equals(...) }`), use the struct's type_args.
+                // Mono the impl method. Pass2 prepends the impl-struct's
+                // generics to the method's `generic_params`, so the full
+                // type-arg vector is `[impl_args..., method_own_args...]`.
+                // Recover each piece:
+                //   - impl_args: the impl struct's concrete type_args.
+                //   - method_own_args: protocol's non-Self type-args (for
+                //     methods like `fmt<F>` conforming to `Formattable<Self, F>`).
                 let method_type_args: &[&IrTy] = &[];
-                if impl_ty.tag == IrTyTag::Struct
-                    && impl_ty.struct_ref().type_args.len() == fn_def.generic_params.len()
+                let proto_args = proto_ty.proto_type_args();
+                let proto_non_self_count = if proto_args.len() >= 1 { proto_args.len() - 1 } else { 0 };
+                let impl_args: &[&IrTy] = if impl_ty.tag == IrTyTag::Struct {
+                    impl_ty.struct_ref().type_args
+                } else {
+                    &[]
+                };
+                let combined_total = impl_args.len() + proto_non_self_count;
+                if fn_def.generic_params.len() == combined_total && combined_total > 0 {
+                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(combined_total);
+                    for i in 0usize..impl_args.len() {
+                        buf[i] = impl_args[i];
+                    }
+                    for i in 0usize..proto_non_self_count {
+                        buf[impl_args.len() + i] = proto_args[i + 1];
+                    }
+                    method_type_args = buf;
+                } else if fn_def.generic_params.len() > 0
+                    && proto_non_self_count == fn_def.generic_params.len() {
+                    // Method only has its own generics (impl is non-generic).
+                    let nargs = proto_non_self_count;
+                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(nargs);
+                    for i in 0usize..nargs {
+                        buf[i] = proto_args[i + 1];
+                    }
+                    method_type_args = buf;
+                } else if impl_args.len() == fn_def.generic_params.len()
                     && fn_def.generic_params.len() > 0 {
-                    method_type_args = impl_ty.struct_ref().type_args;
+                    // Method only inherits the impl's generics (no method-own).
+                    method_type_args = impl_args;
                 }
 
                 // Record proto Self → impl_ty for any defaulted-body method
@@ -3786,6 +3840,21 @@ impl Mono {
                 let self_id_opt = self.ctx.proto_method_self_id.get(&fn_def.id._value);
                 if self_id_opt.is_some() {
                     self.type_map.insert(self_id_opt.unwrap(), impl_ty);
+                }
+
+                // Bind impl-struct generics in type_map (e.g. `impl Foo<T>`'s
+                // T → impl_ty.struct_ref().type_args[0]) so the method body
+                // resolves them when it references types like `&Foo<T>` or
+                // calls associated fns whose param types use T.
+                if impl_ty.tag == IrTyTag::Struct {
+                    let impl_struct_def_opt = self.ctx.struct_defs.get(&impl_ty.struct_ref().id._value);
+                    if impl_struct_def_opt.is_some() {
+                        let impl_struct_def = impl_struct_def_opt.unwrap();
+                        let n = std::cmp::min(impl_struct_def.generic_params.len(), impl_ty.struct_ref().type_args.len());
+                        for gi in 0usize..n {
+                            self.type_map.insert(impl_struct_def.generic_params[gi].id._value, impl_ty.struct_ref().type_args[gi]);
+                        }
+                    }
                 }
 
                 let fn_idx = self.mono_function(fn_def, method_type_args);
@@ -4168,6 +4237,43 @@ impl Mono {
                     self.unify_type_for_inference(param_ty.elems()[i], arg_ty.elems()[i], inferred, found, generic_params);
                 }
             }
+        } else if param_ty.tag == TyTag::Dyn {
+            // AST: `&dyn Proto<...>` (or `&dyn (A + B)`) — caller has already
+            // stripped the outer Pointer, so we're at the Dyn node.
+            // IR side must be the lang(dyn) struct with type_args
+            // [protos_tuple, ptr_ty]. Unify each AST protocol against the
+            // matching IR Protocol's type_args, so a fn generic that appears
+            // as a protocol type-arg (e.g. `&dyn Formattable<Self, F>` where
+            // F is the fn's own generic) can be solved from the call site's
+            // expected dyn type.
+            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref().type_args.len() >= 1 {
+                let protos_tuple_ir = arg_ty.struct_ref().type_args[0];
+                if protos_tuple_ir.tag == IrTyTag::Tuple {
+                    let inner_ast = param_ty.inner();
+                    let ast_protos: &[&Ty];
+                    if inner_ast.tag == TyTag::Tuple {
+                        ast_protos = inner_ast.elems();
+                    } else {
+                        let single = self.ctx.arena.alloc_slice::<&Ty>(1);
+                        single[0] = inner_ast;
+                        ast_protos = single;
+                    }
+                    let n = std::cmp::min(ast_protos.len(), protos_tuple_ir.elems().len());
+                    for pi in 0usize..n {
+                        let ast_proto = ast_protos[pi];
+                        let ir_proto = protos_tuple_ir.elems()[pi];
+                        if ir_proto.tag != IrTyTag::Protocol { continue; }
+                        if ast_proto.tag == TyTag::Generic {
+                            let ast_pargs = ast_proto.elems();
+                            let ir_pargs = ir_proto.proto_type_args();
+                            let pn = std::cmp::min(ast_pargs.len(), ir_pargs.len());
+                            for ai in 0usize..pn {
+                                self.unify_type_for_inference(ast_pargs[ai], ir_pargs[ai], inferred, found, generic_params);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4330,6 +4436,14 @@ impl Mono {
                         break;
                     }
                 }
+            }
+
+            // Catch-all structural unification for return-type shapes the
+            // inline cases miss — notably `&dyn Proto<...>` where a fn
+            // generic appears as a protocol type-arg, and any deeper
+            // pointer / tuple / generic nesting.
+            if !hint_ty.is_void() {
+                self.unify_type_for_inference(ret_ty_ast, hint_ty, inferred, found, def.generic_params);
             }
         }
 

@@ -48,6 +48,8 @@ Notes on remaining macro audit gaps:
 
   Multi-protocol bound order matters for vtable layout: `&dyn (Foo + Bar)` and `&dyn (Bar + Foo)` produce distinct const globals keyed by the protocol-tuple type-arg, with per-method dispatch indices resolved against the bound's declaration order. Verified by `tests/aluminac/dyn_proto_order.alu`.
 
+  Multi-type-arg protocols (e.g. `Formattable<Self, F>`) now thread their non-Self type-args into the vtable build. `IrTyTag::Protocol` carries a `_IrTyProtocolData { proto_id, type_args }` payload (was just `proto_id`). The dyn vtable builder uses these to bind impl-method generics: for an impl method declared `<F: Formatter<F>>` conforming to `Formattable<Self, F>`, the impl method is mono'd with F = bound's F. Generic impls (`impl Foo<T> { fn fmt<F>(...) }`) work too — pass2 prepends impl generics to the method's `generic_params`, so the vtable build assembles `[impl_struct.type_args..., proto.non_self_args...]` for the mono call. Verified by `tests/aluminac/dyn_proto_with_type_args.alu` (single-method, single-method inferred F, array-of-dyn elements with inferred F, and generic-struct impl).
+
   Used by `sysroot/std/regex/`, `sysroot/std/runtime/backtrace.alu`, `sysroot/std/io/`, `sysroot/std/typing.alu`, and `sysroot/std/panicking.alu`'s `panic_impl`.
 - [DONE] **`when` for types (`when_type`).** Already supported. `tests/aluminac/when_type.alu` covers `type T<X> = when cond { A } else { B };`. Audit was wrong on this one.
 - [DONE] **`Ty::Tag` / `Expr::Tag` wrapper nodes.** Audited the alumina-boot Rust source: `Ty::Tag` is a transparent wrapper that lets boot mark types with a string tag (notably "dynamic" for `dyn` lowering). Aluminac doesn't need it — its dyn handling resolves directly to the lang(dyn) struct. Sysroot grep finds only doc references, no actual uses. The `tag` intrinsic itself is implemented in aluminac as identity (lowering its second argument). No further work.
@@ -276,10 +278,13 @@ Notes on remaining macro audit gaps:
 ## Unified sysroot probe
 
 - [PARTIAL] **Aluminac compiles dyn-free programs against `sysroot/`.** The slices in this branch (typeop dispatch, slice pseudo-fields, range type inference, fn-item type resolution, generic-fn skip-on-export, etc.) collectively let aluminac swallow non-trivial code against the unified sysroot — verified by `tests/aluminac/unified_sysroot_basic.alu`. The test exercises generics, Ordering, comparison-operator overload dispatch on a user struct, and works as a regression guard.
+
+  `Option::unwrap` (and the rest of the panic chain — `Result::unwrap`, `panic!`, `dyn Formattable`-based `const_panic_impl`) now compiles against `--sysroot sysroot` for at least the success path. The wins required threading the protocol's non-Self type-args through `IrTyTag::Protocol`, the dyn vtable build assembling `[impl_struct.type_args..., proto.non_self_args...]` for impl methods, structural unification of `&dyn Proto<...>` in expected-return-type inference, and propagating expected element type into array-literal lowering (the panic path expands `format_args!` into an array of `dyn_format_arg(&...)` calls whose F must be solved from the array's expected type).
+
   Missing:
-  - Anything reaching `Option::unwrap` / `Result::unwrap` / `panic!` triggers `const_panic_impl` which uses `dyn Formattable` — a hard `dyn`-blocker.
-  - Stdlib code that uses `dyn` directly (regex internal DFA, runtime backtrace, typing reflection, io/fs Read/Write protocols).
+  - Stdlib code that uses `dyn` directly (regex internal DFA, runtime backtrace, typing reflection, io/fs Read/Write protocols) — still unverified end-to-end.
   - Macros that expand to references to coroutines / threading / panicking.
+  - The actual panic *runtime* (setjmp/longjmp, backtrace) hasn't been exercised — only the compile-time chain.
 
 - [DONE] **Macro expansion type inference for if/else expressions.** Reduced reproductions of "if-else where both arms produce Result<...>" pass under aluminac (verified locally). The original concern was about sysroot's bare format! returning the if/else inline; that's blocked behind sysroot/std/fmt/mod.alu unification on grounds other than this inference issue (the StringBuf/dyn dispatch chain). When that unification is attempted, re-investigate; for now the issue isn't a blocker.
 

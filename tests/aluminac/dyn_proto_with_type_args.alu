@@ -1,0 +1,92 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Multi-type-arg protocols (`Proto<Self, F>`) used in `&dyn` bounds.
+// The protocol's non-Self type-args must be threaded through the
+// vtable build so the impl method's own generics (e.g. `<F: Sink<F>>`)
+// resolve to the bound's concrete F. Three regressions:
+//
+//  1. Single-method protocol with two type args, explicit turbofish on
+//     the wrapping fn — exercises proto type-args propagation.
+//  2. Same shape but F is *inferred* from the let-binding's expected
+//     `&dyn Proto<Self, Concrete>` annotation — exercises return-type
+//     inference structural-walk through `&dyn`.
+//  3. Array literal `[wrap(...)]` with expected element type
+//     `&dyn Proto<Self, Concrete>` — exercises expected-element-type
+//     propagation into per-element call inference.
+//  4. Generic struct impl: `impl Foo<T> { fn fmt<F: Sink<F>>(...) }`
+//     dispatches via dyn vtable, then internally calls `Foo::write`
+//     without turbofish — exercises both impl-struct generics + method
+//     own generics threaded into the vtable mono call.
+
+protocol Sink<Self> { fn put(self: &mut Self, b: u8); }
+protocol Writer<Self, F> { fn write(self: &Self, sink: &mut F); }
+
+struct Counter { n: i32 }
+impl Counter {
+    fn put(self: &mut Counter, _b: u8) { self.n = self.n + 1i32 }
+    fn count(self: &Counter) -> i32 { self.n }
+}
+
+struct Banner {}
+impl Banner {
+    fn write<F: Sink<F>>(self: &Banner, sink: &mut F) {
+        sink.put('B');
+        sink.put('!');
+    }
+}
+
+fn wrap<F: Sink<F>, T: Writer<T, F>>(t: &T) -> &dyn Writer<Self, F> { t }
+
+fn use_dyn(w: &dyn Writer<Self, Counter>, sink: &mut Counter) -> i32 {
+    w.write(sink);
+    sink.count()
+}
+
+// (4) generic struct impl with method-level F
+struct Foo<T> { v: T }
+
+impl Foo<T> {
+    fn write<F: Sink<F>>(self: &Foo<T>, sink: &mut F) {
+        sink.put('x');
+        Foo::write_again(self.v, sink);
+    }
+
+    fn write_again<F: Sink<F>>(_value: T, sink: &mut F) {
+        sink.put('y');
+    }
+}
+
+fn use_foo_dyn(w: &dyn Writer<Self, Counter>, sink: &mut Counter) -> i32 {
+    w.write(sink);
+    sink.count()
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let banner = Banner {};
+    let counter = Counter { n: 0i32 };
+
+    // (1) explicit turbofish
+    let w1 = wrap::<Counter, Banner>(&banner);
+    use_dyn(w1, &counter);
+    if counter.count() != 2i32 { return 1i32; }
+
+    // (2) inferred F from let-binding
+    let counter2 = Counter { n: 0i32 };
+    let w2: &dyn Writer<Self, Counter> = wrap(&banner);
+    use_dyn(w2, &counter2);
+    if counter2.count() != 2i32 { return 2i32; }
+
+    // (3) expected-element-type propagation through array literal
+    let counter3 = Counter { n: 0i32 };
+    let arr: [&dyn Writer<Self, Counter>; 1] = [wrap(&banner)];
+    use_dyn(arr[0], &counter3);
+    if counter3.count() != 2i32 { return 3i32; }
+
+    // (4) generic struct + method-own generic, dispatched through dyn
+    let foo = Foo::<i32> { v: 42i32 };
+    let counter4 = Counter { n: 0i32 };
+    let w4: &dyn Writer<Self, Counter> = &foo;
+    use_foo_dyn(w4, &counter4);
+    if counter4.count() != 2i32 { return 4i32; }
+
+    0i32
+}
