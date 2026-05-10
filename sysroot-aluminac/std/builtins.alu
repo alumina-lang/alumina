@@ -121,6 +121,12 @@ impl tuple {
         }
         f.write_byte(')' as u8)
     }
+    /// Hash each element in order. Empty tuple contributes nothing.
+    fn hash<T, H: std::hash::Hasher<H>>(self: &T, h: &mut H) {
+        for const i in 0usize..std::intrinsics::length_of::<T>() {
+            self.(i).hash(h);
+        }
+    }
 }
 
 #[lang(builtin_callable)]

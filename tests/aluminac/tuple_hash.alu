@@ -1,0 +1,32 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Tuples (including the unit tuple) get a hash impl via the lang-item
+// `tuple` struct's generic methods — element-wise hashing.
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = (1i32, 2i32);
+    let b = (1i32, 2i32);
+    let c = (1i32, 3i32);
+
+    let ha = std::hash::hash_of::<(i32, i32)>(&a);
+    let hb = std::hash::hash_of::<(i32, i32)>(&b);
+    let hc = std::hash::hash_of::<(i32, i32)>(&c);
+
+    if ha != hb { return 1i32; }
+    if ha == hc { return 2i32; }
+
+    // Three-element tuple
+    let t1 = (1u8, 2u16, 3u32);
+    let t2 = (1u8, 2u16, 3u32);
+    let t3 = (1u8, 2u16, 4u32);
+    if std::hash::hash_of::<(u8, u16, u32)>(&t1) != std::hash::hash_of::<(u8, u16, u32)>(&t2) { return 3i32; }
+    if std::hash::hash_of::<(u8, u16, u32)>(&t1) == std::hash::hash_of::<(u8, u16, u32)>(&t3) { return 4i32; }
+
+    // Empty tuple — empty hash contribution; two unit values hash equally.
+    let empty1 = ();
+    let empty2 = ();
+    let he1 = std::hash::hash_of::<()>(&empty1);
+    let he2 = std::hash::hash_of::<()>(&empty2);
+    if he1 != he2 { return 5i32; }
+
+    0i32
+}
