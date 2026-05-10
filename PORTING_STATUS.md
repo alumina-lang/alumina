@@ -186,7 +186,13 @@ Notes on remaining macro audit gaps:
 - [TODO] **`std/mod.alu`** — module re-exports; aluminac-version still has cfg-gated sections; unifying breaks panicking test.
 - [DONE] **`sysroot/mod.alu`** — root module. Identical content in both sysroots; verified via diff.
 - [DONE] **`std/prelude.alu`** — unified.
-- [TODO] **`std/option.alu`** — unifying breaks aluminac bootstrap (sysroot's body uses macros and dyn paths aluminac can't handle yet).
+- [PARTIAL] **`std/option.alu`** — Option already has the bulk of methods (`is_some`/`is_none`/`unwrap`/`map`/`and_then`/`or_else`/`flatten`/`zip`/`as_ptr`/`replace`/`transpose`/`equals`/`fmt`). Newly added `Option::iter() -> OnceIterator<T>` so options drive for-loops and chain into iterator combinators (`.map`, `.filter`, …). Verified by `tests/aluminac/option_iter.alu`.
+  Missing for unification with sysroot's `std/option.alu`:
+  - `unwrap` / `unwrap_or_else` / `unwrap_err` should panic with a descriptive message; sysroot's path uses `panic!` + `lhs.debug()` (DebugAdapter). sysroot-aluminac calls `libc::abort()` silently. Gated on a sysroot-aluminac `debug()` shim or DebugAdapter equivalent.
+  - `hash<T: Hashable<T, H>, H: Hasher<H>>` impl + `mixin Hashable<Option<T>, H>`.
+  - `move()`, `as_nullable_ptr<T: Pointer>` (sysroot has bound-restricted overloads aluminac doesn't yet enforce).
+  - `AnyOption` type alias (`builtins::SameBaseAs<Option<()>>`) — depends on `proto_same_base_as` lang item.
+  - Doc comments and embedded test module — additive once the above land.
 - [TODO] **`std/result.alu`** — same shape as `option.alu`.
 - [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting surface: all six variants with `#[lang(...)]` attrs and `fmt`; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). All variants mix in `cmp::Equatable<...>`. Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, and `range_double_ended.alu` (including .rev() on Range / RangeInclusive and size_hint reporting).
   Missing for full unification with sysroot's `std/range.alu`:
