@@ -191,7 +191,7 @@ Notes on remaining macro audit gaps:
   - `unwrap` / `unwrap_or_else` / `unwrap_err` should panic with a descriptive message; sysroot's path uses `panic!` + `lhs.debug()` (DebugAdapter). sysroot-aluminac calls `libc::abort()` silently. Gated on a sysroot-aluminac `debug()` shim or DebugAdapter equivalent.
   - `hash<T: Hashable<T, H>, H: Hasher<H>>` impl + `mixin Hashable<Option<T>, H>`.
   - `mixin<T: Comparable<T>> Comparable<Option<T>>` (sysroot has it).
-  - `move()`, `as_nullable_ptr<T: Pointer>` (sysroot has bound-restricted overloads aluminac doesn't yet enforce).
+  - `as_nullable_ptr<T: Pointer>` (sysroot has bound-restricted overload aluminac doesn't yet enforce).
   - `AnyOption` type alias (`builtins::SameBaseAs<Option<()>>`) — depends on `proto_same_base_as` lang item.
   - Doc comments and embedded test module — additive once the above land.
 
