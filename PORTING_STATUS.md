@@ -186,14 +186,23 @@ Notes on remaining macro audit gaps:
 - [TODO] **`std/mod.alu`** — module re-exports; aluminac-version still has cfg-gated sections; unifying breaks panicking test.
 - [DONE] **`sysroot/mod.alu`** — root module. Identical content in both sysroots; verified via diff.
 - [DONE] **`std/prelude.alu`** — unified.
-- [PARTIAL] **`std/option.alu`** — Option already has the bulk of methods (`is_some`/`is_none`/`unwrap`/`map`/`and_then`/`or_else`/`flatten`/`zip`/`as_ptr`/`replace`/`transpose`/`equals`/`fmt`). Newly added `Option::iter() -> OnceIterator<T>` so options drive for-loops and chain into iterator combinators (`.map`, `.filter`, …). Verified by `tests/aluminac/option_iter.alu`.
+- [PARTIAL] **`std/option.alu`** — Option already has the bulk of methods (`is_some`/`is_none`/`unwrap`/`map`/`and_then`/`or_else`/`flatten`/`zip`/`as_ptr`/`replace`/`transpose`/`equals`/`fmt`). Newly added `Option::iter() -> OnceIterator<T>` (`tests/aluminac/option_iter.alu`) and `mixin<T: Equatable<T>> Equatable<Option<T>>` so options satisfy `T: Equatable<T>`-bounded generics (verified by `tests/aluminac/option_result_equatable.alu`).
   Missing for unification with sysroot's `std/option.alu`:
   - `unwrap` / `unwrap_or_else` / `unwrap_err` should panic with a descriptive message; sysroot's path uses `panic!` + `lhs.debug()` (DebugAdapter). sysroot-aluminac calls `libc::abort()` silently. Gated on a sysroot-aluminac `debug()` shim or DebugAdapter equivalent.
   - `hash<T: Hashable<T, H>, H: Hasher<H>>` impl + `mixin Hashable<Option<T>, H>`.
+  - `mixin<T: Comparable<T>> Comparable<Option<T>>` (sysroot has it).
   - `move()`, `as_nullable_ptr<T: Pointer>` (sysroot has bound-restricted overloads aluminac doesn't yet enforce).
   - `AnyOption` type alias (`builtins::SameBaseAs<Option<()>>`) — depends on `proto_same_base_as` lang item.
   - Doc comments and embedded test module — additive once the above land.
-- [TODO] **`std/result.alu`** — same shape as `option.alu`.
+
+- [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt` plus newly added `mixin<T: Equatable<T>, E: Equatable<E>> Equatable<Result<T, E>>` (`tests/aluminac/option_result_equatable.alu`).
+  Missing for unification with sysroot's `std/result.alu`:
+  - Descriptive panic on unwrap/unwrap_err — same blocker as Option.
+  - `hash<...>` + `mixin Hashable<Result<T, E>, H>`.
+  - `AnyResult` type alias.
+  - Doc comments + embedded tests.
+<!-- std/result.alu PARTIAL entry moved up next to std/option.alu -->
+
 - [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting surface: all six variants with `#[lang(...)]` attrs and `fmt`; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). All variants mix in `cmp::Equatable<...>`. Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, and `range_double_ended.alu` (including .rev() on Range / RangeInclusive and size_hint reporting).
   Missing for full unification with sysroot's `std/range.alu`:
   - `T: Integer` bounds on every variant. sysroot-aluminac's lookups would tighten — likely fine, but the bound-violation enforcement in aluminac is weak so simply adding the bound may not actually reject misuse. Needs a smoke test against any sysroot code that ranges a non-integer (none currently).
