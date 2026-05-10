@@ -17,7 +17,11 @@ impl RangeFull<T> {
         std::fmt::write!(f, "..")
     }
 
+    fn hash<H: std::hash::Hasher<H>>(self: &RangeFull<T>, _h: &mut H) {
+    }
+
     mixin std::cmp::Equatable<RangeFull<T>>;
+    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeFull<T>, H>;
 }
 
 /// A range with only a lower bound (`a..`)
@@ -57,9 +61,14 @@ impl RangeFrom<T> {
         std::fmt::write!(f, "{}..", self.lower)
     }
 
+    fn hash<H: std::hash::Hasher<H>>(self: &RangeFrom<T>, h: &mut H) {
+        self.lower.hash::<H>(h);
+    }
+
     mixin std::cmp::Equatable<RangeFrom<T>>;
     mixin std::iter::Iterator<RangeFrom<T>, T>;
     mixin std::iter::IteratorExt<RangeFrom<T>, T>;
+    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeFrom<T>, H>;
 }
 
 /// A range with only an upper bound (`..b`)
@@ -87,7 +96,12 @@ impl RangeTo<T> {
         std::fmt::write!(f, "..{}", self.upper)
     }
 
+    fn hash<H: std::hash::Hasher<H>>(self: &RangeTo<T>, h: &mut H) {
+        self.upper.hash::<H>(h);
+    }
+
     mixin std::cmp::Equatable<RangeTo<T>>;
+    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeTo<T>, H>;
 }
 
 /// A range with only an inclusive upper bound (`..=b`)
@@ -115,7 +129,12 @@ impl RangeToInclusive<T> {
         std::fmt::write!(f, "..={}", self.upper)
     }
 
+    fn hash<H: std::hash::Hasher<H>>(self: &RangeToInclusive<T>, h: &mut H) {
+        self.upper.hash::<H>(h);
+    }
+
     mixin std::cmp::Equatable<RangeToInclusive<T>>;
+    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeToInclusive<T>, H>;
 }
 
 /// A range with both lower and upper bounds (a..b)
@@ -184,11 +203,17 @@ impl Range<T> {
         std::fmt::write!(f, "{}..{}", self.lower, self.upper)
     }
 
+    fn hash<H: std::hash::Hasher<H>>(self: &Range<T>, h: &mut H) {
+        self.lower.hash::<H>(h);
+        self.upper.hash::<H>(h);
+    }
+
     mixin std::cmp::Equatable<Range<T>>;
     mixin std::iter::Iterator<Range<T>, T>;
     mixin std::iter::IteratorExt<Range<T>, T>;
     mixin std::iter::DoubleEndedIterator<Range<T>, T>;
     mixin std::iter::DoubleEndedIteratorExt<Range<T>, T>;
+    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<Range<T>, H>;
 }
 
 /// An inclusive range with both lower and upper bounds (a..=b)
@@ -267,9 +292,15 @@ impl RangeInclusive<T> {
         std::fmt::write!(f, "{}..={}", self.lower, self.upper)
     }
 
+    fn hash<H: std::hash::Hasher<H>>(self: &RangeInclusive<T>, h: &mut H) {
+        self.lower.hash::<H>(h);
+        self.upper.hash::<H>(h);
+    }
+
     mixin std::cmp::Equatable<RangeInclusive<T>>;
     mixin std::iter::Iterator<RangeInclusive<T>, T>;
     mixin std::iter::IteratorExt<RangeInclusive<T>, T>;
     mixin std::iter::DoubleEndedIterator<RangeInclusive<T>, T>;
     mixin std::iter::DoubleEndedIteratorExt<RangeInclusive<T>, T>;
+    mixin<H: std::hash::Hasher<H>> std::hash::Hashable<RangeInclusive<T>, H>;
 }

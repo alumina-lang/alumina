@@ -200,19 +200,18 @@ Notes on remaining macro audit gaps:
 - [PARTIAL] **`std/range.alu`** — sysroot-aluminac now matches sysroot's structure for the iteration / equatability / formatting surface: all six variants with `#[lang(...)]` attrs and `fmt`; Range / RangeFrom / RangeInclusive mix in `Iterator` + `IteratorExt`; Range and RangeInclusive additionally mix in `DoubleEndedIterator` + `DoubleEndedIteratorExt` (with `next_back` / `size_hint`). All variants mix in `cmp::Equatable<...>`. Verified by `tests/aluminac/range_fmt.alu`, `range_equatable.alu`, `range_iter_combinators.alu`, and `range_double_ended.alu` (including .rev() on Range / RangeInclusive and size_hint reporting).
   Missing for full unification with sysroot's `std/range.alu`:
   - `T: Integer` bounds on every variant.
-  - `hash` method + `Hashable` mixin. Initially attempted in this session but ran into a real aluminac bug (see "Generic method dispatch on lang-item structs" below) — `val.hash::<H>(&hasher)` from inside `hash_of<T>(val: &T)` returns the empty-hash sentinel instead of dispatching to Range::hash, even though direct calls (`r1.hash::<H>(&h)` outside generic context) work and the same pattern works for non-lang-item structs (verified by a `MyRange<T>` reproducer). The hash method bodies and mixins were reverted; the gap is now blocked on the underlying compiler bug.
-  - Diff-and-unify pass: still pending — currently blocked by the same hash-dispatch bug since sysroot's range.alu has hash methods.
+  - Diff-and-unify pass: still pending — sysroot-aluminac and sysroot diverge in `T: Integer` bounds, doc comments, and the embedded test module. The functional surface (methods + mixins) is parity. Literal unification likely requires either keeping fmt impls (sysroot has none) or changing how sysroot-aluminac's assert_eq formats values.
 
-- [PARTIAL] **Name `Range` shadows: `protocol Range` (builtins) vs `struct Range<T>` (std::range).** Root cause for the earlier-suspected "method dispatch bug" — aluminac's name resolution prefers `std::builtins::Range` (the zero-param protocol) over `std::range::Range<T>` (the struct) when the user writes the unqualified name `Range<i32>`. Concretely:
-  - `size_of::<Range<i32>>()` returns 0 (size of the resolved Protocol IrTy) instead of 8 (the real struct).
-  - `(1..5) is Range<i32>` returns false: the literal lowers to the *struct* IrTy, but the `is`-check resolves `Range<i32>` to the *protocol* IrTy.
-  - `hash_of::<Range<i32>>(&r)` calls `val.hash::<H>(&hasher)` where val ends up bound to the protocol-IrTy version, so method lookup finds nothing and the hasher returns the empty sentinel.
-  - Custom non-lang-item structs (`MyRange<T>`) work correctly since there's no shadowing protocol with the same name.
-  alumina-boot resolves the same code correctly — the protocol vs struct ambiguity must use a scoring rule (e.g. prefer the item that actually accepts the user-supplied number of type-args, or prefer the more recently imported one). Aluminac's resolution path doesn't apply that rule.
-  Missing:
-  - Update aluminac's name resolution to prefer the item whose generic-param arity matches the use site's type-arg count, or fall back to the next match when the first one's arity disagrees.
-  - Add a regression test using `Range<i32>` directly that exercises both `is`-check and method dispatch.
-  - This blocks Hashable on ranges, the literal unification of `std/range.alu`, and any code that names `Range<T>` unqualified outside `std/`.
+<!-- Earlier this session, a hash-dispatch failure on Range<i32> in a user
+test was misattributed first to "lang-item method dispatch" then to
+"protocol Range shadowing struct Range". Deeper digging showed the actual
+cause was simpler: aluminac doesn't auto-import `std::builtins::*` or
+`std::range::*` into the user's scope, so a bare `Range<i32>` in a user
+file resolves to nothing (Ty::unresolved → void at IR time). Both
+`std::range::Range<i32>` and `(use std::range::Range;)` make it work.
+This is correct behavior, not a bug. The Hashable-mixin gap on
+sysroot-aluminac/std/range.alu remains open as a normal slice. -->
+
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
 - [TODO] **`std/string/unicode.alu`** — unifying breaks the util_unicode test (need to investigate).
