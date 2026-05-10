@@ -202,15 +202,15 @@ Notes on remaining macro audit gaps:
   - `T: Integer` bounds on every variant.
   - Diff-and-unify pass: still pending — sysroot-aluminac and sysroot diverge in `T: Integer` bounds, doc comments, and the embedded test module. The functional surface (methods + mixins) is parity. Literal unification likely requires either keeping fmt impls (sysroot has none) or changing how sysroot-aluminac's assert_eq formats values.
 
-<!-- Earlier this session, a hash-dispatch failure on Range<i32> in a user
-test was misattributed first to "lang-item method dispatch" then to
-"protocol Range shadowing struct Range". Deeper digging showed the actual
-cause was simpler: aluminac doesn't auto-import `std::builtins::*` or
-`std::range::*` into the user's scope, so a bare `Range<i32>` in a user
-file resolves to nothing (Ty::unresolved → void at IR time). Both
-`std::range::Range<i32>` and `(use std::range::Range;)` make it work.
-This is correct behavior, not a bug. The Hashable-mixin gap on
-sysroot-aluminac/std/range.alu remains open as a normal slice. -->
+- [PARTIAL] **UFCS auto-ref for methods taking `&T`.** Calling a free function with `&T` parameter via UFCS on a value (not a reference) doesn't trigger auto-take-ref. Reproducer:
+  - `fn hash_of<T>(val: &T) -> u64 { ... }`
+  - `(1i32..5i32).hash_of()` returns 3611206805087242433 (empty-hash sentinel) — aluminac silently binds T to something incorrect.
+  - `(&(1i32..5i32)).hash_of()` works correctly — explicit `&` forces a reference.
+  - Same pattern under alumina-boot: works without explicit `&`.
+  This blocks the embedded `test_hash` in `sysroot/std/range.alu` from running under aluminac (since the test uses `(1..).hash_of()` value-form), and therefore blocks the literal unification of `std/range.alu`. Workarounds in user code: explicit `&` or use `std::hash::hash_of::<T>(&val)` form. Workaround in sysroot tests: rewrite to `(&(...)).hash_of()` — but that changes sysroot, which boot also compiles, so it's an additional sysroot-side change worth doing.
+  Missing:
+  - Make aluminac's UFCS dispatch try implicit-ref on the receiver when the callee's first param is `&T` and the receiver value is `T`.
+  - Add a focused regression test once landed.
 
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
