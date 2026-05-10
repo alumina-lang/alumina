@@ -273,6 +273,11 @@ impl u32 {
     fn swap_bytes(self: u32) -> u32 {
         std::intrinsics::llvm::<u32>("llvm.bswap", self)
     }
+    /// Identity on little-endian targets (the only supported aluminac targets).
+    fn to_le(self: u32) -> u32 { self }
+    fn to_be(self: u32) -> u32 { self.swap_bytes() }
+    fn from_le(self: u32) -> u32 { self }
+    fn from_be(self: u32) -> u32 { self.swap_bytes() }
     fn checked_add(lhs: u32, rhs: u32) -> Option<u32> {
         let r = lhs as u64 + rhs as u64;
         if r > 4294967295u64 { Option::none() } else { Option::some(r as u32) }
@@ -320,6 +325,10 @@ impl u64 {
     fn trailing_zeros(self: u64) -> u32 {
         std::intrinsics::llvm::<u64>("llvm.cttz", self, false) as u32
     }
+    fn to_le(self: u64) -> u64 { self }
+    fn to_be(self: u64) -> u64 { self.swap_bytes() }
+    fn from_le(self: u64) -> u64 { self }
+    fn from_be(self: u64) -> u64 { self.swap_bytes() }
     fn swap_bytes(self: u64) -> u64 {
         std::intrinsics::llvm::<u64>("llvm.bswap", self)
     }
