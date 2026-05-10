@@ -103,8 +103,13 @@ fn lower_is_const_evaluable(m: &mut Mono, expr: &Expr) -> &IrExpr {
 }
 
 fn lower_in_const_context(m: &mut Mono) -> &IrExpr {
-    // Always false at runtime (we're not in a const context)
-    m.mk_bool_lit(false)
+    // Lowers to IrTag::InConstContext: const_eval folds this to `true`,
+    // codegen emits `false`. Matches alumina-boot's context-sensitive
+    // semantics so sysroot's `if in_const_context() { ... }` branches
+    // reach the const-only side when reached during const evaluation.
+    let r = IrExpr::void_expr(m.ctx.bool_ty);
+    r.tag = IrTag::InConstContext;
+    m.ctx.arena.alloc(r)
 }
 
 fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {

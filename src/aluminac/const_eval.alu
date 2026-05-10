@@ -328,6 +328,10 @@ impl ConstEvaluator {
             }
             ConstResult::success(ConstValue::make_void())
         }
+        IrTag::InConstContext => {
+            // We're const-evaluating right now, so the answer is `true`.
+            ConstResult::success(ConstValue::make_bool(true))
+        }
         IrTag::Undef => ConstResult::success(ConstValue::make_uninitialized()),
         IrTag::Zeroed => ConstResult::success(self.make_zeroed(expr.ty)),
         IrTag::FnRef => ConstResult::success(ConstValue::make_fn_ptr(*expr.fn_ref())),

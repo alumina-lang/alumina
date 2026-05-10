@@ -802,6 +802,10 @@ impl FnCodegen {
             // const-eval time.
             LLVMGetUndef(self.ctx.void_type)
         }
+        IrTag::InConstContext => {
+            // At runtime we're definitely not in a const context.
+            LLVMConstInt(self.ctx.i8_type, 0u64, 0i32)
+        }
         IrTag::Trap => {
             // Call llvm.trap intrinsic
             let trap_fn_lookup = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);
