@@ -99,6 +99,11 @@ struct MonoCtx {
 
     // Monomorphization call stack for diagnostic notes
     mono_stack: Vector<MonoFrame>,
+
+    // Cached dyn vtable references: hash(impl_ty_ptr, proto_id) -> IrExpr representing
+    // `&VTABLE[0]` (the vtable pointer) for that (impl, proto) pair. Reused across
+    // multiple `&T as &dyn Proto` coercions for the same T/Proto.
+    dyn_vtable_cache: HashMap<u64, &IrExpr>,
 }
 
 impl MonoCtx {
@@ -175,6 +180,7 @@ impl MonoCtx {
             lang_items: HashMap::new(),
             proto_method_self_id: HashMap::new(),
             mono_stack: Vector::new(),
+            dyn_vtable_cache: HashMap::new(),
         };
 
         // Build lookup tables
@@ -460,6 +466,7 @@ impl MonoCtx {
         self.array_ty_cache.free();
         self.tuple_ty_cache.free();
         self.mono_stack.free();
+        self.dyn_vtable_cache.free();
     }
 }
 

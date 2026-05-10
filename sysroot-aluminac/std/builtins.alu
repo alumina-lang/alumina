@@ -93,6 +93,22 @@ impl array<Arr> {
 #[lang(builtin_tuple)]
 struct tuple {}
 
+/// Fat pointer + vtable for dynamic dispatch — `&dyn Proto` resolves to
+/// `dyn<(Proto,), &void>`. The compiler builds a per-(impl, proto) vtable
+/// and threads its address into `_vtable`; method calls on dyn values
+/// load the typed fn pointer at the method's protocol-declared index and
+/// invoke it with `_ptr` as self.
+#[lang(dyn)]
+struct dyn<Protos, Ptr> {
+    _ptr: Ptr,
+    _vtable: &fn(),
+}
+
+/// Placeholder for the `Self` type in protocol method signatures inside
+/// a dyn context. Recognised by the compiler when building dyn types.
+#[lang(dyn_self)]
+struct Self {}
+
 impl tuple {
     fn len<T>(self: &T) -> usize {
         std::intrinsics::length_of::<T>()

@@ -3547,6 +3547,304 @@ impl Mono {
         }
     }
 
+    /// Lower a method call on a `dyn Proto` value to vtable dispatch.
+    ///
+    /// `ir_obj` is the dyn struct value (the call's receiver). Builds:
+    ///   - a typed fn-pointer for `dyn_val._ptr` + `dyn_val._vtable[idx]`,
+    ///   - a Call with (data_ptr, args...) where data_ptr = dyn_val._ptr.
+    ///
+    /// Returns None if the method isn't found in any of the dyn's protocols
+    /// (caller falls back to the historical Unreachable lowering).
+    fn lower_dyn_method_call(self: &mut Mono, expr: &Expr, ir_obj: &IrExpr,
+                              dyn_struct_ty: &IrTy, method_name: &[u8]) -> Option<&IrExpr> {
+        let type_args = dyn_struct_ty.struct_ref().type_args;
+        if type_args.len() < 1 {
+            return Option::none();
+        }
+        let protos_tuple = type_args[0];
+        if protos_tuple.tag != IrTyTag::Tuple {
+            return Option::none();
+        }
+
+        // Find the method's index in the concatenated method list across protos,
+        // and recover the protocol method's FnDef for its signature.
+        let method_idx: usize = 0;
+        let proto_method_def: Option<&FnDef> = Option::none();
+        let cumulative: usize = 0;
+        let elems = protos_tuple.elems();
+        for pi in 0usize..elems.len() {
+            let proto_ty = elems[pi];
+            if proto_ty.tag != IrTyTag::Protocol { continue; }
+            let pdef = self.ctx.protocol_defs.get(&proto_ty.proto_id());
+            if pdef.is_none() { continue; }
+            let proto = pdef.unwrap();
+            for mi in 0usize..proto.methods.len() {
+                if proto.methods[mi].name == method_name {
+                    method_idx = cumulative + mi;
+                    proto_method_def = Option::some(&proto.methods[mi]);
+                    break;
+                }
+            }
+            if proto_method_def.is_some() { break; }
+            cumulative = cumulative + proto.methods.len();
+        }
+        if proto_method_def.is_none() {
+            return Option::none();
+        }
+        let proto_method = proto_method_def.unwrap();
+
+        // The dyn struct value: deref if ir_obj is a pointer.
+        let dyn_val = if ir_obj.ty.tag == IrTyTag::Pointer {
+            self.mk_deref(ir_obj, dyn_struct_ty)
+        } else {
+            ir_obj
+        };
+
+        // Field 0 = _ptr (void pointer); field 1 = _vtable (&fn()).
+        let void_ty = self.ctx.void_ty;
+        let void_ptr_ty = self.ctx.make_ptr_ty(void_ty, true);
+        let opaque_fn_ty = self.ctx.make_fn_ptr_ty(&[], void_ty);
+        let opaque_fn_ptr_ty = self.ctx.make_ptr_ty(opaque_fn_ty, true);
+
+        let data_ptr = self.mk_field(dyn_val, 0u32, void_ptr_ty);
+        let vtable_ptr = self.mk_field(dyn_val, 1u32, opaque_fn_ptr_ty);
+
+        // Index into vtable: `vtable_ptr[method_idx]` — the fn pointer slot.
+        let idx_lit = self.mk_int_lit(self.ctx.usize_ty, method_idx as u64);
+        let fn_at_idx = self.mk_index(vtable_ptr, idx_lit, opaque_fn_ty);
+
+        // Build the typed fn pointer signature for the call. proto_method
+        // has self: &Self + extra params. Substitute Self → &void at the
+        // type level by using void_ptr_ty for the first param.
+        let n_call_args = expr.args().len();
+        let n_params: usize = 1usize + n_call_args;
+        let typed_param_tys = self.ctx.arena.alloc_slice::<&IrTy>(n_params);
+        typed_param_tys[0] = void_ptr_ty;
+        // Resolve the proto method's tail params using the current type_map.
+        // proto_method.params[0] is `self: &Self` — skip; resolve the rest.
+        for ai in 0usize..n_call_args {
+            let param_idx = 1usize + ai;
+            if param_idx < proto_method.params.len() {
+                typed_param_tys[param_idx] = self.resolve_type(proto_method.params[param_idx].ty);
+            } else {
+                typed_param_tys[param_idx] = void_ty;
+            }
+        }
+        let ret_ty = self.resolve_type(proto_method.return_type);
+        let typed_fn_ty = self.ctx.make_fn_ptr_ty(typed_param_tys, ret_ty);
+
+        // Cast the opaque fn ptr to the typed signature.
+        let typed_fn = self.mk_cast(fn_at_idx, typed_fn_ty);
+
+        // Build call args: [data_ptr, lowered_args...].
+        let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(n_params);
+        call_args[0] = data_ptr;
+        for ai in 0usize..n_call_args {
+            let arg = self.lower_expr(expr.args()[ai]);
+            let dst_idx: usize = 1usize + ai;
+            if dst_idx < typed_param_tys.len() {
+                call_args[dst_idx] = self.coerce_to_type(arg, typed_param_tys[dst_idx]);
+            } else {
+                call_args[dst_idx] = arg;
+            }
+        }
+
+        // Build IrTag::Call with an indirect call target (callee = typed_fn).
+        let call_e = IrExpr::void_expr(ret_ty);
+        call_e.tag = IrTag::Call;
+        call_e._data.call.call_target = IrCallTarget {
+            tag: CallKind::Indirect,
+            fn_ref: IrFnRef::empty(),
+            callee: typed_fn,
+        };
+        call_e._data.call.items = call_args;
+        Option::some(self.ctx.arena.alloc(call_e) as &IrExpr)
+    }
+
+    /// Build a vtable for `impl_ty` against the protocols in `protos_tuple`,
+    /// emit it as a private const global, and return an IrExpr that evaluates
+    /// to `&VTABLE[0]` (the start of the array) cast to `&fn()`. Caches by
+    /// (protos_tuple ptr, impl_ty ptr) so repeated coercions reuse the same
+    /// vtable global.
+    ///
+    /// The vtable is laid out as `[fn(); total_methods]` where the methods
+    /// from each protocol appear in the order they're declared in the
+    /// protocol, concatenated in the order of the protos tuple. Each entry
+    /// is the impl's typed function pointer, bitcast to opaque `fn()`.
+    ///
+    /// Returns null (as &IrExpr) if the protos tuple has no recognisable
+    /// protocol entries (caller should fall back to null vtable).
+    fn build_dyn_vtable_ref(self: &mut Mono, impl_ty: &IrTy, protos_tuple: &IrTy) -> &IrExpr {
+        if protos_tuple.tag != IrTyTag::Tuple {
+            return 0usize as &IrExpr;
+        }
+        // Cache key: pointer-identity of protos_tuple + impl_ty.
+        let cache_key: u64 = (protos_tuple as &void as usize as u64)
+            ^ ((impl_ty as &void as usize as u64) * 0x9e3779b97f4a7c15u64);
+        let cached = self.ctx.dyn_vtable_cache.get(&cache_key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        // Resolve impl scope so we can look up method implementations.
+        let impl_scope_idx: u32 = 0u32;
+        if impl_ty.tag == IrTyTag::Struct {
+            impl_scope_idx = impl_ty.struct_ref().scope_idx;
+        } else if impl_ty.tag == IrTyTag::Enum {
+            impl_scope_idx = impl_ty.enum_ref().scope_idx;
+        } else if impl_ty.tag == IrTyTag::Builtin {
+            let lang_name = Mono::builtin_lang_name(impl_ty.builtin());
+            if lang_name.len() > 0 {
+                let lid = self.ctx.get_lang_item(lang_name);
+                if lid.is_some() {
+                    let sd = self.ctx.struct_defs.get(&lid.unwrap());
+                    if sd.is_some() {
+                        impl_scope_idx = sd.unwrap().scope_idx;
+                    }
+                }
+            }
+        }
+        if impl_scope_idx == 0u32 {
+            return 0usize as &IrExpr;
+        }
+
+        // Opaque `fn()` element type for the vtable array.
+        let opaque_fn_ty = self.ctx.make_fn_ptr_ty(&[], self.ctx.void_ty);
+
+        // Collect a fn pointer for each method in each protocol of the tuple.
+        let entries: Vector<&IrExpr> = Vector::new();
+        defer entries.free();
+
+        for pi in 0usize..protos_tuple.elems().len() {
+            let proto_ty = protos_tuple.elems()[pi];
+            if proto_ty.tag != IrTyTag::Protocol {
+                continue;
+            }
+            let proto_id = proto_ty.proto_id();
+            let proto_def_opt = self.ctx.protocol_defs.get(&proto_id);
+            if proto_def_opt.is_none() {
+                continue;
+            }
+            let proto = proto_def_opt.unwrap();
+
+            for mi in 0usize..proto.methods.len() {
+                let proto_method = &proto.methods[mi];
+                // Find the impl's method by name.
+                let item_opt = self.ctx.scopes.get(impl_scope_idx).items.get(&proto_method.name);
+                if item_opt.is_none() {
+                    // Method missing — push a null pointer so the slot exists.
+                    let null_e = IrExpr::void_expr(opaque_fn_ty);
+                    null_e.tag = IrTag::NullLit;
+                    entries.push(self.ctx.arena.alloc(null_e) as &IrExpr);
+                    continue;
+                }
+                let item = item_opt.unwrap();
+                let fn_id_val = if item.kind.tag == scope::NamedItemTag::Method {
+                    item.kind.id2()._value
+                } else if item.kind.tag == scope::NamedItemTag::Function {
+                    item.kind.id()._value
+                } else {
+                    0usize
+                };
+                if fn_id_val == 0usize {
+                    let null_e = IrExpr::void_expr(opaque_fn_ty);
+                    null_e.tag = IrTag::NullLit;
+                    entries.push(self.ctx.arena.alloc(null_e) as &IrExpr);
+                    continue;
+                }
+                let fn_def_opt = self.ctx.fn_defs.get(&fn_id_val);
+                if fn_def_opt.is_none() {
+                    let null_e = IrExpr::void_expr(opaque_fn_ty);
+                    null_e.tag = IrTag::NullLit;
+                    entries.push(self.ctx.arena.alloc(null_e) as &IrExpr);
+                    continue;
+                }
+                let fn_def = fn_def_opt.unwrap();
+
+                // Mono the impl method. For struct impls with the impl's own
+                // generics matching the method's generic_params (e.g. `impl
+                // Option<T> { fn equals(...) }`), use the struct's type_args.
+                let method_type_args: &[&IrTy] = &[];
+                if impl_ty.tag == IrTyTag::Struct
+                    && impl_ty.struct_ref().type_args.len() == fn_def.generic_params.len()
+                    && fn_def.generic_params.len() > 0 {
+                    method_type_args = impl_ty.struct_ref().type_args;
+                }
+
+                // Record proto Self → impl_ty for any defaulted-body method
+                // bodies that mention Self.
+                let self_id_opt = self.ctx.proto_method_self_id.get(&fn_def.id._value);
+                if self_id_opt.is_some() {
+                    self.type_map.insert(self_id_opt.unwrap(), impl_ty);
+                }
+
+                let fn_idx = self.mono_function(fn_def, method_type_args);
+                let ir_fn = &self.ctx.ir_functions[fn_idx];
+                let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+
+                // Build a typed FnRef expr, then cast to opaque fn().
+                // Compute the typed FnPointer type from ir_fn's params + return.
+                let typed_param_tys = self.ctx.arena.alloc_slice::<&IrTy>(ir_fn.params.len());
+                for pp in 0usize..ir_fn.params.len() {
+                    typed_param_tys[pp] = ir_fn.params[pp].ty;
+                }
+                let typed_fn_ty = self.ctx.make_fn_ptr_ty(typed_param_tys, ir_fn.return_type);
+
+                let fn_ref_e = IrExpr::void_expr(typed_fn_ty);
+                fn_ref_e.tag = IrTag::FnRef;
+                fn_ref_e._data.fn_ref = fn_ref;
+                let fn_ref_expr = self.ctx.arena.alloc(fn_ref_e) as &IrExpr;
+
+                // Cast to opaque fn() and push.
+                entries.push(self.mk_cast(fn_ref_expr, opaque_fn_ty));
+            }
+        }
+
+        if entries.len() == 0usize {
+            return 0usize as &IrExpr;
+        }
+
+        // Build the array literal initializer.
+        let arr_items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(entries.as_slice());
+        let arr_ty = self.ctx.arena.alloc(IrTy::mk_array(opaque_fn_ty, arr_items.len())) as &IrTy;
+        let arr_lit = IrExpr::void_expr(arr_ty);
+        arr_lit.tag = IrTag::ArrayLit;
+        arr_lit._data.block.items = arr_items;
+        let arr_lit_expr = self.ctx.arena.alloc(arr_lit) as &IrExpr;
+
+        // Mangle a unique name for this vtable.
+        let base_name: &[u8] = "_dyn_vtable";
+        let mangled = self.ctx.mangle_name(base_name);
+        let global_id = self.ctx.id_gen.next_id();
+
+        self.ctx.ir_globals.push(IrGlobal {
+            id: global_id,
+            name: base_name,
+            mangled_name: mangled,
+            ty: arr_ty,
+            init: Option::some(arr_lit_expr),
+            is_const: true,
+            is_extern: false,
+            attributes: &[],
+        });
+
+        // Build IrTag::GlobalRef referring to the just-emitted global, then
+        // take its address. The address of the array (which is also the
+        // address of element 0) is what dyn._vtable should hold; cast to
+        // &fn() so callers can do pointer arithmetic.
+        let global_ref_expr = IrExpr::void_expr(arr_ty);
+        global_ref_expr.tag = IrTag::GlobalRef;
+        global_ref_expr._data.global_ref = IrGlobalRef { id: global_id, mangled_name: mangled };
+        let global_ref = self.ctx.arena.alloc(global_ref_expr) as &IrExpr;
+
+        let arr_addr = self.mk_ref(global_ref, true);
+        let opaque_fn_ptr_ty = self.ctx.make_ptr_ty(opaque_fn_ty, true);
+        let result = self.mk_cast(arr_addr, opaque_fn_ptr_ty);
+
+        self.ctx.dyn_vtable_cache.insert(cache_key, result);
+        result
+    }
+
     /// Check if the init type is clearly incompatible with the declared type.
     /// This catches specific mismatches like Pointer(Slice) vs Slice (from &a[..]).
     /// Returns true if there is a clear type tag mismatch.
@@ -3615,24 +3913,40 @@ impl Mono {
         }
 
         // Coerce &T (or any pointer) to a dyn struct (`&dyn Proto` resolved
-        // to the lang(dyn) struct). Aluminac doesn't yet build proper vtables,
-        // so the vtable slot is a null pointer — this lets type-check and
-        // mono succeed for sysroot signatures, but actual dyn dispatch will
-        // crash at runtime if exercised. Method dispatch on dyn values is
-        // tracked separately in PORTING_STATUS.md.
+        // to the lang(dyn) struct). Builds a real vtable for T's
+        // implementation of Proto's methods and threads its address into
+        // the dyn fat pointer's `_vtable` slot. If vtable construction fails
+        // (e.g. unknown protocol), falls back to a null vtable so the
+        // coercion still type-checks (matching prior behaviour).
         if expected_ty.tag == IrTyTag::Struct && val.ty.tag == IrTyTag::Pointer {
             let dyn_lang_id = self.ctx.get_lang_item("dyn");
             if dyn_lang_id.is_some() && expected_ty.struct_ref().id._value == dyn_lang_id.unwrap() {
-                // Build dyn fat pointer: { _ptr: val (cast to &void), _vtable: null }
+                // Build dyn fat pointer: { _ptr: val (cast to &void), _vtable: &VTABLE[0] }
                 let void_ty = self.ctx.void_ty;
                 let void_ptr_ty = self.ctx.make_ptr_ty(void_ty, val.ty.is_const());
                 let data_cast = self.mk_cast(val, void_ptr_ty);
                 // _vtable field type: per sysroot, `&fn()` (a fn pointer to
-                // a no-arg function). We approximate with a generic pointer
-                // and cast at the codegen level.
-                let null_vtable = IrExpr::void_expr(void_ptr_ty);
-                null_vtable.tag = IrTag::NullLit;
-                let vtable_cast = self.ctx.arena.alloc(null_vtable) as &IrExpr;
+                // a no-arg function). The make_ptr_ty here pairs with the
+                // const opaque-fn-pointer type built by build_dyn_vtable_ref.
+                let opaque_fn_ty = self.ctx.make_fn_ptr_ty(&[], self.ctx.void_ty);
+                let opaque_fn_ptr_ty = self.ctx.make_ptr_ty(opaque_fn_ty, true);
+
+                let impl_ty = val.ty.inner();
+                let protos_tuple = if expected_ty.struct_ref().type_args.len() > 0 {
+                    expected_ty.struct_ref().type_args[0]
+                } else {
+                    self.ctx.void_ty
+                };
+
+                let vtable_expr = self.build_dyn_vtable_ref(impl_ty, protos_tuple);
+                let vtable_cast: &IrExpr = if vtable_expr as &void as usize != 0usize {
+                    self.mk_cast(vtable_expr, opaque_fn_ptr_ty)
+                } else {
+                    let null_vtable = IrExpr::void_expr(opaque_fn_ptr_ty);
+                    null_vtable.tag = IrTag::NullLit;
+                    self.ctx.arena.alloc(null_vtable) as &IrExpr
+                };
+
                 let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
                 items[0] = data_cast;
                 items[1] = vtable_cast;
@@ -4101,13 +4415,17 @@ impl Mono {
 
         if resolved_ty.tag == IrTyTag::Struct {
             // Detect a `&dyn Proto` value: the resolved struct is the lang(dyn)
-            // struct. Aluminac doesn't yet build vtables — for any method call
-            // through a dyn value, lower the args (so side effects survive) and
-            // emit Unreachable typed as never. Never coerces to any expected
-            // return, letting the caller compile (and trap-on-execute if ever
-            // reached at runtime).
+            // struct. Lower to real vtable dispatch — load the fn pointer at
+            // the method's protocol-declared index, cast to the typed fn
+            // pointer (with Self → &void), and call with (dyn._ptr, args...).
+            // Falls through to Unreachable if the method can't be located in
+            // the protocol (defensive — shouldn't happen on a typed dyn).
             let dyn_lang_id = self.ctx.get_lang_item("dyn");
             if dyn_lang_id.is_some() && resolved_ty.struct_ref().id._value == dyn_lang_id.unwrap() {
+                let dispatch = self.lower_dyn_method_call(expr, ir_obj, resolved_ty, method_name);
+                if dispatch.is_some() {
+                    return dispatch;
+                }
                 for i in 0usize..expr.args().len() {
                     self.lower_expr(expr.args()[i]);
                 }
