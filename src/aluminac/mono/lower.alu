@@ -4238,39 +4238,45 @@ impl Mono {
                 }
             }
         } else if param_ty.tag == TyTag::Dyn {
-            // AST: `&dyn Proto<...>` (or `&dyn (A + B)`) — caller has already
-            // stripped the outer Pointer, so we're at the Dyn node.
-            // IR side must be the lang(dyn) struct with type_args
-            // [protos_tuple, ptr_ty]. Unify each AST protocol against the
-            // matching IR Protocol's type_args, so a fn generic that appears
-            // as a protocol type-arg (e.g. `&dyn Formattable<Self, F>` where
-            // F is the fn's own generic) can be solved from the call site's
-            // expected dyn type.
-            if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref().type_args.len() >= 1 {
-                let protos_tuple_ir = arg_ty.struct_ref().type_args[0];
-                if protos_tuple_ir.tag == IrTyTag::Tuple {
-                    let inner_ast = param_ty.inner();
-                    let ast_protos: &[&Ty];
-                    if inner_ast.tag == TyTag::Tuple {
-                        ast_protos = inner_ast.elems();
-                    } else {
-                        let single = self.ctx.arena.alloc_slice::<&Ty>(1);
-                        single[0] = inner_ast;
-                        ast_protos = single;
-                    }
-                    let n = std::cmp::min(ast_protos.len(), protos_tuple_ir.elems().len());
-                    for pi in 0usize..n {
-                        let ast_proto = ast_protos[pi];
-                        let ir_proto = protos_tuple_ir.elems()[pi];
-                        if ir_proto.tag != IrTyTag::Protocol { continue; }
-                        if ast_proto.tag == TyTag::Generic {
-                            let ast_pargs = ast_proto.elems();
-                            let ir_pargs = ir_proto.proto_type_args();
-                            let pn = std::cmp::min(ast_pargs.len(), ir_pargs.len());
-                            for ai in 0usize..pn {
-                                self.unify_type_for_inference(ast_pargs[ai], ir_pargs[ai], inferred, found, generic_params);
-                            }
-                        }
+            // AST: `&dyn Proto<...>`. The IR side is the lang(dyn) struct
+            // whose first type-arg is the protos tuple. Walk the AST
+            // protocol's type-args alongside the IR Protocol's type_args,
+            // solving any AST-side Placeholder against the matching IR
+            // type. Direct-Placeholder only — full recursion through
+            // unify_type_for_inference here regressed the panic-chain
+            // mono with a segfault whose root cause is unclear.
+            if arg_ty.tag != IrTyTag::Struct { return; }
+            let s_args = arg_ty.struct_ref().type_args;
+            if s_args.len() < 1 { return; }
+            let protos_tuple_ir = s_args[0];
+            if protos_tuple_ir.tag != IrTyTag::Tuple { return; }
+            let ir_protos = protos_tuple_ir.elems();
+            if ir_protos.len() == 0 { return; }
+            let inner_ast = param_ty.inner();
+            if inner_ast as &void as usize == 0usize { return; }
+            // Only handle the single-proto case for now (multi-proto
+            // bounds keep working through explicit turbofish or per-arg
+            // inference; structural unification of multi-proto in this
+            // path is gated on the segfault investigation).
+            if inner_ast.tag != TyTag::Generic { return; }
+            let ir_proto = ir_protos[0];
+            if ir_proto.tag != IrTyTag::Protocol { return; }
+            let ast_pargs = inner_ast.elems();
+            let ir_pargs = ir_proto.proto_type_args();
+            let pn = std::cmp::min(ast_pargs.len(), ir_pargs.len());
+            // Skip position 0 — that's the protocol's Self placeholder,
+            // and Self in the dyn return type usually refers to the
+            // outer dyn's erased Self, not the function's generic.
+            for ai in 1usize..pn {
+                let ast_a = ast_pargs[ai];
+                let ir_a = ir_pargs[ai];
+                if ast_a as &void as usize == 0usize { continue; }
+                if ast_a.tag != TyTag::Placeholder { continue; }
+                for g in 0usize..generic_params.len() {
+                    if generic_params[g].id._value == ast_a.id()._value && !found[g] {
+                        inferred[g] = ir_a;
+                        found[g] = true;
+                        break;
                     }
                 }
             }
@@ -4438,12 +4444,21 @@ impl Mono {
                 }
             }
 
-            // Catch-all structural unification for return-type shapes the
-            // inline cases miss — notably `&dyn Proto<...>` where a fn
-            // generic appears as a protocol type-arg, and any deeper
-            // pointer / tuple / generic nesting.
-            if !hint_ty.is_void() {
-                self.unify_type_for_inference(ret_ty_ast, hint_ty, inferred, found, def.generic_params);
+            // Dyn return-type unification. Aluminac parses `&dyn Proto`
+            // as a single `TyTag::Dyn` AST node (the `&` is implicit in
+            // the dyn syntax), so the AST side is Dyn directly. The IR
+            // side is the lang(dyn) struct, fronted by a Pointer if the
+            // caller's expected type is `&dyn …`.
+            if !hint_ty.is_void()
+                && ret_ty_ast.tag == TyTag::Dyn {
+                let ir_target = if hint_ty.tag == IrTyTag::Pointer {
+                    hint_ty.inner()
+                } else {
+                    hint_ty
+                };
+                if ir_target.tag == IrTyTag::Struct {
+                    self.unify_type_for_inference(ret_ty_ast, ir_target, inferred, found, def.generic_params);
+                }
             }
         }
 
