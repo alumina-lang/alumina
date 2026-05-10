@@ -3758,6 +3758,14 @@ impl Mono {
         } else if param_ty.tag == TyTag::Pointer {
             if arg_ty.tag == IrTyTag::Pointer {
                 self.unify_type_for_inference(param_ty.inner(), arg_ty.inner(), inferred, found, generic_params);
+            } else {
+                // UFCS auto-take-ref: when the callee expects &T but the
+                // user passed a value of T (e.g. `value.method()` where the
+                // free function's first param is &T), match the inner T
+                // against the value's type. The actual ref-take happens in
+                // try_ufcs_call. Without this, T stays as void and the
+                // dispatch picks the wrong instantiation.
+                self.unify_type_for_inference(param_ty.inner(), arg_ty, inferred, found, generic_params);
             }
         } else if param_ty.tag == TyTag::Slice {
             if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() == 2 && arg_ty.elems()[0].tag == IrTyTag::Pointer {
@@ -3994,8 +4002,11 @@ impl Mono {
         // Build IR args: use already-lowered ir_obj, lower remaining args
         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(total_args);
 
-        // Check if the function expects a reference for the first param
-        if def.params.len() > 0 && def.params[0].ty.tag == TyTag::Pointer {
+        // Check if the function expects a reference for the first param.
+        // Only auto-take-ref when the receiver isn't already a pointer —
+        // otherwise (1..5).hash_of() and (&r).hash_of() would produce
+        // different IR (& vs &&) and dispatch via different mono paths.
+        if def.params.len() > 0 && def.params[0].ty.tag == TyTag::Pointer && ir_obj.ty.tag != IrTyTag::Pointer {
             ir_args[0] = self.mk_ref(ir_obj, false);
         } else {
             ir_args[0] = ir_obj;

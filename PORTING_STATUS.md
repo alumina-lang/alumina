@@ -201,15 +201,9 @@ Notes on remaining macro audit gaps:
   Missing for full unification with sysroot's `std/range.alu`:
   - Diff-and-unify pass: pending — sysroot-aluminac and sysroot diverge in doc comments, `#[inline(...)]` annotations (cosmetic in aluminac), and the embedded test module. The functional surface is at parity. The remaining literal-unification blocker is the embedded test_hash test, which uses `(1..).hash_of()` value-form UFCS (see "UFCS auto-ref for methods taking `&T`" PARTIAL above).
 
-- [PARTIAL] **UFCS auto-ref for methods taking `&T`.** Calling a free function with `&T` parameter via UFCS on a value (not a reference) doesn't trigger auto-take-ref. Reproducer:
-  - `fn hash_of<T>(val: &T) -> u64 { ... }`
-  - `(1i32..5i32).hash_of()` returns 3611206805087242433 (empty-hash sentinel) — aluminac silently binds T to something incorrect.
-  - `(&(1i32..5i32)).hash_of()` works correctly — explicit `&` forces a reference.
-  - Same pattern under alumina-boot: works without explicit `&`.
-  This blocks the embedded `test_hash` in `sysroot/std/range.alu` from running under aluminac (since the test uses `(1..).hash_of()` value-form), and therefore blocks the literal unification of `std/range.alu`. Workarounds in user code: explicit `&` or use `std::hash::hash_of::<T>(&val)` form. Workaround in sysroot tests: rewrite to `(&(...)).hash_of()` — but that changes sysroot, which boot also compiles, so it's an additional sysroot-side change worth doing.
-  Missing:
-  - Make aluminac's UFCS dispatch try implicit-ref on the receiver when the callee's first param is `&T` and the receiver value is `T`.
-  - Add a focused regression test once landed.
+- [DONE] **UFCS auto-ref for methods taking `&T`.** Fixed `unify_type_for_inference` in `mono/lower.alu`: when the callee's parameter is `&T` (Pointer) and the argument is a non-Pointer value, recurse with `(T, arg_ty)` to bind T. Also fixed `try_ufcs_call`'s ref-take to skip when the receiver is already a Pointer (otherwise value-form and ref-form produced different IR — `&` vs `&&` — and dispatched via different mono paths). Verified by `tests/aluminac/ufcs_autoref.alu` (value-form vs ref-form produce identical hashes for Range, Tuple, Option). Closes the value-form UFCS gap.
+
+  Caveat: in `--test --cfg test_std` mode against an unmodified copy of sysroot's `std/range.alu`, the embedded `test_hash` still fails — `(1..).hash_of()` returns the empty-hash sentinel inside that specific multi-test context. Standalone files, including with the `--test` flag on a single test, work correctly. The remaining failure mode looks like a mono-cache interaction (perhaps the test runner's setup mono'es hash_of with T = void from some early call, then the cached entry is reused). Tracked as a separate gap if literal range.alu unification becomes a priority.
 
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
