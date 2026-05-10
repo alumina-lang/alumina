@@ -29,9 +29,12 @@ fn main(args: &[&[u8]]) -> i32 {
     if Option::equals::<i32>(&o1, &o4) { return 12i32; }
     if !Option::equals::<i32>(&o4, &o4) { return 13i32; }
 
-    // Test 3: Option::not_equals
-    if Option::not_equals::<i32>(&o1, &o2) { return 20i32; }
-    if !Option::not_equals::<i32>(&o1, &o3) { return 21i32; }
+    // Test 3: Option not_equals (method-call form — the mixin'd not_equals from
+    // Equatable's default body has signature fn(&Self, &Self), so the natural API
+    // is the dot-call rather than `Option::not_equals::<i32>(...)` which would
+    // bind Self to i32, not Option<i32>).
+    if o1.not_equals(&o2) { return 20i32; }
+    if !o1.not_equals(&o3) { return 21i32; }
 
     // Test 4: Option == and != operators
     if !(o1 == o2) { return 30i32; }
