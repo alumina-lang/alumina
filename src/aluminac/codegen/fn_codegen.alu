@@ -797,6 +797,11 @@ impl FnCodegen {
             LLVMBuildUnreachable(self.ctx.builder);
             LLVMGetUndef(self.ctx.void_type)
         }
+        IrTag::ConstWarning, IrTag::ConstNote => {
+            // No-op at runtime — the diagnostic, if any, was emitted at
+            // const-eval time.
+            LLVMGetUndef(self.ctx.void_type)
+        }
         IrTag::Trap => {
             // Call llvm.trap intrinsic
             let trap_fn_lookup = LLVMGetNamedFunction(self.ctx.module, &"llvm.trap\0"[0] as &libc::c_char);

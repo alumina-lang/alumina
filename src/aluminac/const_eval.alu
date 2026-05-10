@@ -114,6 +114,11 @@ struct ConstEvaluator {
     pointer_size: usize,
     // Last const_panic message, if one fired during eval. Empty otherwise.
     panic_msg: &[u8],
+    // First const_warning / const_note message captured during eval. Single-
+    // slot design surfaces only the first of each — adequate for the sysroot's
+    // current `if in_const_context()`-gated usage.
+    warning_msg: &[u8],
+    note_msg: &[u8],
 }
 
 impl ConstEvaluator {
@@ -140,6 +145,8 @@ impl ConstEvaluator {
             steps_remaining: MAX_ITERATIONS,
             pointer_size: pointer_size,
             panic_msg: "",
+            warning_msg: "",
+            note_msg: "",
         }
     }
 
@@ -306,6 +313,20 @@ impl ConstEvaluator {
         IrTag::ConstPanic => {
             self.panic_msg = expr.str_val();
             ConstResult::fail(ConstEvalError::const_panic())
+        }
+        IrTag::ConstWarning => {
+            // Capture only the first warning so the single-slot field has
+            // deterministic content; subsequent warnings drop silently.
+            if self.warning_msg.len() == 0 {
+                self.warning_msg = expr.str_val();
+            }
+            ConstResult::success(ConstValue::make_void())
+        }
+        IrTag::ConstNote => {
+            if self.note_msg.len() == 0 {
+                self.note_msg = expr.str_val();
+            }
+            ConstResult::success(ConstValue::make_void())
         }
         IrTag::Undef => ConstResult::success(ConstValue::make_uninitialized()),
         IrTag::Zeroed => ConstResult::success(self.make_zeroed(expr.ty)),
@@ -1236,6 +1257,8 @@ impl ConstEvaluator {
             steps_remaining: self.steps_remaining,
             pointer_size: self.pointer_size,
             panic_msg: "",
+            warning_msg: "",
+            note_msg: "",
         };
 
         // Evaluate function body
@@ -1243,10 +1266,16 @@ impl ConstEvaluator {
 
         // Propagate remaining steps back
         self.steps_remaining = child.steps_remaining;
-        // Propagate panic message — a const_panic in callee should surface to
-        // the outermost try_const_eval caller.
+        // Propagate panic / warning / note messages — anything captured in
+        // the callee should reach the outermost try_const_eval caller.
         if child.panic_msg.len() > 0 {
             self.panic_msg = child.panic_msg;
+        }
+        if self.warning_msg.len() == 0 && child.warning_msg.len() > 0 {
+            self.warning_msg = child.warning_msg;
+        }
+        if self.note_msg.len() == 0 && child.note_msg.len() > 0 {
+            self.note_msg = child.note_msg;
         }
 
         if result.ok {
@@ -1492,10 +1521,10 @@ fn try_eval(
     }
 }
 
-/// Like `try_eval` but also reports the const_panic message (if any) the
-/// evaluator captured on the failing path. Empty `panic_msg` means no
-/// const_panic fired (the eval may still have failed for some other reason).
-fn try_eval_with_panic(
+/// Like `try_eval` but also reports any const_panic / const_warning /
+/// const_note messages the evaluator captured. Empty strings mean nothing
+/// of that severity fired during this eval.
+fn try_eval_with_diags(
     arena: &mut Arena,
     id_gen: &mut IdGen,
     ir_functions: &[IrFunction],
@@ -1503,12 +1532,12 @@ fn try_eval_with_panic(
     const_values: &HashMap<usize, ConstValue>,
     pointer_size: usize,
     expr: &IrExpr,
-) -> (Option<ConstValue>, &[u8]) {
+) -> (Option<ConstValue>, &[u8], &[u8], &[u8]) {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
     let result = evaluator.eval(expr);
     let val = if result.ok { Option::some(result.value) } else { Option::none() };
-    (val, evaluator.panic_msg)
+    (val, evaluator.panic_msg, evaluator.warning_msg, evaluator.note_msg)
 }
 
 /// Materialize a ConstValue back into an IrExpr for embedding in IR.

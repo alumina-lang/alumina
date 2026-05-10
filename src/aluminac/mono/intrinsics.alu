@@ -28,8 +28,9 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "stack_alloc" => lower_stack_alloc(m, ir_type_args, expr),
         "llvm" => lower_llvm(m, ir_type_args, expr),
         "const_panic" => lower_const_panic(m, expr),
-        "const_alloc", "const_free",
-            "const_note", "const_warning", "const_bake" =>
+        "const_warning" => lower_const_diag_tag(m, expr, IrTag::ConstWarning),
+        "const_note" => lower_const_diag_tag(m, expr, IrTag::ConstNote),
+        "const_alloc", "const_free", "const_bake" =>
             lower_const_runtime_noop(m, ir_type_args, name),
         "compile_fail", "compile_warn", "compile_note" =>
             lower_compile_diag(m, name, expr),
@@ -254,6 +255,21 @@ fn lower_const_panic(m: &mut Mono, expr: &Expr) -> &IrExpr {
     };
     let result = IrExpr::void_expr(m.ctx.void_ty);
     result.tag = IrTag::ConstPanic;
+    result._data.codegen.str_val = msg;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_const_diag_tag(m: &mut Mono, expr: &Expr, tag: IrTag) -> &IrExpr {
+    // const_warning / const_note: capture a literal-string message and emit
+    // an IR node that const_eval recognises. Non-literal messages drop to
+    // empty (matches const_panic's literal-only constraint).
+    let msg: &[u8] = if expr.args().len() > 0 && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = tag;
     result._data.codegen.str_val = msg;
     m.ctx.arena.alloc(result)
 }

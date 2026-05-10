@@ -1280,11 +1280,16 @@ impl Mono {
                         // For consts, const-evaluate the init so codegen
                         // gets simple literals instead of arbitrary IR.
                         if def.is_const {
-                            let (cv, panic_msg) = self.try_const_eval_with_panic(init_ir);
+                            let (cv, panic_msg, warn_msg, note_msg) = self.try_const_eval_with_diags(init_ir);
+                            let span = def.init.unwrap().span;
+                            if warn_msg.len() > 0 {
+                                self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, warn_msg));
+                            }
+                            if note_msg.len() > 0 {
+                                self.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, note_msg));
+                            }
                             if panic_msg.len() > 0 {
-                                // const_panic fired during eval — surface as a
-                                // compile error at the const item's span.
-                                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.init.unwrap().span, panic_msg));
+                                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, panic_msg));
                             }
                             if cv.is_some() {
                                 self.ctx.const_values.insert(def.id._value, cv.unwrap());
@@ -2312,8 +2317,8 @@ impl Mono {
         )
     }
 
-    fn try_const_eval_with_panic(self: &mut Mono, expr: &IrExpr) -> (Option<ConstValue>, &[u8]) {
-        const_eval::try_eval_with_panic(
+    fn try_const_eval_with_diags(self: &mut Mono, expr: &IrExpr) -> (Option<ConstValue>, &[u8], &[u8], &[u8]) {
+        const_eval::try_eval_with_diags(
             self.ctx.arena,
             self.ctx.id_gen,
             self.ctx.ir_functions.as_slice(),
