@@ -930,13 +930,46 @@ impl Pass1 {
     }
 
     fn visit_mixin_p1(self: &mut Pass1, node: Node) {
-        // Store mixin info for later expansion during mono
+        // A mixin can introduce its own generic params: `mixin<T: Bound> Proto<X<T>>;`.
+        // These are scoped to the mixin only — they must NOT pollute the enclosing
+        // impl's scope. Create a child scope, register the mixin's generic params
+        // there, and use it as the type-resolution scope so the protocol type ref
+        // (the `Proto<X<T>>` part) sees them. The registered ids feed into
+        // PendingMixin.impl_generic_param_ids alongside the impl's own (so `mono`'s
+        // dispatch substitution can bind them from the dispatch type's args).
+        let mixin_type_args = child_by!(node, FieldKind::TypeArguments);
+        let type_scope_idx = self.current_scope;
+        let combined_gp_ids = self.impl_generic_param_ids;
+        if !mixin_type_args.is_none() {
+            let mixin_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+            let prev = self.current_scope;
+            self.current_scope = mixin_scope;
+            self.visit_node(mixin_type_args.unwrap());
+            let mixin_ids = self.collect_generic_param_ids(mixin_type_args.unwrap());
+            self.current_scope = prev;
+            type_scope_idx = mixin_scope;
+            if mixin_ids.len() > 0 {
+                if self.impl_generic_param_ids.len() == 0 {
+                    combined_gp_ids = mixin_ids;
+                } else {
+                    let combined = self.ctx.arena.alloc_slice::<Id>(self.impl_generic_param_ids.len() + mixin_ids.len());
+                    for ci in 0usize..self.impl_generic_param_ids.len() {
+                        combined[ci] = self.impl_generic_param_ids[ci];
+                    }
+                    for ci in 0usize..mixin_ids.len() {
+                        combined[self.impl_generic_param_ids.len() + ci] = mixin_ids[ci];
+                    }
+                    combined_gp_ids = combined as &[Id];
+                }
+            }
+        }
+
         self.ctx.pending_mixins.push(PendingMixin {
             node_start: node.start_byte() as u32,
             node_end: node.end_byte() as u32,
             impl_scope_idx: self.current_scope,
-            type_scope_idx: self.current_scope,
-            impl_generic_param_ids: self.impl_generic_param_ids,
+            type_scope_idx: type_scope_idx,
+            impl_generic_param_ids: combined_gp_ids,
         });
     }
 }
