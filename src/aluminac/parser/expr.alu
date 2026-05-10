@@ -1511,6 +1511,22 @@ impl ExprParser {
         let name = self.ctx.intern_str(self.ctx.node_text(macro_node));
         let macro_item_id: usize = 0;
 
+        // $m!(...) inside a macro body — the macro name itself is a macro
+        // parameter. Record the param idx so expand_macro_expr can substitute
+        // the actual macro reference at expansion time.
+        let name_param_idx: i32 = -1i32;
+        if self.ctx.in_macro_body && macro_node_kind == NodeKind::MacroIdentifier {
+            let raw = self.ctx.node_text(macro_node);
+            let stripped = if raw.len() > 0 && raw[0] == '$' as u8 { raw[1..] } else { raw };
+            let pname = self.ctx.intern_str(stripped);
+            for pi in 0usize..self.ctx.macro_param_names.len() {
+                if self.ctx.macro_param_names[pi] == pname {
+                    name_param_idx = pi as i32;
+                    break;
+                }
+            }
+        }
+
         // For scoped identifiers (e.g. std::io::errno_try), resolve through scope system
         if macro_node_kind == NodeKind::ScopedIdentifier {
             let pass2 = Pass2 { ctx: self.ctx };
@@ -1538,6 +1554,10 @@ impl ExprParser {
             e._data.macro_expr.str_val = name;
             e._data.macro_expr.args = args;
             e._data.macro_expr.flag = true;  // Mark as actual invocation (not bare macro reference)
+            if name_param_idx >= 0i32 {
+                e._data.macro_expr.is_param_subst = true;
+                e._data.macro_expr.param_idx = name_param_idx;
+            }
             return self.ctx.alloc_expr(e);
         }
 
@@ -2113,6 +2133,47 @@ impl ExprParser {
             let expanded_args = self.expand_macro_args_list(
                 expr.args(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
             );
+
+            // $m!(...) — the macro name itself is a macro parameter. Substitute
+            // it with the actual macro reference (a MacroInvocation, possibly
+            // bound), prepend its bound args to the current args, and expand
+            // the resolved macro.
+            if expr._data.macro_expr.is_param_subst {
+                let pidx = expr._data.macro_expr.param_idx;
+                if pidx >= 0i32 && (pidx as usize) < param_args.len() {
+                    let macro_ref = param_args[pidx as usize];
+                    if macro_ref.tag == ExprTag::MacroInvocation {
+                        let real_name = macro_ref.str_val();
+                        let prev_bound = macro_ref.args();
+                        let total = prev_bound.len() + expanded_args.len();
+                        let combined = self.ctx.arena.alloc_slice::<&Expr>(total);
+                        for i in 0usize..prev_bound.len() {
+                            combined[i] = prev_bound[i];
+                        }
+                        for i in 0usize..expanded_args.len() {
+                            combined[prev_bound.len() + i] = expanded_args[i];
+                        }
+                        let macro_entry = self.ctx.resolve_macro(self.scope_idx, real_name);
+                        if macro_entry.is_some() {
+                            let entry = macro_entry.unwrap();
+                            if entry.is_builtin {
+                                return self.expand_builtin_macro(real_name, combined, expr.span);
+                            }
+                            return self.do_expand_macro(entry, combined, expr.span);
+                        }
+                        // Unresolved underlying macro — keep as MacroInvocation with the resolved name
+                        let e = *expr;
+                        e._data.macro_expr.is_param_subst = false;
+                        e._data.macro_expr.param_idx = -1i32;
+                        e._data.macro_expr.str_val = real_name;
+                        e.set_args(combined);
+                        return self.ctx.alloc_expr(e);
+                    }
+                }
+                // Substitution failed — fall through to void
+                return self.alloc_void(expr.span);
+            }
+
             // Look up the macro via scope resolution
             let macro_entry = self.ctx.resolve_macro(self.scope_idx, expr.str_val());
             if macro_entry.is_some() {

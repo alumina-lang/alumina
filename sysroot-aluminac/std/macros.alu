@@ -1,27 +1,136 @@
-// Macro utilities for bootstrap sysroot
+//! Utilities for advanced macro usage
 
-/// Create a macro "closure" - partial application of macro arguments
+/// Create a macro "closure"
+///
+/// This built-in macro takes another macro and an arbitrarty number or arguments
+/// as parameters and returns a reference to a macro that has these arguments
+/// appended on every invocation.
+///
+/// ## Example
+/// ```
+/// use std::macros::bind;
+///
+/// macro print_prefixed($prefix, $arg) {
+///     println!("{}{}", $prefix, $arg);
+/// }
+///
+/// macro foreach($f, $arg...) {
+///     $f!($arg)$...;
+/// }
+///
+/// // prefix1
+/// // prefix2
+/// // prefix3
+/// foreach!(
+///     bind!(print_prefixed, "prefix"),
+///     1,
+///     2,
+///     3
+/// );
+/// ```
 #[builtin] macro bind($mac, $arg...) {}
 
-/// Left-associative fold over arguments
+/// Perform a left-associative fold over the arguments
+///
+/// `$mac` is a reference to a macro, `$base` is a mandatory base case followed
+/// by a variable number of extra arguments to fold.
+///
+/// ```pseudo_alumina
+/// reduce!(m, a1, a2, b3, a4, a5)
+/// // Expands to
+/// m!(m!(m!(m!(a1, a2), a3), a4), a5)
+/// ```
+///
+/// ## Example
+/// ```
+/// use std::macros::reduce;
+///
+/// macro plus($a, $b) {
+///     $a + $b
+/// }
+///
+/// assert_eq!(reduce!(plus, 0, 1, 2, 3, 4, 5), 15);
+/// ```
 #[builtin] macro reduce($mac, $base, $arg...) {}
 
 /// Concatenate string literals at compile time
+///
+/// This is a builtin macro recognised directly by the compiler; the
+/// declaration here gives it a `use std::macros::concat` path and surfaces
+/// it in module documentation.
 #[builtin] macro concat($parts...) {}
 
-/// Parse format string and call wrapper macro with interleaved pieces
+/// Parse a format string and call a wrapper macro with interleaved pieces.
+///
+/// Builtin in both compilers — used internally by `fmt::write!` and
+/// related macros.
 #[builtin] macro format_args($fmt, $args...) {}
 
-// Returns a tuple of all discovered test cases
+/// Returns a tuple of all discovered test cases.
+///
+/// Aluminac-only: alumina-boot uses a different test-discovery path
+/// (the `attributed("test")` intrinsic) and doesn't recognise this name.
+#[cfg(not(boot))]
 #[builtin] macro test_cases() {}
 
+
 /// Count the number of arguments
+///
+/// This macro counts the number of arguments passed to it. The result is a
+/// [usize] constant expression.
+///
+/// ## Example
+/// ```
+/// use std::macros::count;
+///
+/// assert_eq!(count!(), 0);
+/// assert_eq!(count!("a", 1, true), 3);
+/// ```
 macro count($arg...) {
     reduce!(internal::count_reducer, 0usize, $arg$...)
 }
 
+
+#[docs(no_index)]
 mod internal {
     macro count_reducer($acc, $_) {
         $acc + 1usize
+    }
+}
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_count() {
+        assert_eq!(count!(), 0);
+        assert_eq!(count!("a", 1, true), 3);
+    }
+
+    #[test]
+    fn test_bind_reduce() {
+        macro times($a, $b) {
+            $a * $b
+        }
+
+        macro plus($a, $b) {
+            $a + $b
+        }
+
+        macro sum($arg...) {
+            reduce!(plus, 0, $arg$...)
+        }
+
+        macro map($receiver, $m, $arg...) {
+            $receiver!($m!($arg)$...)
+        }
+
+        // prefix1
+        // prefix2
+        // prefix3
+        let x = map!(sum, bind!(times, 3), 1, 2, 3);
+        assert_eq!(x, 18); // 1 * 3 + 2 * 3 + 3 * 3
+        let x = map!(sum, bind!(times, 10), 1, 2, 3);
+        assert_eq!(x, 60); // 1 * 10 + 2 * 10 + 3 * 10
     }
 }
