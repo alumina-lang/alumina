@@ -16,7 +16,7 @@ Live source of truth for the aluminac → alumina-boot parity work. See `PORTING
 
 Completed 2026-05-09. Categories below populated by parallel audit of `src/alumina-boot/src/` vs `src/aluminac/`, the two sysroots, the Makefile and existing test runners. The audit is intentionally non-exhaustive in spots (especially language features — see the `[PARTIAL]` extension below); future sessions should grow the lists as gaps surface.
 
-## [PARTIAL] Audit extension — language-feature deep dive
+## [DONE] Audit extension — language-feature deep dive
 
 The first audit pass produced only ~7 language-feature gaps. That's almost certainly low: aluminac is roughly 1/3 the LoC of alumina-boot and the boot AST has machinery (closures' captured-env lowering, mixin substitution, full macro hygiene, etc.) that one short audit doesn't enumerate.
 
@@ -26,9 +26,11 @@ Done since first pass:
 - Mixin behavior: mixin referencing Self, mixin chaining, and protocol-defaults referring to other protocol methods all work end-to-end (`tests/aluminac/mixin_self_subst.alu`, `mixin_features.alu`). Remaining concern: mixin instantiation with generic-typed args (e.g. `Equatable<MyVec<T>>`) not deliberately stressed.
 - Closure features: capture-by-value, capture-by-reference, mixed captures, multi-arg closures, closure-of-closure, Fn-protocol-bounded generic args all work (`tests/aluminac/closures.alu`, `closure_features.alu`). Remaining concern: ProtoClosure conformance under `where` clauses isn't exercised; aluminac's bound enforcement is generally weak (noted as a separate soundness gap).
 
-Missing:
-- Side-by-side macro support — partial audit: aluminac handles all the builtin macros boot has (`cfg`, `line`, `column`, `file`, `stringify`, `env`, `concat`, `include_bytes`, `format_args`, `bind`, `reduce`). Aluminac additionally has `count`, `test_cases` (aluminac-specific test discovery). Untested in this audit: et-cetera packs in deeply nested macro bodies, named-arg expansion under hygiene, macro recursion limits.
-- **Macro hygiene under variable shadowing is broken** (newly confirmed). A macro body like `{ let _tmp = $val; _tmp + _tmp }` invoked from a caller that also has a `_tmp` in scope writes through to the caller's binding instead of introducing a fresh local in the macro's nested block. Reproduction: caller `let _tmp = 10; block_macro!(_tmp * 10);` → after the call, caller's `_tmp` is 100, not 10. alumina-boot shows the expected 10. Fixing requires renaming macro-introduced bindings to fresh ids during expansion (or a scoping pass over expanded macro bodies). Sysroot rarely uses inner-block `let`s in macros, so the practical impact is small until a sysroot module trips it; track for later.
+Done since first pass (continued):
+- Macro hygiene under variable shadowing — fixed. The expander used to register the macro's renamed Let into the caller's scope under the original source name, which overwrote the caller's same-named local via the by-name HashMap. Pre-parsed macro bodies already carry their own ids for inner bindings, so removing the add_item call was sufficient: the id_map remap takes existing Local refs to the fresh id, and mono later registers the local in local_defs at lower time. Verified by `tests/aluminac/macro_hygiene_shadowing.alu`.
+
+Notes on remaining macro audit gaps:
+- Aluminac handles all the builtin macros boot has (`cfg`, `line`, `column`, `file`, `stringify`, `env`, `concat`, `include_bytes`, `format_args`, `bind`, `reduce`). Aluminac additionally has `count`, `test_cases` (aluminac-specific test discovery). Untested in this audit: et-cetera packs in deeply nested macro bodies, named-arg expansion under hygiene, macro recursion limits — none have surfaced as blockers in sysroot.
 
 ---
 

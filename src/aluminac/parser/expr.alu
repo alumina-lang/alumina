@@ -2160,12 +2160,13 @@ impl ExprParser {
             let new_id = self.ctx.next_id();
             id_map.insert(e._data.let_expr.id._value, new_id);
             e._data.let_expr.id = new_id;
-            // Register the new local in scope so it can be referenced
-            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
-                name: e._data.let_expr.str_val,
-                kind: NamedItemKind::local(new_id),
-                span: e.span,
-            });
+            // Don't register the new local in the caller's scope — that
+            // would shadow the caller's same-named binding via the by-name
+            // HashMap and break hygiene. References inside the macro body
+            // already carry the macro-defined id (resolved during pre-parse
+            // of the body), and the id_map remapping above takes them to
+            // the fresh id. mono later registers the local in local_defs
+            // when it lowers the Let, which is sufficient for codegen.
         }
 
         // Use a tag-dispatched approach for expand to avoid accessor/setter overhead
