@@ -203,12 +203,16 @@ Notes on remaining macro audit gaps:
   - `hash` method + `Hashable` mixin. Initially attempted in this session but ran into a real aluminac bug (see "Generic method dispatch on lang-item structs" below) — `val.hash::<H>(&hasher)` from inside `hash_of<T>(val: &T)` returns the empty-hash sentinel instead of dispatching to Range::hash, even though direct calls (`r1.hash::<H>(&h)` outside generic context) work and the same pattern works for non-lang-item structs (verified by a `MyRange<T>` reproducer). The hash method bodies and mixins were reverted; the gap is now blocked on the underlying compiler bug.
   - Diff-and-unify pass: still pending — currently blocked by the same hash-dispatch bug since sysroot's range.alu has hash methods.
 
-- [PARTIAL] **Generic method dispatch on `#[lang(...)]` structs.** Calling a method with its own type-param via generic dispatch fails to find the method on lang-item-tagged structs. Concretely: `fn hash_of<T>(val: &T) -> u64 { val.hash::<DefaultHash>(&hasher); ... }` correctly dispatches to `Foo<T>::hash` for a user struct `Foo<T>` (verified) but returns the empty-hash sentinel when T = `Range<i32>` (even with all mixins stripped and the `T: Integer` bound removed — see investigation in PORTING_STATUS.md history at commit-time). The issue is reproducible with both implicit and explicit type-arg forms (`val.hash(&h)` and `val.hash::<H>(&h)`), and both inside `std::hash::hash_of` and a user's analog `my_hash_of<T>`. Same code on a non-lang-item struct works.
+- [PARTIAL] **Name `Range` shadows: `protocol Range` (builtins) vs `struct Range<T>` (std::range).** Root cause for the earlier-suspected "method dispatch bug" — aluminac's name resolution prefers `std::builtins::Range` (the zero-param protocol) over `std::range::Range<T>` (the struct) when the user writes the unqualified name `Range<i32>`. Concretely:
+  - `size_of::<Range<i32>>()` returns 0 (size of the resolved Protocol IrTy) instead of 8 (the real struct).
+  - `(1..5) is Range<i32>` returns false: the literal lowers to the *struct* IrTy, but the `is`-check resolves `Range<i32>` to the *protocol* IrTy.
+  - `hash_of::<Range<i32>>(&r)` calls `val.hash::<H>(&hasher)` where val ends up bound to the protocol-IrTy version, so method lookup finds nothing and the hasher returns the empty sentinel.
+  - Custom non-lang-item structs (`MyRange<T>`) work correctly since there's no shadowing protocol with the same name.
+  alumina-boot resolves the same code correctly — the protocol vs struct ambiguity must use a scoring rule (e.g. prefer the item that actually accepts the user-supplied number of type-args, or prefer the more recently imported one). Aluminac's resolution path doesn't apply that rule.
   Missing:
-  - Investigate `try_lower_method_call` in `mono/lower.alu` for any path that special-cases struct refs by lang attributes during method lookup.
-  - Investigate whether the IrTy interning / scope_idx for lang-item structs differs from regular structs in a way that breaks method lookup at instantiation time.
-  - Add a focused regression test once root-caused.
-  - This blocks Hashable on ranges and the literal unification of `std/range.alu`.
+  - Update aluminac's name resolution to prefer the item whose generic-param arity matches the use site's type-arg count, or fall back to the next match when the first one's arity disagrees.
+  - Add a regression test using `Range<i32>` directly that exercises both `is`-check and method dispatch.
+  - This blocks Hashable on ranges, the literal unification of `std/range.alu`, and any code that names `Range<T>` unqualified outside `std/`.
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
 - [TODO] **`std/string/unicode.alu`** — unifying breaks the util_unicode test (need to investigate).
