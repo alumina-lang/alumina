@@ -1532,6 +1532,14 @@ impl Mono {
                     scope_idx = sd.unwrap().scope_idx;
                 }
             }
+        } else if ty.tag == IrTyTag::Tuple {
+            let lang_id = self.ctx.get_lang_item("builtin_tuple");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
         }
         if scope_idx == 0u32 {
             return Option::none();
@@ -1570,6 +1578,14 @@ impl Mono {
                     scope_idx = sd.unwrap().scope_idx;
                 }
             }
+        } else if ty.tag == IrTyTag::Tuple {
+            let lang_id = self.ctx.get_lang_item("builtin_tuple");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
         }
 
         // Mixin'd protocol methods (e.g. Equatable's `not_equals` reached via
@@ -1586,11 +1602,17 @@ impl Mono {
         let type_args: &[&IrTy] = if mixin_args_opt.is_some() {
             let ast_args = mixin_args_opt.unwrap();
             let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, def.id._value);
-            if impl_gp_ids.is_some() && ty.tag == IrTyTag::Struct {
+            if impl_gp_ids.is_some() {
                 let ids = impl_gp_ids.unwrap();
-                let n_gp = std::cmp::min(ids.len(), ty.struct_ref().type_args.len());
-                for gi in 0usize..n_gp {
-                    self.type_map.insert(ids[gi]._value, ty.struct_ref().type_args[gi]);
+                if ty.tag == IrTyTag::Struct {
+                    let n_gp = std::cmp::min(ids.len(), ty.struct_ref().type_args.len());
+                    for gi in 0usize..n_gp {
+                        self.type_map.insert(ids[gi]._value, ty.struct_ref().type_args[gi]);
+                    }
+                } else if ty.tag == IrTyTag::Tuple && ids.len() == 1 {
+                    // Tuple's impl is `impl tuple<Tup: Tuple>` — the single
+                    // impl-generic Tup binds to the whole tuple type.
+                    self.type_map.insert(ids[0]._value, ty);
                 }
             }
             let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
@@ -1943,7 +1965,10 @@ impl Mono {
                 || expr.bin_op() == BinOp::Le
                 || expr.bin_op() == BinOp::Gt
                 || expr.bin_op() == BinOp::Ge;
-            if is_comparison && (ir_lhs.ty.tag == IrTyTag::Struct || ir_lhs.ty.tag == IrTyTag::Slice) {
+            // Tuples dispatch via the lang `tuple` impl (sysroot mixes in
+            // Comparable<Tup>); Eq/Ne falls back to the codegen unrolling at
+            // gen_binary if no `equals` / `not_equals` is mixed in.
+            if is_comparison && (ir_lhs.ty.tag == IrTyTag::Struct || ir_lhs.ty.tag == IrTyTag::Slice || ir_lhs.ty.tag == IrTyTag::Tuple) {
                 let overload = self.try_operator_overload(expr.bin_op(), ir_lhs, ir_rhs);
                 if overload.is_some() {
                     return overload.unwrap();
