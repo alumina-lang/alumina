@@ -832,6 +832,19 @@ impl FnCodegen {
                 arg_types[i] = LLVMTypeOf(arg_vals[i]);
             }
 
+            // llvm.expect.i1 takes i1 args but aluminac stores bools as i8.
+            // Trunc each arg to i1 here so the call matches the intrinsic signature;
+            // the i1 result is widened back to i8 by the trailing coerce_value call.
+            let is_expect_i1 = intrinsic_name == "llvm.expect.i1";
+            if is_expect_i1 {
+                for i in 0usize..items.len() {
+                    if arg_types[i] == self.ctx.i8_type {
+                        arg_vals[i] = LLVMBuildTrunc(self.ctx.builder, arg_vals[i], self.ctx.i1_type, self.temp_cname());
+                        arg_types[i] = self.ctx.i1_type;
+                    }
+                }
+            }
+
             // Deduplicate arg types to get overload types.
             // LLVM intrinsics are parameterized by unique "any" types, not all arg types.
             // e.g. llvm.uadd.with.overflow(i64, i64) has overload types [i64], not [i64, i64].

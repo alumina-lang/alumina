@@ -463,17 +463,27 @@ fn lower_tag(m: &mut Mono, expr: &Expr) -> &IrExpr {
 }
 
 fn lower_expect(m: &mut Mono, expr: &Expr) -> &IrExpr {
-    // expect(value, to_be) -> value: branch-prediction hint, identity at runtime.
-    // alumina-boot lowers to llvm.expect.i1; aluminac stores bools as i8 (to avoid
-    // i1 load UB on misaligned reads), so a faithful llvm.expect.i1 lowering would
-    // need a trunc-i8-to-i1 / zext-i1-to-i8 sandwich. Identity is correct (the
-    // intrinsic is a hint), and matches the no-op result that sysroot would
-    // observe — wire the real LLVM intrinsic when the i1 conversion is built out.
-    if expr.args().len() > 0 {
-        return m.lower_expr(expr.args()[0]);
+    // expect(value, to_be) -> value: branch-prediction hint. Lowers to
+    // llvm.expect.i1; codegen handles the i8 (alumina bool storage) ↔ i1
+    // conversion sandwich. With <2 args we silently drop to identity so
+    // existing tests that don't pass `to_be` keep working.
+    if expr.args().len() < 2 {
+        if expr.args().len() > 0 {
+            return m.lower_expr(expr.args()[0]);
+        }
+        let r = IrExpr::void_expr(m.ctx.bool_ty);
+        r.tag = IrTag::Undef;
+        return m.ctx.arena.alloc(r);
     }
+    let val_ir = m.lower_expr(expr.args()[0]);
+    let to_be_ir = m.lower_expr(expr.args()[1]);
+    let ir_args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
+    ir_args[0] = val_ir;
+    ir_args[1] = to_be_ir;
     let result = IrExpr::void_expr(m.ctx.bool_ty);
-    result.tag = IrTag::Undef;
+    result.tag = IrTag::LlvmIntrinsic;
+    result._data.codegen.str_val = "llvm.expect.i1";
+    result._data.codegen.items = ir_args;
     m.ctx.arena.alloc(result)
 }
 
