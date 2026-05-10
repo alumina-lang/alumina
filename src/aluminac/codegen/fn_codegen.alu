@@ -845,22 +845,42 @@ impl FnCodegen {
                 }
             }
 
+            // llvm.ctlz / llvm.cttz: signature is (iN, i1 is_zero_undef) where iN is
+            // the lone overload type. Aluminac's bool is i8, so trunc the flag arg
+            // to i1; we also force a single-element overload list (just the iN) so
+            // the intrinsic lookup doesn't include the i1 in the suffix.
+            let is_ctlz_cttz = intrinsic_name == "llvm.ctlz" || intrinsic_name == "llvm.cttz";
+            if is_ctlz_cttz && items.len() == 2 {
+                if arg_types[1] == self.ctx.i8_type {
+                    arg_vals[1] = LLVMBuildTrunc(self.ctx.builder, arg_vals[1], self.ctx.i1_type, self.temp_cname());
+                    arg_types[1] = self.ctx.i1_type;
+                }
+            }
+
             // Deduplicate arg types to get overload types.
             // LLVM intrinsics are parameterized by unique "any" types, not all arg types.
             // e.g. llvm.uadd.with.overflow(i64, i64) has overload types [i64], not [i64, i64].
             let overload_types = self.ctx.arena.alloc_slice::<LLVMTypeRef>(items.len());
             let overload_count: usize = 0;
-            for i in 0usize..items.len() {
-                let ty = arg_types[i];
-                let found = false;
-                for j in 0usize..overload_count {
-                    if overload_types[j] == ty {
-                        found = true;
-                    }
+            if is_ctlz_cttz {
+                // Single iN overload; the i1 flag is fixed and not part of the suffix.
+                if items.len() > 0 {
+                    overload_types[0] = arg_types[0];
+                    overload_count = 1;
                 }
-                if !found {
-                    overload_types[overload_count] = ty;
-                    overload_count = overload_count + 1;
+            } else {
+                for i in 0usize..items.len() {
+                    let ty = arg_types[i];
+                    let found = false;
+                    for j in 0usize..overload_count {
+                        if overload_types[j] == ty {
+                            found = true;
+                        }
+                    }
+                    if !found {
+                        overload_types[overload_count] = ty;
+                        overload_count = overload_count + 1;
+                    }
                 }
             }
 

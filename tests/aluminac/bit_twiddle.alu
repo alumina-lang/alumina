@@ -62,6 +62,38 @@ fn test_swap_bytes() -> i32 {
     0i32
 }
 
+fn test_leading_trailing_zeros() -> i32 {
+    // u8: 8-bit width
+    if (1u8).leading_zeros() != 7u32 { return 1i32; }
+    if (0x80u8).leading_zeros() != 0u32 { return 2i32; }
+    if (0u8).leading_zeros() != 8u32 { return 3i32; }
+    if (1u8).trailing_zeros() != 0u32 { return 4i32; }
+    if (0x80u8).trailing_zeros() != 7u32 { return 5i32; }
+    if (0u8).trailing_zeros() != 8u32 { return 6i32; }
+
+    // u16
+    if (1u16).leading_zeros() != 15u32 { return 10i32; }
+    if (0x8000u16).leading_zeros() != 0u32 { return 11i32; }
+    if (0u16).trailing_zeros() != 16u32 { return 12i32; }
+
+    // u32
+    if (1u32).leading_zeros() != 31u32 { return 20i32; }
+    if (0x80000000u32).leading_zeros() != 0u32 { return 21i32; }
+    if (0u32).trailing_zeros() != 32u32 { return 22i32; }
+    if (0x10u32).trailing_zeros() != 4u32 { return 23i32; }
+
+    // u64
+    if (1u64).leading_zeros() != 63u32 { return 30i32; }
+    if (0u64).trailing_zeros() != 64u32 { return 31i32; }
+
+    // signed: width is the same; ctlz counts MSB-zeros, so a positive i32 with
+    // MSB clear leads with 1 zero (sign bit), then more.
+    if (1i32).leading_zeros() != 31u32 { return 40i32; }
+    if (-1i32).leading_zeros() != 0u32 { return 41i32; }
+
+    0i32
+}
+
 fn main(args: &[&[u8]]) -> i32 {
     let r = test_count_ones();
     if r != 0 { return r; }
@@ -69,6 +101,8 @@ fn main(args: &[&[u8]]) -> i32 {
     if r != 0 { return r + 100; }
     let r = test_swap_bytes();
     if r != 0 { return r + 200; }
+    let r = test_leading_trailing_zeros();
+    if r != 0 { return r + 300; }
 
     0i32
 }
