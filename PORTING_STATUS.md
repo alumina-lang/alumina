@@ -188,8 +188,7 @@ Notes on remaining macro audit gaps:
 - [DONE] **`std/prelude.alu`** — unified.
 - [PARTIAL] **`std/option.alu`** — Option already has the bulk of methods (`is_some`/`is_none`/`unwrap`/`map`/`and_then`/`or_else`/`flatten`/`zip`/`as_ptr`/`replace`/`transpose`/`equals`/`fmt`). Newly added `Option::iter() -> OnceIterator<T>` (`tests/aluminac/option_iter.alu`) and `mixin<T: Equatable<T>> Equatable<Option<T>>` so options satisfy `T: Equatable<T>`-bounded generics (verified by `tests/aluminac/option_result_equatable.alu`).
   Missing for unification with sysroot's `std/option.alu`:
-  - Panic-message richness: sysroot's unwrap panic includes `lhs.debug()` (DebugAdapter formats the actual value). sysroot-aluminac's panics now include type-level descriptions (`"called Option::unwrap on a None value"`) but no value rendering — None has no value to render, so the gap shows only on `unwrap_err` which sysroot would format the Some side. Gated on a sysroot-aluminac DebugAdapter equivalent for full parity.
-  - `as_nullable_ptr<T: Pointer>` (sysroot has bound-restricted overload aluminac doesn't yet enforce).
+  - Panic-message richness: sysroot's unwrap panic includes `lhs.debug()` (DebugAdapter formats the actual value). sysroot-aluminac's panics now include type-level descriptions (`"called Option::unwrap on a None value"`) but no value rendering. Gated on a sysroot-aluminac DebugAdapter equivalent for full parity.
   - Doc comments and embedded test module — additive once the above land.
 
 - [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt`. Newly added `mixin Equatable<Result<T, E>>`, `hash<...>` + `mixin Hashable<Result<T, E>, H>`, plus `AnyResult` type alias (`tests/aluminac/option_result_equatable.alu`, `option_result_hash.alu`, `option_result_any.alu`).
