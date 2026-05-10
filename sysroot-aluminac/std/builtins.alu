@@ -97,15 +97,29 @@ impl tuple {
     fn len<T>(self: &T) -> usize {
         std::intrinsics::length_of::<T>()
     }
-    /// Format helper that handles the unit type. Non-empty tuples don't
-    /// have per-element reflection in aluminac yet, so they fall back to
-    /// the placeholder `(...)`.
-    fn fmt<T, F: std::fmt::Formatter<F>>(self: &T, f: &mut F) -> std::fmt::Result {
-        when std::intrinsics::length_of::<T>() == 0usize {
-            f.write_str("()")
-        } else {
-            f.write_str("(...)")
+    /// Element-wise equality via static_for + tuple-index auto-deref.
+    fn equals<T>(lhs: &T, rhs: &T) -> bool {
+        for const i in 0usize..lhs.len() {
+            if lhs.(i) != rhs.(i) {
+                return false;
+            }
         }
+        true
+    }
+    fn not_equals<T>(lhs: &T, rhs: &T) -> bool {
+        !tuple::equals::<T>(lhs, rhs)
+    }
+    /// Format `(a, b, c)` by writing each element separated with ", ".
+    /// Empty tuple renders as `()`.
+    fn fmt<T, F: std::fmt::Formatter<F>>(self: &T, f: &mut F) -> std::fmt::Result {
+        f.write_byte('(' as u8)?;
+        for const i in 0usize..std::intrinsics::length_of::<T>() {
+            when i > 0usize {
+                f.write_str(", ")?;
+            }
+            self.(i).fmt(f)?;
+        }
+        f.write_byte(')' as u8)
     }
 }
 
