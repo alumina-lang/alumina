@@ -188,7 +188,9 @@ Notes on remaining macro audit gaps:
 - [DONE] **`std/prelude.alu`** — unified.
 - [TODO] **`std/option.alu`** — unifying breaks aluminac bootstrap (sysroot's body uses macros and dyn paths aluminac can't handle yet).
 - [TODO] **`std/result.alu`** — same shape as `option.alu`.
-- [TODO] **`std/range.alu`** — sysroot has full `lang(range_*_new)` impl blocks; unifying breaks test-std-aluminac on iterator integration.
+- [PARTIAL] **`std/range.alu`** — biggest blocker (mixin'd `Equatable::not_equals` dispatch failing to bind Self) is fixed. Remaining blocker for unification: when an `assert_eq!(range, range)` fails, the panic-side `eprintln!` formats both sides — sysroot-aluminac has no `fmt` impl for the Range types (and slice fmt is absent more broadly). Unifying `std/range.alu` therefore still requires either Range-type `fmt` impls in sysroot-aluminac or full `std/fmt.alu` unification (gated on dyn).
+  Missing:
+  - `fmt` for Range / RangeFrom / RangeTo / RangeFull / RangeInclusive / RangeToInclusive in sysroot-aluminac (or sysroot's full when-based fmt path under aluminac).
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [TODO] **`std/string/mod.alu`** — unifying breaks aluminac bootstrap (sysroot uses dyn-related `?` operator chains).
 - [TODO] **`std/string/unicode.alu`** — unifying breaks the util_unicode test (need to investigate).

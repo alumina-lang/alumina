@@ -1480,11 +1480,49 @@ impl Mono {
 
     // Call a method on a type, monomorphizing it with the type's type args.
     fn call_method_on_type(self: &mut Mono, def: &FnDef, ty: &IrTy, ir_lhs: &IrExpr, ir_rhs: &IrExpr, ret_ty: &IrTy) -> &IrExpr {
-        // Use the struct's type_args (e.g. [i16] for Option<i16>) rather than
-        // the full type. This correctly maps to the method's generic params,
-        // whether the method is in a generic impl (impl Option<T>) or a
-        // non-generic impl (impl Option { fn equals<T>(...) }).
-        let type_args: &[&IrTy] = if ty.tag == IrTyTag::Slice {
+        // Find the type's scope to consult mixin info.
+        let scope_idx: u32 = 0u32;
+        if ty.tag == IrTyTag::Struct {
+            scope_idx = ty.struct_ref().scope_idx;
+        } else if ty.tag == IrTyTag::Enum {
+            scope_idx = ty.enum_ref().scope_idx;
+        } else if ty.tag == IrTyTag::Slice {
+            let lang_id = self.ctx.get_lang_item("slice");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    scope_idx = sd.unwrap().scope_idx;
+                }
+            }
+        }
+
+        // Mixin'd protocol methods (e.g. Equatable's `not_equals` reached via
+        // `mixin Equatable<RangeFull<T>>`) take the protocol's generic args,
+        // not the impl struct's own type args. Resolve them from the mixin
+        // AST args, mapping the impl's generic-param ids to the struct's
+        // concrete type args.
+        let mixin_args_opt: Option<&[&Ty]> = if scope_idx != 0u32 {
+            self.ctx.scopes.get_mixin_type_args(scope_idx, def.id._value)
+        } else {
+            Option::none()
+        };
+
+        let type_args: &[&IrTy] = if mixin_args_opt.is_some() {
+            let ast_args = mixin_args_opt.unwrap();
+            let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, def.id._value);
+            if impl_gp_ids.is_some() && ty.tag == IrTyTag::Struct {
+                let ids = impl_gp_ids.unwrap();
+                let n_gp = std::cmp::min(ids.len(), ty.struct_ref().type_args.len());
+                for gi in 0usize..n_gp {
+                    self.type_map.insert(ids[gi]._value, ty.struct_ref().type_args[gi]);
+                }
+            }
+            let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
+            for i in 0usize..ast_args.len() {
+                resolved[i] = self.resolve_type(ast_args[i]);
+            }
+            resolved as &[&IrTy]
+        } else if ty.tag == IrTyTag::Slice {
             // Slice methods take Ptr as their type-arg (e.g. impl slice<Ptr>).
             // Some — like `equals<T, Ptr>` — take both T (the pointee) and Ptr;
             // pass the right vector based on def.generic_params.len().
@@ -1508,6 +1546,14 @@ impl Mono {
             ta[0] = ty;
             ta as &[&IrTy]
         };
+
+        // For protocol methods, also bind Self in type_map to the underlying type
+        // so calls like `Self::equals(...)` inside default method bodies resolve.
+        let self_id_opt = self.ctx.proto_method_self_id.get(&def.id._value);
+        if self_id_opt.is_some() {
+            self.type_map.insert(self_id_opt.unwrap(), ty);
+        }
+
         let fn_idx = self.mono_function(def, type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
 
