@@ -3814,10 +3814,12 @@ impl Mono {
                 if fn_def.generic_params.len() == combined_total && combined_total > 0 {
                     let buf = self.ctx.arena.alloc_slice::<&IrTy>(combined_total);
                     for i in 0usize..impl_args.len() {
-                        buf[i] = impl_args[i];
+                        let a = impl_args[i];
+                        buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
                     }
                     for i in 0usize..proto_non_self_count {
-                        buf[impl_args.len() + i] = proto_args[i + 1];
+                        let a = proto_args[i + 1];
+                        buf[impl_args.len() + i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
                     }
                     method_type_args = buf;
                 } else if fn_def.generic_params.len() > 0
@@ -3826,13 +3828,19 @@ impl Mono {
                     let nargs = proto_non_self_count;
                     let buf = self.ctx.arena.alloc_slice::<&IrTy>(nargs);
                     for i in 0usize..nargs {
-                        buf[i] = proto_args[i + 1];
+                        let a = proto_args[i + 1];
+                        buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
                     }
                     method_type_args = buf;
                 } else if impl_args.len() == fn_def.generic_params.len()
                     && fn_def.generic_params.len() > 0 {
                     // Method only inherits the impl's generics (no method-own).
-                    method_type_args = impl_args;
+                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(impl_args.len());
+                    for i in 0usize..impl_args.len() {
+                        let a = impl_args[i];
+                        buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
+                    }
+                    method_type_args = buf;
                 }
 
                 // Record proto Self → impl_ty for any defaulted-body method
