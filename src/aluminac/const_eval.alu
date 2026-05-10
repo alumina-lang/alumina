@@ -1319,6 +1319,10 @@ impl ConstEvaluator {
         }
         let arg_r = self.eval(items[0]);
         if !arg_r.ok { return arg_r; }
+        // expect.i1 is the only bool-typed hint; the bit-twiddlers all need int.
+        if arg_r.value.tag == CValTag::Bool && name == "llvm.expect.i1" {
+            return ConstResult::success(arg_r.value);
+        }
         if arg_r.value.tag != CValTag::Int {
             return ConstResult::fail(ConstEvalError::unsupported());
         }

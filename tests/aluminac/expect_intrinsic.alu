@@ -26,5 +26,21 @@ fn main() -> i32 {
     if !expect(true, true) { return 5; }
     if expect(false, true) { return 6; }
 
+    // const-time identity through const_eval's LlvmIntrinsic handler.
+    // If expect doesn't fold, LEN can't const-evaluate and the array
+    // type below fails to resolve; the test wouldn't compile.
+    const RES_T: bool = expect(true, true);
+    const RES_F: bool = expect(false, false);
+    const LEN: usize = if RES_T { 7usize } else { 0usize };
+    const LEN2: usize = if RES_F { 0usize } else { 11usize };
+    let arr: [u8; LEN];
+    let arr2: [u8; LEN2];
+    let n: usize = 0;
+    for _ in 0usize..LEN { n = n + 1; }
+    if n != 7 { return 7; }
+    n = 0;
+    for _ in 0usize..LEN2 { n = n + 1; }
+    if n != 11 { return 8; }
+
     0
 }
