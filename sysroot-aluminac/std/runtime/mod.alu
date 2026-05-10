@@ -1,0 +1,23 @@
+//! Run time glue code (program entrypoint, tests, ...)
+//!
+//! Stub for sysroot-aluminac. Sysroot's full runtime module covers
+//! entrypoint glue, panic/backtrace, and program-level lifecycle. This
+//! minimal version exposes just `in_const_context` / `is_const_evaluable` /
+//! `const_eval`, the const-context probes that downstream sysroot code
+//! (xxhash, mem, fmt) consults to choose runtime vs const-eval paths.
+
+/// Returns `true` when evaluated in a const context, `false` otherwise.
+#[inline(ir)]
+fn in_const_context() -> bool {
+    intrinsics::in_const_context()
+}
+
+/// True when the argument is a const-evaluable expression.
+macro is_const_evaluable($arg) {
+    intrinsics::is_const_evaluable($arg)
+}
+
+/// Evaluate an expression at const time.
+macro const_eval($arg) {
+    intrinsics::const_eval($arg)
+}
