@@ -97,6 +97,16 @@ impl tuple {
     fn len<T>(self: &T) -> usize {
         std::intrinsics::length_of::<T>()
     }
+    /// Format helper that handles the unit type. Non-empty tuples don't
+    /// have per-element reflection in aluminac yet, so they fall back to
+    /// the placeholder `(...)`.
+    fn fmt<T, F: std::fmt::Formatter<F>>(self: &T, f: &mut F) -> std::fmt::Result {
+        when std::intrinsics::length_of::<T>() == 0usize {
+            f.write_str("()")
+        } else {
+            f.write_str("(...)")
+        }
+    }
 }
 
 #[lang(builtin_callable)]

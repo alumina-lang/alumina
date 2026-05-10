@@ -19,5 +19,11 @@ fn main(args: &[&[u8]]) -> i32 {
     when u is std::builtins::Tuple {} else { return 3i32; }
     when u is std::builtins::ZeroSized {} else { return 4i32; }
 
+    // fmt: unit prints as "()". Non-empty tuples fall back to "(...)".
+    let buf: std::string::StringBuf = std::string::StringBuf::new();
+    defer buf.free();
+    std::fmt::write!(&buf, "{}", ()).unwrap();
+    if buf.as_slice() != "()" { return 5i32; }
+
     0i32
 }
