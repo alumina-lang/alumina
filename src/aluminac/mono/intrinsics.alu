@@ -37,7 +37,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "type_id" => lower_type_id(m, ir_type_args),
         "type_name" => lower_type_name(m, ir_type_args, false),
         "named_type_name" => lower_type_name(m, ir_type_args, true),
-        "module_path" => lower_module_path(m),
+        "module_path" => lower_module_path(m, ir_type_args),
         "has_attribute" => lower_has_attribute(m, ir_type_args, expr),
         "length_of" => lower_length_of(m, type_args, ir_type_args, expr),
         "asm" => lower_asm(m, expr),
@@ -355,14 +355,40 @@ fn lower_type_name(m: &mut Mono, ir_type_args: &[&IrTy], named_only: bool) -> &I
     m.ctx.arena.alloc(result)
 }
 
-fn lower_module_path(m: &mut Mono) -> &IrExpr {
-    // module_path<T>() -> &[u8]: alumina-boot returns the module path of T's
-    // declaration. aluminac doesn't track module paths on IrStructRef/IrEnumRef
-    // yet, so return void — std::typing::Type::module_path uses
-    // `when module_path::<T>() is () { Option::none() } else { ... }` to
-    // gracefully fall back to None.
-    let result = IrExpr::void_expr(m.ctx.void_ty);
-    result.tag = IrTag::Void;
+fn lower_module_path(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // module_path<T>() -> &[u8]: returns the `::`-joined module path of T's
+    // declaration. For struct/enum, walk up *from the parent* of the type's
+    // own scope to collect Module ancestors — pass1 creates a Module-kind
+    // scope for the struct/enum body itself (it's where method lookups live),
+    // so starting at the type's own scope_idx would erroneously include its
+    // own name. Other types fall back to void so std::typing::Type::module_path's
+    // `when ... is ()` branch returns None.
+    let scope_idx: u32 = 0;
+    if ir_type_args.len() > 0 {
+        let t = ir_type_args[0];
+        if t.tag == IrTyTag::Struct {
+            scope_idx = t.struct_ref().scope_idx;
+        } else if t.tag == IrTyTag::Enum {
+            scope_idx = t.enum_ref().scope_idx;
+        }
+    }
+    let path: &[u8] = "";
+    if scope_idx != 0 {
+        let parent = m.ctx.scopes.get(scope_idx).parent;
+        if parent.is_some() {
+            path = m.ctx.scopes.module_path_for_scope(m.ctx.arena, parent.unwrap());
+        }
+    }
+    if path.len() == 0 {
+        let r = IrExpr::void_expr(m.ctx.void_ty);
+        r.tag = IrTag::Void;
+        return m.ctx.arena.alloc(r);
+    }
+    let u8_ty = m.ctx.intern_builtin_ty(BuiltinType::U8);
+    let slice_ty = m.ctx.make_slice_ty(u8_ty, true);
+    let result = IrExpr::void_expr(slice_ty);
+    result.tag = IrTag::StringLit;
+    result._data.lit.str_val = path;
     m.ctx.arena.alloc(result)
 }
 

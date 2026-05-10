@@ -4,7 +4,7 @@ use ast::{Id, IdGen, Item, ItemRef, Ty, GenericParam, FnDef, StructDef, EnumDef,
           ProtocolDef, TypeAlias, StaticDef,
           BuiltinType, BoundType};
 use aluminac_common::arena::Arena;
-use std::collections::HashMap;
+use std::collections::{HashMap, Vector};
 
 // What kind of thing a name refers to
 enum NamedItemTag {
@@ -473,5 +473,68 @@ impl ScopeArena {
             scope.items.free();
         }
         self.scopes.free();
+    }
+
+    /// Recover the source name of `scope_idx` by searching its parent's items
+    /// for a NamedItem that points back to it. Returns "" if not found (e.g.
+    /// the root scope or anonymous scopes like blocks).
+    fn scope_name(self: &ScopeArena, scope_idx: u32) -> &[u8] {
+        if scope_idx == 0 { return ""; }
+        let scope = self.get(scope_idx);
+        if scope.parent.is_none() { return ""; }
+        let parent = self.get(scope.parent.unwrap());
+        for pair in parent.items {
+            if pair.1.kind.scope_idx == scope_idx {
+                return pair.1.name;
+            }
+        }
+        ""
+    }
+
+    /// Build a `::`-joined module path from `scope_idx` upward, collecting
+    /// the names of Module ancestors only. Anonymous scopes (Function,
+    /// Block, Impl, Protocol, struct/enum scopes) are skipped — only modules
+    /// contribute. Returns an empty slice if no modules are found.
+    fn module_path_for_scope(self: &ScopeArena, arena: &mut Arena, scope_idx: u32) -> &[u8] {
+        let segments: std::collections::Vector<&[u8]> = std::collections::Vector::new();
+        defer segments.free();
+        let cur_opt: Option<u32> = Option::some(scope_idx);
+        while cur_opt.is_some() {
+            let cur = cur_opt.unwrap();
+            let s = self.get(cur);
+            if s.kind == ScopeKind::Module {
+                let name = self.scope_name(cur);
+                if name.len() > 0 {
+                    segments.push(name);
+                }
+            }
+            cur_opt = s.parent;
+        }
+        if segments.len() == 0 {
+            return "";
+        }
+        // Reverse-collect into "a::b::c" form.
+        let total: usize = 0;
+        for i in 0usize..segments.len() {
+            total = total + segments[i].len();
+        }
+        if segments.len() > 1 {
+            total = total + 2 * (segments.len() - 1);
+        }
+        let buf = arena.alloc_slice::<u8>(total);
+        let pos: usize = 0;
+        for i in 0usize..segments.len() {
+            let seg = segments[segments.len() - 1 - i];
+            if i > 0 {
+                buf[pos] = ':' as u8;
+                buf[pos + 1] = ':' as u8;
+                pos = pos + 2;
+            }
+            for j in 0usize..seg.len() {
+                buf[pos + j] = seg[j];
+            }
+            pos = pos + seg.len();
+        }
+        buf as &[u8]
     }
 }
