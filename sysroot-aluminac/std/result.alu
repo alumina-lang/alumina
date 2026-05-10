@@ -51,18 +51,18 @@ impl Result<T, E> {
         !self._is_ok
     }
 
-    /// Return the success value, aborting if error value is present
+    /// Return the success value, panicking if error value is present.
     fn unwrap(self: Result<T, E>) -> T {
         if !self._is_ok {
-            libc::abort();
+            panic!("called Result::unwrap on an Err value");
         }
         self._ok
     }
 
-    /// Return the error value, aborting if success value is present
+    /// Return the error value, panicking if success value is present.
     fn unwrap_err(self: Result<T, E>) -> E {
         if self._is_ok {
-            libc::abort();
+            panic!("called Result::unwrap_err on an Ok value");
         }
         self._err
     }
