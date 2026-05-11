@@ -258,10 +258,24 @@ impl slice {
         else { std::cmp::Ordering::Equal }
     }
 
-    /// Hash a slice by hashing each element.
-    fn hash<T, H: std::hash::Hasher<H>>(self: &[T], hasher: &mut H) {
-        // For byte slices, hash directly
-        hasher.write(*self);
+    /// Hash a slice by hashing each element. Takes a pointer-to-slice
+    /// (matches sysroot/std/mem.alu's signature) so `*self` can be used
+    /// to recover the slice value when forwarding to hasher.write for
+    /// byte slices.
+    fn hash<Ptr, H: std::hash::Hasher<H>>(
+        self: &slice<Ptr>,
+        hasher: &mut H,
+    ) {
+        let p = self._ptr;
+        when *p is u8 {
+            hasher.write(*self);
+        } else {
+            let idx = 0usize;
+            while idx < self.len() {
+                (*self)[idx].hash(hasher);
+                idx += 1;
+            }
+        }
     }
 
     /// Write byte slice as string. Used by format_args! for string literal pieces.

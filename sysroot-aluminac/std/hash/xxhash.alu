@@ -1,44 +1,90 @@
-/// xxHash (XXH64) implementation for non-cryptographic hashing.
+const CHUNK_SIZE: usize = 32;
+const PRIME_1: u64 = 0x9E3779B185EBCA87;
+const PRIME_2: u64 = 0xC2B2AE3D27D4EB4F;
+const PRIME_3: u64 = 0x165667B19E3779F9;
+const PRIME_4: u64 = 0x85EBCA77C2B2AE63;
+const PRIME_5: u64 = 0x27D4EB2F165667C5;
 
-const CHUNK_SIZE: usize = 32usize;
-const PRIME_1: u64 = 0x9E3779B185EBCA87u64;
-const PRIME_2: u64 = 0xC2B2AE3D27D4EB4Fu64;
-const PRIME_3: u64 = 0x165667B19E3779F9u64;
-const PRIME_4: u64 = 0x85EBCA77C2B2AE63u64;
-const PRIME_5: u64 = 0x27D4EB2F165667C5u64;
-
+#[inline]
 fn round(acc: u64, input: u64) -> u64 {
-    ((acc + (input * PRIME_2)).rotate_left(31usize)) * PRIME_1
+    ((acc + (input * PRIME_2)).rotate_left(31)) * PRIME_1
 }
 
+// Helper to read u64 from byte slice at offset (const-friendly)
+#[inline]
 fn read_u64_at(input: &[u8], offset: usize) -> u64 {
-    *(&input[offset] as &u64)
+    if std::runtime::in_const_context() {
+        // In const context, build array and use type punning
+        let bytes: [u8; 8] = [
+            input[offset],
+            input[offset + 1],
+            input[offset + 2],
+            input[offset + 3],
+            input[offset + 4],
+            input[offset + 5],
+            input[offset + 6],
+            input[offset + 7],
+        ];
+        intrinsics::transmute::<[u8; 8], u64>(bytes).to_le()
+    } else {
+        (*(&input[offset] as &u64)).to_le()
+    }
 }
 
+// Helper to read u32 from byte slice at offset (const-friendly)
+#[inline]
 fn read_u32_at(input: &[u8], offset: usize) -> u32 {
-    *(&input[offset] as &u32)
+    if std::runtime::in_const_context() {
+        let bytes: [u8; 4] = [
+            input[offset],
+            input[offset + 1],
+            input[offset + 2],
+            input[offset + 3],
+        ];
+        intrinsics::transmute::<[u8; 4], u32>(bytes).to_le()
+    } else {
+        (*(&input[offset] as &u32)).to_le()
+    }
 }
 
+// Helper to copy bytes into u64 array (const-friendly)
+#[inline]
 fn copy_to_mem(mem: &mut [u64; 4], mem_size: usize, input: &[u8]) {
-    let dst = (&mem[0] as usize + mem_size) as &mut u8;
-    input.copy_to_nonoverlapping(dst);
+    if std::runtime::in_const_context() {
+        // Convert to bytes, copy, convert back
+        let mem_bytes: [u8; 32] = std::intrinsics::transmute::<[u64; 4], [u8; 32]>(*mem);
+        let i = 0usize;
+        loop {
+            if i >= input.len() {
+                break;
+            }
+            mem_bytes[mem_size + i] = input[i];
+            i += 1;
+        }
+        *mem = std::intrinsics::transmute::<[u8; 32], [u64; 4]>(mem_bytes);
+    } else {
+        // At runtime, use pointer arithmetic (in-place)
+        input.copy_to_nonoverlapping((&mem[0] as &mut u8) + mem_size);
+    }
 }
 
+#[inline]
 fn merge_round(acc: u64, val: u64) -> u64 {
-    let acc = acc ^ round(0u64, val);
+    acc ^= round(0, val);
     acc * PRIME_1 + PRIME_4
 }
 
+#[inline]
 fn avalanche(input: u64) -> u64 {
-    let input = input ^ (input >> 33u64);
+    input ^= input >> 33;
     input = input * PRIME_2;
-    input = input ^ (input >> 29u64);
+    input ^= input >> 29;
     input = input * PRIME_3;
-    input = input ^ (input >> 32u64);
+    input ^= input >> 32;
     input
 }
 
-/// 64-bit version of xxHash (XXH64).
+/// 64-bit version of xxHash (XXH64)
 struct Xxh64 {
     total_len: usize,
     v1: u64,
@@ -50,51 +96,53 @@ struct Xxh64 {
 }
 
 impl Xxh64 {
+    #[inline]
     fn new() -> Xxh64 {
-        with_seed(0xdeadb33fu64)
+        with_seed(0xdeadb33f)
     }
 
+    #[inline]
     fn with_seed(seed: u64) -> Xxh64 {
         Xxh64 {
-            total_len: 0usize,
+            total_len: 0,
             v1: seed + PRIME_1 + PRIME_2,
             v2: seed + PRIME_2,
             v3: seed,
             v4: seed - PRIME_1,
-            mem: [0u64, 0u64, 0u64, 0u64],
-            mem_size: 0usize,
+            mem: [0, 0, 0, 0],
+            mem_size: 0,
         }
     }
 
     fn write(self: &mut Xxh64, input: &[u8]) {
-        self.total_len = self.total_len + input.len();
+        self.total_len += input.len();
 
         if (self.mem_size + input.len()) < CHUNK_SIZE {
             copy_to_mem(&self.mem, self.mem_size, input);
-            self.mem_size = self.mem_size + input.len();
-            return;
+            self.mem_size += input.len();
+            return
         }
 
-        if self.mem_size > 0usize {
+        if self.mem_size > 0 {
             let fill_len = CHUNK_SIZE - self.mem_size;
-            copy_to_mem(&self.mem, self.mem_size, input[0usize..fill_len]);
+            copy_to_mem(&self.mem, self.mem_size, input[0..fill_len]);
 
-            self.v1 = round(self.v1, self.mem[0]);
-            self.v2 = round(self.v2, self.mem[1]);
-            self.v3 = round(self.v3, self.mem[2]);
-            self.v4 = round(self.v4, self.mem[3]);
+            self.v1 = round(self.v1, self.mem[0].to_le());
+            self.v2 = round(self.v2, self.mem[1].to_le());
+            self.v3 = round(self.v3, self.mem[2].to_le());
+            self.v4 = round(self.v4, self.mem[3].to_le());
 
             input = input[fill_len..];
-            self.mem_size = 0usize;
+            self.mem_size = 0;
         }
 
         if input.len() >= CHUNK_SIZE {
             loop {
-                self.v1 = round(self.v1, read_u64_at(input, 0usize));
-                self.v2 = round(self.v2, read_u64_at(input, 8usize));
-                self.v3 = round(self.v3, read_u64_at(input, 16usize));
-                self.v4 = round(self.v4, read_u64_at(input, 24usize));
-                input = input[32usize..];
+                self.v1 = round(self.v1, read_u64_at(input, 0));
+                self.v2 = round(self.v2, read_u64_at(input, 8));
+                self.v3 = round(self.v3, read_u64_at(input, 16));
+                self.v4 = round(self.v4, read_u64_at(input, 24));
+                input = input[32..];
 
                 if input.len() < CHUNK_SIZE {
                     break;
@@ -102,8 +150,8 @@ impl Xxh64 {
             }
         }
 
-        if input.len() > 0usize {
-            copy_to_mem(&self.mem, 0usize, input);
+        if input.len() > 0 {
+            copy_to_mem(&self.mem, 0, input);
             self.mem_size = input.len();
         }
     }
@@ -112,10 +160,10 @@ impl Xxh64 {
         let result: u64;
 
         if self.total_len >= CHUNK_SIZE {
-            result = (self.v1.rotate_left(1usize)) +
-                (self.v2.rotate_left(7usize)) +
-                (self.v3.rotate_left(12usize)) +
-                (self.v4.rotate_left(18usize));
+            result = (self.v1.rotate_left(1)) +
+                (self.v2.rotate_left(7)) +
+                (self.v3.rotate_left(12)) +
+                (self.v4.rotate_left(18));
 
             result = merge_round(result, self.v1);
             result = merge_round(result, self.v2);
@@ -127,27 +175,139 @@ impl Xxh64 {
 
         result = result + (self.total_len as u64);
 
-        let remainder = std::mem::slice_from_raw_const::<u8>(&self.mem[0] as &u8, self.mem_size);
+        let remainder = if runtime::in_const_context() {
+            let mem_bytes: [u8; 32] = std::intrinsics::transmute::<[u64; 4], [u8; 32]>(self.mem);
+            mem_bytes[0..self.mem_size] as &[u8]
+        } else {
+            std::mem::slice::from_raw(&self.mem[0] as &u8, self.mem_size)
+        };
         let offset = 0usize;
 
-        while (remainder.len() - offset) >= 8usize {
-            result = result ^ round(0u64, read_u64_at(remainder, offset));
-            offset = offset + 8usize;
-            result = (result.rotate_left(27usize)) * PRIME_1 + PRIME_4;
+        while (remainder.len() - offset) >= 8 {
+            result ^= round(0, read_u64_at(remainder, offset));
+            offset += 8;
+            result = (result.rotate_left(27)) * PRIME_1 + PRIME_4
         }
 
-        if (remainder.len() - offset) >= 4usize {
-            result = result ^ ((read_u32_at(remainder, offset) as u64) * PRIME_1);
-            offset = offset + 4usize;
-            result = (result.rotate_left(23usize)) * PRIME_2 + PRIME_3;
+        if (remainder.len() - offset) >= 4 {
+            result ^= (read_u32_at(remainder, offset) as u64) * PRIME_1;
+            offset += 4;
+            result = (result.rotate_left(23)) * PRIME_2 + PRIME_3;
         }
 
         while offset < remainder.len() {
-            result = result ^ ((remainder[offset] as u64) * PRIME_5);
-            result = (result.rotate_left(11usize)) * PRIME_1;
-            offset = offset + 1usize;
+            result ^= (remainder[offset] as u64) * PRIME_5;
+            result = (result.rotate_left(11)) * PRIME_1;
+            offset += 1;
         }
 
         avalanche(result)
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_chunks_dont_matter() {
+        let h1 = Xxh64::new();
+        h1.write("the quick brown fox jumps over the lazy dog");
+
+        let h2 = Xxh64::new();
+        h2.write("the quick brown fox");
+        h2.write(" jumps over the lazy dog");
+
+        let h3 = Xxh64::new();
+        h3.write("the ");
+        h3.write("quick ");
+        h3.write("brown ");
+        h3.write("fox ");
+        h3.write("jumps ");
+        h3.write("over ");
+        h3.write("the ");
+        h3.write("lazy ");
+        h3.write("dog");
+
+        let h4 = Xxh64::new();
+        for ch in "the quick brown fox jumps over the lazy dog" {
+            h4.write(&[ch]);
+        }
+
+        let h1 = h1.finish();
+        let h2 = h2.finish();
+        let h3 = h3.finish();
+        let h4 = h4.finish();
+
+        assert_eq!(h1, h2);
+        assert_eq!(h1, h3);
+        assert_eq!(h1, h4);
+    }
+
+    #[test]
+    fn test_xxh64() {
+        fn hash_range(i: i32) -> u64 {
+            let h = Xxh64::new();
+            let buf: [u8; 512];
+            (0..i)
+                .iter()
+                .map(std::util::cast::<i32, u8>)
+                .fill_slice(&buf);
+
+            buf[0..(i as usize)].hash(&h);
+            h.finish()
+        }
+
+        assert_eq!(hash_range(0), 0x321d9574cbb2c8c1u64);
+        assert_eq!(hash_range(1), 0x30cd56493705c332u64);
+        assert_eq!(hash_range(2), 0xc729c92e2bd4b4b0u64);
+        assert_eq!(hash_range(3), 0xdb4f4cd8ea3bcc09u64);
+        assert_eq!(hash_range(4), 0xf3d6919258f94f6eu64);
+        assert_eq!(hash_range(5), 0xf53d15e261d28b98u64);
+        assert_eq!(hash_range(6), 0x1a4198e336b45bd0u64);
+        assert_eq!(hash_range(7), 0xd7844ef0c48a6c6eu64);
+        assert_eq!(hash_range(8), 0x1942fe685f1be3c3u64);
+        assert_eq!(hash_range(9), 0xf9bc3ca67fdf918au64);
+        assert_eq!(hash_range(10), 0x6d1a9ca7230c48ccu64);
+        assert_eq!(hash_range(11), 0xc030ae1fa4e76adbu64);
+        assert_eq!(hash_range(12), 0xfe6ddab1c8bcd96u64);
+        assert_eq!(hash_range(13), 0x3cba013988c08900u64);
+        assert_eq!(hash_range(14), 0xb4b2e7809619f59u64);
+        assert_eq!(hash_range(15), 0x7fe8535643609f5bu64);
+        assert_eq!(hash_range(16), 0x117baab10bfad4acu64);
+        assert_eq!(hash_range(17), 0xfe0224cfd69ab9d9u64);
+        assert_eq!(hash_range(18), 0x8294f344e82643d9u64);
+        assert_eq!(hash_range(19), 0x83c8df19069a8d16u64);
+        assert_eq!(hash_range(20), 0xbc9111f6f9ba02a9u64);
+        assert_eq!(hash_range(21), 0x8bad6fb071388923u64);
+        assert_eq!(hash_range(22), 0x9f6a41ead384ca23u64);
+        assert_eq!(hash_range(23), 0x19b683539b2722e2u64);
+        assert_eq!(hash_range(24), 0xb63db8163fc5bb27u64);
+        assert_eq!(hash_range(25), 0xeb2c3950e44c7167u64);
+        assert_eq!(hash_range(26), 0xe30362ebb86bf47au64);
+        assert_eq!(hash_range(27), 0x5b4d5d020bfc7af0u64);
+        assert_eq!(hash_range(28), 0x839836184518306au64);
+        assert_eq!(hash_range(29), 0x4d3d80b46994511u64);
+        assert_eq!(hash_range(30), 0xdd0f130a73e430f8u64);
+        assert_eq!(hash_range(31), 0x36ee910d7cf2dacau64);
+        assert_eq!(hash_range(32), 0x9ed7f2f259d5efeeu64);
+        assert_eq!(hash_range(33), 0x8492affa8df10250u64);
+        assert_eq!(hash_range(34), 0x3910d0af1aa259bau64);
+        assert_eq!(hash_range(35), 0xb0c92244367c02a3u64);
+        assert_eq!(hash_range(36), 0x250a1143d9e1d41fu64);
+        assert_eq!(hash_range(37), 0x5f718696a358cbb5u64);
+        assert_eq!(hash_range(38), 0x74c837497e601242u64);
+        assert_eq!(hash_range(39), 0x73ae77b9392c5beau64);
+        assert_eq!(hash_range(40), 0x64cade9bf3228dd0u64);
+        assert_eq!(hash_range(41), 0x32e90bf4ba44613du64);
+        assert_eq!(hash_range(42), 0x343a2669127a345cu64);
+        assert_eq!(hash_range(43), 0x53669f9c7db0b82cu64);
+        assert_eq!(hash_range(44), 0x5cebc2e588c1409fu64);
+        assert_eq!(hash_range(45), 0x995b6f462d5d53efu64);
+        assert_eq!(hash_range(46), 0xac0959e713f53e79u64);
+        assert_eq!(hash_range(47), 0x2bf0d3442fec7519u64);
+        assert_eq!(hash_range(48), 0xc44594eeb39efae3u64);
+        assert_eq!(hash_range(49), 0xdd1520c422ec8060u64);
+        assert_eq!(hash_range(50), 0x2a919ccea10d1988u64);
     }
 }
