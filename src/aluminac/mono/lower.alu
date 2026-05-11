@@ -688,9 +688,6 @@ impl Mono {
             }
         }
 
-        let mangled = self.ctx.mangle_name(def.name);
-
-
         // Use scope_idx directly from StructDef
         let scope_idx = def.scope_idx;
 
@@ -814,8 +811,6 @@ impl Mono {
                 counter = counter + 1;
             }
         }
-
-        let mangled = self.ctx.mangle_name(def.name);
 
         // Use scope_idx directly from EnumDef
         let enum_scope_idx = def.scope_idx;
@@ -1626,7 +1621,6 @@ impl Mono {
                     }
                 }
                 // Use the underlying type for the literal
-                let underlying = enum_ty.enum_ref().underlying;
                 self.mk_int_lit(enum_ty, variant_val)
             } else {
                 let r = IrExpr::void_expr(self.ctx.void_ty);
@@ -2884,7 +2878,7 @@ impl Mono {
     // Used to deduplicate locals across static for iterations.
     fn remap_ir_locals(self: &Mono, expr_: &IrExpr, remap: &HashMap<usize, usize>) {
         // Cast away const - safe because all IrExpr are arena-allocated and owned by us
-        let expr = expr_ as &IrExpr as &mut IrExpr;
+        let expr = expr_ as &mut IrExpr;
         switch expr.tag {
             IrTag::Local, IrTag::Param => {
                 let r = remap.get(&expr._data.var.id._value);
@@ -3121,12 +3115,12 @@ impl Mono {
             // "[T; N]"
             let total = 1usize + inner_name.len() + 2usize + size_str.len() + 1usize;
             let buf = self.ctx.arena.alloc_slice::<u8>(total);
-            buf[0] = '[' as u8;
+            buf[0] = '[';
             inner_name.copy_to_nonoverlapping(&buf[1]);
-            buf[1 + inner_name.len()] = ';' as u8;
-            buf[2 + inner_name.len()] = ' ' as u8;
+            buf[1 + inner_name.len()] = ';';
+            buf[2 + inner_name.len()] = ' ';
             size_str.copy_to_nonoverlapping(&buf[3 + inner_name.len()]);
-            buf[3 + inner_name.len() + size_str.len()] = ']' as u8;
+            buf[3 + inner_name.len() + size_str.len()] = ']';
             buf as &[u8]
         } else if ty.tag == IrTyTag::Struct {
             ty.struct_ref().name
@@ -3245,7 +3239,6 @@ impl Mono {
 
         // 6. Drive iteration: const-eval .next() repeatedly, lower body per value
         let stmts: Vector<&IrExpr> = Vector::new();
-        let saved_local_defs_len = self.local_defs.len();
         let loop_var_id = expr.id()._value;
 
         loop {
@@ -3680,7 +3673,6 @@ impl Mono {
             // "expr is Protocol" - protocol conformance check
             // Evaluate at compile time when possible
             let ir_val = self.lower_expr(expr.lhs());
-            let bool_ty = self.ctx.intern_builtin_ty(BuiltinType::Bool);
             let val_ty = ir_val.ty;
 
             // Check for ZeroSized protocol: type is ZST if it has no runtime representation

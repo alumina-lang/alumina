@@ -152,11 +152,13 @@ impl Pass2 {
             // Parse parameter names
             let params_node = child_by!(node, FieldKind::Parameters);
             let param_names: Vector<&[u8]> = Vector::new();
+            #[allow(defer_in_a_loop)]
             defer param_names.free();
 
             let variadic_idx: i32 = NO_VARIADIC;
             if !params_node.is_none() {
                 let cursor = params_node.unwrap().walk();
+                #[allow(defer_in_a_loop)]
                 defer cursor.free();
                 let param_idx: i32 = 0i32;
                 for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
@@ -164,7 +166,7 @@ impl Pass2 {
                     if !name_node.is_none() {
                         let name_text = self.ctx.node_text(name_node.unwrap());
                         // Strip the $ prefix
-                        let name = if name_text.len() > 0 && name_text[0] == '$' as u8 {
+                        let name = if name_text.len() > 0 && name_text[0] == '$' {
                             self.ctx.intern_str(name_text[1..])
                         } else {
                             self.ctx.intern_str(name_text)
@@ -292,7 +294,7 @@ impl Pass2 {
             if !abi_node.is_none() {
                 let abi_text = self.ctx.node_text(abi_node.unwrap());
                 // Strip quotes from string literal
-                if abi_text.len() >= 2 && abi_text[0] == '"' as u8 {
+                if abi_text.len() >= 2 && abi_text[0] == '"' {
                     Option::some(self.ctx.intern_str(abi_text[1..abi_text.len()-1]))
                 } else {
                     Option::some("C")
@@ -650,7 +652,7 @@ impl Pass2 {
                 let ret: &Ty = if !ret_node.is_none() {
                     self.parse_type(ret_node.unwrap(), scope_idx)
                 } else {
-                    self.ctx.alloc_ty(Ty::void_ty()) as &Ty
+                    self.ctx.alloc_ty(Ty::void_ty())
                 };
 
                 self.ctx.alloc_ty(Ty::fn_pointer_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(param_types.as_slice()), ret))
@@ -748,7 +750,7 @@ impl Pass2 {
             NodeKind::MacroIdentifier => {
                 // $T in macro body - look up in macro_args as a type
                 let text = self.ctx.node_text(node);
-                let name = if text.len() > 0 && text[0] == '$' as u8 {
+                let name = if text.len() > 0 && text[0] == '$' {
                     self.ctx.intern_str(text[1..])
                 } else {
                     self.ctx.intern_str(text)

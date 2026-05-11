@@ -190,10 +190,10 @@ impl Compiler {
                 // Skip . and ..
                 // Use character-level comparison to avoid potential slice == issues
                 let skip = false;
-                if name.len() == 1 && name[0] == '.' as u8 {
+                if name.len() == 1 && name[0] == '.' {
                     skip = true;
                 }
-                if name.len() == 2 && name[0] == '.' as u8 && name[1] == '.' as u8 {
+                if name.len() == 2 && name[0] == '.' && name[1] == '.' {
                     skip = true;
                 }
                 if skip {
@@ -289,7 +289,7 @@ impl Compiler {
                 }
             }
 
-            dir_iter.close();
+            let _ = dir_iter.close();
             dir_path.free();
             mod_prefix.free();
         }
@@ -530,7 +530,7 @@ impl Compiler {
         output.copy_to_nonoverlapping(&cmd[pos]);
         pos = pos + output.len();
 
-        cmd[pos] = ' ' as u8;
+        cmd[pos] = ' ';
         pos = pos + 1;
 
         obj_file.copy_to_nonoverlapping(&cmd[pos]);
@@ -547,7 +547,7 @@ impl Compiler {
         }
 
         if extra.len() > 0usize {
-            cmd[pos] = ' ' as u8;
+            cmd[pos] = ' ';
             pos = pos + 1;
             extra.copy_to_nonoverlapping(&cmd[pos]);
             pos = pos + extra.len();
@@ -609,7 +609,7 @@ impl Compiler {
         let pos: usize = 19;
         let val = n;
         while val > 0 && pos > 0 {
-            buf[pos] = ('0' as u8) + (val % 10) as u8;
+            buf[pos] = ('0') + (val % 10) as u8;
             val = val / 10;
             pos = pos - 1;
         }
@@ -730,12 +730,12 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
         } else if arg == "--help" || arg == "-h" {
             print_usage();
             exit(0i32);
-        } else if arg.len() > 0 && arg[0] != '-' as u8 {
+        } else if arg.len() > 0 && arg[0] != '-' {
             // Check for module::path=file.alu format
             let eq_pos: usize = 0;
             let found_eq = false;
             while eq_pos < arg.len() {
-                if arg[eq_pos] == '=' as u8 {
+                if arg[eq_pos] == '=' {
                     found_eq = true;
                     break;
                 }
@@ -877,7 +877,7 @@ fn matches_prefix(s: &[u8], prefix: &[u8]) -> bool {
 fn already_has_key(flags: &Vector<&[u8]>, key: &[u8]) -> bool {
     for i in 0usize..flags.len() {
         let f = flags[i];
-        if f.len() > key.len() && f[key.len()] == '=' as u8 {
+        if f.len() > key.len() && f[key.len()] == '=' {
             let same = true;
             for j in 0usize..key.len() {
                 if f[j] != key[j] { same = false; break; }

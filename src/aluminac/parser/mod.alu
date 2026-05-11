@@ -202,7 +202,7 @@ impl ParseContext {
     }
 
     fn node_text(self: &ParseContext, node: Node) -> &[u8] {
-        self.source[node.start_byte() as usize..node.end_byte() as usize]
+        self.source[node.start_byte()..node.end_byte()]
     }
 
     fn make_span(self: &ParseContext, node: Node) -> Span {
@@ -294,12 +294,12 @@ impl ParseContext {
         let value_node = child_by!(node, FieldKind::Value);
         if !value_node.is_none() {
             let value_text = self.node_text(value_node.unwrap());
-            if value_text.len() >= 2 && value_text[0] == '"' as u8 {
+            if value_text.len() >= 2 && value_text[0] == '"' {
                 value_text = value_text[1..value_text.len() - 1];
             }
             let match_buf = self.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
             name.copy_to_nonoverlapping(&match_buf[0]);
-            match_buf[name.len()] = '=' as u8;
+            match_buf[name.len()] = '=';
             value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
             return self.has_cfg(match_buf as &[u8]);
         }
@@ -422,9 +422,9 @@ fn parse_usize(text: &[u8]) -> usize {
     let result: usize = 0;
     for i in 0usize..text.len() {
         let c = text[i];
-        if c >= '0' as u8 && c <= '9' as u8 {
-            result = result * 10 + (c - '0' as u8) as usize;
-        } else if c == '_' as u8 {
+        if c >= '0' && c <= '9' {
+            result = result * 10 + (c - '0') as usize;
+        } else if c == '_' {
             // Skip underscores in numeric literals
         } else {
             break;
@@ -440,20 +440,20 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
     let negative: bool = false;
 
     // Check for leading negative sign
-    if text.len() > 0 && text[0] == '-' as u8 {
+    if text.len() > 0 && text[0] == '-' {
         negative = true;
         i = 1;
     }
 
     // Check for hex/octal/binary prefix
-    if text.len() >= i + 2 && text[i] == '0' as u8 {
-        if text[i + 1] == 'x' as u8 || text[i + 1] == 'X' as u8 {
+    if text.len() >= i + 2 && text[i] == '0' {
+        if text[i + 1] == 'x' || text[i + 1] == 'X' {
             base = 16;
             i = i + 2;
-        } else if text[i + 1] == 'o' as u8 || text[i + 1] == 'O' as u8 {
+        } else if text[i + 1] == 'o' || text[i + 1] == 'O' {
             base = 8;
             i = i + 2;
-        } else if text[i + 1] == 'b' as u8 || text[i + 1] == 'B' as u8 {
+        } else if text[i + 1] == 'b' || text[i + 1] == 'B' {
             base = 2;
             i = i + 2;
         }
@@ -462,14 +462,14 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
     let suffix_start: usize = text.len();
     while i < text.len() {
         let c = text[i];
-        if c == '_' as u8 {
+        if c == '_' {
             i = i + 1;
-        } else if base == 16 && ((c >= 'a' as u8 && c <= 'f' as u8) || (c >= 'A' as u8 && c <= 'F' as u8)) {
-            let digit: u64 = if c >= 'a' as u8 { (c - 'a' as u8 + 10) as u64 } else { (c - 'A' as u8 + 10) as u64 };
+        } else if base == 16 && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+            let digit: u64 = if c >= 'a' { (c - 'a' + 10) as u64 } else { (c - 'A' + 10) as u64 };
             value = value * base + digit;
             i = i + 1;
-        } else if c >= '0' as u8 && c <= '9' as u8 {
-            value = value * base + (c - '0' as u8) as u64;
+        } else if c >= '0' && c <= '9' {
+            value = value * base + (c - '0') as u64;
             i = i + 1;
         } else {
             suffix_start = i;
@@ -555,9 +555,9 @@ fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
     let out_len: usize = 0;
     let i: usize = 0;
     while i < text.len() {
-        if text[i] == '\\' as u8 && i + 1 < text.len() {
+        if text[i] == '\\' && i + 1 < text.len() {
             i = i + 2;
-            if text[i - 1] == 'x' as u8 && i + 1 < text.len() {
+            if text[i - 1] == 'x' && i + 1 < text.len() {
                 i = i + 2;  // \xNN
             }
         } else {
@@ -570,19 +570,19 @@ fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
     let j: usize = 0;
     i = 0;
     while i < text.len() {
-        if text[i] == '\\' as u8 && i + 1 < text.len() {
+        if text[i] == '\\' && i + 1 < text.len() {
             switch text[i + 1] {
-                'n' as u8 => { buf[j] = '\n' as u8; },
-                'r' as u8 => { buf[j] = '\r' as u8; },
-                't' as u8 => { buf[j] = '\t' as u8; },
-                '\\' as u8 => { buf[j] = '\\' as u8; },
-                '"' as u8 => { buf[j] = '"' as u8; },
-                '0' as u8 => { buf[j] = 0u8; },
-                'x' as u8 => {
+                'n' => { buf[j] = '\n'; },
+                'r' => { buf[j] = '\r'; },
+                't' => { buf[j] = '\t'; },
+                '\\' => { buf[j] = '\\'; },
+                '"' => { buf[j] = '"'; },
+                '0' => { buf[j] = 0u8; },
+                'x' => {
                     if i + 3 < text.len() {
                         let hi = hex_digit(text[i + 2]);
                         let lo = hex_digit(text[i + 3]);
-                        buf[j] = ((hi << 4) | lo) as u8;
+                        buf[j] = (hi << 4) | lo;
                         i = i + 2;
                     }
                 },
@@ -600,9 +600,9 @@ fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
 }
 
 fn hex_digit(c: u8) -> u8 {
-    if c >= '0' as u8 && c <= '9' as u8 { c - '0' as u8 }
-    else if c >= 'a' as u8 && c <= 'f' as u8 { c - 'a' as u8 + 10 }
-    else if c >= 'A' as u8 && c <= 'F' as u8 { c - 'A' as u8 + 10 }
+    if c >= '0' && c <= '9' { c - '0' }
+    else if c >= 'a' && c <= 'f' { c - 'a' + 10 }
+    else if c >= 'A' && c <= 'F' { c - 'A' + 10 }
     else { 0u8 }
 }
 

@@ -134,7 +134,7 @@ impl ExprParser {
             NodeKind::MacroIdentifier => {
                 // $param reference
                 let text = self.ctx.node_text(node);
-                let name = if text.len() > 0 && text[0] == '$' as u8 {
+                let name = if text.len() > 0 && text[0] == '$' {
                     self.ctx.intern_str(text[1..])
                 } else {
                     self.ctx.intern_str(text)
@@ -335,15 +335,15 @@ impl ExprParser {
         let text = self.ctx.node_text(node);
         // Strip quotes
         let ch: u32 = if text.len() >= 3 {
-            if text[1] == '\\' as u8 && text.len() >= 4 {
+            if text[1] == '\\' && text.len() >= 4 {
                 // Escape sequence
                 switch text[2] {
-                    'n' as u8 => '\n' as u32,
-                    'r' as u8 => '\r' as u32,
-                    't' as u8 => '\t' as u32,
-                    '\\' as u8 => '\\' as u32,
-                    '\'' as u8 => '\'' as u32,
-                    '0' as u8 => 0u32,
+                    'n' => '\n' as u32,
+                    'r' => '\r' as u32,
+                    't' => '\t' as u32,
+                    '\\' => '\\' as u32,
+                    '\'' => '\'' as u32,
+                    '0' => 0u32,
                     _ => text[2] as u32,
                 }
             } else {
@@ -996,6 +996,7 @@ impl ExprParser {
                     let body_node = child_by!(child, FieldKind::Value);
 
                     let patterns: Vector<&Expr> = Vector::new();
+                    #[allow(defer_in_a_loop)]
                     defer patterns.free();
 
                     if !pattern_node.is_none() {
@@ -1005,6 +1006,7 @@ impl ExprParser {
                         if !is_wildcard {
                             // Parse pattern values
                             let cursor2 = pattern_node.unwrap().walk();
+                            #[allow(defer_in_a_loop)]
                             defer cursor2.free();
                             for pat_child in pattern_node.unwrap().children(&cursor2) {
                                 if pat_child.is_named() {
@@ -1538,7 +1540,7 @@ impl ExprParser {
         let name_param_idx: i32 = -1i32;
         if self.ctx.in_macro_body && macro_node_kind == NodeKind::MacroIdentifier {
             let raw = self.ctx.node_text(macro_node);
-            let stripped = if raw.len() > 0 && raw[0] == '$' as u8 { raw[1..] } else { raw };
+            let stripped = if raw.len() > 0 && raw[0] == '$' { raw[1..] } else { raw };
             let pname = self.ctx.intern_str(stripped);
             for pi in 0usize..self.ctx.macro_param_names.len() {
                 if self.ctx.macro_param_names[pi] == pname {
@@ -1858,14 +1860,13 @@ impl ExprParser {
         let string_part: Vector<u8> = Vector::new();
         defer string_part.free();
         let next_arg_idx: usize = 0;
-        let parse_ok = true;
 
         let i: usize = 0;
         while i < fmt_str.len() {
-            if fmt_str[i] == '{' as u8 {
-                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '{' as u8 {
+            if fmt_str[i] == '{' {
+                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '{' {
                     // Escaped brace: {{ -> {
-                    string_part.push('{' as u8);
+                    string_part.push('{');
                     i = i + 2;
                 } else {
                     // Start of format placeholder
@@ -1883,10 +1884,10 @@ impl ExprParser {
                     let has_explicit_idx = false;
                     let explicit_idx: usize = 0;
 
-                    while i < fmt_str.len() && fmt_str[i] != '}' as u8 {
-                        if fmt_str[i] >= '0' as u8 && fmt_str[i] <= '9' as u8 {
+                    while i < fmt_str.len() && fmt_str[i] != '}' {
+                        if fmt_str[i] >= '0' && fmt_str[i] <= '9' {
                             has_explicit_idx = true;
-                            explicit_idx = explicit_idx * 10 + (fmt_str[i] - '0' as u8) as usize;
+                            explicit_idx = explicit_idx * 10 + (fmt_str[i] - '0') as usize;
                         }
                         i = i + 1;
                     }
@@ -1906,10 +1907,10 @@ impl ExprParser {
                         i = i + 1; // skip closing }
                     }
                 }
-            } else if fmt_str[i] == '}' as u8 {
-                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '}' as u8 {
+            } else if fmt_str[i] == '}' {
+                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '}' {
                     // Escaped brace: }} -> }
-                    string_part.push('}' as u8);
+                    string_part.push('}');
                     i = i + 2;
                 } else {
                     // Stray }

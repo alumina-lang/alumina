@@ -594,7 +594,7 @@ impl ConstEvaluator {
     fn mask_to_width(self: &ConstEvaluator, val: u64, width: u32) -> u64 {
         if width >= 64 { return val; }
         if width == 0 { return 0u64; }
-        val & ((1u64 << (width as u32)) - 1u64)
+        val & ((1u64 << width) - 1u64)
     }
 
     fn float_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> ConstResult {
@@ -1403,7 +1403,7 @@ impl ConstEvaluator {
             let bytes = (width / 8) as u64;
             let result: u64 = 0;
             let v = val;
-            for i in 0u64..bytes {
+            for _i in 0u64..bytes {
                 result = (result << 8u64) | (v & 0xFFu64);
                 v = v >> 8u64;
             }

@@ -138,13 +138,13 @@ impl Pass1 {
                             } else {
                                 let raw = self.ctx.node_text(args_node.unwrap());
                                 let inner = raw;
-                                if inner.len() >= 2 && inner[0] == '(' as u8 && inner[inner.len() - 1] == ')' as u8 {
+                                if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
                                     inner = inner[1..inner.len() - 1];
                                 }
-                                while inner.len() > 0 && (inner[0] == ' ' as u8 || inner[0] == '\t' as u8) {
+                                while inner.len() > 0 && (inner[0] == ' ' || inner[0] == '\t') {
                                     inner = inner[1..];
                                 }
-                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' as u8 || inner[inner.len() - 1] == '\t' as u8) {
+                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
                                     inner = inner[0..inner.len() - 1];
                                 }
                                 inner
@@ -188,13 +188,13 @@ impl Pass1 {
                             if !args_node.is_none() {
                                 let raw = self.ctx.node_text(args_node.unwrap());
                                 let inner = raw;
-                                if inner.len() >= 2 && inner[0] == '(' as u8 && inner[inner.len() - 1] == ')' as u8 {
+                                if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
                                     inner = inner[1..inner.len() - 1];
                                 }
-                                while inner.len() > 0 && (inner[0] == ' ' as u8 || inner[0] == '\t' as u8) {
+                                while inner.len() > 0 && (inner[0] == ' ' || inner[0] == '\t') {
                                     inner = inner[1..];
                                 }
-                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' as u8 || inner[inner.len() - 1] == '\t' as u8) {
+                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
                                     inner = inner[0..inner.len() - 1];
                                 }
                                 if inner == "always" {
@@ -248,10 +248,10 @@ impl Pass1 {
                                 // Strip outer parens and one pair of surrounding quotes:
                                 // raw text is `("strlen")`.
                                 let inner = link_name;
-                                if inner.len() >= 2 && inner[0] == '(' as u8 && inner[inner.len() - 1] == ')' as u8 {
+                                if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
                                     inner = inner[1..inner.len() - 1];
                                 }
-                                if inner.len() >= 2 && inner[0] == '"' as u8 && inner[inner.len() - 1] == '"' as u8 {
+                                if inner.len() >= 2 && inner[0] == '"' && inner[inner.len() - 1] == '"' {
                                     inner = inner[1..inner.len() - 1];
                                 }
                                 attrs.push(Attribute::link_name(self.ctx.intern_str(inner)));
@@ -261,7 +261,7 @@ impl Pass1 {
                             let args_node = child_by!(meta, FieldKind::Arguments);
                             if !args_node.is_none() {
                                 let lang_name = self.ctx.node_text(args_node.unwrap());
-                                if lang_name.len() >= 2 && lang_name[0] == '(' as u8 && lang_name[lang_name.len() - 1] == ')' as u8 {
+                                if lang_name.len() >= 2 && lang_name[0] == '(' && lang_name[lang_name.len() - 1] == ')' {
                                     lang_name = lang_name[1..lang_name.len() - 1];
                                 }
                                 attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
@@ -316,14 +316,14 @@ impl Pass1 {
             // key = "value" form: check if cfg flag matches the value
             let value_text = self.ctx.node_text(value_node.unwrap());
             // Strip quotes from string literal
-            if value_text.len() >= 2 && value_text[0] == '"' as u8 {
+            if value_text.len() >= 2 && value_text[0] == '"' {
                 value_text = value_text[1..value_text.len() - 1];
             }
             // Look for a cfg flag of the form "key=value"
             // Build "key=value" string and check against has_cfg
             let match_buf = self.ctx.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
             name.copy_to_nonoverlapping(&match_buf[0]);
-            match_buf[name.len()] = '=' as u8;
+            match_buf[name.len()] = '=';
             value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
             return self.ctx.has_cfg(match_buf as &[u8]);
         }
@@ -555,7 +555,7 @@ impl Pass1 {
         }
     }
 
-    fn visit_struct_field_p1(self: &mut Pass1, node: Node) {
+    fn visit_struct_field_p1(self: &mut Pass1, _node: Node) {
         // Fields are collected during pass 2
     }
 

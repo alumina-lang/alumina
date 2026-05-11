@@ -57,7 +57,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
     }
 }
 
-fn lower_const_eval(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+fn lower_const_eval(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
     // const_eval<T>(expr) -> T: evaluate expression at compile time
     if expr.args().len() > 0 {
         let ir_expr = m.lower_expr(expr.args()[0]);
@@ -113,7 +113,7 @@ fn lower_in_const_context(m: &mut Mono) -> &IrExpr {
     m.ctx.arena.alloc(r)
 }
 
-fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
     // size_of<T>() -> usize - compute at monomorphization time
     let measured_ty = if ir_type_args.len() > 0 {
         ir_type_args[0]
@@ -124,7 +124,7 @@ fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
     m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), sz as u64)
 }
 
-fn lower_align_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+fn lower_align_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
     let measured_ty = if ir_type_args.len() > 0 {
         ir_type_args[0]
     } else {
@@ -340,7 +340,7 @@ fn lower_compile_diag(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
     }
 }
 
-fn lower_volatile(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+fn lower_volatile(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
     // volatile<Ptr>(ptr) -> Ptr - identity for now
     if expr.args().len() > 0 {
         return m.lower_expr(expr.args()[0]);
@@ -456,7 +456,7 @@ fn lower_has_attribute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &Ir
     m.mk_bool_lit(false)
 }
 
-fn lower_length_of(m: &mut Mono, type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+fn lower_length_of(m: &mut Mono, _type_args: &[&Ty], ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
     // length_of<T>() -> usize - array/tuple length
     let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
     let measured_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { m.ctx.void_ty };
@@ -795,7 +795,6 @@ fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExp
     // literal, when type_descriptor_new isn't registered, or when no items
     // match — sysroot's typing.alu's `for const idx in 0..cases.len()`
     // loop handles len()==0 cleanly.
-    let void_ty = m.ctx.void_ty;
 
     // Lookup helpers used by both the success and fallback paths.
     let attr_name: &[u8] = if expr.args().len() >= 1 && expr.args()[0].tag == ExprTag::StringLit {
@@ -887,7 +886,7 @@ fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExp
     m.ctx.arena.alloc(tuple_lit) as &IrExpr
 }
 
-fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
     // value_of<T: Const | Static>() -> T
     //
     // For a const, inline the const-evaluated value. For a static, emit

@@ -265,7 +265,7 @@ impl FnCodegen {
                 let lname = local.name;
                 if lname.len() == 0 { continue; }
                 // Skip compiler-generated temps (names starting with _)
-                if lname[0] == '_' as u8 { continue; }
+                if lname[0] == '_' { continue; }
 
                 let alloca = self.locals.get(&local.id._value);
                 if alloca.is_none() { continue; }
@@ -336,7 +336,6 @@ impl FnCodegen {
                     LLVMBuildRetVoid(self.ctx.builder);
                 } else {
                     // Ensure return value type matches function return type
-                    let body_ty = LLVMTypeOf(body_val);
                     let ret_val = self.coerce_value(body_val, ret_ty);
                     LLVMBuildRet(self.ctx.builder, ret_val);
                 }
@@ -977,8 +976,6 @@ impl FnCodegen {
             let val = self.gen_expr(expr.lhs());
             let target_ty = self.ctx.llvm_type(expr.ty);
             let val_ty = LLVMTypeOf(val);
-            let val_kind = LLVMGetTypeKind(val_ty);
-            let target_kind = LLVMGetTypeKind(target_ty);
 
             // If same type, return as-is
             if val_ty == target_ty {
@@ -1679,7 +1676,7 @@ impl FnCodegen {
         }
     }
 
-    fn gen_cast(self: &mut FnCodegen, inner: &IrExpr, target_ty: &IrTy, result_ty: &IrTy) -> LLVMValueRef {
+    fn gen_cast(self: &mut FnCodegen, inner: &IrExpr, target_ty: &IrTy, _result_ty: &IrTy) -> LLVMValueRef {
         let src_val = self.gen_expr(inner);
         let src_ty = inner.ty;
         let dst_llvm = self.ctx.llvm_type(target_ty);
@@ -2079,7 +2076,6 @@ impl FnCodegen {
             if phi_count > 0 {
                 let arm_ty = LLVMTypeOf(phi_vals[0]);
                 let arm_kind = LLVMGetTypeKind(arm_ty);
-                let res_kind = LLVMGetTypeKind(llvm_result_ty);
                 if arm_kind != LLVMTypeKind::Void && arm_ty != llvm_result_ty {
                     // Check if all arms have the same type
                     let all_same = true;
