@@ -154,6 +154,26 @@ fn write_unaligned<T>(ptr: &mut T, val: T) {
     memcpy(ptr as &mut void, &val as &void, size_of::<T>());
 }
 
+/// Performs a volatile read from a memory location. When the pointed-to type
+/// is zero-sized, no read is performed.
+#[inline(ir)]
+fn read_volatile<T>(ptr: &T) -> T {
+    when *ptr is builtins::ZeroSized {
+        std::util::unit()
+    } else {
+        *std::intrinsics::volatile(ptr)
+    }
+}
+
+/// Performs a volatile write to a memory location. When the pointed-to type
+/// is zero-sized, no write is performed.
+#[inline(ir)]
+fn write_volatile<T>(ptr: &mut T, val: T) {
+    when !(*ptr is builtins::ZeroSized) {
+        *std::intrinsics::volatile(ptr) = val;
+    }
+}
+
 /// Swap the values at two mutable references.
 fn swap<T>(a: &mut T, b: &mut T) {
     let tmp = *a;
@@ -343,5 +363,24 @@ mod internal {
             idx += 1;
         }
         lhs._len.compare(&rhs._len)
+    }
+}
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_volatile() {
+        let a = 42i32;
+        assert_eq!(a.read_volatile(), 42i32);
+        a.write_volatile(0i32);
+        assert_eq!(a, 0i32);
+    }
+
+    #[test]
+    fn test_volatile_zst() {
+        let a: () = ();
+        a.read_volatile();
+        a.write_volatile(());
     }
 }
