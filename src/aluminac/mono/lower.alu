@@ -527,6 +527,12 @@ impl Mono {
                         if args_ty.tag == IrTyTag::Tuple {
                             return self.ctx.make_fn_ptr_ty(args_ty.elems(), ret_ty);
                         }
+                        // `()` (the unit tuple) collapses to void_ty in
+                        // make_tuple_ty, so a zero-arg `function_pointer_of<(), Ret>`
+                        // arrives here with args_ty.tag == Void. Treat as zero-args.
+                        if args_ty.is_void() {
+                            return self.ctx.make_fn_ptr_ty(&[], ret_ty);
+                        }
                     } else if lang == "typeop_underlying_type_of" && type_args.len() >= 1 {
                         let t = type_args[0];
                         if t.tag == IrTyTag::Enum {

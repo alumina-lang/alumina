@@ -181,6 +181,27 @@ impl Type<T> {
     fn is_named_function(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::NamedFunction }
     fn is_function_pointer(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::FunctionPointer }
     fn is_protocol(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Protocol }
+
+    /// Convert a named-function or closure `T` to a regular function pointer
+    /// with matching argument and return types. Mirrors sysroot's
+    /// `Type<T>::as_fn` so test runners can read fn pointers out of an
+    /// `attributed`-produced tuple of Type<F> descriptors.
+    fn as_fn(self: Type<T>) -> std::builtins::function_pointer_of<
+        std::builtins::arguments_of<T>,
+        std::builtins::return_type_of<T>
+    > {
+        std::util::unit::<T>()
+    }
+
+    /// Returns the type's module path or None for unnamed types.
+    fn module_path(self: Type<T>) -> Option<&[u8]> {
+        let p = std::intrinsics::module_path::<T>();
+        when typeof(p) is () {
+            Option::none()
+        } else {
+            Option::some(p)
+        }
+    }
 }
 
 /// Compile-time descriptor for an enum variant.
