@@ -202,6 +202,18 @@ impl Type<T> {
             Option::some(p)
         }
     }
+
+    /// Returns the type's name (struct / enum short name, or fn name).
+    /// Mirrors sysroot's Type<T>::name. Returns None for unnamed types
+    /// (pointers, tuples, primitives — anything whose type_name is empty).
+    fn name(self: Type<T>) -> Option<&[u8]> {
+        let n = std::intrinsics::type_name::<T>();
+        if n.len() == 0usize {
+            Option::none()
+        } else {
+            Option::some(n)
+        }
+    }
 }
 
 /// Compile-time descriptor for an enum variant.

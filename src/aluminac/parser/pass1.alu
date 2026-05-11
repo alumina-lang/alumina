@@ -161,7 +161,15 @@ impl Pass1 {
                         }
                         "cold" => attrs.push(Attribute::cold()),
                         "export" => attrs.push(Attribute::export()),
-                        "test" => attrs.push(Attribute::test()),
+                        "test" => {
+                            // Aluminac retains a dedicated AttrTag::Test for
+                            // marking test-mode root-monos, but also stores a
+                            // Custom("test") so reflection / attributed lookups
+                            // see it like alumina-boot does (`#[test]` is just
+                            // a Custom attribute on the alumina-boot side).
+                            attrs.push(Attribute::test());
+                            attrs.push(Attribute::custom(self.ctx.intern_str("test")));
+                        }
                         "thread_local" => attrs.push(Attribute::thread_local()),
                         "static_ctor" => attrs.push(Attribute::static_ctor()),
                         "no_return" => attrs.push(Attribute::no_return()),
