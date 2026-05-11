@@ -1,0 +1,40 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// `intrinsics::enum_variants::<E>()` returns an array of `EnumVariant<E>`
+// (one per declared variant), built via the `enum_variant_new` lang item.
+// Mirrors alumina-boot's `intr_enum_variants`. Replaces aluminac's prior
+// empty-slice stub.
+
+use std::intrinsics::enum_variants;
+
+enum Color { Red, Green, Blue }
+
+enum Status {
+    Ok = 0i32,
+    Warning = 10i32,
+    Error = 99i32,
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Default-discriminant enum: variants in declaration order, values
+    // are 0/1/2.
+    let cs = enum_variants::<Color>();
+    if cs.len() != 3usize { return 1i32; }
+    if cs[0].name() != "Red"   { return 2i32; }
+    if cs[1].name() != "Green" { return 3i32; }
+    if cs[2].name() != "Blue"  { return 4i32; }
+    if cs[0].value() != Color::Red   { return 5i32; }
+    if cs[1].value() != Color::Green { return 6i32; }
+    if cs[2].value() != Color::Blue  { return 7i32; }
+
+    // Explicit-discriminant enum: each value as declared.
+    let ss = enum_variants::<Status>();
+    if ss.len() != 3usize { return 10i32; }
+    if ss[0].name() != "Ok"      { return 11i32; }
+    if ss[1].name() != "Warning" { return 12i32; }
+    if ss[2].name() != "Error"   { return 13i32; }
+    if ss[0].value() != Status::Ok      { return 14i32; }
+    if ss[1].value() != Status::Warning { return 15i32; }
+    if ss[2].value() != Status::Error   { return 16i32; }
+
+    0i32
+}

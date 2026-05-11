@@ -48,7 +48,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "stop_iteration" => lower_stop_iteration(m),
         "with_span_of" => lower_with_span_of(m, expr),
         "attributed" => lower_attributed(m, ir_type_args),
-        "enum_variants" => lower_empty_descriptor_slice(m, "enum_variant"),
+        "enum_variants" => lower_enum_variants(m, ir_type_args),
         "fields" => lower_empty_descriptor_slice(m, "field_descriptor"),
         "vtable" => lower_empty_descriptor_slice(m, "vtable"),
         _ => lower_unknown(m, name, expr),
@@ -616,12 +616,11 @@ fn lower_with_span_of(m: &mut Mono, expr: &Expr) -> &IrExpr {
 }
 
 fn lower_empty_descriptor_slice(m: &mut Mono, _kind: &[u8]) -> &IrExpr {
-    // enum_variants<T> / fields<T> — return empty slices. The expected slice
-    // element type is `EnumVariant<T>` / `Field<T, F>` etc. respectively, all
-    // of which are sysroot structs we can't reconstruct without const-time
-    // allocation. Caller code that iterates these slices does nothing on
-    // empty input, which is wrong for reflection-driven code but lets
-    // signatures type-check through the usual void-coerce path.
+    // fields<T> / vtable<T> stub — returns an empty slice with void element
+    // type. Caller code that iterates does nothing on empty input, which is
+    // wrong for reflection-driven code but lets signatures type-check
+    // through the usual void-coerce path. (`enum_variants` no longer uses
+    // this — it has a real implementation via `lower_enum_variants`.)
     let void_ty = m.ctx.void_ty;
     let slice_ty = m.ctx.make_slice_ty(void_ty, true);
     let empty_str: &[u8] = "";
@@ -629,6 +628,67 @@ fn lower_empty_descriptor_slice(m: &mut Mono, _kind: &[u8]) -> &IrExpr {
     result.tag = IrTag::StringLit;
     result._data.lit.str_val = empty_str;
     m.ctx.arena.alloc(result)
+}
+
+fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // enum_variants<T: Enum>() -> [EnumVariant<T>; N]
+    //
+    // Builds an array literal whose elements are calls to the
+    // `enum_variant_new` lang item — one per variant. Mirrors alumina-boot's
+    // `intr_enum_variants` (in `src/alumina-boot/src/ir/mono/intrinsics.rs`).
+    //
+    // Falls back to an empty void slice when:
+    //   - the type arg isn't an enum (mis-typed call site);
+    //   - the `enum_variant_new` lang item isn't declared in the sysroot;
+    //   - the lang-item function isn't registered in fn_defs.
+    if ir_type_args.len() < 1 || ir_type_args[0].tag != IrTyTag::Enum {
+        return lower_empty_descriptor_slice(m, "enum_variant");
+    }
+    let enum_ty = ir_type_args[0];
+    let enum_ref = enum_ty.enum_ref();
+
+    let lang_id_opt = m.ctx.get_lang_item("enum_variant_new");
+    if !lang_id_opt.is_some() {
+        return lower_empty_descriptor_slice(m, "enum_variant");
+    }
+    let fn_def_opt = m.ctx.fn_defs.get(&lang_id_opt.unwrap());
+    if !fn_def_opt.is_some() {
+        return lower_empty_descriptor_slice(m, "enum_variant");
+    }
+    let def = fn_def_opt.unwrap();
+
+    let type_args_buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
+    type_args_buf[0] = enum_ty;
+    let fn_idx = m.mono_function(def, type_args_buf);
+    let ir_fn = &m.ctx.ir_functions[fn_idx];
+    let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+    let return_ty = ir_fn.return_type;
+
+    let n_variants = enum_ref.variants.len();
+    let entries = m.ctx.arena.alloc_slice::<&IrExpr>(n_variants);
+    let underlying_ty = enum_ref.underlying;
+
+    for i in 0usize..n_variants {
+        let variant = &enum_ref.variants[i];
+        let name_lit = IrExpr::void_expr(m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true));
+        name_lit.tag = IrTag::StringLit;
+        name_lit._data.lit.str_val = variant.name;
+        let name_expr = m.ctx.arena.alloc(name_lit) as &IrExpr;
+
+        let int_lit = m.mk_int_lit(underlying_ty, variant.value);
+        let cast_to_enum = m.mk_cast(int_lit, enum_ty);
+
+        let args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
+        args[0] = name_expr;
+        args[1] = cast_to_enum;
+        entries[i] = m.mk_call(fn_ref, args, return_ty);
+    }
+
+    let arr_ty = m.ctx.arena.alloc(IrTy::mk_array(return_ty, n_variants)) as &IrTy;
+    let arr_lit = IrExpr::void_expr(arr_ty);
+    arr_lit.tag = IrTag::ArrayLit;
+    arr_lit._data.block.items = entries;
+    m.ctx.arena.alloc(arr_lit) as &IrExpr
 }
 
 fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {

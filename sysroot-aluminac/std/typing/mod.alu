@@ -134,3 +134,82 @@ fn is_function_pointer<T>() -> bool {
 fn is_protocol<T>() -> bool {
     std::intrinsics::uninitialized::<T>() is std::builtins::Protocol
 }
+
+/// Compile-time descriptor for an enum variant.
+///
+/// Returned in arrays by `intrinsics::enum_variants::<E>()`. The compiler
+/// constructs each entry by calling the `enum_variant_new` lang item below
+/// with the variant's name string and discriminant value.
+struct EnumVariant<T> {
+    _name: &[u8],
+    _value: T,
+}
+
+impl EnumVariant<T> {
+    /// The name of the enum variant.
+    fn name(self: &EnumVariant<T>) -> &[u8] {
+        self._name
+    }
+
+    /// The value (discriminant) of the enum variant.
+    fn value(self: &EnumVariant<T>) -> T {
+        self._value
+    }
+}
+
+/// Compile-time descriptor for a struct/union field.
+///
+/// Returned (as the elements of a tuple) by `intrinsics::fields::<S>()`.
+/// Each element is heterogeneous (`Field<S, T_i>` for the i-th field's type),
+/// so the result is a tuple, not an array.
+struct Field<StructT, FieldT> {
+    _name: Option<&[u8]>,
+    _offset: usize,
+}
+
+impl Field<StructT, FieldT> {
+    /// The field's name. Returns `Option::none()` for tuple-positional fields.
+    fn name(self: &Field<StructT, FieldT>) -> Option<&[u8]> {
+        self._name
+    }
+
+    /// Byte offset of the field within the parent struct/union.
+    fn offset(self: &Field<StructT, FieldT>) -> usize {
+        self._offset
+    }
+}
+
+#[docs(no_index)]
+mod internal {
+    /// Lang-item constructor for an `EnumVariant<T>`. The compiler emits
+    /// calls to this function from the `enum_variants` intrinsic, building
+    /// up the array of variants for an enum type.
+    #[lang(enum_variant_new)]
+    #[inline(ir)]
+    fn make_enum_variant<E>(name: &[u8], value: E) -> EnumVariant<E> {
+        EnumVariant {
+            _name: name,
+            _value: value,
+        }
+    }
+
+    /// Lang-item constructor for a named `Field<StructT, FieldT>`.
+    #[lang(field_descriptor_new)]
+    #[inline(ir)]
+    fn make_field_desc<StructT, FieldT>(name: &[u8], offset: usize) -> Field<StructT, FieldT> {
+        Field {
+            _name: Option::some(name),
+            _offset: offset,
+        }
+    }
+
+    /// Lang-item constructor for an unnamed (positional) `Field<StructT, FieldT>`.
+    #[lang(field_descriptor_new_unnamed)]
+    #[inline(ir)]
+    fn make_field_desc_unnamed<StructT, FieldT>(offset: usize) -> Field<StructT, FieldT> {
+        Field {
+            _name: Option::none(),
+            _offset: offset,
+        }
+    }
+}
