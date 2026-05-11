@@ -4,7 +4,7 @@ use std::iter::*;
 
 fn test_to_vector() -> i32 {
     let arr = [1i32, 2i32, 3i32, 4i32, 5i32];
-    let it = slice_iter::<i32>(arr[0usize..5usize]);
+    let it = arr[0usize..5usize].iter();
     let vec = it.to_vector();
     defer vec.free();
 
@@ -17,7 +17,7 @@ fn test_to_vector() -> i32 {
 
 fn test_to_vector_map() -> i32 {
     let arr = [1i32, 2i32, 3i32];
-    let it = slice_iter::<i32>(arr[0usize..3usize]);
+    let it = arr[0usize..3usize].iter();
     let mapped = it.map::<i32>(|v: i32| -> i32 { v * 10i32 });
     let vec = mapped.to_vector();
     defer vec.free();
@@ -32,7 +32,7 @@ fn test_to_vector_map() -> i32 {
 
 fn test_to_vector_filter() -> i32 {
     let arr = [1i32, 2i32, 3i32, 4i32, 5i32, 6i32];
-    let it = slice_iter::<i32>(arr[0usize..6usize]);
+    let it = arr[0usize..6usize].iter();
     let filtered = it.filter(|v: i32| -> bool { v % 2i32 == 0i32 });
     let vec = filtered.to_vector();
     defer vec.free();
@@ -74,7 +74,7 @@ fn test_free_all() -> i32 {
 
 fn test_to_vector_empty() -> i32 {
     let arr: [i32; 0];
-    let it = slice_iter::<i32>(arr[0usize..0usize]);
+    let it = arr[0usize..0usize].iter();
     let vec = it.to_vector();
     defer vec.free();
 
@@ -87,8 +87,8 @@ fn test_to_vector_empty() -> i32 {
 fn test_to_vector_chain() -> i32 {
     let a = [1i32, 2i32];
     let b = [3i32, 4i32];
-    let it1 = slice_iter::<i32>(a[0usize..2usize]);
-    let it2 = slice_iter::<i32>(b[0usize..2usize]);
+    let it1 = a[0usize..2usize].iter();
+    let it2 = b[0usize..2usize].iter();
     let chained = it1.chain::<SliceIterator<i32>>(&it2);
     let vec = chained.to_vector();
     defer vec.free();

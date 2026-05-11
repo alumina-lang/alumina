@@ -823,18 +823,9 @@ fn from_fn<T, F: Fn() -> Option<T>>(fun: F) -> FromFnIterator<F, T> {
     FromFnIterator { _fun: fun }
 }
 
-// The canonical SliceIterator lives in `std/mem.alu` (parameterised over the
-// element-pointer type, matching sysroot's shape). Earlier sysroot-aluminac
-// also defined its own SliceIterator<T> here; that's been removed to avoid
-// the layout-mismatched bitcast that came from having two structurally
-// different types share a name.
-//
-// `slice_iter<T>` is retained as a convenience for aluminac-specific tests
-// that predate the rename. sysroot calls `slice.iter()` directly; once the
-// tests in `tests/aluminac/` migrate, this can be deleted.
-fn slice_iter<T>(s: &[T]) -> std::mem::SliceIterator<&T> {
-    s.iter()
-}
+// The canonical SliceIterator lives in `std/mem.alu`; iterate slices via
+// `slice.iter()` directly. Earlier sysroot-aluminac defined its own
+// SliceIterator<T> here, but mem.alu unification removed it.
 
 /// A countdown iterator. See [countdown].
 struct Countdown {
