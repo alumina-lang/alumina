@@ -3780,6 +3780,12 @@ impl Mono {
                                 is_match = ta[0] as &void == arg_ty as &void;
                             }
                         }
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_const") {
+                        // Const: val_ty is an ItemRef whose underlying item is a const.
+                        is_match = val_ty.tag == IrTyTag::ItemRef && val_ty.item_ref_is_const();
+                    } else if self.ctx.is_lang_item(proto_id_value, "proto_static") {
+                        // Static: val_ty is an ItemRef whose underlying item is a static.
+                        is_match = val_ty.tag == IrTyTag::ItemRef && !val_ty.item_ref_is_const();
                     } else {
                         // User-defined protocol: check if type has all required methods
                         is_match = self.check_protocol_conformance(val_ty, proto);

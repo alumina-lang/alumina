@@ -27,5 +27,13 @@ fn main() -> i32 {
     // value_of fetches the const/static's value.
     if std::intrinsics::value_of::<FOO>() != 42i32 { return 5; }
     if std::intrinsics::value_of::<BAR>() != 7u64 { return 6; }
+
+    // proto_const / proto_static recognise const/static items via `is`.
+    let foo_ph = std::intrinsics::uninitialized::<FOO>();
+    let bar_ph = std::intrinsics::uninitialized::<BAR>();
+    if !(foo_ph is std::builtins::Const) { return 7; }
+    if foo_ph is std::builtins::Static { return 8; }
+    if bar_ph is std::builtins::Const { return 9; }
+    if !(bar_ph is std::builtins::Static) { return 10; }
     0
 }
