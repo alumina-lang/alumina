@@ -275,15 +275,45 @@ impl ExprParser {
         defer cursor.free();
         for child in children_by!(node, FieldKind::Statements, &cursor) {
             if child.is_named() {
+                // Skip a statement entirely if it carries a cfg attribute
+                // that evaluates false. Without this, the cfg-suppressed
+                // alloc_void from parse_expr is still pushed, which is
+                // mostly harmless EXCEPT when the trailing block in a
+                // function body has cfg-suppressed alternatives — see the
+                // result-expr handling below.
+                let inner_opt = child_by!(child, FieldKind::Inner);
+                if !inner_opt.is_none() {
+                    let inner_kind = NODE_KINDS[inner_opt.unwrap().symbol() as usize];
+                    if inner_kind == NodeKind::ExpressionStatement {
+                        let attrs_node = child_by!(inner_opt.unwrap(), FieldKind::Attributes);
+                        if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                            continue;
+                        }
+                    }
+                }
                 let expr = block_parser.parse_expr(child);
                 stmts.push(expr);
             }
         }
 
-        // Also check for a result expression
+        // Also check for a result expression. If the result is itself a
+        // cfg-suppressed ExpressionStatement (e.g. sysroot's `Instant::now`
+        // body: two `#[cfg(...)] { ... }` block alternatives where only
+        // one is active), drop it — the block's value will come from the
+        // last preceding non-suppressed statement instead.
         let result_node = child_by!(node, FieldKind::Result);
         if !result_node.is_none() {
-            stmts.push(block_parser.parse_expr(result_node.unwrap()));
+            let result_kind = NODE_KINDS[result_node.unwrap().symbol() as usize];
+            let suppressed = false;
+            if result_kind == NodeKind::ExpressionStatement {
+                let attrs_node = child_by!(result_node.unwrap(), FieldKind::Attributes);
+                if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                    suppressed = true;
+                }
+            }
+            if !suppressed {
+                stmts.push(block_parser.parse_expr(result_node.unwrap()));
+            }
         }
 
         let result = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
