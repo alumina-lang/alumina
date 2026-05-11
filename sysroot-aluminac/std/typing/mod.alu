@@ -135,6 +135,54 @@ fn is_protocol<T>() -> bool {
     std::intrinsics::uninitialized::<T>() is std::builtins::Protocol
 }
 
+/// Compile-time type descriptor (a zero-sized stub the compiler hangs
+/// reflection methods off). `Type::new::<T>()` is the typical way to
+/// obtain one. Mirrors sysroot's `std::typing::Type<T>`.
+struct Type<T> {}
+
+impl Type<T> {
+    /// Creates a new type descriptor.
+    #[lang(type_descriptor_new)]
+    fn new() -> Type<T> {
+        Type {}
+    }
+
+    /// Returns the name of the type.
+    fn debug_name(self: Type<T>) -> &[u8] {
+        type_name::<T>()
+    }
+
+    /// Returns the (compile-time) tuple of field descriptors for `T`.
+    fn fields(self: Type<T>) -> typeof(std::intrinsics::fields::<T>()) {
+        std::intrinsics::fields::<T>()
+    }
+
+    /// Returns the (compile-time) array of variant descriptors for `T`.
+    fn variants(self: Type<T>) -> typeof(std::intrinsics::enum_variants::<T>()) {
+        std::intrinsics::enum_variants::<T>()
+    }
+
+    fn is_void(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is () }
+    fn is_zero_sized(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::ZeroSized }
+    fn is_primitive(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Primitive }
+    fn is_numeric(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Numeric }
+    fn is_integer(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Integer }
+    fn is_floating_point(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::FloatingPoint }
+    fn is_signed(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Signed }
+    fn is_unsigned(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Unsigned }
+    fn is_pointer(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Pointer }
+    fn is_array(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Array }
+    fn is_tuple(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Tuple }
+    fn is_struct(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Struct }
+    fn is_union(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Union }
+    fn is_enum(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Enum }
+    fn is_closure(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Closure }
+    fn is_range(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Range }
+    fn is_named_function(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::NamedFunction }
+    fn is_function_pointer(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::FunctionPointer }
+    fn is_protocol(self: Type<T>) -> bool { std::intrinsics::uninitialized::<T>() is std::builtins::Protocol }
+}
+
 /// Compile-time descriptor for an enum variant.
 ///
 /// Returned in arrays by `intrinsics::enum_variants::<E>()`. The compiler
