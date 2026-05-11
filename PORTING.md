@@ -98,12 +98,13 @@ Each iteration is one commit. After each commit, **immediately start the next it
 
 ## Quality gates (non-negotiable, every commit)
 
-Run before every commit:
+Run `make porting-gates` before every commit — it bundles all the gates below in fail-fast order. The individual targets are still callable if you want to iterate on one:
 
 - `make test-aluminac` — must pass.
 - `make test-std-aluminac` — must pass.
 - `make bootstrap` — must pass (stage 2 == stage 3).
-- If sysroot files moved or unified: `make test-libraries` and (if the file lives under `sysroot/`) `make test-std` to confirm alumina-boot still compiles them.
+- `make test-libraries` and `make test-std` — must pass under alumina-boot.
+- `make test-lang` — must pass under alumina-boot.
 - `make test-diag` — must pass on alumina-boot (any change to error reporting in alumina-boot must keep it green).
 
 Do not stack work on a knowingly-broken bootstrap. Fix it first. The only exception is if the commit message *explicitly* says "WIP: bootstrap broken, next commit fixes" and the very next commit does fix it.

@@ -329,7 +329,14 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac porting-gates
+
+# Per-commit quality gates for the aluminac → alumina-boot parity work.
+# Runs the suites listed under "Quality gates" in PORTING.md. test-diag is
+# alumina-boot only; the others are run under both compilers where
+# applicable. Fail-fast: the recipe stops on the first failing gate.
+porting-gates: test-aluminac test-std-aluminac bootstrap test-std test-libraries test-lang test-diag
+	@echo "All porting quality gates passed."
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
