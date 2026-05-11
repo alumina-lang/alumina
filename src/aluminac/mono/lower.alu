@@ -5752,12 +5752,23 @@ impl Mono {
                                     call_ta = ctx_ta;
                                 }
                             } else if self.expected_type.tag == IrTyTag::Slice && def.generic_params.len() == 1usize {
-                                // For single-generic functions whose declared return type is
-                                // `slice<Ptr>` (the lang slice struct), the expected `&[T]` /
-                                // `&mut [T]` lets us infer Ptr = `&T` / `&mut T`.
-                                let ptr_ty = self.ctx.make_ptr_ty(self.expected_type.inner(), self.expected_type.is_const());
+                                // Single-generic fns returning a slice. The placeholder
+                                // can appear either as the *element* type (declared
+                                // `-> &[T]` / `-> &mut [T]`, AST `TyTag::Slice` over a
+                                // Placeholder) or as the *pointer* type-arg (declared
+                                // `-> slice<Ptr>`, AST `TyTag::Generic` over the
+                                // lang(slice) struct with Ptr as the single arg). Pick
+                                // the right substitution by inspecting `def.return_type`.
                                 let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
-                                ctx_ta[0] = ptr_ty;
+                                if def.return_type.tag == TyTag::Slice
+                                    && def.return_type.inner().tag == TyTag::Placeholder
+                                    && def.return_type.inner().id()._value == def.generic_params[0].id._value {
+                                    // Declared `-> &[T]`: T is the element type.
+                                    ctx_ta[0] = self.expected_type.inner();
+                                } else {
+                                    // Declared `-> slice<Ptr>`: Ptr = `&{const?}elem`.
+                                    ctx_ta[0] = self.ctx.make_ptr_ty(self.expected_type.inner(), self.expected_type.is_const());
+                                }
                                 call_ta = ctx_ta;
                             }
                         }

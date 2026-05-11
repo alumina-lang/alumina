@@ -823,42 +823,17 @@ fn from_fn<T, F: Fn() -> Option<T>>(fun: F) -> FromFnIterator<F, T> {
     FromFnIterator { _fun: fun }
 }
 
-/// An iterator over elements of a slice. See [slice_iter].
-struct SliceIterator<T> {
-    _slice: &[T],
-    _idx: usize,
-}
-
-impl SliceIterator<T> {
-    fn next(self: &mut SliceIterator<T>) -> Option<T> {
-        if self._idx >= self._slice.len() {
-            return Option::none();
-        }
-        let v = self._slice[self._idx];
-        self._idx = self._idx + 1usize;
-        Option::some(v)
-    }
-    fn next_back(self: &mut SliceIterator<T>) -> Option<T> {
-        if self._slice.len() == 0usize || self._idx >= self._slice.len() {
-            return Option::none();
-        }
-        let new_len = self._slice.len() - 1usize;
-        let v = self._slice[new_len];
-        self._slice = self._slice[0usize..new_len];
-        Option::some(v)
-    }
-    fn size_hint(self: &SliceIterator<T>) -> Option<usize> {
-        Option::some(self._slice.len() - self._idx)
-    }
-    mixin Iterator<SliceIterator<T>, T>;
-    mixin IteratorExt<SliceIterator<T>, T>;
-    mixin DoubleEndedIterator<SliceIterator<T>, T>;
-    mixin DoubleEndedIteratorExt<SliceIterator<T>, T>;
-}
-
-/// Returns an iterator over the elements of a slice.
-fn slice_iter<T>(slice: &[T]) -> SliceIterator<T> {
-    SliceIterator::<T> { _slice: slice, _idx: 0usize }
+// The canonical SliceIterator lives in `std/mem.alu` (parameterised over the
+// element-pointer type, matching sysroot's shape). Earlier sysroot-aluminac
+// also defined its own SliceIterator<T> here; that's been removed to avoid
+// the layout-mismatched bitcast that came from having two structurally
+// different types share a name.
+//
+// `slice_iter<T>` is retained as a convenience for aluminac-specific tests
+// that predate the rename. sysroot calls `slice.iter()` directly; once the
+// tests in `tests/aluminac/` migrate, this can be deleted.
+fn slice_iter<T>(s: &[T]) -> std::mem::SliceIterator<&T> {
+    s.iter()
 }
 
 /// A countdown iterator. See [countdown].
