@@ -1924,11 +1924,22 @@ impl Mono {
             resolved[consumed..] as &[&IrTy]
         } else if ty.tag == IrTyTag::Slice {
             // Slice methods take Ptr as their type-arg (e.g. impl slice<Ptr>).
-            // Some — like `equals<T, Ptr>` — take both T (the pointee) and Ptr;
-            // pass the right vector based on def.generic_params.len().
+            // Variants:
+            //   1 generic  -> [Ptr]            (e.g. fn len<Ptr>)
+            //   2 generics -> [T, Ptr]         (e.g. fn equals<T, Ptr>)
+            //   3 generics -> [T, Ptr, *void*] (e.g. fn hash<T, Ptr, H>:
+            //                  H is method-only, can't be derived from
+            //                  receiver — leave a void slot for inference
+            //                  to fill in from the hasher arg).
             let elem_ty = self.slice_elem_ty(ty);
             let ptr_ty = self.ctx.make_ptr_ty(elem_ty, ty.is_const());
-            if def.generic_params.len() == 2 {
+            if def.generic_params.len() == 3 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(3);
+                ta[0] = elem_ty;
+                ta[1] = ptr_ty;
+                ta[2] = self.ctx.void_ty;
+                ta as &[&IrTy]
+            } else if def.generic_params.len() == 2 {
                 let ta = self.ctx.arena.alloc_slice::<&IrTy>(2);
                 ta[0] = elem_ty;
                 ta[1] = ptr_ty;
@@ -2028,13 +2039,22 @@ impl Mono {
             method_type_args = concrete_ty.struct_ref().type_args;
         } else if concrete_ty.tag == IrTyTag::Slice {
             // Self=slice<Ptr>. Mirror call_method_on_type's Slice branch:
-            // methods taking <Ptr> get [&elem]; methods taking <T, Ptr> get
-            // [elem, &elem]. Without this, deferred-call mono of slice
-            // methods like `Self::equals(...)` in mem.alu's protocol-method
-            // bodies left T/Ptr unbound and downstream `*lhs._ptr` -> void.
+            // methods taking <Ptr> get [&elem]; methods taking <T, Ptr>
+            // get [elem, &elem]; methods taking <T, Ptr, H> (e.g. hash)
+            // get [elem, &elem, void] with the last slot left for
+            // argument inference. Without this, deferred-call mono of
+            // slice methods like `Self::equals(...)` in mem.alu's
+            // protocol-method bodies left T/Ptr unbound and downstream
+            // `*lhs._ptr` -> void.
             let elem_ty = self.slice_elem_ty(concrete_ty);
             let ptr_ty = self.ctx.make_ptr_ty(elem_ty, concrete_ty.is_const());
-            if def.generic_params.len() == 2 {
+            if def.generic_params.len() == 3 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(3);
+                ta[0] = elem_ty;
+                ta[1] = ptr_ty;
+                ta[2] = self.ctx.void_ty;
+                method_type_args = ta;
+            } else if def.generic_params.len() == 2 {
                 let ta = self.ctx.arena.alloc_slice::<&IrTy>(2);
                 ta[0] = elem_ty;
                 ta[1] = ptr_ty;
