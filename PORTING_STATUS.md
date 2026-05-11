@@ -265,7 +265,10 @@ The remaining compiler-side work clusters into three real items. Closing these u
 
 - [TODO] **`std/fmt/ryu/`** — float formatting (10 files). Needs full bit-twiddling intrinsics, when-dispatch, and large const tables. Net-new for aluminac.
 - [TODO] **`std/panicking.alu`** — sysroot uses `panic!` macro + setjmp/longjmp via `jmp_buf`; aluminac has a different shape. Reconcile.
-- [TODO] **`std/time.alu`** — sysroot uses `clock_gettime` directly; aluminac has minimal `Duration`. Depends on libc bindings.
+- [PARTIAL] **`std/time.alu`** — unification attempted 2026-05-11 then reverted (commits cb7f4380 / 7ec80c85). Switching `sysroot-aluminac/std/time.alu` to sysroot's version compiles cleanly but breaks `make test-std-aluminac` because the embedded `tests` module is then mono'd via aluminac's `test_cases!()` builtin and exposes two latent issues: (1) `test_monotonish` uses `thread::sleep` which sysroot-aluminac doesn't have (gated under `#[cfg(threading)]` upstream is one option), and (2) `test_artithmetic` runs `assert_eq!(start.duration_since(&start), Duration::zero())` on `Duration` values and fails fmt dispatch with "could not resolve method 'fmt' on type ''". The fmt resolution failure is the real blocker; the right fix is to debug why `assert_eq!`'s macro expansion can't dispatch fmt on a Duration value when the standalone `Duration::fmt` call works.
+  Missing for unification (post-revert state):
+  - Diagnose the `assert_eq!` → `eprintln!` → `static_format_args` → `$arg.fmt($fmt)` dispatch failure for Duration values.
+  - Decide whether to keep `test_monotonish` (and any other thread::sleep users) gated under `#[cfg(threading)]` upstream, or to add a thread::sleep stub to sysroot-aluminac.
 - [TODO] **`std/fs/mod.alu`** + **`std/fs/unix.alu`** — file abstraction + Unix syscall layer. Depends on closure traits for iteration, libc.
 - [TODO] **`std/io/mod.alu`** + **`std/io/unix.alu`** — Read/Write traits + stdio. Depends on protocol design.
 - [TODO] **`std/process/mod.alu`** + **`std/process/unix.alu`** — fork/exec/stdio plumbing. Depends on threads, closures, dyn traits.
