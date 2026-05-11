@@ -1,203 +1,494 @@
 //! Type for operations that can fail.
 //!
-//! The `?` operator on Result types desugars to the `try` macro below.
+//! [Result] is the type that can be used to express fallible operations in the type system.
+//! Alumina does not have exceptions. Value `Result<T, E>` can be either a successfull value of
+//! type `T` or an error value `E`, usually in some form representing the failure that happened.
+//!
+//! ```
+//! enum ExecutableType {
+//!     ELF,
+//!     PE
+//! }
+//!
+//! struct Error {}
+//!
+//! fn executable_type(contents: &[u8]) -> Result<ExecutableType, Error> {
+//!     use std::string::starts_with;
+//!     if contents.starts_with("MZ") {
+//!         Result::ok(ExecutableType::PE)
+//!     } else if contents.starts_with("\x7FELF") {
+//!         Result::ok(ExecutableType::ELF)
+//!     } else {
+//!         // Invalid executable
+//!         Result::err(Error {})
+//!     }
+//! }
+//!
+//! let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
+//!
+//! if result.is_err() {
+//!     eprintln!("Invalid executable");
+//! } else {
+//!     // e.g. result.unwrap();
+//!     // do something with it
+//! }
+//! ```
+//!
+//! [Result] is commonly used with the [try operator](try) (`?`) so that fallible functions can
+//! be composed easily by bailing early.
+//!
+//! [Result] values can also be transformed without unwrapping them using combinators such as [Result::map] and
+//! [Result::and_then], and converted into [Option] with [Result::get]/[Result::get_err].
 
-/// Try macro for Result: desugars `expr?` to early-return on error.
-macro try($result) {
-    {
-        let _result = $result;
-        if _result._is_ok {
-            _result._ok
-        } else {
-            return Result::err(_result._err)
-        }
+/// Extract the success value or short-circuit the calling function.
+///
+/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the
+/// expression.
+///
+/// Expands to the following expression
+/// ```pseudo_alumina
+/// if $.is_ok() {
+///     $.unwrap()
+/// } else {
+///     return Result::err(self.unwrap_err())
+/// }
+/// ```
+///
+/// See also [std::option::try] for [std::option::Option].
+macro try($res) {
+    let res = $res;
+    if res.is_ok() {
+        res.unwrap()
+    } else {
+        return ::std::result::Result::err(res.unwrap_err())
     }
 }
 
-/// Protocol that matches all Result<T, E> types regardless of T or E.
+/// Extract the success value or yield the calling coroutine.
+///
+/// This is similar to [try], but usable in coroutine functions that yield [Result] values.
+///
+/// Expands to the following expression
+/// ```pseudo_alumina
+/// if $.is_ok() {
+///     $.unwrap()
+/// } else {
+///     yield Result::err(self.unwrap_err())
+///     return
+/// }
+/// ```
+macro yield_try($res) {
+    let res = $res;
+    if res.is_ok() {
+        res.unwrap()
+    } else {
+        yield ::std::result::Result::err(res.unwrap_err());
+        return;
+    }
+}
+
+/// Type alias matching any monomorphization of `Result<T, E>`, regardless of `T` or `E`.
+///
+/// Useful for `is`-checks at compile time:
+/// ```
+/// use std::result::AnyResult;
+///
+/// let r: Result<i32, &[u8]> = Result::ok(1);
+/// assert!(r is AnyResult);
+/// assert!(!(42 is AnyResult));
+/// ```
 type AnyResult = std::builtins::SameBaseAs<Result<(), ()>>;
 
 /// Either a success value or an error value.
+///
+/// See [module level documentation](std::result) for more information.
+///
+/// ## Example
+/// ```
+/// let ok: Result<i32, i32> = Result::ok(1);
+/// let err: Result<i32, i32> = Result::err(-1);
+///
+/// assert!(ok.is_ok());
+/// assert!(err.is_err());
+///
+/// assert_eq!(ok.unwrap(), 1);
+/// assert_eq!(err.unwrap_err(), -1);
+/// ```
+#[diag::must_use]
 struct Result<T, E> {
     _is_ok: bool,
-    _ok: T,
-    _err: E,
+    _inner: _ResultT<T, E>
+}
+
+union _ResultT<T, E> {
+    ok: T,
+    err: E
 }
 
 impl Result<T, E> {
     /// Create a success variant
-    fn ok(value: T) -> Result<T, E> {
-        let r: Result<T, E> = std::mem::zeroed::<Result<T, E>>();
-        r._is_ok = true;
-        r._ok = value;
-        r
+    ///
+    /// ## Example
+    /// ```
+    /// let r: Result<i32, i32> = Result::ok(10);
+    ///
+    /// assert!(r.is_ok());
+    /// assert_eq!(r.unwrap(), 10);
+    /// ```
+    #[inline(ir)]
+    fn ok(ok: T) -> Result<T, E> {
+        Result::<T, E> {
+            _is_ok: true,
+            _inner: _ResultT::<T, E> {
+                ok: ok
+            }
+        }
     }
 
-    /// Create an error variant
-    fn err(value: E) -> Result<T, E> {
-        let r: Result<T, E> = std::mem::zeroed::<Result<T, E>>();
-        r._is_ok = false;
-        r._err = value;
-        r
+    /// Create a error variant
+    ///
+    /// ## Example
+    /// ```
+    /// let r: Result<i32, i32> = Result::err(42);
+    ///
+    /// assert!(r.is_err());
+    /// assert_eq!(r.unwrap_err(), 42);
+    /// ```
+    #[inline(ir)]
+    fn err(err: E) -> Result<T, E> {
+        Result::<T, E> {
+            _is_ok: false,
+            _inner: _ResultT::<T, E> {
+                err: err
+            }
+        }
     }
 
-    /// Returns `true` if the result contains an OK variant
+    /// Returns `true` if the result conains an OK variant, `false` otherwise
+    #[inline(ir)]
     fn is_ok(self: &Result<T, E>) -> bool {
         self._is_ok
     }
 
-    /// Returns `true` if the result contains an error variant
+
+    /// Returns `true` if the result conains an error variant, `false` otherwise
+    #[inline(ir)]
     fn is_err(self: &Result<T, E>) -> bool {
         !self._is_ok
     }
 
-    /// Return the success value, panicking if error value is present.
-    fn unwrap(self: Result<T, E>) -> T {
-        if !self._is_ok {
-            panic!("called Result::unwrap on an Err value");
-        }
-        self._ok
-    }
-
-    /// Return the error value, panicking if success value is present.
-    fn unwrap_err(self: Result<T, E>) -> E {
-        if self._is_ok {
-            panic!("called Result::unwrap_err on an Ok value");
-        }
-        self._err
-    }
-
-    /// Return the success value or a default value
-    fn unwrap_or(self: Result<T, E>, val: T) -> T {
-        if self._is_ok {
-            self._ok
-        } else {
-            val
-        }
-    }
-
-    /// Return the success value or a default value provided by a callback
-    fn unwrap_or_else<F: Fn(E) -> T>(self: Result<T, E>, func: F) -> T {
-        if self._is_ok {
-            self._ok
-        } else {
-            func(self._err)
-        }
-    }
-
     /// Converts from `Result<T, E>` to `Option<T>`.
+    ///
+    /// If the result contains an error, it returns `Option::none()`.
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// let o1: Option<i32> = r1.get();
+    /// let o2: Option<i32> = r2.get();
+    ///
+    /// assert!(o1.is_some());
+    /// assert_eq!(o1.unwrap(), 10);
+    ///
+    /// assert!(o2.is_none());
+    /// ```
     fn get(self: Result<T, E>) -> Option<T> {
-        if self._is_ok {
-            Option::some(self._ok)
+        if self.is_ok() {
+            Option::some(self.unwrap())
         } else {
             Option::none()
         }
     }
 
     /// Converts from `Result<T, E>` to `Option<E>`.
+    ///
+    /// If the result contains an OK varianr, it returns `Option::none()`.
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// let o1: Option<i32> = r1.get_err();
+    /// let o2: Option<i32> = r2.get_err();
+    ///
+    /// assert!(o1.is_none());
+    ///
+    /// assert!(o2.is_some());
+    /// assert_eq!(o2.unwrap(), 20);
+    /// ```
     fn get_err(self: Result<T, E>) -> Option<E> {
-        if self._is_ok {
+        if self.is_ok() {
             Option::none()
         } else {
-            Option::some(self._err)
+            Option::some(self.unwrap_err())
         }
     }
 
-    /// Transform the success value by calling the provided function.
+    /// Return the success value, panicking if error value is present
+    ///
+    /// ## Examples
+    /// ```
+    /// let r: Result<i32, i32> = Result::ok(10);
+    ///
+    /// assert_eq!(r.unwrap(), 10);
+    /// ```
+    /// ```panics
+    /// let r: Result<i32, i32> = Result::err(42);
+    ///
+    /// r.unwrap(); // panics
+    /// ```
+    #[inline(always)]
+    fn unwrap(self: Result<T, E>) -> T {
+        #[cold]
+        #[inline(never)]
+        fn unwrap_panic_err(err: E) -> ! {
+            use fmt::debug;
+            when err is fmt::Formattable<E, panicking::internal::PanicFormatter> {
+                panic!("unwrap on an err value: {}", err)
+            } else {
+                panic!("unwrap on an err value: {}", err.debug())
+            }
+        }
+
+        if self.is_ok() {
+            self._inner.ok
+        } else {
+            unwrap_panic_err(self._inner.err);
+        }
+    }
+
+    /// Return the error value, panicking if success value is present
+    ///
+    /// ## Examples
+    /// ```
+    /// let r: Result<i32, i32> = Result::err(10);
+    ///
+    /// assert_eq!(r.unwrap_err(), 10);
+    /// ```
+    /// ```panics
+    /// let r: Result<i32, i32> = Result::ok(42);
+    ///
+    /// r.unwrap_err(); // panics
+    /// ```
+    #[inline(always)]
+    fn unwrap_err(self: Result<T, E>) -> E {
+        #[cold]
+        #[inline(never)]
+        fn unwrap_panic_ok(ok: T) -> ! {
+            use fmt::debug;
+            when ok is fmt::Formattable<T, panicking::internal::PanicFormatter> {
+                panic!("unwrap on an ok value: {}", ok)
+            } else {
+                panic!("unwrap on an ok value: {}", ok.debug())
+            }
+        }
+
+        if self.is_err() {
+            self._inner.err
+        } else {
+            unwrap_panic_ok(self._inner.ok);
+        }
+    }
+
+    /// Return the success value or a default value
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// assert_eq!(r1.unwrap_or(30), 10);
+    /// assert_eq!(r2.unwrap_or(40), 40);
+    /// ```
+    fn unwrap_or(self: Result<T, E>, val: T) -> T {
+        if self.is_ok() {
+            self.unwrap()
+        } else {
+            val
+        }
+    }
+
+    /// Return the success value or a default value provided by a callback
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// assert_eq!(r1.unwrap_or_else(|_: i32| -> i32 { i32::max_value() }), 10);
+    /// assert_eq!(r2.unwrap_or_else(|_: i32| -> i32 { i32::max_value() }), i32::max_value());
+    /// ```
+    fn unwrap_or_else<F: Fn(E) -> T>(self: Result<T, E>, func: F) -> T {
+        if self.is_ok() {
+            self.unwrap()
+        } else {
+            func(self.unwrap_err())
+        }
+    }
+
+    /// Transform the success value inside the `Result` by calling the provided function.
+    ///
+    /// If the error value is present, function is not called and the original error is
+    /// passed through.
+    ///
+    /// ## Example
+    /// ```
+    /// let a: Result<i32, ()> = Result::ok(42);
+    /// let b: Result<i32, ()> = Result::err(());
+    ///
+    /// assert_eq!(a.map(|v: i32| -> i32 { v + 1 }), Result::ok(43));
+    /// assert_eq!(b.map(|v: i32| -> i32 { v + 1 }), Result::err(()));
+    /// ```
     fn map<Tm, F: Fn(T) -> Tm>(self: Result<T, E>, func: F) -> Result<Tm, E> {
-        if self._is_ok {
-            Result::ok(func(self._ok))
+        if self.is_ok() {
+            Result::ok(func(self.unwrap()))
         } else {
-            Result::err(self._err)
+            Result::err(self.unwrap_err())
         }
     }
 
-    /// Transform the error value by calling the provided function.
+    /// Transform the error value inside the `Result` by calling the provided function.
+    ///
+    /// If the success value is present, function is not called and the original error is
+    /// passed through.
+    ///
+    /// ## Example
+    /// ```
+    /// let a: Result<(), i32> = Result::err(42);
+    /// let b: Result<(), i32> = Result::ok(());
+    ///
+    /// assert_eq!(a.map_err(|v: i32| -> i32 { v + 1 }), Result::err(43));
+    /// assert_eq!(b.map_err(|v: i32| -> i32 { v + 1 }), Result::ok(()));
+    /// ```
     fn map_err<Em, F: Fn(E) -> Em>(self: Result<T, E>, func: F) -> Result<T, Em> {
-        if self._is_ok {
-            Result::ok(self._ok)
+        if self.is_ok() {
+            Result::ok(self.unwrap())
         } else {
-            Result::err(func(self._err))
+            Result::err(func(self.unwrap_err()))
         }
     }
 
-    /// Transform the value by calling the provided function, which returns a Result.
+    /// Transform the value inside the `Result` by calling the provided function, which returns a
+    /// `Result`.
+    ///
+    /// If the success value is present, function is not called and the original error is
+    /// passed through.
     fn and_then<Tm, F: Fn(T) -> Result<Tm, E>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
-        if self._is_ok {
-            func(self._ok)
+        if self.is_ok() {
+            func(self.unwrap())
         } else {
-            Result::err(self._err)
+            Result::err(self.unwrap_err())
         }
     }
 
-    /// Return the result if ok, otherwise call `func` with the error.
+    /// Transform the error value by calling the provided function, which returns a `Result`.
+    ///
+    /// If the success value is present, function is not called and the original value is
+    /// passed through. The error type may change to a new type `Em`.
     fn or_else<Em, F: Fn(E) -> Result<T, Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
-        if self._is_ok {
-            Result::ok(self._ok)
+        if self.is_ok() {
+            Result::ok(self.unwrap())
         } else {
-            func(self._err)
+            func(self.unwrap_err())
         }
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &Result<T, E>, f: &mut F) -> std::fmt::Result {
-        if self._is_ok {
-            f.write_str("ok(...)")
+    /// @ std::fmt::DebugFormattable::debug_fmt
+    fn debug_fmt<F: fmt::Formatter<F>>(self: &Result<T, E>, formatter: &mut F) -> fmt::Result {
+        use std::fmt::debug;
+
+        if self.is_ok() {
+            fmt::write!(formatter, "ok({})", self.unwrap().debug())
         } else {
-            f.write_str("err(...)")
+            fmt::write!(formatter, "err({})", self.unwrap_err().debug())
         }
     }
 }
 
 impl Result {
-    /// Convert `Result<Option<T>, E>` to `Option<Result<T, E>>`.
+    use fmt::{write, Formatter, Formattable};
+    use hash::{Hashable, Hasher};
+    use cmp::{Equatable};
+    use mem::{Freeable, Movable};
+
+    /// Convert `Result<Option<T>, E>` to `Option<Result<T, E>>`
+    ///
+    /// See also [Option::transpose] for the reverse operation.
+    ///
+    /// ## Example
+    /// ```
+    /// let a: Result<Option<i32>, i32> = Result::ok(Option::some(42));
+    /// let b: Result<Option<i32>, i32> = Result::ok(Option::none());
+    /// let c: Result<Option<i32>, i32> = Result::err(1337);
+    ///
+    /// assert_eq!(a.transpose(), Option::some(Result::ok(42)));
+    /// assert_eq!(b.transpose(), Option::none());
+    /// assert_eq!(c.transpose(), Option::some(Result::err(1337)));
+    /// ```
     fn transpose<T, E>(self: Result<Option<T>, E>) -> Option<Result<T, E>> {
         if self.is_ok() {
-            let opt: Option<T> = self.unwrap();
-            if opt.is_some() {
-                let v: T = opt.unwrap();
-                let r: Result<T, E> = Result::ok(v);
-                Option::some(r)
+            if self.unwrap().is_some() {
+                Option::some(Result::ok(self.unwrap().unwrap()))
             } else {
-                let none_val: Option<Result<T, E>> = Option::none();
-                none_val
+                Option::none()
             }
         } else {
-            let e: E = self.unwrap_err();
-            let r: Result<T, E> = Result::err(e);
-            Option::some(r)
+            Option::some(Result::err(self.unwrap_err()))
         }
     }
 
-    /// Compare two results for equality.
+    /// @ std::fmt::Formattable::fmt
+    fn fmt<T: Formattable<T, F>, E: Formattable<E, F>, F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) -> fmt::Result {
+        if self.is_ok() {
+            write!(formatter, "ok({})", self.unwrap())
+        } else {
+            write!(formatter, "err({})", self.unwrap_err())
+        }
+    }
+
+    /// @ std::hash::Hashable::hash
+    #[inline]
+    fn hash<T: Hashable<T, H>, E: Hashable<E, H>, H: Hasher<H>>(self: &Result<T, E>, hasher: &mut H) {
+        self.is_ok().hash(hasher);
+        if self.is_ok() {
+            self.unwrap().hash(hasher);
+        } else {
+            self.unwrap_err().hash(hasher);
+        }
+    }
+
+    /// @ std::cmp::Equatable::equals
+    #[inline]
     fn equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
-        if lhs._is_ok && rhs._is_ok {
-            lhs._ok.equals(&rhs._ok)
-        } else if !lhs._is_ok && !rhs._is_ok {
-            lhs._err.equals(&rhs._err)
+        if lhs.is_ok() && rhs.is_ok() {
+            lhs.unwrap().equals(&rhs.unwrap())
+        } else if lhs.is_err() && rhs.is_err() {
+            lhs.unwrap_err().equals(&rhs.unwrap_err())
         } else {
             false
         }
     }
 
-    /// Compare two results for inequality.
-    fn not_equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
-        !Result::equals::<T, E>(lhs, rhs)
-    }
-
-    /// Hash the result. The Ok / Err discriminator and the payload both hash.
-    fn hash<T: std::hash::Hashable<T, H>, E: std::hash::Hashable<E, H>, H: std::hash::Hasher<H>>(self: &Result<T, E>, hasher: &mut H) {
-        if self._is_ok {
-            // Discriminator byte for Ok.
-            (1u8).hash(hasher);
-            self._ok.hash(hasher);
+    /// @ std::mem::Movable::move
+    fn move<T: Movable<T>, E: Movable<E>>(self: &mut Result<T, E>) -> Result<T, E> {
+        if self.is_ok() {
+            Result::ok(self.unwrap().move())
         } else {
-            // Discriminator byte for Err.
-            (0u8).hash(hasher);
-            self._err.hash(hasher);
+            Result::err(self.unwrap_err().move())
         }
     }
 
-    mixin<T: Equatable<T>, E: Equatable<E>> std::cmp::Equatable<Result<T, E>>;
-    mixin<T: std::hash::Hashable<T, H>, E: std::hash::Hashable<E, H>, H: std::hash::Hasher<H>>
-        std::hash::Hashable<Result<T, E>, H>;
+    /// @ std::mem::Freeable::free
+    fn free<T: Freeable<T>, E: Freeable<E>>(self: &mut Result<T, E>) {
+        if self.is_ok() {
+            self.unwrap().free();
+        } else {
+            self.unwrap_err().free();
+        }
+    }
+
+    mixin<T: Equatable<T>, E: Equatable<E>> Equatable<Result<T, E>>;
 }

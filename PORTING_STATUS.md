@@ -222,13 +222,14 @@ The remaining compiler-side work clusters into three real items. Closing these u
 
   Caveat: `Option::not_equals::<T>(...)` no longer matches the sysroot-aluminac signature with method-level T (since sysroot only has the protocol-mixin'd version with `Self: Option<T>`). `tests/aluminac/protocol_bound_debug.alu` updated to use the natural method-call form `o1.not_equals(&o2)`.
 
-- [PARTIAL] **`std/result.alu`** — Same shape as Option. Has `is_ok`/`is_err`/`unwrap`/`map`/`map_err`/`and_then`/`or_else`/`transpose`/`equals`/`fmt`. Newly added `mixin Equatable<Result<T, E>>`, `hash<...>` + `mixin Hashable<Result<T, E>, H>`, plus `AnyResult` type alias (`tests/aluminac/option_result_equatable.alu`, `option_result_hash.alu`, `option_result_any.alu`). `fmt::debug<T>` + `DebugAdapter` stub now landed (defers to T's own fmt for Formattable, type name otherwise). `Result::unwrap` end-to-end against `--sysroot sysroot` now compiles and runs (the protocol-Self uniformity refactor closed the previously-blocking `fmt/mod.alu:348` error path); a focused minimal repro `let r: Result<i32,i32> = err(99); r.unwrap()` returns the expected exit 42 panic.
-  Missing for unification with sysroot's `std/result.alu`:
-  - `panicking::internal::PanicFormatter` is missing from sysroot-aluminac — moot once the unified sysroot is adopted; the question becomes whether to keep result.alu's stub minimal in sysroot-aluminac or just unify both.
-  - Adding both `write_str` and `write_byte` methods to a struct inside aluminac's own panicking module also segfaults the self-build (likely a Formatter-conformance loop) — separate slice.
-  - Panic-message richness: full version uses DebugAdapter walking through reflection. Stub is in place but limited.
-  - Doc comments + embedded tests.
-<!-- std/result.alu PARTIAL entry moved up next to std/option.alu -->
+- [DONE] **`std/result.alu`** — unified. Both sysroots now share byte-identical content (verified via `diff -q`). The Self-uniformity refactor unblocked unification: `Result::unwrap` end-to-end works against the unified sysroot, panic chain compiles, all the previously-failing inference paths resolve. Two small additions to sysroot's version were needed to keep the existing aluminac tests green: `or_else` (dual of `and_then` for the error path) and the `AnyResult` type alias — both are pure additions accepted by alumina-boot too.
+
+  Aluminac's `make test-std-aluminac` exercises the embedded test module (`test_result_basic`, `test_unwrap_or`, `test_map`, etc.) under the unified file. `make test-std` (alumina-boot against sysroot) still passes.
+
+  Open follow-ups (now bundled under `std/panicking.alu` instead of result.alu):
+  - `panicking::internal::PanicFormatter` segfault when given both `write_str` and `write_byte` directly — the symptom is a Formatter-conformance loop, separate from the result.alu work.
+  - Panic-message richness uses DebugAdapter walking through reflection; stubs work, full version blocked on reflection lang items.
+<!-- std/result.alu DONE — was previously PARTIAL -->
 
 - [DONE] **`std/range.alu`** — unified. sysroot's range.alu now has fmt impls (additive for alumina-boot; needed by aluminac since sysroot-aluminac's assert_eq formats with `{}`). sysroot-aluminac/std/range.alu is byte-identical to sysroot/std/range.alu. The embedded test module (`test_range`, `test_range_inclusive`, `test_range_lower`, `test_equality`, `test_hash`) now runs under `make test-std-aluminac` (count grows from 18 → 23). The UFCS auto-ref fix landed earlier this session was the prerequisite for `test_hash` to dispatch correctly.
 
