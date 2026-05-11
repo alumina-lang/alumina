@@ -857,6 +857,26 @@ impl Mono {
             cache_key = cache_key ^ self.current_mono_key;
             cache_key = cache_key * 1099511628211u64;
         }
+        // Mix in the protocol-generic bindings (Self + protocol's other
+        // generics) for protocol-derived methods. After the FnDef-shape
+        // refactor, those generics are no longer in `def.generic_params`
+        // and so don't appear in `type_args` — but they DO change the
+        // mono'd body. Without mixing them in, two distinct instantiations
+        // (e.g. `sum<SliceIterator<i32>, i32>` and `sum<SliceIterator<usize>,
+        // usize>`) collapse onto the same cache_key and the first one's
+        // body wins.
+        let proto_gp_ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
+        if proto_gp_ids_opt.is_some() {
+            let pgp_ids = proto_gp_ids_opt.unwrap();
+            for k in 0usize..pgp_ids.len() {
+                let bound_opt = self.type_map.get(&pgp_ids[k]);
+                if bound_opt.is_some() {
+                    let p_addr = bound_opt.unwrap() as &void as usize as u64;
+                    cache_key = cache_key ^ (p_addr * 0x9e3779b97f4a7c15u64);
+                    cache_key = cache_key * 1099511628211u64;
+                }
+            }
+        }
         let cached = self.ctx.fn_cache.get(&cache_key);
         if cached.is_some() {
             self.current_fn_name = prev_fn_name;
@@ -899,6 +919,7 @@ impl Mono {
                 had_gp[gi] = false;
             }
         }
+
 
         // Set up generic substitution
         if def.generic_params.len() > 0 && type_args.len() > 0 {
@@ -1604,6 +1625,116 @@ impl Mono {
         }
     }
 
+    // Bind a protocol method's protocol-generic params (Self + others, in
+    // declaration order) into `type_map` from a slice of concrete IR types.
+    // The list of ids comes from `proto_method_proto_gp_ids` and was set when
+    // the protocol was registered in `MonoCtx::build_lookup_tables`.
+    //
+    // Returns the number of `args` consumed (= the number of proto generics
+    // bound). Callers should treat `args[returned_count..]` as remaining
+    // method-own type args to forward to `mono_function`.
+    //
+    // For non-protocol-method FnDefs (impl methods), this is a no-op and
+    // returns 0; the call flow proceeds as before.
+    fn bind_proto_generics(self: &mut Mono, def: &FnDef, args: &[&IrTy]) -> usize {
+        let ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
+        if !ids_opt.is_some() {
+            return 0usize;
+        }
+        let ids = ids_opt.unwrap();
+        let n = std::cmp::min(ids.len(), args.len());
+        for i in 0usize..n {
+            let id = ids[i];
+            let arg = args[i];
+            // Skip null / void slots — leave whatever type_map binding (if
+            // any) the caller already set up. This matches the dyn vtable
+            // build's existing pattern where unknown slots are left for the
+            // dispatcher to fill in.
+            if arg as &void as usize == 0usize { continue; }
+            if arg.is_void() { continue; }
+            self.type_map.insert(id, arg);
+        }
+        n
+    }
+
+    // Infer protocol-generic bindings (Self + protocol's other generics)
+    // from the actual call's receiver and argument types, binding them into
+    // `type_map`. Complementary to `bind_proto_generics`:
+    //
+    //   - `bind_proto_generics` binds from an explicit array (the mixin's
+    //     `<...>` args, or the dyn type's proto args). It's used when the
+    //     bindings are statically known from the dispatch context.
+    //
+    //   - This function fills in bindings the explicit arrays didn't supply,
+    //     by unifying the protocol method's parameter types against the
+    //     call's actual argument types — the same way `infer_type_args`
+    //     does for a function's own generics. Mirrors alumina-boot's model
+    //     where the protocol's generics aren't on the FnDef and have to
+    //     come from the call site somehow.
+    //
+    // No-op for non-protocol-method FnDefs.
+    fn infer_proto_generics_from_call(
+        self: &mut Mono,
+        def: &FnDef,
+        receiver_ty: &IrTy,
+        args: &[&Expr],
+    ) {
+        let ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
+        if !ids_opt.is_some() { return; }
+        let ids = ids_opt.unwrap();
+        if ids.len() == 0 { return; }
+
+        // Synthesize a GenericParam slice keyed on the proto ids so we can
+        // reuse the existing `unify_type_for_inference` machinery (which
+        // matches placeholder ids against `generic_params[i].id`).
+        let synthetic = self.ctx.arena.alloc_slice::<GenericParam>(ids.len());
+        for i in 0usize..ids.len() {
+            synthetic[i] = GenericParam {
+                id: Id { _value: ids[i] },
+                name: "_proto",
+                bounds: &[],
+                default_ty: Option::none(),
+            };
+        }
+        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(ids.len());
+        let found = self.ctx.arena.alloc_slice::<bool>(ids.len());
+        for i in 0usize..ids.len() {
+            inferred[i] = self.ctx.void_ty;
+            found[i] = false;
+        }
+
+        // Infer from receiver vs self param type.
+        if def.params.len() > 0 {
+            let self_param_ty = def.params[0].ty;
+            let self_arg_ty = receiver_ty;
+            if self_param_ty.tag == TyTag::Pointer {
+                self_param_ty = self_param_ty.inner();
+                if self_arg_ty.tag == IrTyTag::Pointer {
+                    self_arg_ty = self_arg_ty.inner();
+                }
+            }
+            self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, synthetic);
+        }
+
+        // Infer from explicit args (skipping self).
+        let num_explicit = if def.params.len() > 0 { def.params.len() - 1 } else { 0usize };
+        for p in 0usize..num_explicit {
+            if p >= args.len() { break; }
+            let param_ty = def.params[p + 1].ty;
+            let arg_ty = self.lower_expr(args[p]).ty;
+            self.unify_type_for_inference(param_ty, arg_ty, inferred, found, synthetic);
+        }
+
+        // Bind successful, non-void inferences. Skip void or unfound slots so
+        // bindings the caller (e.g. `bind_proto_generics` from a mixin path)
+        // may have already established are preserved.
+        for i in 0usize..ids.len() {
+            if found[i] && !inferred[i].is_void() {
+                self.type_map.insert(ids[i], inferred[i]);
+            }
+        }
+    }
+
     // Try to call an operator overload for a binary comparison on struct types.
     // Looks up the appropriate method (equals, less_than, etc.) directly on the type's scope,
     // creates references to both operands, and emits a call.
@@ -1709,7 +1840,11 @@ impl Mono {
             for i in 0usize..ast_args.len() {
                 resolved[i] = self.resolve_type(ast_args[i]);
             }
-            resolved as &[&IrTy]
+            // Bind protocol generics (Self + others) via type_map; the
+            // remaining slots after that are the method's own generics that
+            // mono_function will assign positionally to def.generic_params.
+            let consumed = self.bind_proto_generics(def, resolved);
+            resolved[consumed..] as &[&IrTy]
         } else if ty.tag == IrTyTag::Slice {
             // Slice methods take Ptr as their type-arg (e.g. impl slice<Ptr>).
             // Some — like `equals<T, Ptr>` — take both T (the pointee) and Ptr;
@@ -3233,10 +3368,14 @@ impl Mono {
             for i in 0usize..ast_args.len() {
                 resolved[i] = self.resolve_type(ast_args[i]);
             }
-            method_type_args = resolved;
+            // Bind protocol generics (Self + others) from the mixin's args via
+            // type_map; what remains is the method's own.
+            let consumed = self.bind_proto_generics(def, resolved);
+            method_type_args = resolved[consumed..];
         }
 
-        // For protocol methods, also set Self type from resolved_ty
+        // For protocol methods, also set Self type from resolved_ty (covers
+        // direct-call paths where there is no mixin info recording Self).
         let self_id_opt = self.ctx.proto_method_self_id.get(&fn_id._value);
         if self_id_opt.is_some() {
             self.type_map.insert(self_id_opt.unwrap(), resolved_ty);
@@ -3851,60 +3990,27 @@ impl Mono {
                 }
                 let fn_def = fn_def_opt.unwrap();
 
-                // Mono the impl method. Pass2 prepends the impl-struct's
-                // generics to the method's `generic_params`, so the full
-                // type-arg vector is `[impl_args..., method_own_args...]`.
-                // Recover each piece:
-                //   - impl_args: the impl struct's concrete type_args.
-                //   - method_own_args: protocol's non-Self type-args (for
-                //     methods like `fmt<F>` conforming to `Formattable<Self, F>`).
-                let method_type_args: &[&IrTy] = &[];
+                // Bind the impl method's generic context. There are two cases
+                // and they're now distinguished structurally — by whether the
+                // method came from a protocol mixin — rather than by length-
+                // matching arithmetic on `impl_args.len() + proto_non_self_count`
+                // (which was four branches and never closed cleanly; see the
+                // 2026-05-11 retrospective in PORTING.md).
+                //
+                //   - impl method: `fn_def.generic_params` is `[impl's, own]`.
+                //     Pass `[impl_args..., proto_non_self_args...]` so the
+                //     method's own slots line up with proto's non-Self.
+                //   - protocol method (mixin'd into this impl): now uniform
+                //     with impl methods — `fn_def.generic_params` is just the
+                //     method's own. The protocol's generics (Self + others)
+                //     are bound via `bind_proto_generics` from the dyn
+                //     protocol's args, with `impl_ty` overriding Self.
                 let proto_args = proto_ty.proto_type_args();
-                let proto_non_self_count = if proto_args.len() >= 1 { proto_args.len() - 1 } else { 0 };
                 let impl_args: &[&IrTy] = if impl_ty.tag == IrTyTag::Struct {
                     impl_ty.struct_ref().type_args
                 } else {
                     &[]
                 };
-                let combined_total = impl_args.len() + proto_non_self_count;
-                if fn_def.generic_params.len() == combined_total && combined_total > 0 {
-                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(combined_total);
-                    for i in 0usize..impl_args.len() {
-                        let a = impl_args[i];
-                        buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
-                    }
-                    for i in 0usize..proto_non_self_count {
-                        let a = proto_args[i + 1];
-                        buf[impl_args.len() + i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
-                    }
-                    method_type_args = buf;
-                } else if fn_def.generic_params.len() > 0
-                    && proto_non_self_count == fn_def.generic_params.len() {
-                    // Method only has its own generics (impl is non-generic).
-                    let nargs = proto_non_self_count;
-                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(nargs);
-                    for i in 0usize..nargs {
-                        let a = proto_args[i + 1];
-                        buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
-                    }
-                    method_type_args = buf;
-                } else if impl_args.len() == fn_def.generic_params.len()
-                    && fn_def.generic_params.len() > 0 {
-                    // Method only inherits the impl's generics (no method-own).
-                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(impl_args.len());
-                    for i in 0usize..impl_args.len() {
-                        let a = impl_args[i];
-                        buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
-                    }
-                    method_type_args = buf;
-                }
-
-                // Record proto Self → impl_ty for any defaulted-body method
-                // bodies that mention Self.
-                let self_id_opt = self.ctx.proto_method_self_id.get(&fn_def.id._value);
-                if self_id_opt.is_some() {
-                    self.type_map.insert(self_id_opt.unwrap(), impl_ty);
-                }
 
                 // Bind impl-struct generics in type_map (e.g. `impl Foo<T>`'s
                 // T → impl_ty.struct_ref().type_args[0]) so the method body
@@ -3919,6 +4025,71 @@ impl Mono {
                             self.type_map.insert(impl_struct_def.generic_params[gi].id._value, impl_ty.struct_ref().type_args[gi]);
                         }
                     }
+                }
+
+                let method_type_args: &[&IrTy] = &[];
+                let is_proto_method = self.ctx.proto_method_proto_gp_ids.get(&fn_def.id._value).is_some();
+                if is_proto_method {
+                    // Build proto-generic args = [impl_ty, proto_args[1..]] so
+                    // Self → impl_ty and the protocol's other generics map
+                    // through positionally. Pass any leftover slots (= the
+                    // method's own) as method_type_args.
+                    let proto_arg_buf = self.ctx.arena.alloc_slice::<&IrTy>(std::cmp::max(proto_args.len(), 1usize));
+                    proto_arg_buf[0] = impl_ty;
+                    for i in 1usize..proto_args.len() {
+                        let a = proto_args[i];
+                        proto_arg_buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
+                    }
+                    let _ = self.bind_proto_generics(fn_def, proto_arg_buf);
+                    // Methods with their own generics are not currently
+                    // dispatchable via a vtable entry without inference (the
+                    // entry would have to be specialised per call site, not
+                    // per impl). Leave method_type_args empty for now; the
+                    // method body still mono's correctly when its own
+                    // generics aren't actually used (typical for protocol
+                    // methods like `fmt`, `equals`, `hash`, etc.).
+                } else {
+                    // Plain impl method — its `generic_params` already
+                    // includes impl's placeholders, so pass [impl_args...,
+                    // proto_non_self_args...] padded to its length.
+                    let proto_non_self_count = if proto_args.len() >= 1 { proto_args.len() - 1 } else { 0 };
+                    let combined_total = impl_args.len() + proto_non_self_count;
+                    if fn_def.generic_params.len() == combined_total && combined_total > 0 {
+                        let buf = self.ctx.arena.alloc_slice::<&IrTy>(combined_total);
+                        for i in 0usize..impl_args.len() {
+                            let a = impl_args[i];
+                            buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
+                        }
+                        for i in 0usize..proto_non_self_count {
+                            let a = proto_args[i + 1];
+                            buf[impl_args.len() + i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
+                        }
+                        method_type_args = buf;
+                    } else if proto_non_self_count == fn_def.generic_params.len() && fn_def.generic_params.len() > 0 {
+                        let nargs = proto_non_self_count;
+                        let buf = self.ctx.arena.alloc_slice::<&IrTy>(nargs);
+                        for i in 0usize..nargs {
+                            let a = proto_args[i + 1];
+                            buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
+                        }
+                        method_type_args = buf;
+                    } else if impl_args.len() == fn_def.generic_params.len() && fn_def.generic_params.len() > 0 {
+                        let buf = self.ctx.arena.alloc_slice::<&IrTy>(impl_args.len());
+                        for i in 0usize..impl_args.len() {
+                            let a = impl_args[i];
+                            buf[i] = if a as &void as usize == 0usize { self.ctx.void_ty } else { a };
+                        }
+                        method_type_args = buf;
+                    }
+                }
+
+                // Self may be referenced indirectly by the impl's method body
+                // (e.g. `Self::foo(...)`). The proto-method case binds it via
+                // `bind_proto_generics`; for plain impl methods, also wire it
+                // up so legacy default-body code keeps resolving.
+                let self_id_opt = self.ctx.proto_method_self_id.get(&fn_def.id._value);
+                if self_id_opt.is_some() {
+                    self.type_map.insert(self_id_opt.unwrap(), impl_ty);
                 }
 
                 let fn_idx = self.mono_function(fn_def, method_type_args);
@@ -4778,11 +4949,16 @@ impl Mono {
             return Option::none();
         }
         let def = fn_def.unwrap();
-        // For mixin'd methods, resolve the mixin's type args and use them as method_type_args.
-        // Protocol generic params are now prepended to the method's FnDef.generic_params,
-        // so these type args map to positions 0..N in the function's generic params.
-        // The mixin type args contain Placeholder refs to the IMPL's generic params,
-        // so we must map those impl param IDs to concrete types from the struct's type_args.
+        // For mixin'd methods, resolve the mixin's type args. The mixin
+        // records `proto_args` for the protocol it injects (Self + protocol's
+        // other generics, in declaration order). Bind those into `type_map`
+        // via `bind_proto_generics` and forward whatever remains as the
+        // method's own type args.
+        //
+        // The mixin type args contain Placeholder refs to the IMPL's generic
+        // params (and to the mixin's own generic params). We must first map
+        // those impl param IDs to concrete types from the struct's type_args
+        // so subsequent `resolve_type` calls produce concrete IR types.
         let mixin_args = self.ctx.scopes.get_mixin_type_args(scope_idx, fn_id._value);
         if mixin_args.is_some() {
             let ast_args = mixin_args.unwrap();
@@ -4798,7 +4974,8 @@ impl Mono {
             for i in 0usize..ast_args.len() {
                 resolved[i] = self.resolve_type(ast_args[i]);
             }
-            method_type_args = resolved;
+            let consumed = self.bind_proto_generics(def, resolved);
+            method_type_args = resolved[consumed..];
         }
 
         // Combine struct type args with method turbofish type args
@@ -4984,6 +5161,12 @@ impl Mono {
         if self_id_opt.is_some() {
             self.type_map.insert(self_id_opt.unwrap(), resolved_ty);
         }
+
+        // For protocol methods, also infer the protocol's other generics
+        // (e.g. `F` in `Formattable<Self, F>`) from the call's actual
+        // receiver and arg types. The mixin's `<...>` args may have left
+        // them unbound — see `infer_proto_generics_from_call`.
+        self.infer_proto_generics_from_call(def, ir_obj.ty, expr.args());
 
         // Monomorphize the method with type args (for generic impls + turbofish)
         let fn_idx = self.mono_function(def, combined_type_args);

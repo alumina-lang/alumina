@@ -97,6 +97,15 @@ struct MonoCtx {
     // Protocol method Self substitution: maps method_fn_id -> protocol's Self generic param id
     proto_method_self_id: HashMap<usize, usize>,
 
+    // Protocol method's full generic-param ids (Self at index 0, then the
+    // protocol's other generics in declaration order). Set for every method
+    // declared inside a `protocol Foo<...>` block; empty for plain impl
+    // methods. Dispatch sites use this to bind the protocol's generics in
+    // `type_map` from the corresponding mixin / dyn / call-site arguments,
+    // so the method's own generic_params (now uniform with impl methods —
+    // method's own only) line up with the type_args mono_function receives.
+    proto_method_proto_gp_ids: HashMap<usize, &[usize]>,
+
     // Monomorphization call stack for diagnostic notes
     mono_stack: Vector<MonoFrame>,
 
@@ -184,6 +193,7 @@ impl MonoCtx {
             slice_new_fn_id: 0,
             lang_items: HashMap::new(),
             proto_method_self_id: HashMap::new(),
+            proto_method_proto_gp_ids: HashMap::new(),
             mono_stack: Vector::new(),
             dyn_vtable_cache: HashMap::new(),
             local_fn_ids: HashMap::new(),
@@ -233,17 +243,33 @@ impl MonoCtx {
                         self.lang_items.insert(hash, self.items[i].protocol_def().id._value);
                     }
                 }
-                // Register protocol methods in fn_defs with protocol generic_params prepended
+                // Register protocol methods in fn_defs. As of the Self-uniformity
+                // refactor, method.generic_params is the method's own only — the
+                // protocol's generics (Self + others) are recorded separately in
+                // `proto_method_proto_gp_ids` and bound by dispatch sites via
+                // type_map.
                 let proto_def = self.items[i].protocol_def();
                 let self_gp_id: usize = 0usize;
                 if proto_def.generic_params.len() > 0 {
                     self_gp_id = proto_def.generic_params[0].id._value;
                 }
+                let proto_gp_ids: &[usize] = if proto_def.generic_params.len() > 0 {
+                    let buf = self.arena.alloc_slice::<usize>(proto_def.generic_params.len());
+                    for k in 0usize..proto_def.generic_params.len() {
+                        buf[k] = proto_def.generic_params[k].id._value;
+                    }
+                    buf as &[usize]
+                } else {
+                    &[]
+                };
                 for j in 0usize..proto_def.methods.len() {
                     let method = &proto_def.methods[j];
                     self.fn_defs.insert(method.id._value, method);
                     if self_gp_id != 0usize || proto_def.generic_params.len() > 0 {
                         self.proto_method_self_id.insert(method.id._value, self_gp_id);
+                    }
+                    if proto_gp_ids.len() > 0 {
+                        self.proto_method_proto_gp_ids.insert(method.id._value, proto_gp_ids);
                     }
                 }
             } else if self.items[i].tag == ItemTag::Static {

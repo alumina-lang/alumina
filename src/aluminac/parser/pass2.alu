@@ -1026,26 +1026,18 @@ impl Pass2 {
                     Option::none()
                 };
 
-                // Prepend protocol generic params to method generic params
-                // (mirrors how build_function handles impl generic params)
-                let all_generic_params = if generic_params.len() > 0 {
-                    let total = generic_params.len() + fn_generic_params.len();
-                    let combined = self.ctx.arena.alloc_slice::<GenericParam>(total);
-                    for gi in 0usize..generic_params.len() {
-                        combined[gi] = generic_params[gi];
-                    }
-                    for gi in 0usize..fn_generic_params.len() {
-                        combined[generic_params.len() + gi] = fn_generic_params[gi];
-                    }
-                    combined as &[GenericParam]
-                } else {
-                    fn_generic_params
-                };
-
+                // Mirror alumina-boot: a protocol method's generic_params are
+                // *only* the method's own. The protocol's generics (Self + any
+                // others like F in `Formattable<Self, F>`) are bound at the
+                // dispatch site via type_map using `proto_method_proto_gp_ids`
+                // (registered in `MonoCtx::build_lookup_tables`). This keeps
+                // FnDef shapes uniform with `build_function`'s impl-method
+                // path and removes the need for length-matching branches in
+                // the dyn vtable build.
                 methods.push(FnDef {
                     id: fn_id,
                     name: fn_name,
-                    generic_params: all_generic_params,
+                    generic_params: fn_generic_params,
                     params: fn_params,
                     return_type: fn_ret,
                     body: fn_body,
