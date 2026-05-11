@@ -418,9 +418,18 @@ impl ExprParser {
                 return self.ctx.alloc_expr(e);
             }
         } else {
-            // Unresolved - may be resolved later during monomorphization
+            // Unresolved at parse time. When parsing a macro body, the
+            // reference may bind to a local in the caller's scope —
+            // store the source name so expand_macro_expr can re-resolve
+            // at the call site (e.g. test_fmt's `macro chk(...) { ... &buf
+            // ... }` where `buf` is declared in test_fmt's body, BEFORE
+            // the macro definition textually but BEFORE the macro body
+            // is pre-parsed in source order).
             let e = self.make_expr(ExprTag::Local, span);
             e._data.id_ref.id = Id { _value: 0 };
+            if self.ctx.in_macro_body {
+                e._data.id_ref.str_val = self.ctx.intern_str(name);
+            }
             self.ctx.alloc_expr(e)
         }
     }
@@ -2225,6 +2234,37 @@ impl ExprParser {
            expr.tag == ExprTag::EnumRef || expr.tag == ExprTag::BoundValue {
             // Check if this local needs ID remapping (hygiene)
             if expr.tag == ExprTag::Local {
+                // Unresolved at macro-body-pre-parse time: parse_identifier
+                // stashed the source name on the Local's str_val. Re-resolve
+                // against the call-site scope (e.g. `&buf` where buf is a
+                // function-local in the macro's caller).
+                if expr.id()._value == 0usize && expr.str_val().len() > 0usize {
+                    let resolved = self.ctx.scopes.resolve(self.scope_idx, expr.str_val());
+                    if resolved.is_some() {
+                        let item = resolved.unwrap();
+                        if item.kind.tag == scope::NamedItemTag::Local {
+                            let e = self.make_expr(ExprTag::Local, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Param {
+                            let e = self.make_expr(ExprTag::Param, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Static {
+                            let e = self.make_expr(ExprTag::StaticRef, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Const {
+                            let e = self.make_expr(ExprTag::StaticRef, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Function {
+                            let e = self.make_expr(ExprTag::FnRef, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        }
+                    }
+                }
                 let mapped = id_map.get(&expr.id()._value);
                 if mapped.is_some() {
                     let e = *expr;
