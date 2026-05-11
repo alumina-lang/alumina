@@ -288,16 +288,16 @@ The remaining compiler-side work clusters into three real items. Closing these u
 
 - [TODO] **`std/fmt/ryu/`** — float formatting (10 files). Needs full bit-twiddling intrinsics, when-dispatch, and large const tables. Net-new for aluminac.
 - [TODO] **`std/panicking.alu`** — sysroot uses `panic!` macro + setjmp/longjmp via `jmp_buf`; aluminac has a different shape. Reconcile.
-- [PARTIAL] **`std/time.alu`** — unification attempted 2026-05-11 then reverted (commits cb7f4380 / 7ec80c85). Subsequent retries the same day closed four of the original blockers and uncovered a fifth:
-  1. ~~`test_monotonish` uses `thread::sleep` which sysroot-aluminac doesn't have.~~ Trivially fixed with `#[cfg(threading)]` on the test.
-  2. ~~`Instant`-formatting Equatable: `assert_eq!` macro divergence.~~ Aligned sysroot-aluminac's `assert_eq!` / `assert_ne!` to use `.debug()` via aluminac's existing `fmt::internal::DebugAdapter` stub (commit caefdb5b). Matches sysroot's `internal::assert_eq` shape.
-  3. ~~`Duration::fmt` calls `hours.zero_pad(2)` where hours is `i64` and `abs.nanos.zero_pad(9)` where nanos is `u32`. Aluminac's zero_pad was i64-only.~~ Made `zero_pad` generic over `builtins::Integer` via `when val is Signed` (commit 926b4003).
-  4. ~~Macros defined inside a function body could not reference the function's locals.~~ Fixed in commit b5e1a50b: parse_identifier stashes the source name on unresolved Local exprs when inside a macro body; expand_macro_expr re-resolves at the call site. sysroot's `test_fmt` macro (`let buf: [u8; 1024]; macro chk(...) { ... &buf ... }`) now expands correctly.
-  5. ~~Instant arithmetic discrepancy.~~ Root-caused 2026-05-11: TWO underlying bugs surfaced together.
-     - **Struct field cfg ignored.** `pass2`'s `build_struct` included all field nodes regardless of `#[cfg(...)]`. Instant's `{ spec: timespec OR inner: u64 }` cfg-gated alternates BOTH appeared in the layout — sizeof(Instant) was 24 instead of 16. Fixed in commit ca561b50: `eval_field_cfg` helper now consults `ParseContext::eval_cfg_meta_item`.
-     - **cfg on block expressions inside fn bodies still ignored.** Even after the field fix, `Instant::now`'s body contains two cfg-gated block expressions (one per platform), and a nested `#[cfg(target_os = ...)]` on the inner `clock_gettime` call. Aluminac doesn't evaluate cfg on these — `Instant::now` ends up reading garbage. Verified via `/tmp/test_instant_arith.alu`: direct `clock_gettime(CLOCK_MONOTONIC, &spec_mut)` works (tv_sec=1716993, tv_nsec=279106687); `Instant::now()` gives [tv_nsec, tv_nsec] in both slots. Replicating Instant::now's body inline WITHOUT cfg blocks works correctly.
+- [DONE] **`std/time.alu`** — unified 2026-05-11. `sysroot/std/time.alu` and `sysroot-aluminac/std/time.alu` are now byte-identical (verified by diff -q). The unification closed five blockers across the session:
+  1. `test_monotonish` (thread::sleep) gated under `#[cfg(threading)]` upstream so aluminac (no threading) skips it cleanly.
+  2. `assert_eq!` macro divergence — aligned sysroot-aluminac's macro to use `.debug()` matching sysroot's `internal::assert_eq` shape.
+  3. zero_pad was i64-only — made generic over `builtins::Integer` via `when val is Signed`.
+  4. Macros inside fn bodies couldn't reference enclosing locals — parse_identifier now stashes the source name on unresolved Local exprs when in_macro_body; expand_macro_expr re-resolves at call site.
+  5. Struct field `#[cfg(...)]` was ignored AND cfg-suppressed trailing block expressions in fn bodies were treated as the block's result. Both fixed in pass2 (`eval_field_cfg` helper) and parse_block (skip cfg-suppressed statements and demote suppressed result).
 
-  Path forward: implement cfg evaluation for nested block expressions / nested statement-level cfg attributes inside function bodies (likely in `parse_block` or `parse_expr` in `src/aluminac/parser/expr.alu`). Once that's green, swap `sysroot/std/time.alu` into `sysroot-aluminac/std/time.alu` wholesale and update test.alu to use `duration_since` instead of `elapsed`.
+  Plus two small ports: `cmp::lex_compare` macro added to sysroot-aluminac/std/cmp.alu, and `Instant.elapsed(&start)` renamed to `Instant.duration_since(&start)` in `sysroot-aluminac/test.alu` (matches sysroot's API).
+
+  `make test-std-aluminac` count grew from 33 → 38 (covers all of sysroot's embedded `tests` module: test_from, test_total, test_artithmetic, test_fmt, test_hash, test_compare). The aluminac-specific `tests/aluminac/time_basic.alu` was removed (covered the old API that no longer exists).
 - [TODO] **`std/fs/mod.alu`** + **`std/fs/unix.alu`** — file abstraction + Unix syscall layer. Depends on closure traits for iteration, libc.
 - [PARTIAL] **`std/io/mod.alu`** + **`std/io/unix.alu`** — `io/unix.alu` is already byte-identical between sysroots (the OS-syscall layer needs no aluminac-specific changes). `io/mod.alu` (the Read/Write protocol layer) still needs work — gated on protocol-trait design and dyn dispatch in the sysroot.
 - [TODO] **`std/process/mod.alu`** + **`std/process/unix.alu`** — fork/exec/stdio plumbing. Depends on threads, closures, dyn traits.
