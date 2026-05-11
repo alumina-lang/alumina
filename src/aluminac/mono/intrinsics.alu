@@ -8,6 +8,7 @@ use mono::lower::Mono;
 use ast::*;
 use scope::*;
 use diagnostics::DiagnosticContext;
+use layout::{compute_type_size, compute_type_align};
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet, Vector};
 use std::option::Option;
@@ -49,7 +50,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "with_span_of" => lower_with_span_of(m, expr),
         "attributed" => lower_attributed(m, ir_type_args),
         "enum_variants" => lower_enum_variants(m, ir_type_args),
-        "fields" => lower_empty_descriptor_slice(m, "field_descriptor"),
+        "fields" => lower_fields(m, ir_type_args),
         "vtable" => lower_empty_descriptor_slice(m, "vtable"),
         _ => lower_unknown(m, name, expr),
     }
@@ -689,6 +690,96 @@ fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     arr_lit.tag = IrTag::ArrayLit;
     arr_lit._data.block.items = entries;
     m.ctx.arena.alloc(arr_lit) as &IrExpr
+}
+
+fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // fields<T: Struct | Union>() -> (Field<T, F0>, Field<T, F1>, ...)
+    //
+    // Builds a tuple whose i-th element is a call to the
+    // `field_descriptor_new` lang item parameterised by `(StructT, FieldT_i)`,
+    // with arguments `(field_name_string, byte_offset)`. Returns a tuple
+    // (not an array) because each `Field<S, T_i>` is a distinct type.
+    //
+    // Layout follows the same algorithm as `layout::compute_type_size`:
+    //   - struct: per-field alignment padding, packed structs skip padding;
+    //   - union: every field starts at offset 0.
+    //
+    // Falls back to an empty void slice when the type isn't a struct/union
+    // or when the lang item isn't declared. Mirrors alumina-boot's
+    // `intr_fields` (in `src/alumina-boot/src/ir/mono/intrinsics.rs`).
+    if ir_type_args.len() < 1 || ir_type_args[0].tag != IrTyTag::Struct {
+        return lower_empty_descriptor_slice(m, "field_descriptor");
+    }
+    let struct_ty = ir_type_args[0];
+    let struct_ref = struct_ty.struct_ref();
+
+    let lang_id_opt = m.ctx.get_lang_item("field_descriptor_new");
+    if !lang_id_opt.is_some() {
+        return lower_empty_descriptor_slice(m, "field_descriptor");
+    }
+    let fn_def_opt = m.ctx.fn_defs.get(&lang_id_opt.unwrap());
+    if !fn_def_opt.is_some() {
+        return lower_empty_descriptor_slice(m, "field_descriptor");
+    }
+    let def = fn_def_opt.unwrap();
+
+    let n_fields = struct_ref.fields.len();
+    let entries = m.ctx.arena.alloc_slice::<&IrExpr>(n_fields);
+    let elem_tys = m.ctx.arena.alloc_slice::<&IrTy>(n_fields);
+    let usize_ty = m.ctx.usize_ty;
+    let u8_slice_ty = m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true);
+    let is_union = struct_ref.is_union;
+    let is_packed = struct_ref.is_packed;
+    let pointer_size = m.ctx.pointer_size;
+
+    let running_offset: usize = 0;
+
+    for i in 0usize..n_fields {
+        let field = &struct_ref.fields[i];
+        let field_align = compute_type_align(field.ty, pointer_size);
+        let field_size = compute_type_size(field.ty, pointer_size);
+
+        let field_offset: usize = if is_union {
+            0usize
+        } else {
+            let padding = if is_packed || field_align == 0usize {
+                0usize
+            } else {
+                (field_align - (running_offset % field_align)) % field_align
+            };
+            running_offset + padding
+        };
+        if !is_union {
+            running_offset = field_offset + field_size;
+        }
+
+        // Mono field_descriptor_new<StructT, FieldT> for this (struct, field) pair.
+        let type_args_buf = m.ctx.arena.alloc_slice::<&IrTy>(2);
+        type_args_buf[0] = struct_ty;
+        type_args_buf[1] = field.ty;
+        let fn_idx = m.mono_function(def, type_args_buf);
+        let ir_fn = &m.ctx.ir_functions[fn_idx];
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        let return_ty = ir_fn.return_type;
+        elem_tys[i] = return_ty;
+
+        let name_lit = IrExpr::void_expr(u8_slice_ty);
+        name_lit.tag = IrTag::StringLit;
+        name_lit._data.lit.str_val = field.name;
+        let name_expr = m.ctx.arena.alloc(name_lit) as &IrExpr;
+        let offset_expr = m.mk_int_lit(usize_ty, field_offset as u64);
+
+        let args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
+        args[0] = name_expr;
+        args[1] = offset_expr;
+        entries[i] = m.mk_call(fn_ref, args, return_ty);
+    }
+
+    let tuple_ty = m.ctx.make_tuple_ty(elem_tys);
+    let tuple_lit = IrExpr::void_expr(tuple_ty);
+    tuple_lit.tag = IrTag::TupleLit;
+    tuple_lit._data.block.items = entries;
+    m.ctx.arena.alloc(tuple_lit) as &IrExpr
 }
 
 fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
