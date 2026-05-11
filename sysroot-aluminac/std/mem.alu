@@ -223,39 +223,47 @@ impl slice {
         std::iter::slice_iter::<T>(self)
     }
 
-    /// Element-wise equality comparison for slices.
-    /// Specialized with memcmp for primitive types (u8, i32, etc.).
-    fn equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
-        if lhs.len() != rhs.len() { return false; }
-        when lhs[0] is Primitive {
-            if lhs.len() > 0usize {
-                memcmp(
-                    &lhs[0] as &void,
-                    &rhs[0] as &void,
-                    lhs.len() * intrinsics::size_of::<typeof(lhs[0])>()
-                ) == 0i32
+    /// Element-wise equality comparison for slices. Mirrors sysroot's
+    /// 2-generic signature so the body can dispatch on `*lhs._ptr`'s
+    /// pointee type.
+    fn equals<T: std::cmp::Equatable<T>, Ptr: builtins::PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
+        when *lhs._ptr is std::builtins::ZeroSized {
+            lhs.len() == rhs.len()
+        } else when *lhs._ptr is std::builtins::Primitive {
+            // Optimization for slices of primitive types
+            if std::runtime::in_const_context() {
+                internal::default_equals::<Ptr>(lhs, rhs)
             } else {
-                true
+                lhs.len() == rhs.len() &&
+                    (memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * std::mem::size_of::<T>()) == 0i32)
             }
         } else {
-            for i in 0usize..lhs.len() {
-                if lhs[i] != rhs[i] { return false; }
-            }
-            true
+            internal::default_equals::<Ptr>(lhs, rhs)
         }
     }
 
-    /// Lexicographic comparison for slices.
-    fn compare<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> std::cmp::Ordering {
-        let len = lhs.len();
-        if rhs.len() < len { len = rhs.len(); }
-        for i in 0usize..len {
-            if lhs[i] < rhs[i] { return std::cmp::Ordering::Less; }
-            if lhs[i] > rhs[i] { return std::cmp::Ordering::Greater; }
+    /// Lexicographic comparison for slices. Mirrors sysroot's 2-generic
+    /// signature so the body can dispatch on `*lhs._ptr`'s pointee type.
+    fn compare<T: std::cmp::Comparable<T>, Ptr: builtins::PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> std::cmp::Ordering {
+        when *lhs._ptr is std::builtins::ZeroSized {
+            lhs.len().compare(&rhs.len())
+        } else when *lhs._ptr is u8 {
+            if std::runtime::in_const_context() {
+                internal::default_compare::<Ptr>(lhs, rhs)
+            } else {
+                let n = if lhs.len() < rhs.len() { lhs.len() } else { rhs.len() };
+                let cmp = memcmp(lhs._ptr as &void, rhs._ptr as &void, n * std::mem::size_of::<T>());
+                if cmp < 0i32 {
+                    std::cmp::Ordering::Less
+                } else if cmp > 0i32 {
+                    std::cmp::Ordering::Greater
+                } else {
+                    lhs.len().compare(&rhs.len())
+                }
+            }
+        } else {
+            internal::default_compare::<Ptr>(lhs, rhs)
         }
-        if lhs.len() < rhs.len() { std::cmp::Ordering::Less }
-        else if lhs.len() > rhs.len() { std::cmp::Ordering::Greater }
-        else { std::cmp::Ordering::Equal }
     }
 
     /// Hash a slice by hashing each element. Mirrors sysroot/std/mem.alu's
@@ -303,4 +311,37 @@ impl slice {
         slice_free::<T>(data);
     }
 
+}
+
+/// Internal helpers reachable from `impl slice`'s equals/compare bodies.
+/// Mirrors `internal::default_equals` / `default_compare` in
+/// sysroot/std/mem.alu's top-level `mod internal`.
+mod internal {
+    fn default_equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
+        if lhs._len != rhs._len {
+            return false;
+        }
+
+        let idx = 0usize;
+        while idx < lhs._len {
+            if *(lhs._ptr + idx) != *(rhs._ptr + idx) {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    fn default_compare<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> std::cmp::Ordering {
+        let idx = 0usize;
+        let len = if lhs._len < rhs._len { lhs._len } else { rhs._len };
+        while idx < len {
+            let cmp = (*(lhs._ptr + idx)).compare(rhs._ptr + idx);
+            if cmp != std::cmp::Ordering::Equal {
+                return cmp;
+            }
+            idx += 1;
+        }
+        lhs._len.compare(&rhs._len)
+    }
 }
