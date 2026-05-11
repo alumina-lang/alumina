@@ -69,6 +69,26 @@ impl Vector<T> {
         self._length = self._length + value.len();
     }
 
+    /// Extend the vector with the elements from an iterator.
+    fn extend<I: std::iter::Iterator<I, T>>(self: &mut Vector<T>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0usize));
+        loop {
+            let item = iter.next();
+            if item.is_some() {
+                self.push(item.unwrap());
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Build a vector from the elements of an iterator.
+    fn from_iter<I: std::iter::Iterator<I, T>>(iter: &mut I) -> Vector<T> {
+        let vec = Vector::new::<T>();
+        vec.extend(iter);
+        vec
+    }
+
     /// Insert an element at the given index, shifting all elements after it.
     fn insert(self: &mut Vector<T>, index: usize, value: T) {
         self.reserve(1usize);
