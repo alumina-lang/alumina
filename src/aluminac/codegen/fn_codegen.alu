@@ -1214,6 +1214,22 @@ impl FnCodegen {
             indices[0] = lhs_val;
             return LLVMBuildInBoundsGEP2(self.ctx.builder, pointee_ty, rhs_val, &indices[0], 1u32, self.temp_cname());
         }
+        // Pointer subtraction: ptr - ptr → ptrtoint both, sub as isize,
+        // divide by sizeof(pointee) for element distance. Matches C
+        // semantics and sysroot's `string::find` (which subtracts two
+        // `&u8` to compute a usize index).
+        if op == BinOp::Sub && lhs_kind == LLVMTypeKind::Pointer && rhs_kind == LLVMTypeKind::Pointer {
+            let int_ty = self.ctx.isize_type;
+            let lhs_int = LLVMBuildPtrToInt(self.ctx.builder, lhs_val, int_ty, self.temp_cname());
+            let rhs_int = LLVMBuildPtrToInt(self.ctx.builder, rhs_val, int_ty, self.temp_cname());
+            let byte_diff = LLVMBuildSub(self.ctx.builder, lhs_int, rhs_int, self.temp_cname());
+            let pointee_size = compute_type_size(lhs.ty.inner(), self.ctx.pointer_size as usize);
+            if pointee_size > 1usize {
+                let size_const = LLVMConstInt(int_ty, pointee_size as u64, 0i32);
+                return LLVMBuildSDiv(self.ctx.builder, byte_diff, size_const, self.temp_cname());
+            }
+            return byte_diff;
+        }
 
         // If types don't match, coerce: pointer->int or int size mismatch
         let lhs_ty = LLVMTypeOf(lhs_val);
