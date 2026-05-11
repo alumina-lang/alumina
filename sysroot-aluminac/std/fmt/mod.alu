@@ -414,17 +414,31 @@ impl ZeroPadAdapter {
     }
 }
 
-/// Format a signed integer with zero-padding to a minimum width.
-fn zero_pad(val: i64, width: usize) -> ZeroPadAdapter {
-    if val < 0i64 {
-        let abs_val = if val == -9223372036854775808i64 {
-            9223372036854775808u64
+/// Format an integer with zero-padding to a minimum width. Generic
+/// over any builtin integer type so callers can write `nanos.zero_pad(9)`
+/// regardless of nanos' specific width / signedness. Mirrors the
+/// generic `NumFormatAdapter<T: Integer>::zero_pad` shape in sysroot's
+/// fmt; the adapter still stores the magnitude as u64 + a sign flag.
+fn zero_pad<T: std::builtins::Integer>(val: T, width: usize) -> ZeroPadAdapter {
+    when val is std::builtins::Signed {
+        // Signed path: detect negative and store the magnitude as u64.
+        // The `val == T::MIN` two's-complement edge case is handled by
+        // casting to i64 first (sign-extending) and using the same
+        // 0 - x dance as the previous i64-only version.
+        let v64 = val as i64;
+        if v64 < 0i64 {
+            let abs_val = if v64 == -9223372036854775808i64 {
+                9223372036854775808u64
+            } else {
+                (0i64 - v64) as u64
+            };
+            ZeroPadAdapter { _value: abs_val, _width: width, _signed: true, _negative: true }
         } else {
-            (0i64 - val) as u64
-        };
-        ZeroPadAdapter { _value: abs_val, _width: width, _signed: true, _negative: true }
+            ZeroPadAdapter { _value: v64 as u64, _width: width, _signed: true, _negative: false }
+        }
     } else {
-        ZeroPadAdapter { _value: val as u64, _width: width, _signed: true, _negative: false }
+        // Unsigned path: no sign to consider; widen to u64.
+        ZeroPadAdapter { _value: val as u64, _width: width, _signed: false, _negative: false }
     }
 }
 
