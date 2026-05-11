@@ -945,6 +945,45 @@ impl Mono {
                 had_gp[gi] = false;
             }
         }
+        // Same snapshot for proto generics (Self + protocol's others) of
+        // protocol-derived methods. Dispatchers (`bind_proto_generics`,
+        // `infer_proto_generics_from_call`) set these before this call;
+        // restoring them on exit keeps recursive instantiations from
+        // clobbering each other and prevents nested calls' bindings from
+        // leaking into the outer mono frame.
+        let proto_ids: &[usize] = &[];
+        let proto_save_vals = self.ctx.arena.alloc_slice::<&IrTy>(0);
+        let proto_save_had = self.ctx.arena.alloc_slice::<bool>(0);
+        let proto_gp_snap = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
+        if proto_gp_snap.is_some() {
+            proto_ids = proto_gp_snap.unwrap();
+            proto_save_vals = self.ctx.arena.alloc_slice::<&IrTy>(proto_ids.len());
+            proto_save_had = self.ctx.arena.alloc_slice::<bool>(proto_ids.len());
+            for k in 0usize..proto_ids.len() {
+                let prev = self.type_map.get(&proto_ids[k]);
+                if prev.is_some() {
+                    proto_save_vals[k] = prev.unwrap();
+                    proto_save_had[k] = true;
+                } else {
+                    proto_save_had[k] = false;
+                }
+            }
+        }
+        // Snapshot the protocol-method Self id (its bound type, when present).
+        let self_id_v: usize = 0usize;
+        let self_id_have = false;
+        let self_id_val: &IrTy = self.ctx.void_ty;
+        let self_id_had = false;
+        let self_id_snap = self.ctx.proto_method_self_id.get(&def.id._value);
+        if self_id_snap.is_some() {
+            self_id_v = self_id_snap.unwrap();
+            self_id_have = true;
+            let prev_self = self.type_map.get(&self_id_v);
+            if prev_self.is_some() {
+                self_id_val = prev_self.unwrap();
+                self_id_had = true;
+            }
+        }
 
 
         // Set up generic substitution
@@ -1057,6 +1096,18 @@ impl Mono {
             if had_gp[gi] {
                 self.type_map.insert(def.generic_params[gi].id._value, saved_gp[gi]);
             }
+        }
+        // Same restore for proto generics (Self + protocol's others) +
+        // the Self id binding. Entries that had no prior binding stay
+        // wherever the dispatcher left them — matches the leaky-context
+        // policy applied to own generic_params above.
+        for k in 0usize..proto_ids.len() {
+            if proto_save_had[k] {
+                self.type_map.insert(proto_ids[k], proto_save_vals[k]);
+            }
+        }
+        if self_id_have && self_id_had {
+            self.type_map.insert(self_id_v, self_id_val);
         }
 
         // Collect local defs
