@@ -61,6 +61,16 @@ protocol Comparable<Self: Equatable<Self>> {
     }
 }
 
+/// Lexicographic-compare helper: return early from the enclosing function
+/// if `$lhs.compare(&$rhs)` is non-Equal. Used to chain field comparisons
+/// in a struct's `compare` impl. Matches sysroot/std/cmp.alu's macro.
+macro lex_compare($lhs, $rhs) {
+    let cmp = $lhs.compare(&$rhs);
+    if cmp != Ordering::Equal {
+        return cmp;
+    }
+}
+
 /// Compare two values using the Comparable::compare method.
 fn compare<T: Comparable<T>>(a: &T, b: &T) -> Ordering {
     a.compare(b)
