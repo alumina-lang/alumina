@@ -35,7 +35,6 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "compile_fail", "compile_warn", "compile_note" =>
             lower_compile_diag(m, name, expr),
         "volatile" => lower_volatile(m, ir_type_args, expr),
-        "slice_len" => lower_slice_len(m, expr),
         "type_id" => lower_type_id(m, ir_type_args),
         "type_name" => lower_type_name(m, ir_type_args, false),
         "named_type_name" => lower_type_name(m, ir_type_args, true),
@@ -347,16 +346,6 @@ fn lower_volatile(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr 
     let result = IrExpr::void_expr(m.ctx.void_ty);
     result.tag = IrTag::Undef;
     m.ctx.arena.alloc(result)
-}
-
-fn lower_slice_len(m: &mut Mono, expr: &Expr) -> &IrExpr {
-    // slice_len<T>(s: &[T]) -> usize - extract length from slice
-    let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
-    if expr.args().len() > 0 {
-        let ir_slice = m.lower_expr(expr.args()[0]);
-        return m.mk_field(ir_slice, SLICE_LEN_FIELD, usize_ty);
-    }
-    m.mk_int_lit(usize_ty, 0u64)
 }
 
 fn lower_type_id(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
