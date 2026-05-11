@@ -4584,6 +4584,22 @@ impl Mono {
                 for i in 0usize..param_ty.elems().len() {
                     self.unify_type_for_inference(param_ty.elems()[i], arg_ty.struct_ref().type_args[i], inferred, found, generic_params);
                 }
+            } else if arg_ty.tag == IrTyTag::Slice
+                && param_ty.inner().tag == TyTag::Named
+                && param_ty.elems().len() == 1 {
+                // AST `slice<Ptr>` (Generic over the #[lang(slice)] struct)
+                // vs IR `IrTyTag::Slice`. The IR slice doesn't store the Ptr
+                // type-arg directly — only the pointee — so reconstruct
+                // `Ptr = make_ptr_ty(arg.inner(), arg.is_const())` and unify
+                // it with the AST's single Placeholder. Without this, a
+                // 2- or 3-generic `slice::method<.., Ptr, ..>` left Ptr
+                // unbound, the slice body re-resolved to a struct slice<void>,
+                // and `self._ptr` failed to find the pseudo-field.
+                let slice_lang = self.ctx.get_lang_item("slice");
+                if slice_lang.is_some() && param_ty.inner().id()._value == slice_lang.unwrap() {
+                    let ptr_ty = self.ctx.make_ptr_ty(arg_ty.inner(), arg_ty.is_const());
+                    self.unify_type_for_inference(param_ty.elems()[0], ptr_ty, inferred, found, generic_params);
+                }
             }
         } else if param_ty.tag == TyTag::Tuple && param_ty.elems().len() > 0 {
             if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() >= param_ty.elems().len() {

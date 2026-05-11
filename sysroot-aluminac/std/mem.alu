@@ -258,16 +258,16 @@ impl slice {
         else { std::cmp::Ordering::Equal }
     }
 
-    /// Hash a slice by hashing each element. Takes a pointer-to-slice
-    /// (matches sysroot/std/mem.alu's signature) so `*self` can be used
-    /// to recover the slice value when forwarding to hasher.write for
-    /// byte slices.
-    fn hash<Ptr, H: std::hash::Hasher<H>>(
+    /// Hash a slice by hashing each element. Mirrors sysroot/std/mem.alu's
+    /// 3-generic signature with `when *self._ptr is X` branches.
+    fn hash<T: std::hash::Hashable<T, H>, Ptr: builtins::PointerOf<T>, H: std::hash::Hasher<H>>(
         self: &slice<Ptr>,
         hasher: &mut H,
     ) {
-        let p = self._ptr;
-        when *p is u8 {
+        when *self._ptr is std::builtins::ZeroSized {
+            // no-op: ZST slices contribute only via len(), but slices of ZSTs
+            // don't carry distinguishing data either; matches sysroot.
+        } else when *self._ptr is u8 {
             hasher.write(*self);
         } else {
             let idx = 0usize;
