@@ -1815,21 +1815,29 @@ impl FnCodegen {
             let phi_ty = self.ctx.llvm_type(result_ty);
             if !self.is_void_type(phi_ty) {
                 if !then_terminated && !else_terminated {
-                    // Both branches reach merge - need phi
+                    // Both branches reach merge - need phi.
+                    //
+                    // Coercions must be emitted in their respective end-blocks
+                    // (not in merge_bb), otherwise the cast would dominate
+                    // only one path through the function. Always reposition
+                    // the builder before the branch's terminator before
+                    // calling coerce_value — `coerce_value` may emit IR
+                    // (bitcast, inttoptr, etc.) even when the types look
+                    // syntactically identical at the IrTy level but differ
+                    // at the LLVM type level. The phi itself is created in
+                    // merge_bb after both coercions are placed.
+                    let then_terminator = LLVMGetBasicBlockTerminator(then_end_bb);
+                    LLVMPositionBuilderBefore(self.ctx.builder, then_terminator);
+                    let coerced_then = self.coerce_value(then_val, phi_ty);
+                    let else_terminator = LLVMGetBasicBlockTerminator(else_end_bb);
+                    LLVMPositionBuilderBefore(self.ctx.builder, else_terminator);
+                    let coerced_else = self.coerce_value(else_val, phi_ty);
+                    LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);
                     let phi = LLVMBuildPhi(self.ctx.builder, phi_ty, self.temp_cname());
                     let vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
                     let bbs = self.ctx.arena.alloc_slice::<LLVMBasicBlockRef>(2);
-                    let then_ty = LLVMTypeOf(then_val);
-                    let else_ty = LLVMTypeOf(else_val);
-                    if then_ty != phi_ty && !then_terminated {
-                        LLVMPositionBuilderBefore(self.ctx.builder, LLVMGetBasicBlockTerminator(then_end_bb));
-                    }
-                    vals[0] = self.coerce_value(then_val, phi_ty);
-                    if else_ty != phi_ty && !else_terminated {
-                        LLVMPositionBuilderBefore(self.ctx.builder, LLVMGetBasicBlockTerminator(else_end_bb));
-                    }
-                    vals[1] = self.coerce_value(else_val, phi_ty);
-                    LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);
+                    vals[0] = coerced_then;
+                    vals[1] = coerced_else;
                     bbs[0] = then_end_bb;
                     bbs[1] = else_end_bb;
                     LLVMAddIncoming(phi, &vals[0], &bbs[0], 2);
