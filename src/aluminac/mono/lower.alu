@@ -537,8 +537,23 @@ impl Mono {
                             let fn_ref = t.closure_fn();
                             return self.ctx.make_fn_ty(fn_ref);
                         }
-                        // Static / Const variants: aluminac doesn't expose item-as-type
-                        // generics yet, so these stay TODO.
+                        if t.tag == IrTyTag::ItemRef {
+                            // const/static item-arg: recover the declared type.
+                            let sd_opt = self.ctx.static_defs.get(&t.item_ref_id());
+                            if sd_opt.is_some() {
+                                let sd = sd_opt.unwrap();
+                                if sd.ty.is_some() {
+                                    return self.resolve_type(sd.ty.unwrap());
+                                }
+                                // No declared type — must be inferred from the
+                                // initializer. Fall back to lowering the init
+                                // expression's type.
+                                if sd.init.is_some() {
+                                    let init_ir = self.lower_expr(sd.init.unwrap());
+                                    return init_ir.ty;
+                                }
+                            }
+                        }
                     } else if lang == "typeop_pointer_with_mut_of" && type_args.len() >= 2 {
                         // pointer_with_mut_of<Ptr, RefForMutability>: produce a pointer to
                         // Ptr's pointee with the mutability of the second arg.
@@ -619,6 +634,17 @@ impl Mono {
         let proto_def = self.ctx.protocol_defs.get(&item_ref.id._value);
         if proto_def.is_some() {
             return self.ctx.arena.alloc(IrTy::mk_protocol_with_args(item_ref.id._value, type_args));
+        }
+
+        // Const/static items used as type-args (`underlying_type_of<MY_CONST>`,
+        // `value_of::<MY_CONST>`). Both kinds live in static_defs; the
+        // `is_const` flag distinguishes them. The resulting IrTy::ItemRef
+        // is consumed by typeop_underlying_type_of (to recover the declared
+        // type) and intrinsics::value_of (to emit a load/StaticRef).
+        let static_def = self.ctx.static_defs.get(&item_ref.id._value);
+        if static_def.is_some() {
+            let sd = static_def.unwrap();
+            return self.ctx.arena.alloc(IrTy::mk_item_ref(item_ref.id._value, sd.is_const));
         }
 
         self.ctx.void_ty

@@ -530,6 +530,16 @@ impl Pass2 {
                         // resolve_named_type in mono/lower.alu.
                         let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Const ||
+                              item.kind.tag == scope::NamedItemTag::Static {
+                        // A const/static used as a type-arg (sysroot:
+                        // `underlying_type_of<MY_CONST>`, `value_of::<MY_CONST>`).
+                        // Produces Ty::Named here; resolve_named_type sees
+                        // the id in `static_defs` and lowers to IrTy::ItemRef
+                        // so typeop_underlying_type_of and value_of can
+                        // recover the declared type / fetch the value.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
                     }
                 }
                 // Unqualified-name failures fall through to Ty::unresolved
@@ -677,6 +687,12 @@ impl Pass2 {
                         // A function path used in type position resolves to
                         // the function's zero-sized item type. Mirrors the
                         // TypeIdentifier branch above for unqualified names.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Const ||
+                              item.kind.tag == scope::NamedItemTag::Static {
+                        // Const/static used as a type-arg — see TypeIdentifier
+                        // branch above.
                         let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
                     }

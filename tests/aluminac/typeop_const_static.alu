@@ -1,0 +1,27 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+//
+// Verifies that const/static items can appear as type-args to
+// builtins::underlying_type_of, recovering the item's declared type.
+// Closes the `Const`/`Static` slot of the underlying_type_of typeop.
+
+const FOO: i32 = 42;
+static BAR: u64 = 7u64;
+
+fn main() -> i32 {
+    let a: std::builtins::underlying_type_of<FOO> = 0i32;
+    a = 5i32;
+    if a != 5i32 { return 1; }
+
+    let b: std::builtins::underlying_type_of<BAR> = 0u64;
+    b = 99u64;
+    if b != 99u64 { return 2; }
+
+    // The const's declared type round-trips through size_of.
+    if std::mem::size_of::<std::builtins::underlying_type_of<FOO>>() != 4usize {
+        return 3;
+    }
+    if std::mem::size_of::<std::builtins::underlying_type_of<BAR>>() != 8usize {
+        return 4;
+    }
+    0
+}

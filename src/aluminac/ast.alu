@@ -877,6 +877,10 @@ enum IrTyTag {
     Closure = 10i32,    // closure: struct of captures + associated function
     Fn = 11i32,         // function item: ZST representing a specific function
     Protocol = 12i32,   // protocol marker: carries the protocol's def-id for `is`-checks
+    ItemRef = 13i32,    // const/static item used as a generic type-arg —
+                        // carries the StaticDef's id and a flag distinguishing
+                        // const-vs-static. Resolved by typeop_underlying_type_of
+                        // and value_of intrinsics.
 }
 
 // Slice struct field indices (fat pointer layout: {data_ptr, len})
@@ -918,6 +922,11 @@ struct _IrTyProtocolData {
     type_args: &[&IrTy],
 }
 
+struct _IrTyItemRefData {
+    id: usize,
+    is_const: bool,
+}
+
 union _IrTyData {
     builtin: BuiltinType,           // Builtin, Never
     pointer: _IrTyPointerData,      // Pointer
@@ -930,6 +939,7 @@ union _IrTyData {
     slice: _IrTySliceData,          // Slice
     fn_item: _IrTyFnData,          // Fn
     proto: _IrTyProtocolData,       // Protocol
+    item_ref: _IrTyItemRefData,     // ItemRef
 }
 
 struct IrTy {
@@ -1010,6 +1020,12 @@ impl IrTy {
 
     fn proto_id(self: &IrTy) -> usize { self._data.proto.proto_id }
     fn proto_type_args(self: &IrTy) -> &[&IrTy] { self._data.proto.type_args }
+
+    fn mk_item_ref(id: usize, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::ItemRef, _data: _IrTyData { item_ref: _IrTyItemRefData { id: id, is_const: is_const } } }
+    }
+    fn item_ref_id(self: &IrTy) -> usize { self._data.item_ref.id }
+    fn item_ref_is_const(self: &IrTy) -> bool { self._data.item_ref.is_const }
 
     fn is_void(self: &IrTy) -> bool {
         self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void)
