@@ -833,13 +833,21 @@ impl ExprParser {
         // UFCS hint: try to resolve field_name as a free function in scope.
         // If found, store its ID+1 in id2 so mono can try UFCS fallback.
         // We store id+1 because id=0 is valid; id2._value==0 means "no hint".
-        if !self.ctx.in_macro_body {
-            let resolved = self.ctx.scopes.resolve(self.scope_idx, field_name);
-            if resolved.is_some() {
-                let item = resolved.unwrap();
-                if item.kind.tag == scope::NamedItemTag::Function {
-                    e._data.field.id2 = Id { _value: item.kind.id()._value + 1usize };
-                }
+        //
+        // Previously gated under !in_macro_body, which suppressed macro
+        // hygiene's ability to bind `use`-introduced names: a body like
+        // `macro foo($a) { use std::fmt::debug; $a.debug() }` would parse
+        // the `.debug()` without a UFCS hint and fail at mono time. Allow
+        // the hint inside macro bodies too — names introduced by uses
+        // inside the body resolve at definition time, which matches user
+        // intent for macros that pull in helpers. The hygiene caveat is
+        // that the hint pre-binds to whatever was in scope at definition,
+        // not the expansion site.
+        let resolved = self.ctx.scopes.resolve(self.scope_idx, field_name);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NamedItemTag::Function {
+                e._data.field.id2 = Id { _value: item.kind.id()._value + 1usize };
             }
         }
 
