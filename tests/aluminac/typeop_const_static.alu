@@ -35,5 +35,21 @@ fn main() -> i32 {
     if foo_ph is std::builtins::Static { return 8; }
     if bar_ph is std::builtins::Const { return 9; }
     if !(bar_ph is std::builtins::Static) { return 10; }
+
+    // Item-as-type-arg flows through user generic functions.
+    let doubled = double_const::<FOO>();
+    if doubled != 84i32 { return 11; }
+    let stat = read_static::<BAR>();
+    if stat != 7u64 { return 12; }
+
     0
+}
+
+fn double_const<T: std::builtins::Const>() -> std::builtins::underlying_type_of<T> {
+    let v = std::intrinsics::value_of::<T>();
+    v + v
+}
+
+fn read_static<T: std::builtins::Static>() -> std::builtins::underlying_type_of<T> {
+    std::intrinsics::value_of::<T>()
 }
