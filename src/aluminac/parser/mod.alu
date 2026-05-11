@@ -278,6 +278,115 @@ impl ParseContext {
         false
     }
 
+    // Evaluate a cfg condition from a meta_item node. Shared between pass1
+    // (item-level #[cfg(...)]) and expression-statement attribute filtering.
+    fn eval_cfg_meta_item(self: &mut ParseContext, node: Node) -> bool {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        if kind != NodeKind::MetaItem {
+            return false;
+        }
+        let name_node = child_by!(node, FieldKind::Name);
+        if name_node.is_none() {
+            return false;
+        }
+        let name = self.node_text(name_node.unwrap());
+        let args_node = child_by!(node, FieldKind::Arguments);
+        let value_node = child_by!(node, FieldKind::Value);
+        if !value_node.is_none() {
+            let value_text = self.node_text(value_node.unwrap());
+            if value_text.len() >= 2 && value_text[0] == '"' as u8 {
+                value_text = value_text[1..value_text.len() - 1];
+            }
+            let match_buf = self.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
+            name.copy_to_nonoverlapping(&match_buf[0]);
+            match_buf[name.len()] = '=' as u8;
+            value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
+            return self.has_cfg(match_buf as &[u8]);
+        }
+        if name == "cfg" {
+            if args_node.is_none() { return false; }
+            return self.eval_cfg_arguments_single(args_node.unwrap());
+        } else if name == "not" {
+            if args_node.is_none() { return false; }
+            return !self.eval_cfg_arguments_single(args_node.unwrap());
+        } else if name == "all" {
+            if args_node.is_none() { return true; }
+            return self.eval_cfg_arguments_all(args_node.unwrap());
+        } else if name == "any" {
+            if args_node.is_none() { return false; }
+            return self.eval_cfg_arguments_any(args_node.unwrap());
+        }
+        if !args_node.is_none() {
+            return false;
+        }
+        self.has_cfg(name)
+    }
+
+    fn eval_cfg_arguments_single(self: &mut ParseContext, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                return self.eval_cfg_meta_item(child);
+            }
+        }
+        false
+    }
+
+    fn eval_cfg_arguments_all(self: &mut ParseContext, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                if !self.eval_cfg_meta_item(child) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn eval_cfg_arguments_any(self: &mut ParseContext, node: Node) -> bool {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::MetaItem {
+                if self.eval_cfg_meta_item(child) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    // Check whether the `attributes` field on an expression_statement (or
+    // any other node with a similar attribute layout) contains a
+    // `#[cfg(...)]` whose condition evaluates to false. Returns true if
+    // the statement should be excluded from lowering.
+    fn stmt_cfg_suppresses(self: &mut ParseContext, attrs_node: Node) -> bool {
+        let cursor = attrs_node.walk();
+        defer cursor.free();
+        for attr in attrs_node.children(&cursor) {
+            let attr_kind = NODE_KINDS[attr.symbol() as usize];
+            if attr_kind != NodeKind::AttributeItem { continue; }
+            let meta = child_by!(attr, FieldKind::Inner);
+            if meta.is_none() { continue; }
+            let name_node = child_by!(meta.unwrap(), FieldKind::Name);
+            if name_node.is_none() { continue; }
+            let name = self.node_text(name_node.unwrap());
+            if name != "cfg" { continue; }
+            let args_node = child_by!(meta.unwrap(), FieldKind::Arguments);
+            if args_node.is_none() { continue; }
+            if !self.eval_cfg_arguments_single(args_node.unwrap()) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn error(self: &mut ParseContext, node: Node, message: &[u8]) {
         self.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.make_span(node), message));
     }

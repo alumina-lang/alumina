@@ -97,22 +97,35 @@ impl ExprParser {
                 self.alloc_void(span)
             },
             NodeKind::ExpressionStatement => {
-                let cursor = node.walk();
-                defer cursor.free();
-                for child in node.children(&cursor) {
-                    if child.is_named() {
-                        return self.parse_expr(child);
+                // The grammar gives expression_statement an optional
+                // `attributes` field before the `inner` expression.
+                // Walking children unconditionally would return the
+                // attributes node first (it's named), and aluminac has
+                // no expression-level attribute handling — so the actual
+                // expression would be silently dropped. Use FieldKind::Inner
+                // to skip past the attributes node directly.
+                //
+                // Also honour `#[cfg(...)]` on expression statements: if
+                // the condition is false, drop the statement (return void)
+                // so the inner expression isn't lowered. Other expression-
+                // level attributes (`#[allow(...)]`, `#[docs(...)]`, etc.)
+                // are diagnostics-only and don't affect lowering.
+                let attrs_node = child_by!(node, FieldKind::Attributes);
+                if !attrs_node.is_none() {
+                    if self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                        return self.alloc_void(span);
                     }
+                }
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    return self.parse_expr(inner.unwrap());
                 }
                 self.alloc_void(span)
             },
             NodeKind::Statement => {
-                let cursor = node.walk();
-                defer cursor.free();
-                for child in node.children(&cursor) {
-                    if child.is_named() {
-                        return self.parse_expr(child);
-                    }
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    return self.parse_expr(inner.unwrap());
                 }
                 self.alloc_void(span)
             },
