@@ -1,0 +1,38 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// UFCS generic free-function called on a ZST after the same function has
+// been instantiated for a non-ZST: the call-site result type must reflect
+// the current mono's substitution, not a leftover type_map binding from a
+// previous mono of the same function.
+//
+// Regression: `try_ufcs_call` used to compute `ret_ty` by calling
+// `self.resolve_type(def.return_type)` *after* `mono_function` had
+// snapshot/restored `type_map`. For `f::<()>(x)` invoked after a prior
+// `f::<i32>(y)`, the restore put T=i32 back into type_map, so the call's
+// `result_ty` was i32 even though the body had been mono'd for T=().
+// Codegen then named the void call's result and the LLVM verifier rejected
+// it with "Instruction has a name, but provides a void value!".
+
+use std::*;
+
+#[inline(ir)]
+fn read_volatile<T>(ptr: &T) -> T {
+    when *ptr is builtins::ZeroSized {
+        util::unit()
+    } else {
+        *intrinsics::volatile(ptr)
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Non-ZST instantiation first — leaves T=i32 in type_map.
+    let a: i32 = 42;
+    let ra = a.read_volatile();
+    if ra != 42 { return 1i32; }
+
+    // ZST instantiation second — call-site return-type must be void, not
+    // i32. Before the fix this tripped the LLVM verifier at codegen time.
+    let u: () = ();
+    let _ru: () = u.read_volatile();
+
+    0i32
+}

@@ -1061,6 +1061,19 @@ impl FnCodegen {
                 let field_ptr_ty = LLVMPointerType(result_ty, 0);
                 return LLVMBuildBitCast(self.ctx.builder, obj_ptr, field_ptr_ty, self.temp_cname());
             }
+            // Zero-sized struct: `llvm_struct_type` collapses it to an empty
+            // LLVM struct `{}`. The IR-level FieldAccess can still refer to
+            // a "field" (e.g. `DebugAdapter<RangeFull<i32>>._value` where
+            // `_value: RangeFull<i32>` is itself zero-sized), but there's
+            // no LLVM slot to GEP into — issuing the GEP crashes inside
+            // LLVM's `PointerType::get`. Return an undef pointer of the
+            // field's LLVM type instead; downstream loads / stores on a
+            // zero-sized field are no-ops.
+            if LLVMCountStructElementTypes(obj_ty) == 0u32 {
+                let field_llvm = self.ctx.llvm_type(expr.ty);
+                let safe_field = if LLVMGetTypeKind(field_llvm) == LLVMTypeKind::Void { self.ctx.i8_type } else { field_llvm };
+                return LLVMGetUndef(LLVMPointerType(safe_field, 0));
+            }
             // Bitcast to correct pointer type for GEP
             let obj_ptr_ty = LLVMPointerType(obj_ty, 0);
             let typed_ptr = LLVMBuildBitCast(self.ctx.builder, obj_ptr, obj_ptr_ty, self.temp_cname());

@@ -4898,12 +4898,20 @@ impl Mono {
             ir_args[1 + i] = self.lower_expr(expr.args()[i]);
         }
 
-        // Monomorphize and call
+        // Monomorphize and call. Use `ir_fn.return_type` rather than
+        // re-resolving `def.return_type` here: `mono_function`
+        // snapshot/restores `type_map` bindings on the def's generic params,
+        // so by this point a prior instantiation's binding may have been
+        // restored. The mono'd function's `return_type` was computed under
+        // *this* call's bindings, so it's the right thing to put on the
+        // call's IR node. Without this, `read_volatile<()>` called via
+        // UFCS after a prior `read_volatile<i32>` mono'd the body with
+        // void-return but kept the i32 binding on the call site — codegen
+        // then named the void call's result and the verifier rejected it.
         let fn_idx = self.mono_function(def, type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
         let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
-        let ret_ty = self.resolve_type(def.return_type);
-        Option::some(self.mk_call(fn_ref, ir_args, ret_ty))
+        Option::some(self.mk_call(fn_ref, ir_args, ir_fn.return_type))
     }
 
     // Try to resolve a method call: obj.method(args) -> Type::method(&obj, args)
