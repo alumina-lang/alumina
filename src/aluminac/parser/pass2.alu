@@ -532,6 +532,14 @@ impl Pass2 {
                         return self.ctx.alloc_ty(Ty::named(id));
                     }
                 }
+                // Unqualified-name failures fall through to Ty::unresolved
+                // silently for now. Adding a parse-time diagnostic here
+                // surfaces real-but-tolerated patterns in sysroot — most
+                // notably `Self` outside protocol-method context, and
+                // unimported protocol names like `Primitive` in mem.alu's
+                // `when lhs[0] is Primitive` (alumina-boot resolves these
+                // via mechanisms aluminac doesn't fully mirror yet).
+                // Tracked as the remaining Missing item under entry #7.
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             NodeKind::PointerOf => {

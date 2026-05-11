@@ -810,11 +810,12 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
 
     // target_pointer_width — needed by sysroot's `count_ones`/etc. when-arms
     // that branch on `usize`. Default to 64 on the supported architectures.
+    // Stored unquoted; eval_cfg_meta_item strips quotes from source values.
     let ptr_width: &[u8] = "";
     if matches_prefix(triple, "x86_64") || matches_prefix(triple, "aarch64") {
-        ptr_width = "target_pointer_width=\"64\"";
+        ptr_width = "target_pointer_width=64";
     } else if matches_prefix(triple, "i686") || matches_prefix(triple, "i386") {
-        ptr_width = "target_pointer_width=\"32\"";
+        ptr_width = "target_pointer_width=32";
     }
 
     // target_env — sysroot/libc/bindings.alu's c_char and friends branch on
@@ -838,8 +839,10 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
 
     // target_endian — sysroot's `to_le` / `to_be` / etc. branch on this. Both
     // x86_64 and aarch64 (Linux) are little-endian; aarch64-be exists but is
-    // not a target we currently support.
-    let endian: &[u8] = "target_endian=\"little\"";
+    // not a target we currently support. Note the value is stored unquoted
+    // here — eval_cfg_meta_item strips the quotes from source-level
+    // `target_endian = "little"` before matching.
+    let endian: &[u8] = "target_endian=little";
     if endian.len() > 0 && !already_has_key(&options.cfg_flags, "target_endian") {
         options.cfg_flags.push(endian);
     }
