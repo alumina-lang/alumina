@@ -51,6 +51,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "attributed" => lower_attributed(m, ir_type_args),
         "enum_variants" => lower_enum_variants(m, ir_type_args),
         "fields" => lower_fields(m, ir_type_args),
+        "value_of" => lower_value_of(m, ir_type_args, expr),
         "vtable" => lower_empty_descriptor_slice(m, "vtable"),
         _ => lower_unknown(m, name, expr),
     }
@@ -804,6 +805,38 @@ fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     result.tag = IrTag::StringLit;
     result._data.lit.str_val = empty_str;
     m.ctx.arena.alloc(result)
+}
+
+fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // value_of<T: Const | Static>() -> T
+    //
+    // For a const, inline the const-evaluated value. For a static, emit
+    // a load of the global. T at the IR level is an IrTy::ItemRef carrying
+    // the StaticDef's id.
+    if ir_type_args.len() < 1 || ir_type_args[0].tag != IrTyTag::ItemRef {
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        return m.ctx.arena.alloc(result);
+    }
+    let item_id = ir_type_args[0].item_ref_id();
+    let sd_opt = m.ctx.static_defs.get(&item_id);
+    if !sd_opt.is_some() {
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        return m.ctx.arena.alloc(result);
+    }
+    let sd = sd_opt.unwrap();
+    // Build a StaticRef expression — lower_expr's StaticRef path then handles
+    // global-emission, const-eval inlining (for consts), and type recovery.
+    let static_ref = IrExpr::void_expr(m.ctx.void_ty);
+    static_ref.tag = IrTag::Void;
+    // Use a synthetic Expr to ride through the existing StaticRef path so
+    // we don't duplicate the emission + const-eval logic.
+    let synth = Expr::void_expr();
+    synth.tag = ExprTag::StaticRef;
+    synth._data.id_ref.id = sd.id;
+    let synth_e = m.ctx.arena.alloc(synth) as &Expr;
+    m.lower_expr(synth_e)
 }
 
 fn lower_unknown(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
