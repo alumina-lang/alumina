@@ -2026,6 +2026,24 @@ impl Mono {
         if concrete_ty.tag == IrTyTag::Struct
             && concrete_ty.struct_ref().type_args.len() == def.generic_params.len() {
             method_type_args = concrete_ty.struct_ref().type_args;
+        } else if concrete_ty.tag == IrTyTag::Slice {
+            // Self=slice<Ptr>. Mirror call_method_on_type's Slice branch:
+            // methods taking <Ptr> get [&elem]; methods taking <T, Ptr> get
+            // [elem, &elem]. Without this, deferred-call mono of slice
+            // methods like `Self::equals(...)` in mem.alu's protocol-method
+            // bodies left T/Ptr unbound and downstream `*lhs._ptr` -> void.
+            let elem_ty = self.slice_elem_ty(concrete_ty);
+            let ptr_ty = self.ctx.make_ptr_ty(elem_ty, concrete_ty.is_const());
+            if def.generic_params.len() == 2 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(2);
+                ta[0] = elem_ty;
+                ta[1] = ptr_ty;
+                method_type_args = ta;
+            } else if def.generic_params.len() == 1 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                ta[0] = ptr_ty;
+                method_type_args = ta;
+            }
         }
 
         // Handle turbofish type args on the call itself (e.g. T::method::<U>(args))
