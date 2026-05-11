@@ -1491,8 +1491,15 @@ impl FnCodegen {
         // Build function type for the call
         let ret_ty = self.ctx.llvm_type(result_ty);
         // IrTyTag::Fn is a ZST whose llvm_type is void; treat it like a void
-        // return so we don't try to bind a name to the call result.
-        let is_void_ret = result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn || use_sret;
+        // return so we don't try to bind a name to the call result. Same for
+        // empty tuples (`()`), which `CodegenCtx::llvm_type` collapses to
+        // LLVM void — without the LLVM-side check, a call to a function
+        // declared `-> ()` (e.g. `read_volatile<()>` after generic
+        // instantiation) would be named, and the verifier rejects "named
+        // void result" with "Instruction has a name, but provides a void
+        // value!".
+        let is_void_ret = result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn || use_sret
+            || LLVMGetTypeKind(ret_ty) == LLVMTypeKind::Void;
         let llvm_ret = if is_void_ret { self.ctx.void_type } else { ret_ty };
 
         // Total slots in arg_vals (synthetic sret + the user-visible args).

@@ -208,9 +208,15 @@ fn lower_transmute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr
 }
 
 fn lower_stack_alloc(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
-    // stack_alloc<T>(size) -> &mut T
+    // stack_alloc<T>(size) -> &mut T. The signature in
+    // `sysroot-aluminac/std/intrinsics.alu` is
+    //   extern "intrinsic" fn stack_alloc<T>(size: usize) -> &mut T;
+    // so the IR result type is a pointer to T, not T itself. Without the
+    // wrap, codegen's `IrTag::StackAlloc` path bitcasts the i8* alloca
+    // straight to T (often an integer) and LLVM rejects the resulting
+    // pointer-to-non-pointer-sized-int bitcast.
     let ret_ty = if ir_type_args.len() > 0 {
-        ir_type_args[0]
+        m.ctx.make_ptr_ty(ir_type_args[0], false)
     } else {
         m.ctx.void_ty
     };
