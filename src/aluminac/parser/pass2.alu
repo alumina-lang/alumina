@@ -904,6 +904,42 @@ impl Pass2 {
         }
     }
 
+    // Evaluate `#[cfg(...)]` attributes attached to a struct field. Returns
+    // true if the field should be included, false if any cfg evaluates
+    // false (i.e. the field is excluded under the current configuration).
+    // Non-cfg attributes on fields are currently ignored (fields don't
+    // carry attributes on the IR side; this only gates inclusion).
+    fn eval_field_cfg(self: &mut Pass2, field_node: Node) -> bool {
+        let attr_node = child_by!(field_node, FieldKind::Attributes);
+        if attr_node.is_none() {
+            return true;
+        }
+        let cursor = attr_node.unwrap().walk();
+        defer cursor.free();
+        for child in attr_node.unwrap().children(&cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind != NodeKind::AttributeItem {
+                continue;
+            }
+            let inner_node = child_by!(child, FieldKind::Inner);
+            if inner_node.is_none() {
+                continue;
+            }
+            let meta = inner_node.unwrap();
+            let name_node = child_by!(meta, FieldKind::Name);
+            if name_node.is_none() {
+                continue;
+            }
+            let name = self.ctx.node_text(name_node.unwrap());
+            if name == "cfg" {
+                if !self.ctx.eval_cfg_meta_item(meta) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn build_struct(self: &mut Pass2, node: Node, pending: &PendingStruct) {
         let generic_params = self.parse_generic_params(node, pending.scope_idx);
 
@@ -916,6 +952,15 @@ impl Pass2 {
         for child in children_by!(node, FieldKind::Body, &cursor) {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::StructField {
+                // Honour `#[cfg(...)]` on struct fields. Without this,
+                // cfg-gated alternates (e.g. sysroot's Instant declares
+                // `spec: timespec` under cfg(not(macos)) and `inner: u64`
+                // under cfg(macos)) both end up in the struct layout,
+                // doubling its size and shifting subsequent field
+                // offsets. See PORTING_STATUS.md `[PARTIAL] std/time.alu`.
+                if !self.eval_field_cfg(child) {
+                    continue;
+                }
                 let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
                 let type_node = child_by!(child, FieldKind::Type);
                 let ty = if !type_node.is_none() {
