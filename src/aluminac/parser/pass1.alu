@@ -170,6 +170,39 @@ impl Pass1 {
                         "no_mangle" => attrs.push(Attribute::no_mangle()),
                         "const_only" => attrs.push(Attribute::const_only()),
                         "no_const" => attrs.push(Attribute::no_const()),
+                        "const" => {
+                            // alumina-boot syntax: `#[const(always)]` maps to
+                            // `const_only`, `#[const(never)]` maps to `no_const`.
+                            // Either form should round-trip the attribute on
+                            // the function so downstream queries
+                            // (`has_attribute`) match alumina-boot's behavior.
+                            let args_node = child_by!(meta, FieldKind::Arguments);
+                            if !args_node.is_none() {
+                                let raw = self.ctx.node_text(args_node.unwrap());
+                                let inner = raw;
+                                if inner.len() >= 2 && inner[0] == '(' as u8 && inner[inner.len() - 1] == ')' as u8 {
+                                    inner = inner[1..inner.len() - 1];
+                                }
+                                while inner.len() > 0 && (inner[0] == ' ' as u8 || inner[0] == '\t' as u8) {
+                                    inner = inner[1..];
+                                }
+                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' as u8 || inner[inner.len() - 1] == '\t' as u8) {
+                                    inner = inner[0..inner.len() - 1];
+                                }
+                                if inner == "always" {
+                                    attrs.push(Attribute::const_only());
+                                } else if inner == "never" {
+                                    attrs.push(Attribute::no_const());
+                                } else {
+                                    // Unknown mode — store as Custom for
+                                    // diagnostics tooling instead of dropping.
+                                    attrs.push(Attribute::custom(self.ctx.intern_str("const")));
+                                }
+                            } else {
+                                // Bare `#[const]` — store as Custom.
+                                attrs.push(Attribute::custom(self.ctx.intern_str("const")));
+                            }
+                        }
                         "tuple_call" => attrs.push(Attribute::tuple_call()),
                         "packed" => {
                             // #[packed] (no arg) defaults to alignment 1.
