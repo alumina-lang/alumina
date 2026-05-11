@@ -48,7 +48,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "tuple_invoke" => lower_tuple_invoke(m, expr),
         "stop_iteration" => lower_stop_iteration(m),
         "with_span_of" => lower_with_span_of(m, expr),
-        "attributed" => lower_attributed(m, ir_type_args),
+        "attributed" => lower_attributed(m, ir_type_args, expr),
         "enum_variants" => lower_enum_variants(m, ir_type_args),
         "fields" => lower_fields(m, ir_type_args),
         "value_of" => lower_value_of(m, ir_type_args, expr),
@@ -783,28 +783,108 @@ fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     m.ctx.arena.alloc(tuple_lit) as &IrExpr
 }
 
-fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
-    // attributed<Args: Tuple>(name: &[u8]) -> &[fn(Args) -> Ret] — returns
-    // a slice of function pointers whose signature matches Args and whose
-    // declarations carry the named (Custom) attribute. Building this requires
-    // const-time slice allocation that aluminac doesn't support yet
-    // (tracked under const_alloc / const_bake). For now we return an empty
-    // slice so callers compile.
+fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // attributed<Args: Tuple>(name: &[u8]) -> (Type<I_0>, Type<I_1>, ...)
     //
-    // Sysroot's main use is `attributed::<()>("test")` for test discovery;
-    // aluminac has its own test runner (test_cases!() builtin), so the
-    // empty-slice return is workable for that path.
+    // Filters fn_defs whose attributes contain `Attribute::Custom(name)`,
+    // mono's each with the Args type-args, and returns a tuple of Type<I>
+    // descriptors built via the `type_descriptor_new` lang item. Mirrors
+    // alumina-boot's `intr_attributed`.
+    //
+    // Falls back to an empty void slice when the name isn't a string
+    // literal, when type_descriptor_new isn't registered, or when no items
+    // match — sysroot's typing.alu's `for const idx in 0..cases.len()`
+    // loop handles len()==0 cleanly.
     let void_ty = m.ctx.void_ty;
-    // Element type: a function pointer with no args, void return — the most
-    // generic stand-in. Caller's expected type may not match, but for the
-    // cfg(test) path this is unused.
-    let fn_ptr_ty = m.ctx.make_fn_ptr_ty(&[], void_ty);
-    let slice_ty = m.ctx.make_slice_ty(fn_ptr_ty, true);
-    let empty_str: &[u8] = "";
-    let result = IrExpr::void_expr(slice_ty);
-    result.tag = IrTag::StringLit;
-    result._data.lit.str_val = empty_str;
-    m.ctx.arena.alloc(result)
+
+    // Lookup helpers used by both the success and fallback paths.
+    let attr_name: &[u8] = if expr.args().len() >= 1 && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let lang_id_opt = m.ctx.get_lang_item("type_descriptor_new");
+
+    if attr_name.len() == 0usize || !lang_id_opt.is_some() {
+        return lower_empty_descriptor_slice(m, "attributed");
+    }
+    let td_def_opt = m.ctx.fn_defs.get(&lang_id_opt.unwrap());
+    if !td_def_opt.is_some() {
+        return lower_empty_descriptor_slice(m, "attributed");
+    }
+    let td_def = td_def_opt.unwrap();
+
+    // Tuple type-args from Args: when ir_type_args[0] is a Tuple, unpack;
+    // when () (void), use empty; otherwise treat as a single-arg list.
+    let args_ty: &[&IrTy] = &[];
+    if ir_type_args.len() >= 1 {
+        let a0 = ir_type_args[0];
+        if a0.tag == IrTyTag::Tuple {
+            args_ty = a0.elems();
+        } else if !a0.is_void() {
+            let buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
+            buf[0] = a0;
+            args_ty = buf;
+        }
+    }
+
+    let entries: Vector<&IrExpr> = Vector::new();
+    defer entries.free();
+    let elem_tys: Vector<&IrTy> = Vector::new();
+    defer elem_tys.free();
+
+    let it = m.ctx.fn_defs.iter();
+    loop {
+        let pair_opt = it.next();
+        if !pair_opt.is_some() { break; }
+        let pair = pair_opt.unwrap();
+        let def = pair.1;
+        // Match by Attribute::Custom(name).
+        let matched = false;
+        for ai in 0usize..def.attributes.len() {
+            let a = def.attributes[ai];
+            if a.tag == AttrTag::Custom {
+                let s = a.str_val();
+                if s.len() == attr_name.len() {
+                    let eq = true;
+                    for bi in 0usize..s.len() {
+                        if s[bi] != attr_name[bi] { eq = false; break; }
+                    }
+                    if eq { matched = true; break; }
+                }
+            }
+        }
+        if !matched { continue; }
+
+        // Mono the matched function with the Args type-args. The Fn ZST
+        // is the item type for the descriptor.
+        let fn_idx = m.mono_function(def, args_ty);
+        let ir_fn = &m.ctx.ir_functions[fn_idx];
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        let fn_ty = m.ctx.make_fn_ty(fn_ref);
+
+        // Mono type_descriptor_new<fn_ty> and emit a call.
+        let td_buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
+        td_buf[0] = fn_ty;
+        let td_idx = m.mono_function(td_def, td_buf);
+        let td_ir = &m.ctx.ir_functions[td_idx];
+        let td_ref = IrFnRef { id: td_ir.id, mangled_name: td_ir.mangled_name };
+        let entry = m.mk_call(td_ref, &[], td_ir.return_type);
+        entries.push(entry);
+        elem_tys.push(td_ir.return_type);
+    }
+
+    if entries.len() == 0usize {
+        return lower_empty_descriptor_slice(m, "attributed");
+    }
+
+    let elems_slice = m.ctx.arena.alloc_slice_copy::<&IrTy>(elem_tys.as_slice());
+    let tuple_ty = m.ctx.make_tuple_ty(elems_slice);
+    let items_slice = m.ctx.arena.alloc_slice_copy::<&IrExpr>(entries.as_slice());
+    let tuple_lit = IrExpr::void_expr(tuple_ty);
+    tuple_lit.tag = IrTag::TupleLit;
+    tuple_lit._data.block.items = items_slice;
+    m.ctx.arena.alloc(tuple_lit) as &IrExpr
 }
 
 fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
