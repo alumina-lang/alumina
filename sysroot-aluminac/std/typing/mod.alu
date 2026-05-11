@@ -225,6 +225,21 @@ impl Field<StructT, FieldT> {
     fn offset(self: &Field<StructT, FieldT>) -> usize {
         self._offset
     }
+
+    /// Returns the type descriptor for the field's type.
+    fn type(self: &Field<StructT, FieldT>) -> Type<FieldT> {
+        Type {}
+    }
+
+    /// Returns a pointer to the field within `inst` (the parent struct).
+    fn as_ptr(self: &Field<StructT, FieldT>, inst: &StructT) -> &FieldT {
+        ((inst as &u8) + self._offset) as &FieldT
+    }
+
+    /// Returns a mutable pointer to the field within `inst`.
+    fn as_mut_ptr(self: &Field<StructT, FieldT>, inst: &mut StructT) -> &mut FieldT {
+        ((inst as &mut u8) + self._offset) as &mut FieldT
+    }
 }
 
 #[docs(no_index)]
