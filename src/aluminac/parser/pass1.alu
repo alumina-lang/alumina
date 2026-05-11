@@ -412,6 +412,14 @@ impl Pass1 {
     }
 
     fn visit_mod_p1(self: &mut Pass1, node: Node) {
+        // Honour `#[cfg(...)]` on mod declarations. Without this, gated
+        // modules (e.g. embedded `#[cfg(all(test, test_std))] mod tests`)
+        // would be unconditionally registered and their inner test
+        // functions discovered by test_cases!() / attributed::<()>("test")
+        // regardless of cfg.
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
         let name = self.get_name(node);
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 

@@ -727,6 +727,19 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             }
         } else if arg == "--test" {
             options.test_mode = true;
+            // `--test` implies `--cfg test` so source-level
+            // `#[cfg(all(test, ...))]` gates evaluate correctly.
+            // Mirrors alumina-boot which auto-adds the same flag.
+            let has_test = false;
+            for i in 0usize..options.cfg_flags.len() {
+                if options.cfg_flags[i] == "test" {
+                    has_test = true;
+                    break;
+                }
+            }
+            if !has_test {
+                options.cfg_flags.push("test");
+            }
         } else if arg == "--help" || arg == "-h" {
             print_usage();
             exit(0i32);
