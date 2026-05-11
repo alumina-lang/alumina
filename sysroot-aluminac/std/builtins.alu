@@ -475,6 +475,7 @@ impl usize {
         std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &usize, hasher: &mut H) {
+        std::eprintln!("    usize::hash called self={}", *self);
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, std::mem::size_of::<usize>()));
     }
 }
@@ -953,3 +954,34 @@ type signed_of<T> = when std::typing::is_same::<T, u8>() {
 } else {
     T
 };
+
+// Compiler-evaluated typeop type aliases. Bodies are intentionally empty —
+// `resolve_named_type` in mono/lower.alu recognises the lang attribute and
+// computes the result type directly.
+
+#[lang(typeop_return_type_of)]
+type return_type_of<T>;
+
+#[lang(typeop_arguments_of)]
+type arguments_of<T>;
+
+#[lang(typeop_generic_args_of)]
+type generic_args_of<T>;
+
+#[lang(typeop_replace_generic_args_of)]
+type replace_generic_args_of<T, Args>;
+
+#[lang(typeop_pointer_with_mut_of)]
+type pointer_with_mut_of<T, Ptr>;
+
+#[lang(typeop_array_with_length_of)]
+type array_with_length_of<T, Arr>;
+
+#[lang(typeop_underlying_type_of)]
+type underlying_type_of<T>;
+
+#[lang(typeop_underlying_function_of)]
+type underlying_function_of<T>;
+
+#[lang(typeop_function_pointer_of)]
+type function_pointer_of<Args, Ret = ()>;

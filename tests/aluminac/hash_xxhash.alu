@@ -168,17 +168,29 @@ fn test_hash_of() -> i32 {
 }
 
 fn test_hash_with_seed() -> i32 {
-    use std::hash::hash_of_with_seed;
+    use std::hash::xxhash::Xxh64;
 
     let a: i32 = 42i32;
-    let h1 = hash_of_with_seed::<i32>(&a, 0u64);
-    let h2 = hash_of_with_seed::<i32>(&a, 1u64);
+    let h1 = {
+        let h = Xxh64::with_seed(0u64);
+        a.hash(&h);
+        h.finish()
+    };
+    let h2 = {
+        let h = Xxh64::with_seed(1u64);
+        a.hash(&h);
+        h.finish()
+    };
 
     // Different seeds should produce different hashes
     if h1 == h2 { return 60i32; }
 
     // Same seed, same hash
-    let h3 = hash_of_with_seed::<i32>(&a, 0u64);
+    let h3 = {
+        let h = Xxh64::with_seed(0u64);
+        a.hash(&h);
+        h.finish()
+    };
     if h1 != h3 { return 61i32; }
 
     0i32
