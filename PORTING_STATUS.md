@@ -270,7 +270,7 @@ The remaining compiler-side work clusters into three real items. Closing these u
   - Diagnose the `assert_eq!` → `eprintln!` → `static_format_args` → `$arg.fmt($fmt)` dispatch failure for Duration values.
   - Decide whether to keep `test_monotonish` (and any other thread::sleep users) gated under `#[cfg(threading)]` upstream, or to add a thread::sleep stub to sysroot-aluminac.
 - [TODO] **`std/fs/mod.alu`** + **`std/fs/unix.alu`** — file abstraction + Unix syscall layer. Depends on closure traits for iteration, libc.
-- [TODO] **`std/io/mod.alu`** + **`std/io/unix.alu`** — Read/Write traits + stdio. Depends on protocol design.
+- [PARTIAL] **`std/io/mod.alu`** + **`std/io/unix.alu`** — `io/unix.alu` is already byte-identical between sysroots (the OS-syscall layer needs no aluminac-specific changes). `io/mod.alu` (the Read/Write protocol layer) still needs work — gated on protocol-trait design and dyn dispatch in the sysroot.
 - [TODO] **`std/process/mod.alu`** + **`std/process/unix.alu`** — fork/exec/stdio plumbing. Depends on threads, closures, dyn traits.
 - [TODO] **`std/runtime/mod.alu`** — backtrace + panic runtime. Depends on debug info + dyn.
 - [TODO] **`std/runtime/backtrace.alu`** — uses libc + closures for frame iteration. Depends on debug info + closures verified.
