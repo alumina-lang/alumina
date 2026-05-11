@@ -817,6 +817,25 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
         ptr_width = "target_pointer_width=\"32\"";
     }
 
+    // target_env — sysroot/libc/bindings.alu's c_char and friends branch on
+    // `target_env = "gnu"` / `"musl"`. Without this, those typedefs fail to
+    // resolve and downstream uses silently become void.
+    let env: &[u8] = "";
+    if contains_subseq(triple, "gnu") {
+        env = "target_env=gnu";
+    } else if contains_subseq(triple, "musl") {
+        env = "target_env=musl";
+    } else if contains_subseq(triple, "android") {
+        env = "target_env=";
+    } else if contains_subseq(triple, "darwin") || contains_subseq(triple, "macos") {
+        // Apple platforms have no separate target_env; sysroot's cfgs
+        // for macos don't gate on target_env so leave it unset.
+        env = "";
+    }
+    if env.len() > 0 && !already_has_key(&options.cfg_flags, "target_env") {
+        options.cfg_flags.push(env);
+    }
+
     // target_endian — sysroot's `to_le` / `to_be` / etc. branch on this. Both
     // x86_64 and aarch64 (Linux) are little-endian; aarch64-be exists but is
     // not a target we currently support.

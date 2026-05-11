@@ -665,8 +665,25 @@ impl Pass2 {
                     } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
                         let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Function {
+                        // A function path used in type position resolves to
+                        // the function's zero-sized item type. Mirrors the
+                        // TypeIdentifier branch above for unqualified names.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
                     }
                 }
+                // Path didn't resolve to anything (or resolved to an item kind
+                // that can't appear in a type position). Without this
+                // diagnostic, callers like resolve_named_type would silently
+                // fall through to void_ty — see the underlying_type_of
+                // regression in PORTING_STATUS.md item #6.
+                let text = self.ctx.node_text(node);
+                let msg_prefix: &[u8] = "unresolved type path: ";
+                let buf = self.ctx.arena.alloc_slice::<u8>(msg_prefix.len() + text.len());
+                msg_prefix.copy_to_nonoverlapping(&buf[0]);
+                text.copy_to_nonoverlapping(&buf[msg_prefix.len()]);
+                self.ctx.error(node, buf as &[u8]);
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             NodeKind::GenericTypeWithTurbofish => {
