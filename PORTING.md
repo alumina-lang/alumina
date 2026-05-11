@@ -133,3 +133,36 @@ This project will run across many sessions and many context compactions. Treat y
 - If you find yourself simplifying a test to make it pass ("I'll come back and add the harder cases"), **stop and add the harder cases to a `[PARTIAL]` entry first.** Otherwise they vanish.
 - Periodically scan `[PARTIAL]` entries; if any have been sitting for many commits without progress, surface that — it may be that the design is wrong, not that the work is hard.
 - "Continue without asking" applies between slices, not within them. If a slice itself reveals a real ambiguity — a design choice with non-obvious tradeoffs — that's a legitimate stop, not laziness.
+
+## Stay-on-track notes (lessons from prior sessions)
+
+Specific failure modes observed in this project. Read before starting work.
+
+### Verify framings against alumina-boot, not against `PORTING_STATUS.md`
+
+`PORTING_STATUS.md` is descriptive of past investigations — not authoritative, and entries go stale. Several entries here have turned out to be wrong:
+
+- `enum_variants` / `fields` / `attributed` were tagged "blocked on `const_alloc`" across multiple sessions. They're not — alumina-boot's `intr_enum_variants` is a plain `array_of(...)` expression of lang-item calls, no heap. Verified by reading `src/alumina-boot/src/ir/mono/intrinsics.rs`.
+- DWARF was tagged `[TODO]` for an unknown number of sessions. Aluminac actually has DWARF emission via `LLVMDIBuilder*` calls. Verified by grepping `src/aluminac/llvm.alu` and `codegen/mod.alu`.
+
+**Rule:** before you adopt a framing like "X is blocked on Y" from a status entry, spend 5 minutes verifying against the actual source. If the status entry is wrong, fix it in the same commit as your work.
+
+### Recognize structural-asymmetry signals
+
+If you find yourself adding a "fifth branch" to handle a new shape of input that the existing four don't cover, **stop**. Two or more patches in a row to the same dispatch site usually means the underlying model is asymmetric and the right fix is upstream of where you're touching.
+
+Concrete example from 2026-05-11: the dyn vtable builder has four branches matching `def.generic_params.len()` against combinations of `impl_args.len()` and `proto_non_self_count`. Each new case "needed another branch". Real cause was that `pass2.alu`'s two FnDef-building paths produce structurally different `generic_params` shapes (one includes Self, the other doesn't). A fifth branch wouldn't have fixed it; uniform construction will.
+
+### When the obvious next slice is large, the obvious next slice is the slice
+
+Don't drift into reading 6 different `[PARTIAL]` entries looking for a smaller one. If the headline blocker is large, read alumina-boot's solution shape first, then attempt it. If genuinely stuck, ask the user a specific design question rather than swapping to an unrelated small slice and shipping a `feat:` commit that doesn't move the headline.
+
+Symptoms of slice-shopping drift: reading several modules in a row, opening files just to gauge size, multiple "let me check if this works" experiments without committing. Each minute spent here is a minute not spent on the actual blocker.
+
+### Don't propagate prose between sessions without verifying it
+
+Long-form prose ages worst. If an entry's first sentence says "alumina-boot does X, aluminac does Y" — that's a snapshot, possibly wrong now. Periodically (e.g. when touching an adjacent entry) re-read for staleness. The "Highest-leverage remaining work" section in `PORTING_STATUS.md` is meant to be the high-signal summary; if it disagrees with a per-feature entry, the per-feature entry is probably the stale one.
+
+### Architectural debt should be tracked, not patched around forever
+
+Some gaps are bandage-able with targeted fixes (the 2026-05-11 type_map snapshot/restore). Bandages buy time but compound: the same architectural shape will surface in new symptoms. When you ship a bandage, **also write an entry naming the underlying architectural debt** so the next session can decide between another bandage and the real fix. The "Highest-leverage remaining work" section is the right home for these — item #4 there is the type_map example.

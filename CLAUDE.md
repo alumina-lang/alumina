@@ -45,6 +45,34 @@ If a gate fails once: diagnose and fix, don't escalate. Escalate only after mult
 
 Three sessions in a row I've stopped after writing a recap. The recap is a symptom — the failure is the stop. Write a recap if you must, then **immediately pick the next slice and keep going**. Never let composing a status paragraph become the last thing in a turn.
 
+## Stay on the headline blocker — don't drift into slice-shopping
+
+The mirror failure mode of stopping is *drifting*: instead of stopping cleanly, you read 6 different `[PARTIAL]` entries trying to find a small contained slice, then ship something unrelated to the headline. This produces a long commit log that doesn't move the needle. Symptoms observed on this project:
+
+- Opening multiple files just to gauge slice size.
+- Multiple "let me check if this works" experiments without committing.
+- Several `docs:`-only commits in a row (status-shuffling without code change).
+- Two consecutive sessions where the headline blocker (e.g. `Result::unwrap` end-to-end) didn't move but 10+ smaller commits landed.
+
+**Rule:** if the headline blocker from the last session is still the headline blocker, the right slice is the *next step* toward it — even if that step is "read alumina-boot's solution shape for an hour" or "ask the user a specific design question". A `feat:` commit for an unrelated minor parity item is not progress on the headline. It's drift.
+
+If the next step on the headline truly requires user judgment (a design choice with non-obvious tradeoffs), **ask the user with a specific question** — don't swap to a small unrelated slice. Asking ≠ stopping.
+
+## When patching twice in the same place, stop and look up
+
+If you find yourself adding a second branch, special case, or fallback to the same dispatch site within a few sessions, **stop**. That's a strong signal the underlying model is wrong-shaped and the right fix is upstream of where you're patching. Add a structural entry to `PORTING_STATUS.md` describing the asymmetry; don't ship the third branch.
+
+Concrete trigger (2026-05-11): the dyn vtable build at `mono/lower.alu` line 3821 had four branches matching `def.generic_params.len()` against `impl_args.len() + proto_non_self_count` combinations. Mid-session I tried to add a fifth. Reverting and looking at *why* the existing branches each needed to be different revealed the real cause: `pass2.alu`'s two FnDef-building paths produce asymmetric `generic_params` shapes. The fifth branch wouldn't have fixed anything; a single uniform construction will.
+
+## Verify entries in `PORTING_STATUS.md` against alumina-boot, not against the entry's prose
+
+Status entries go stale. Confirmed-stale examples in this file's history:
+
+- "`enum_variants` needs `const_alloc`" — wrong. alumina-boot's `intr_enum_variants` is a plain `array_of(...)` of lang-item calls. No heap involvement. (Read `src/alumina-boot/src/ir/mono/intrinsics.rs` if in doubt.)
+- "Aluminac emits no DWARF" — wrong. `LLVMDIBuilder*` is wired in `llvm.alu` + `codegen/mod.alu`. The `-g` flag is documented in `--help`.
+
+Before you adopt a framing like "X is blocked on Y" from an existing entry, spend 5 minutes verifying against the actual source. If the entry is wrong, fix it in the same commit as your work — that's how staleness gets removed instead of compounding.
+
 ## Commands
 
 - `make` — build alumina-boot
