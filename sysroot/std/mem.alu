@@ -881,6 +881,68 @@ fn free<T>(a: &mut T) {
     }
 }
 
+/// Free-function aliases for slice operations. The canonical sysroot form
+/// is `slice::empty()` / `slice::alloc(len)` etc. — methods on the
+/// lang(slice) struct. These aliases parameterise on the element type
+/// (rather than the pointer-to-element). Both forms compile under
+/// alumina-boot; aluminac codepaths historically used the free-function
+/// shape.
+
+/// Empty mutable slice. Equivalent to `slice::empty::<&mut T>()`.
+#[inline]
+fn slice_empty<T>() -> &mut [T] {
+    slice::empty::<&mut T>()
+}
+
+/// Construct a mutable slice from a raw pointer + length.
+#[inline]
+fn slice_from_raw<T>(ptr: &mut T, len: usize) -> &mut [T] {
+    slice::from_raw::<&mut T>(ptr, len)
+}
+
+/// Construct an immutable slice from a raw pointer + length.
+#[inline]
+fn slice_from_raw_const<T>(ptr: &T, len: usize) -> &[T] {
+    slice::from_raw::<&T>(ptr, len)
+}
+
+/// Heap-allocate a slice of `T`.
+#[inline]
+fn slice_alloc<T>(len: usize) -> &mut [T] {
+    slice::alloc::<T>(len)
+}
+
+/// Heap-allocate a zero-initialised slice of `T`.
+#[inline]
+fn slice_alloc_zeroed<T>(len: usize) -> &mut [T] {
+    slice::alloc_zeroed::<T>(len)
+}
+
+/// Resize a heap-allocated slice in place.
+#[inline]
+fn slice_realloc<T>(data: &mut [T], new_len: usize) -> &mut [T] {
+    slice::realloc::<T>(data, new_len)
+}
+
+/// Free a heap-allocated slice.
+#[inline]
+fn slice_free<T>(data: &mut [T]) {
+    data.free();
+}
+
+/// Free a heap-allocated single object. Aluminac-historical name for `free`.
+#[inline]
+fn free_obj<T>(a: &mut T) {
+    free::<T>(a)
+}
+
+/// Raw memcpy wrapper. Untyped (byte) copy, semantics identical to
+/// `libc::memcpy`.
+#[inline]
+fn memcpy(dst: &mut void, src: &void, n: usize) {
+    libc::memcpy(dst, src, n);
+}
+
 /// Memory size of for a given type in bytes.
 ///
 /// ## Example
