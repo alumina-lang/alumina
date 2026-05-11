@@ -238,3 +238,19 @@ extern "intrinsic" fn with_span_of<T, E>(expr: E) -> E;
     /// Call a builtin C "type function" (e.g. sizeof)
     extern "intrinsic" fn codegen_type_func<T, Ret>(name: &[u8]) -> T;
 }
+
+#[cfg(not(boot))]
+{
+    // Aluminac-only intrinsics. The LLVM-backed compiler exposes these
+    // directly; alumina-boot doesn't need them since it produces C and
+    // dispatches through codegen_func / codegen_const / codegen_type_func
+    // (see the cfg(boot) block above).
+
+    /// Call an LLVM intrinsic by name. Variadic arguments are passed
+    /// through to the intrinsic's typed signature.
+    extern "intrinsic" fn llvm<Ret>(name: &[u8], ...) -> Ret;
+
+    /// Allocate `size` bytes on the current function's stack. The returned
+    /// pointer's lifetime is the enclosing function call.
+    extern "intrinsic" fn stack_alloc<T>(size: usize) -> &mut T;
+}
