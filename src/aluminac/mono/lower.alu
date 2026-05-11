@@ -30,6 +30,13 @@ struct Mono {
     // Compile-time constant replacements for static for loop variables.
     // When a local ID is in this map, lower_variable produces a literal instead of a Local ref.
     const_replacements: HashMap<usize, ConstValue>,
+    // Mono cache_key of the function whose body we are currently lowering.
+    // Nested fns (`fn` declared inside another fn's body) mix this into their
+    // own cache key so that each outer instantiation produces its own mono of
+    // the nested fn — necessary because the nested fn's body resolves outer
+    // placeholders through type_map, and a single shared mono would lock in
+    // whichever outer's types arrived first.
+    current_mono_key: u64,
 }
 
 impl Mono {
@@ -44,6 +51,7 @@ impl Mono {
             expected_type: ctx.void_ty,
             suppress_field_error: false,
             const_replacements: HashMap::new(),
+            current_mono_key: 0u64,
         }
     }
 
@@ -57,6 +65,7 @@ impl Mono {
             current_fn_name: "",
             expected_type: ctx.void_ty,
             suppress_field_error: false,
+            current_mono_key: 0u64,
         }
     }
 
@@ -839,6 +848,15 @@ impl Mono {
 
 
         let cache_key = hash_mono_key(def.id, type_args);
+        // Nested fns (declared inside another fn's body) inherit the outer
+        // fn's generic context lexically. Mix the outer mono's cache_key
+        // into the nested fn's so that each outer instantiation produces
+        // its own copy — otherwise the first mono of the nested fn locks
+        // in whichever placeholders the outer happened to bind first.
+        if self.ctx.local_fn_ids.get(&def.id._value).is_some() {
+            cache_key = cache_key ^ self.current_mono_key;
+            cache_key = cache_key * 1099511628211u64;
+        }
         let cached = self.ctx.fn_cache.get(&cache_key);
         if cached.is_some() {
             self.current_fn_name = prev_fn_name;
@@ -859,6 +877,28 @@ impl Mono {
         let prev_local_defs = self.local_defs;
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
+
+        // Snapshot any *prior* type_map bindings for this fn's generic
+        // params. After body lowering we restore the entries that were
+        // bound before, so a recursive mono of the same function with
+        // different type_args (e.g. `Result::unwrap` re-entering itself
+        // through `?` in `format_integer`) doesn't leave the outer
+        // context's bindings overwritten. Entries that were *unbound*
+        // before stay set on exit — the dispatcher paths rely on that
+        // leaky-context behavior to fill in method-only generics that
+        // no caller ever binds explicitly.
+        let saved_gp = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
+        let had_gp = self.ctx.arena.alloc_slice::<bool>(def.generic_params.len());
+        for gi in 0usize..def.generic_params.len() {
+            let gp_id = def.generic_params[gi].id._value;
+            let old = self.type_map.get(&gp_id);
+            if old.is_some() {
+                saved_gp[gi] = old.unwrap();
+                had_gp[gi] = true;
+            } else {
+                had_gp[gi] = false;
+            }
+        }
 
         // Set up generic substitution
         if def.generic_params.len() > 0 && type_args.len() > 0 {
@@ -947,6 +987,11 @@ impl Mono {
         self.ctx.ir_functions.push(placeholder);
         self.ctx.fn_cache.insert(cache_key, idx);
 
+        // Update the mono-context fingerprint so nested fns we encounter
+        // while lowering the body key their cache against this mono.
+        let prev_mono_key = self.current_mono_key;
+        self.current_mono_key = cache_key;
+
         // Lower body (may recursively call mono_function)
         let body: Option<&IrExpr> = if def.body.is_some() {
             let body_ir = self.lower_expr_coerced(def.body.unwrap(), self.return_type);
@@ -955,6 +1000,17 @@ impl Mono {
         } else {
             Option::none()
         };
+
+        self.current_mono_key = prev_mono_key;
+
+        // Restore the *previously-bound* type_map entries (see snapshot
+        // above). Entries that had no prior binding are left set to whatever
+        // this mono installed, to preserve the leaky-context behavior.
+        for gi in 0usize..def.generic_params.len() {
+            if had_gp[gi] {
+                self.type_map.insert(def.generic_params[gi].id._value, saved_gp[gi]);
+            }
+        }
 
         // Collect local defs
         let local_defs_slice = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice());

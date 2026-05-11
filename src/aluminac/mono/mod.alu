@@ -104,6 +104,11 @@ struct MonoCtx {
     // `&VTABLE[0]` (the vtable pointer) for that (impl, proto) pair. Reused across
     // multiple `&T as &dyn Proto` coercions for the same T/Proto.
     dyn_vtable_cache: HashMap<u64, &IrExpr>,
+
+    // Function ids that were declared inside another function's body. Their
+    // mono cache is keyed against the outer mono's cache_key so that each
+    // outer instantiation produces its own copy — see `mono_function`.
+    local_fn_ids: HashMap<usize, bool>,
 }
 
 impl MonoCtx {
@@ -181,6 +186,7 @@ impl MonoCtx {
             proto_method_self_id: HashMap::new(),
             mono_stack: Vector::new(),
             dyn_vtable_cache: HashMap::new(),
+            local_fn_ids: HashMap::new(),
         };
 
         // Build lookup tables
@@ -260,6 +266,27 @@ impl MonoCtx {
                             self.slice_new_fn_id = fn_id;
                         }
                     }
+                }
+            }
+        }
+
+        // Pass 3: identify nested fns (`fn` declared inside another fn's
+        // body). Pass1 places these in a Block-kind scope; record the
+        // function ids so `mono_function` can key its cache against the
+        // outer mono. This is what keeps `unwrap_panic_err` (the nested
+        // helper in `Result::unwrap`) from getting reused across distinct
+        // instantiations of the outer fn.
+        let n_scopes = self.scopes.scopes.len();
+        for sidx in 0usize..n_scopes {
+            if self.scopes.scopes[sidx].kind != ScopeKind::Block {
+                continue;
+            }
+            for pair in self.scopes.scopes[sidx].items {
+                let kind = pair.1.kind;
+                if kind.tag == NamedItemTag::Function {
+                    self.local_fn_ids.insert(kind.id()._value, true);
+                } else if kind.tag == NamedItemTag::Method {
+                    self.local_fn_ids.insert(kind.id2()._value, true);
                 }
             }
         }
