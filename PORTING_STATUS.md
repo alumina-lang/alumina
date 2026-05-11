@@ -265,7 +265,7 @@ The remaining compiler-side work clusters into three real items. Closing these u
 
 - [TODO] **`std/fmt/ryu/`** — float formatting (10 files). Needs full bit-twiddling intrinsics, when-dispatch, and large const tables. Net-new for aluminac.
 - [TODO] **`std/panicking.alu`** — sysroot uses `panic!` macro + setjmp/longjmp via `jmp_buf`; aluminac has a different shape. Reconcile.
-- [DONE] **`std/time.alu`** — unified. Both sysroots share byte-identical content. The aluminac-specific `tests/aluminac/time_basic.alu` was updated to use sysroot's API (field access on `Duration.secs` / `Duration.nanos`, `Instant::duration_since` instead of `since` / `elapsed`). The custom `total_millis` / `total_micros` aluminac-specific helpers became inline arithmetic in the test (small enough not to need accessor methods on `Duration`).
+- [TODO] **`std/time.alu`** — sysroot uses `clock_gettime` directly; aluminac has minimal `Duration`. Depends on libc bindings.
 - [TODO] **`std/fs/mod.alu`** + **`std/fs/unix.alu`** — file abstraction + Unix syscall layer. Depends on closure traits for iteration, libc.
 - [TODO] **`std/io/mod.alu`** + **`std/io/unix.alu`** — Read/Write traits + stdio. Depends on protocol design.
 - [TODO] **`std/process/mod.alu`** + **`std/process/unix.alu`** — fork/exec/stdio plumbing. Depends on threads, closures, dyn traits.
