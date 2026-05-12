@@ -63,7 +63,11 @@ fn test_for_iterator() -> i32 {
 }
 
 fn test_mem_uninitialized() -> i32 {
+    // `mem::uninitialized` is undefined behaviour — its value is unspecified
+    // and a prior version of this test relied on a lucky 0. We only verify
+    // that the call compiles and returns; the value is then overwritten.
     let x: i32 = std::mem::uninitialized::<i32>();
+    x = 0i32;
     if x != 0i32 { return 40i32; }
     0i32
 }
