@@ -22,6 +22,7 @@ struct Pass1 {
     in_container: bool,   // inside struct/enum/protocol/impl
     current_enum_id: Option<Id>,
     impl_generic_param_ids: &[Id],
+    impl_generic_param_names: &[&[u8]],
     skip_item: bool,      // set by parse_attributes when #[cfg] evaluates to false
 }
 
@@ -33,6 +34,7 @@ impl Pass1 {
             in_container: false,
             current_enum_id: Option::none(),
             impl_generic_param_ids: &[],
+            impl_generic_param_names: &[],
             skip_item: false,
         }
     }
@@ -463,6 +465,7 @@ impl Pass1 {
             attributes: attributes,
             is_method: self.in_container,
             impl_generic_param_ids: self.impl_generic_param_ids,
+            impl_generic_param_names: self.impl_generic_param_names,
         });
 
         // Visit generic params and parameters in child scope
@@ -633,6 +636,7 @@ impl Pass1 {
         let prev = self.current_scope;
         let prev_container = self.in_container;
         let prev_impl_gp = self.impl_generic_param_ids;
+        let prev_impl_gp_names = self.impl_generic_param_names;
         self.current_scope = child_scope;
         self.in_container = true;
 
@@ -640,16 +644,24 @@ impl Pass1 {
         if !type_args.is_none() {
             // Visit to register generic params in scope
             self.visit_node(type_args.unwrap());
-            // Collect the IDs of the generic params we just registered
+            // Collect the IDs (and names) of the generic params we just
+            // registered. Multiple impl blocks of the same struct write into
+            // the SAME (struct-shared) scope, so later impls overwrite K /
+            // V / H. Capturing the ids+names per-impl lets pass2 rebind the
+            // correct ones in each method's function scope before parsing
+            // its types.
             self.impl_generic_param_ids = self.collect_generic_param_ids(type_args.unwrap());
+            self.impl_generic_param_names = self.collect_generic_param_names(type_args.unwrap());
         } else {
             self.impl_generic_param_ids = &[];
+            self.impl_generic_param_names = &[];
         }
         self.visit_children_by_field(node, FieldKind::Body);
 
         self.current_scope = prev;
         self.in_container = prev_container;
         self.impl_generic_param_ids = prev_impl_gp;
+        self.impl_generic_param_names = prev_impl_gp_names;
     }
 
     fn visit_type_def_p1(self: &mut Pass1, node: Node) {
@@ -963,6 +975,37 @@ impl Pass1 {
             return &[];
         }
         self.ctx.arena.alloc_slice_copy::<Id>(ids.as_slice())
+    }
+
+    /// Parallel to `collect_generic_param_ids` but returns the source-level
+    /// names (e.g. ["K", "V", "H"]). Pass2's build_function uses these to
+    /// re-bind each impl's K/V/H in the method's function scope, so a later
+    /// impl block (which overwrites K in the struct's shared scope) doesn't
+    /// steer this method's type references to the wrong id.
+    fn collect_generic_param_names(self: &mut Pass1, type_args_node: Node) -> &[&[u8]] {
+        let names: Vector<&[u8]> = Vector::new();
+        defer names.free();
+
+        let cursor = type_args_node.walk();
+        defer cursor.free();
+        for child in children_by!(type_args_node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if !placeholder.is_none() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+
+        if names.len() == 0 {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(names.as_slice())
     }
 
     fn visit_parameter_p1(self: &mut Pass1, node: Node) {

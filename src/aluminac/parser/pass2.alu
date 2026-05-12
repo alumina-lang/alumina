@@ -294,6 +294,25 @@ impl Pass2 {
     }
 
     fn build_function(self: &mut Pass2, node: Node, pending: &PendingFunction) {
+        // For methods inside an `impl Foo<K, V, ...>` block, re-register the
+        // impl's generic params in this function's scope so name lookups bind
+        // to THIS impl's ids. The struct's shared scope only retains whichever
+        // impl was visited last in pass1 (add_item overwrites by name); without
+        // rebinding here, `key: K` in an earlier impl's method would resolve
+        // to a later impl's K id and mono substitution would pick up the wrong
+        // type. Function scope shadows impl/struct scope on lookup, so this
+        // is sufficient.
+        if pending.impl_generic_param_ids.len() > 0
+            && pending.impl_generic_param_ids.len() == pending.impl_generic_param_names.len() {
+            for ig in 0usize..pending.impl_generic_param_ids.len() {
+                self.ctx.scopes.add_item(pending.scope_idx, NamedItem {
+                    name: pending.impl_generic_param_names[ig],
+                    kind: NamedItemKind::generic_param(pending.impl_generic_param_ids[ig]),
+                    span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                });
+            }
+        }
+
         // Parse generic parameters
         let fn_generic_params = self.parse_generic_params(node, pending.scope_idx);
 

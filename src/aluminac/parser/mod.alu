@@ -87,6 +87,12 @@ struct PendingFunction {
     attributes: &[Attribute],
     is_method: bool,
     impl_generic_param_ids: &[Id],
+    // Names parallel to impl_generic_param_ids. Captured at pass1 visit time
+    // so pass2's build_function can re-register each impl's K/V/H in the
+    // method's function scope before parsing types. Without this, a later
+    // impl block of the same struct (which overwrites K in the struct's
+    // shared scope) would steer this method's `K` reference to the WRONG id.
+    impl_generic_param_names: &[&[u8]],
 }
 
 struct PendingStruct {
