@@ -122,10 +122,18 @@ fn test_heap_extended() -> i32 {
 }
 
 fn test_iter_partition() -> i32 {
+    // `.partition()` was an aluminac-specific iterator extension; sysroot's
+    // iter.alu doesn't expose it. Express the same semantics with two
+    // filter().to_vector() walks so we keep the coverage of iter + Vector
+    // collect across both predicate branches.
     let arr: [i32; 6] = [1i32, 2i32, 3i32, 4i32, 5i32, 6i32];
-    let (evens, odds) = arr[..].iter()
-        .partition(|x: i32| -> bool { x % 2i32 == 0i32 });
+    let evens = arr[..].iter()
+        .filter(|x: i32| -> bool { x % 2i32 == 0i32 })
+        .to_vector();
     defer evens.free();
+    let odds = arr[..].iter()
+        .filter(|x: i32| -> bool { x % 2i32 != 0i32 })
+        .to_vector();
     defer odds.free();
     if evens.len() != 3usize { return 40i32; }
     if odds.len() != 3usize { return 41i32; }
@@ -133,12 +141,16 @@ fn test_iter_partition() -> i32 {
 }
 
 fn test_iter_min_max_by() -> i32 {
+    // sysroot's iter.alu exposes Comparable-based `.min()` / `.max()` rather
+    // than the closure-taking `min_by` / `max_by` aluminac used to carry.
+    // The closure-based forms still exercise the iterator dispatch shape, but
+    // for unified-sysroot parity prefer the natural-ordering form.
     let arr: [i32; 4] = [3i32, 1i32, 4i32, 2i32];
 
-    let m = arr[..].iter().min_by(|a: &i32, b: &i32| -> std::cmp::Ordering { a.compare(b) });
+    let m = arr[..].iter().min();
     if m.unwrap() != 1i32 { return 50i32; }
 
-    let m2 = arr[..].iter().max_by(|a: &i32, b: &i32| -> std::cmp::Ordering { a.compare(b) });
+    let m2 = arr[..].iter().max();
     if m2.unwrap() != 4i32 { return 51i32; }
 
     0i32

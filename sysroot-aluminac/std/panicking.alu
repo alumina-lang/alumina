@@ -57,6 +57,32 @@ mod internal {
     /// matches the prior silent-void behaviour.
     struct PanicFormatter {}
 
+    /// Helper for the `assert_eq!` macro. The macro defers to this function so
+    /// that aluminac's "first param wins" type-arg inference for `T` propagates
+    /// the LHS's concrete type to the RHS at re-lowering time. Without this,
+    /// inline calls like `assert_eq!(x, Option::none())` would lower the RHS
+    /// in a void expected_type context and silently bind Option's T to void.
+    #[cold]
+    fn assert_eq_helper<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) {
+        use std::fmt::debug;
+        if lhs != rhs {
+            std::io::eprint!("panic at {}:{}:{}: ", file, line, column);
+            std::io::eprintln!("assertion failed: {} != {}", lhs.debug(), rhs.debug());
+            panic_with_hook(file, line, column);
+        }
+    }
+
+    /// Mirror of [assert_eq_helper] for `assert_ne!`.
+    #[cold]
+    fn assert_ne_helper<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) {
+        use std::fmt::debug;
+        if lhs == rhs {
+            std::io::eprint!("panic at {}:{}:{}: ", file, line, column);
+            std::io::eprintln!("assertion failed: {} == {}", lhs.debug(), rhs.debug());
+            panic_with_hook(file, line, column);
+        }
+    }
+
     fn panic_with_hook(file: &[u8], line: i32, column: i32) -> ! {
         if std::mem::replace::<bool>(&PANICKING, true) {
             std::intrinsics::trap();

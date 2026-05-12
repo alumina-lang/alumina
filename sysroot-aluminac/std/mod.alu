@@ -23,36 +23,24 @@ macro assert($cond) {
     }
 }
 
+// `assert_eq!` / `assert_ne!` route through `internal::assert_*_helper`
+// functions so that aluminac's "first param wins" type-arg inference
+// propagates the LHS's concrete type to the RHS at re-lowering time.
+//
+// The previous inline form (`let _a = $a; let _b = $b; …`) lacked
+// bidirectional inference through `let _b = $b`: generic-return calls
+// like `Option::none()` (no args, no context) silently bound their T
+// to void, the RHS came out as `Option<void>`, and the later debug-fmt
+// chain tripped over `self._inner.fmt(...)` on an unresolved tuple.
+//
+// Sysroot uses the same fn-helper pattern (`std::internal::assert_eq`).
+
 macro assert_eq($a, $b) {
-    {
-        use std::fmt::debug;
-        let _a = $a;
-        let _b = $b;
-        if _a != _b {
-            let _file: &[u8] = file!();
-            let _line: i32 = line!();
-            let _col: i32 = column!();
-            eprint!("panic at {}:{}:{}: ", _file, _line, _col);
-            eprintln!("assertion failed: {} != {}", _a.debug(), _b.debug());
-            panicking::internal::panic_with_hook(_file, _line, _col);
-        }
-    }
+    panicking::internal::assert_eq_helper(file!(), line!(), column!(), $a, $b);
 }
 
 macro assert_ne($a, $b) {
-    {
-        use std::fmt::debug;
-        let _a = $a;
-        let _b = $b;
-        if _a == _b {
-            let _file: &[u8] = file!();
-            let _line: i32 = line!();
-            let _col: i32 = column!();
-            eprint!("panic at {}:{}:{}: ", _file, _line, _col);
-            eprintln!("assertion failed: {} == {}", _a.debug(), _b.debug());
-            panicking::internal::panic_with_hook(_file, _line, _col);
-        }
-    }
+    panicking::internal::assert_ne_helper(file!(), line!(), column!(), $a, $b);
 }
 
 macro debug_assert($cond) {
