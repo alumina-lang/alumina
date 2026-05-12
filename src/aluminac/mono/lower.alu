@@ -4418,6 +4418,24 @@ impl Mono {
         if result as &void as usize != 0 {
             return result;
         }
+
+        // Auto-take-ref before erroring: callee expects `&T` / `&mut T`,
+        // caller passed a value of T. Sysroot relies on this (e.g.
+        // `slice.copy_to_nonoverlapping(deque._data[0])` — same shape that
+        // alumina-boot accepts implicitly). Lives in check_and_coerce
+        // (call-site arg coercion) rather than the generic try_coerce
+        // path so it doesn't fire in arbitrary IR-equality contexts where
+        // taking address of a value would change semantics. Only fires
+        // when val is an lvalue we can address.
+        if expected_ty.tag == IrTyTag::Pointer && val.ty.tag != IrTyTag::Pointer
+            && expected_ty.inner() == val.ty {
+            if val.tag == IrTag::Local || val.tag == IrTag::Param
+                || val.tag == IrTag::FieldAccess || val.tag == IrTag::Index
+                || val.tag == IrTag::Deref {
+                return self.mk_ref(val, expected_ty.is_const());
+            }
+        }
+
         let expected_name = self.ir_type_name(expected_ty);
         let got_name = self.ir_type_name(val.ty);
         self.emit_diag(diagnostics::CodeDiagnostic::type_mismatch(

@@ -58,26 +58,29 @@ fn test_hashset_extended() -> i32 {
 }
 
 fn test_deque_extended() -> i32 {
-    // Test from_slice
+    // sysroot's Deque doesn't expose `get(idx)` / `front()` / `back()`
+    // accessors (those were aluminac-local). Test the same coverage via
+    // pop_front / pop / iter to keep exercising the unified Deque end-to-end.
     let arr: [i32; 4] = [1i32, 2i32, 3i32, 4i32];
     let d: Deque<i32> = Deque::from_slice(arr[..]);
     defer d.free();
     if d.len() != 4usize { return 20i32; }
 
-    // Test get
-    let v = d.get(0usize);
-    if !v.is_some() { return 21i32; }
-    if v.unwrap() != 1i32 { return 22i32; }
-    let v2 = d.get(3usize);
-    if v2.unwrap() != 4i32 { return 23i32; }
-    let v3 = d.get(10usize);
-    if v3.is_some() { return 24i32; }
-
-    // Test front/back
-    let f = d.front();
-    if f.unwrap() != 1i32 { return 25i32; }
-    let b = d.back();
-    if b.unwrap() != 4i32 { return 26i32; }
+    // front via pop_front (consumes)
+    let f = d.pop_front();
+    if !f.is_some() { return 21i32; }
+    if f.unwrap() != 1i32 { return 22i32; }
+    // back via pop (consumes)
+    let b = d.pop();
+    if !b.is_some() { return 23i32; }
+    if b.unwrap() != 4i32 { return 24i32; }
+    if d.len() != 2usize { return 25i32; }
+    // remaining: [2, 3]
+    let m1 = d.pop_front();
+    if m1.unwrap() != 2i32 { return 26i32; }
+    let m2 = d.pop_front();
+    if m2.unwrap() != 3i32 { return 27i32; }
+    if !d.pop_front().is_none() { return 28i32; }
 
     0i32
 }
