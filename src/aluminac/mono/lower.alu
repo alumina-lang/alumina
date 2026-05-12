@@ -2253,10 +2253,7 @@ impl Mono {
             }
         }
 
-        // Build the if-else chain from last non-default arm to first
-        let else_expr: Option<&IrExpr> = default_body;
-
-        // Collect non-default arms in order, then fold right-to-left
+        // Count non-default arms
         let non_default_count: usize = 0;
         for i in 0usize..arms.len() {
             if arms[i].pattern.len() > 0 {
@@ -2264,8 +2261,35 @@ impl Mono {
             }
         }
 
-        // Process arms in reverse order to build nested if-else
+        // Build the if-else chain from last non-default arm to first.
+        //
+        // If no explicit default arm exists, peel off the last non-default
+        // arm and use its body unconditionally as the deepest else. This
+        // preserves the LLVM-switch semantics where omitting a default on
+        // an exhaustive switch yields the value-producing arms, and avoids
+        // emitting an if with `else: None` (gen_if would return `undef` on
+        // the missing branch, breaking phi merging at the enclosing if).
+        let else_expr: Option<&IrExpr> = default_body;
         let arm_idx: usize = non_default_count;
+        if default_body.is_none() && non_default_count > 0 {
+            // Find the LAST non-default arm and use its body as the
+            // unconditional tail. We stop iterating one arm earlier.
+            let last_non_default: usize = 0;
+            let count: usize = 0;
+            for i in 0usize..arms.len() {
+                if arms[i].pattern.len() > 0 {
+                    if count == non_default_count - 1 {
+                        last_non_default = i;
+                    }
+                    count = count + 1;
+                }
+            }
+            else_expr = Option::some(self.lower_expr(arms[last_non_default].body));
+            arm_idx = non_default_count - 1;
+        }
+
+        // Process remaining non-default arms in reverse order to build
+        // nested if-else
         while arm_idx > 0 {
             arm_idx = arm_idx - 1;
 
@@ -2528,64 +2552,23 @@ impl Mono {
             block_stmts[2] = ir_while;
             self.mk_block_void(block_stmts)
         } else if expr.tag == ExprTag::Switch {
+            // Always desugar to an if-else chain with `==` comparisons.
+            // Matches alumina-boot's semantics: switch is sugar for an
+            // ordered series of equality tests. LLVM's optimizer recognises
+            // the pattern and converts to a jump table when beneficial, so
+            // we don't lose codegen quality vs an explicit LLVM switch.
+            //
+            // The earlier integer-switch fast path extracted pattern values
+            // into a u64 table and silently zeroed any pattern shape it
+            // didn't recognise (const-references, enum variants in some
+            // contexts, etc.). That meant `switch x { libc::DT_DIR => Dir,
+            // libc::DT_REG => Reg }` collapsed both const-ref arms onto
+            // case 0 and the real `d_type=4` fell to the default — the
+            // root cause of the self-host bootstrap regression on the
+            // fs/mod.alu swap. Unifying through if-else removes the table
+            // extraction entirely and patterns just get compared as values.
             let ir_value = self.lower_expr(expr.lhs());
-
-            // Check if the discriminant type supports LLVM switch (integer types only)
-            let is_int_switch = (ir_value.ty.tag == IrTyTag::Builtin && (ir_value.ty.builtin().is_integer() || ir_value.ty.builtin() == BuiltinType::Bool))
-                || ir_value.ty.tag == IrTyTag::Enum;
-
-            if is_int_switch {
-                // Integer/enum types: use LLVM switch instruction
-                let ir_arms = self.ctx.arena.alloc_slice::<IrSwitchArm>(expr.switch_arms().len());
-                for i in 0usize..expr.switch_arms().len() {
-                    let values = self.ctx.arena.alloc_slice::<u64>(expr.switch_arms()[i].pattern.len());
-                    for j in 0usize..expr.switch_arms()[i].pattern.len() {
-                        let pat_expr = self.lower_expr(expr.switch_arms()[i].pattern[j]);
-                        if pat_expr.tag == IrTag::IntLit {
-                            values[j] = pat_expr.int_val();
-                        } else if pat_expr.tag == IrTag::Cast && pat_expr.lhs().tag == IrTag::IntLit {
-                            values[j] = pat_expr.lhs().int_val();
-                        } else if pat_expr.tag == IrTag::BoolLit {
-                            values[j] = if pat_expr.bool_val() { 1u64 } else { 0u64 };
-                        } else {
-                            // Const reference (StaticRef to a const), enum
-                            // variant ref, or any other compile-time evaluable
-                            // expression. Try const-eval to extract the value.
-                            // Without this, e.g. `switch x { libc::DT_DIR => ... }`
-                            // silently collapses every const-ref arm to 0,
-                            // making distinct constants collide on the same
-                            // switch case and d_type=4 fall to the default.
-                            let const_val = self.try_const_eval(pat_expr);
-                            if const_val.is_some() {
-                                let cv = const_val.unwrap();
-                                if cv.tag == CValTag::Int {
-                                    values[j] = cv.int_val();
-                                } else if cv.tag == CValTag::Bool {
-                                    values[j] = cv.int_val();
-                                } else {
-                                    values[j] = 0;
-                                }
-                            } else {
-                                values[j] = 0;
-                            }
-                        }
-                    }
-                    ir_arms[i] = IrSwitchArm {
-                        values: values,
-                        body: self.lower_expr(expr.switch_arms()[i].body),
-                        is_default: expr.switch_arms()[i].pattern.len() == 0,
-                    };
-                }
-                let result_ty = if expr.switch_arms().len() > 0 { ir_arms[0].body.ty } else { self.ctx.void_ty };
-                let result = IrExpr::void_expr(result_ty);
-                result.tag = IrTag::Switch;
-                result._data.switch_data.lhs = ir_value;
-                result._data.switch_data.switch_arms = ir_arms;
-                self.ctx.arena.alloc(result)
-            } else {
-                // Non-integer types: desugar to if-else chain with == comparisons
-                self.lower_switch_as_if_else(ir_value, expr.switch_arms())
-            }
+            self.lower_switch_as_if_else(ir_value, expr.switch_arms())
         } else if expr.tag == ExprTag::Break {
             let ir_val: Option<&IrExpr> = if expr.opt_expr().is_some() {
                 Option::some(self.lower_expr(expr.opt_expr().unwrap()))
