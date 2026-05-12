@@ -207,14 +207,21 @@ impl Vector<T> {
         self._data[self._length..]
     }
 
-    /// Return a slice for iteration (used by for..in loops).
-    fn iter(self: &Vector<T>) -> &[T] {
-        self._data[0usize..self._length]
+    /// Return an iterator over the elements (used by for..in loops).
+    /// Matches sysroot's signature so callers like sysroot's `BinaryHeap::iter`
+    /// (`self._data.iter()`) can return `SliceIterator<&T>` directly.
+    fn iter(self: &Vector<T>) -> std::mem::SliceIterator<&T> {
+        self._data[0usize..self._length].iter()
     }
 
-    /// Return a mutable slice (for iteration).
-    fn iter_mut(self: &mut Vector<T>) -> &mut [T] {
-        self._data[0usize..self._length]
+    /// Return an iterator over pointer references to the elements.
+    fn iter_ref(self: &Vector<T>) -> std::mem::SliceRefIterator<&T> {
+        self._data[0usize..self._length].iter_ref()
+    }
+
+    /// Return an iterator over mutable element pointers.
+    fn iter_mut(self: &mut Vector<T>) -> std::mem::SliceRefIterator<&mut T> {
+        self._data[0usize..self._length].iter_mut()
     }
 
     /// @ std::mem::Borrowable::borrow

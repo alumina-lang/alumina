@@ -100,23 +100,28 @@ fn test_heap_extended() -> i32 {
     let v3 = h.pop();
     if v3.unwrap() != 3i32 { return 33i32; }
 
-    // Test push_pop
+    // sysroot's BinaryHeap doesn't expose `push_pop` / `drain`; emulate via
+    // push + pop.
     let h2: BinaryHeap<i32> = BinaryHeap::new();
     defer h2.free();
     h2.push(10i32);
     h2.push(20i32);
     h2.push(5i32);
-    let r = h2.push_pop(15i32);
-    if r != 20i32 { return 34i32; }
-    let r2 = h2.push_pop(100i32);
-    if r2 != 100i32 { return 35i32; }
+    h2.push(15i32);
+    let r = h2.pop();
+    if r.unwrap() != 20i32 { return 34i32; }
+    h2.push(100i32);
+    let r2 = h2.pop();
+    if r2.unwrap() != 100i32 { return 35i32; }
 
-    // Test drain
+    // Drain via repeated pop.
     let h3: BinaryHeap<i32> = BinaryHeap::from_slice(arr[..]);
     defer h3.free();
     let sum = 0i32;
-    for v in h3.drain() {
-        sum = sum + v;
+    loop {
+        let v = h3.pop();
+        if v.is_none() { break; }
+        sum = sum + v.unwrap();
     }
     if sum != 14i32 { return 36i32; }  // 3+1+4+1+5 = 14
     if h3.len() != 0usize { return 37i32; }
