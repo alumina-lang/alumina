@@ -4954,6 +4954,26 @@ impl Mono {
                     }
                 }
             }
+            // Match: fn returns a tuple of placeholders (e.g. `fn make_pair<T>() -> (T, T)`)
+            // and hint is a concrete tuple. Walk the declared tuple's elems in
+            // parallel with the hint's elems and bind any direct-Placeholder
+            // slot to the corresponding hint elem.
+            if ret_ty_ast.tag == TyTag::Tuple && hint_ty.tag == IrTyTag::Tuple
+                && ret_ty_ast.elems().len() == hint_ty.elems().len() {
+                let ret_elems = ret_ty_ast.elems();
+                let hint_elems = hint_ty.elems();
+                for ti in 0usize..ret_elems.len() {
+                    if ret_elems[ti].tag == TyTag::Placeholder {
+                        for g in 0usize..num_generics {
+                            if !found[g] && def.generic_params[g].id._value == ret_elems[ti].id()._value {
+                                inferred[g] = hint_elems[ti];
+                                found[g] = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             // Direct placeholder in return type: fn foo<T>() -> T
             if ret_ty_ast.tag == TyTag::Placeholder && !hint_ty.is_void() {
                 for g in 0usize..num_generics {
