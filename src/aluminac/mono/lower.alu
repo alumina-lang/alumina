@@ -4594,6 +4594,13 @@ impl Mono {
                 self.unify_type_for_inference(param_ty.inner(), arg_ty.elems()[0].inner(), inferred, found, generic_params);
             } else if arg_ty.tag == IrTyTag::Slice {
                 self.unify_type_for_inference(param_ty.inner(), arg_ty.inner(), inferred, found, generic_params);
+            } else if arg_ty.tag == IrTyTag::Pointer && arg_ty.inner().tag == IrTyTag::Array {
+                // `&[T]` parameter (AST `TyTag::Slice`) vs `&[T; N]` argument
+                // (IR `Pointer<Array<T, N>>`). Array-to-slice coerces at the
+                // call site, but the type-arg inference still needs to look
+                // through to bind T. Without this, calls like
+                // `f::<T>(&[1, 2, 3])` leave T unbound and mono with T=void.
+                self.unify_type_for_inference(param_ty.inner(), arg_ty.inner().inner(), inferred, found, generic_params);
             }
         } else if param_ty.tag == TyTag::Generic && param_ty.elems().len() > 0 {
             if arg_ty.tag == IrTyTag::Struct && arg_ty.struct_ref().type_args.len() >= param_ty.elems().len() {
