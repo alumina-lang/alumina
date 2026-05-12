@@ -2245,11 +2245,20 @@ impl Mono {
         let ir_let = self.mk_let(tmp_id, ir_value.ty, ir_value);
         let tmp_read = self.mk_local(tmp_id, ir_value.ty);
 
-        // Separate default arm from non-default arms
-        let default_body: Option<&IrExpr> = Option::none();
+        // Separate default arm from non-default arms.
+        //
+        // Per alumina-boot's semantics (src/alumina-boot/src/ast/expressions.rs's
+        // visit_switch_expression, around line 1250), a missing default arm
+        // desugars to an implicit `ExprKind::Void` — i.e. the unit value `()`.
+        // Type unification of arm bodies with `()` is what produces alumina-boot's
+        // "branches have incompatible types (i32, ())" error when the user
+        // omits a default on a value-producing switch. So we always pass a
+        // concrete `else_expr` down the chain: either the user's default body
+        // or a synthesized Void IrExpr.
+        let default_body: &IrExpr = self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         for i in 0usize..arms.len() {
             if arms[i].pattern.len() == 0 {
-                default_body = Option::some(self.lower_expr(arms[i].body));
+                default_body = self.lower_expr(arms[i].body);
             }
         }
 
@@ -2261,35 +2270,10 @@ impl Mono {
             }
         }
 
-        // Build the if-else chain from last non-default arm to first.
-        //
-        // If no explicit default arm exists, peel off the last non-default
-        // arm and use its body unconditionally as the deepest else. This
-        // preserves the LLVM-switch semantics where omitting a default on
-        // an exhaustive switch yields the value-producing arms, and avoids
-        // emitting an if with `else: None` (gen_if would return `undef` on
-        // the missing branch, breaking phi merging at the enclosing if).
-        let else_expr: Option<&IrExpr> = default_body;
+        // Process arms in reverse order to build nested if-else with
+        // `default_body` as the deepest else.
+        let else_expr: Option<&IrExpr> = Option::some(default_body);
         let arm_idx: usize = non_default_count;
-        if default_body.is_none() && non_default_count > 0 {
-            // Find the LAST non-default arm and use its body as the
-            // unconditional tail. We stop iterating one arm earlier.
-            let last_non_default: usize = 0;
-            let count: usize = 0;
-            for i in 0usize..arms.len() {
-                if arms[i].pattern.len() > 0 {
-                    if count == non_default_count - 1 {
-                        last_non_default = i;
-                    }
-                    count = count + 1;
-                }
-            }
-            else_expr = Option::some(self.lower_expr(arms[last_non_default].body));
-            arm_idx = non_default_count - 1;
-        }
-
-        // Process remaining non-default arms in reverse order to build
-        // nested if-else
         while arm_idx > 0 {
             arm_idx = arm_idx - 1;
 
