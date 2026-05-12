@@ -561,11 +561,16 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
     }
 
     if ir_callee.ty.tag == IrTyTag::Fn {
+        // Match on (id, mangled_name) and break — multiple monos of the
+        // same source fn share `id`. See the equivalent fix in
+        // mono/lower.alu's lower_call Fn/Closure return-type path.
         let fn_ref = ir_callee.ty.fn_item_ref();
         let ret_ty = m.ctx.void_ty;
         for i in 0usize..m.ctx.ir_functions.len() {
-            if m.ctx.ir_functions[i].id._value == fn_ref.id._value {
+            if m.ctx.ir_functions[i].id._value == fn_ref.id._value
+                && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
                 ret_ty = m.ctx.ir_functions[i].return_type;
+                break;
             }
         }
         return m.mk_call(fn_ref, split_args, ret_ty);
@@ -583,10 +588,13 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
     } else if ir_callee.ty.tag == IrTyTag::Closure {
         let closure_ty = ir_callee.ty;
         let fn_ref = closure_ty.closure_fn();
+        // Same (id, mangled_name) + break rule as above.
         let ret_ty = m.ctx.void_ty;
         for i in 0usize..m.ctx.ir_functions.len() {
-            if m.ctx.ir_functions[i].id._value == fn_ref.id._value {
+            if m.ctx.ir_functions[i].id._value == fn_ref.id._value
+                && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
                 ret_ty = m.ctx.ir_functions[i].return_type;
+                break;
             }
         }
         let ref_expr = m.mk_ref(ir_callee, false);
