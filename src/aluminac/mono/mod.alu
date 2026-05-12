@@ -433,7 +433,18 @@ impl MonoCtx {
     }
 
     fn make_fn_ty(self: &mut MonoCtx, fn_ref: IrFnRef) -> &IrTy {
+        // Key by (id, mangled_name). Caching by id alone collapses distinct
+        // monomorphizations of the same source function onto the FIRST mono's
+        // fn_ref, so a turbofish value like `Result::unwrap::<u32, Error>` that
+        // creates a SECOND mono of `unwrap` would silently get the FIRST mono's
+        // IrTy back — and any downstream lookup that uses the embedded
+        // mangled_name (or even just iterates `ir_functions` for id matches)
+        // would resolve to the wrong return type. Mix the mangled_name bytes
+        // into the cache key so each mono gets its own IrTy.
         let key: usize = fn_ref.id._value + 0x40000000usize;
+        for i in 0usize..fn_ref.mangled_name.len() {
+            key = key * 31usize + (fn_ref.mangled_name[i] as usize);
+        }
         let cached = self.tuple_ty_cache.get(&key);
         if cached.is_some() { return cached.unwrap(); }
         let result = self.arena.alloc(IrTy::mk_fn(fn_ref));

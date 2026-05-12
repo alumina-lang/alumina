@@ -495,8 +495,18 @@ impl Mono {
                             have_fn = true;
                         }
                         if have_fn {
+                            // Match on (id, mangled_name) — multiple monos of
+                            // the same source function share `id`, so we need
+                            // the mangled_name to pick the specific one the
+                            // type-arg `f` actually points at.
+                            let target_mangled = if f.tag == IrTyTag::Closure {
+                                f.closure_fn().mangled_name
+                            } else {
+                                f.fn_item_ref().mangled_name
+                            };
                             for i in 0usize..self.ctx.ir_functions.len() {
-                                if self.ctx.ir_functions[i].id._value == fn_id_for_args {
+                                if self.ctx.ir_functions[i].id._value == fn_id_for_args
+                                    && self.ctx.ir_functions[i].mangled_name == target_mangled {
                                     let params = self.ctx.ir_functions[i].params;
                                     let skip: usize = if f.tag == IrTyTag::Closure { 1 } else { 0 };
                                     let n = if params.len() >= skip { params.len() - skip } else { 0 };
@@ -528,8 +538,16 @@ impl Mono {
                             have_fn = true;
                         }
                         if have_fn {
+                            // Same (id, mangled_name) rule as typeop_arguments_of —
+                            // see comment there.
+                            let target_mangled = if f.tag == IrTyTag::Closure {
+                                f.closure_fn().mangled_name
+                            } else {
+                                f.fn_item_ref().mangled_name
+                            };
                             for i in 0usize..self.ctx.ir_functions.len() {
-                                if self.ctx.ir_functions[i].id._value == fn_id_for_ret {
+                                if self.ctx.ir_functions[i].id._value == fn_id_for_ret
+                                    && self.ctx.ir_functions[i].mangled_name == target_mangled {
                                     return self.ctx.ir_functions[i].return_type;
                                 }
                             }
@@ -4808,6 +4826,44 @@ impl Mono {
                                     inferred[g] = ret_ty;
                                     found[g] = true;
                                 }
+                            } else if arg_expr.tag == ExprTag::TurbofishValue && arg_expr.lhs().tag == ExprTag::FnRef {
+                                // Turbofish-applied function reference: e.g.
+                                // `Result::unwrap::<u32, Error>` passed as a value.
+                                // Bind the function's generic params from the
+                                // explicit type args, resolve the return type,
+                                // then restore type_map. Without this branch the
+                                // explicit args would be ignored and the return
+                                // type would resolve under whatever stale
+                                // bindings happened to be in type_map.
+                                let fn_def = self.ctx.fn_defs.get(&arg_expr.lhs().id()._value);
+                                if fn_def.is_some() {
+                                    let inner_def = fn_def.unwrap();
+                                    let n_ta = arg_expr.type_args().len();
+                                    let n_bind = if n_ta < inner_def.generic_params.len() { n_ta } else { inner_def.generic_params.len() };
+                                    let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(n_bind);
+                                    let saved_had = self.ctx.arena.alloc_slice::<bool>(n_bind);
+                                    for k in 0usize..n_bind {
+                                        let prev = self.type_map.get(&inner_def.generic_params[k].id._value);
+                                        if prev.is_some() {
+                                            saved_vals[k] = prev.unwrap();
+                                            saved_had[k] = true;
+                                        } else {
+                                            saved_had[k] = false;
+                                        }
+                                        let resolved = self.resolve_type(arg_expr.type_args()[k]);
+                                        self.type_map.insert(inner_def.generic_params[k].id._value, resolved);
+                                    }
+                                    let ret_ty = self.resolve_type(inner_def.return_type);
+                                    for k in 0usize..n_bind {
+                                        if saved_had[k] {
+                                            self.type_map.insert(inner_def.generic_params[k].id._value, saved_vals[k]);
+                                        } else {
+                                            self.type_map.remove(&inner_def.generic_params[k].id._value);
+                                        }
+                                    }
+                                    inferred[g] = ret_ty;
+                                    found[g] = true;
+                                }
                             }
                         }
                         // Check if Fn bound return type is Generic containing our placeholder
@@ -5326,11 +5382,20 @@ impl Mono {
                                     inferred[g] = arg_ir.ty.ret_ty();
                                     found_count = found_count + 1usize;
                                 } else if arg_ir.ty.tag == IrTyTag::Fn {
+                                    // Match on (id, mangled_name) and break: multiple
+                                    // monos of the same source function share `id`,
+                                    // so id-only matching would let the LAST matching
+                                    // mono's return_type win — and pick up an
+                                    // unrelated mono (e.g. Result::unwrap<()> from
+                                    // the panic chain) when the caller meant a
+                                    // specific one (Result::unwrap<u32, Error>).
                                     let fn_ref = arg_ir.ty.fn_item_ref();
                                     for fi in 0usize..self.ctx.ir_functions.len() {
-                                        if self.ctx.ir_functions[fi].id._value == fn_ref.id._value {
+                                        if self.ctx.ir_functions[fi].id._value == fn_ref.id._value
+                                            && self.ctx.ir_functions[fi].mangled_name == fn_ref.mangled_name {
                                             inferred[g] = self.ctx.ir_functions[fi].return_type;
                                             found_count = found_count + 1usize;
+                                            break;
                                         }
                                     }
                                 }
@@ -5356,10 +5421,13 @@ impl Mono {
                                         if arg_ir2.ty.tag == IrTyTag::FnPointer {
                                             resolved_ret = arg_ir2.ty.ret_ty();
                                         } else if arg_ir2.ty.tag == IrTyTag::Fn {
+                                            // Same (id, mangled_name) + break rule as above.
                                             let fn_ref2 = arg_ir2.ty.fn_item_ref();
                                             for fi in 0usize..self.ctx.ir_functions.len() {
-                                                if self.ctx.ir_functions[fi].id._value == fn_ref2.id._value {
+                                                if self.ctx.ir_functions[fi].id._value == fn_ref2.id._value
+                                                    && self.ctx.ir_functions[fi].mangled_name == fn_ref2.mangled_name {
                                                     resolved_ret = self.ctx.ir_functions[fi].return_type;
+                                                    break;
                                                 }
                                             }
                                         }
@@ -5931,12 +5999,17 @@ impl Mono {
 
             // Determine return type from callee
             if ir_callee.ty.tag == IrTyTag::Fn {
-                // Direct call through Fn type (ZST function item)
+                // Direct call through Fn type (ZST function item).
+                // Match on (id, mangled_name) and break: multiple monos of the
+                // same source function share `id`, so id-only matching can pick
+                // up an unrelated mono's return_type.
                 let fn_ref = ir_callee.ty.fn_item_ref();
                 let ret_ty = self.ctx.void_ty;
                 for i in 0usize..self.ctx.ir_functions.len() {
-                    if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                    if self.ctx.ir_functions[i].id._value == fn_ref.id._value
+                        && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
                         ret_ty = self.ctx.ir_functions[i].return_type;
+                        break;
                     }
                 }
                 self.mk_call(fn_ref, ir_args, ret_ty)
@@ -5953,11 +6026,13 @@ impl Mono {
                 let closure_ty = ir_callee.ty;
                 let fn_ref = closure_ty.closure_fn();
 
-                // Look up the function to get its return type
+                // Same (id, mangled_name) + break rule as above.
                 let ret_ty = self.ctx.void_ty;
                 for i in 0usize..self.ctx.ir_functions.len() {
-                    if self.ctx.ir_functions[i].id._value == fn_ref.id._value {
+                    if self.ctx.ir_functions[i].id._value == fn_ref.id._value
+                        && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
                         ret_ty = self.ctx.ir_functions[i].return_type;
+                        break;
                     }
                 }
 
