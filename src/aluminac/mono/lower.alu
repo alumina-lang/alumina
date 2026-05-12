@@ -2548,7 +2548,26 @@ impl Mono {
                         } else if pat_expr.tag == IrTag::BoolLit {
                             values[j] = if pat_expr.bool_val() { 1u64 } else { 0u64 };
                         } else {
-                            values[j] = 0;
+                            // Const reference (StaticRef to a const), enum
+                            // variant ref, or any other compile-time evaluable
+                            // expression. Try const-eval to extract the value.
+                            // Without this, e.g. `switch x { libc::DT_DIR => ... }`
+                            // silently collapses every const-ref arm to 0,
+                            // making distinct constants collide on the same
+                            // switch case and d_type=4 fall to the default.
+                            let const_val = self.try_const_eval(pat_expr);
+                            if const_val.is_some() {
+                                let cv = const_val.unwrap();
+                                if cv.tag == CValTag::Int {
+                                    values[j] = cv.int_val();
+                                } else if cv.tag == CValTag::Bool {
+                                    values[j] = cv.int_val();
+                                } else {
+                                    values[j] = 0;
+                                }
+                            } else {
+                                values[j] = 0;
+                            }
                         }
                     }
                     ir_arms[i] = IrSwitchArm {
@@ -3974,6 +3993,12 @@ impl Mono {
                 // Non-named type: resolve and compare
                 let check_ir_ty = self.resolve_type(check_ty);
                 is_match = val_ty as &void == check_ir_ty as &void;
+                // DBG: print only when BOTH are Slice but they don't match (the suspected bug shape)
+                if val_ty.tag == IrTyTag::Slice && check_ir_ty.tag == IrTyTag::Slice && !is_match {
+                    std::io::eprintln!("[DBG-tc-SLICE] BOTH SLICE BUT MISMATCH: val ptr={} inner.tag={} const={}, check ptr={} inner.tag={} const={}",
+                        val_ty as &void as usize, val_ty.inner().tag as i32, val_ty.is_const() as i32,
+                        check_ir_ty as &void as usize, check_ir_ty.inner().tag as i32, check_ir_ty.is_const() as i32);
+                }
             }
 
             self.mk_bool_lit(is_match)
