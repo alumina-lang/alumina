@@ -359,6 +359,22 @@ impl Mono {
             return ir_ty;
         }
 
+        // Hint 0: caller-supplied expected_type matches the same struct.
+        // Set by lower_expr_coerced when the struct lit appears in a
+        // typed context — e.g. an outer struct literal's field value
+        // where the outer field's declared type pins the inner struct's
+        // type-args. Without this, field-based inference (hint 2) can
+        // bind only those generics that appear directly in field types,
+        // and "phantom" generics like FusedIterator's T (no field has
+        // type T) silently collapse to void. That mis-mono'd
+        // FusedIterator<…, void> miscompiles `chain` (the second leg
+        // reads from a void-typed Option slot instead of Option<T>).
+        if self.expected_type.tag == IrTyTag::Struct
+            && self.expected_type.struct_ref().id._value == ir_ty.struct_ref().id._value
+            && self.expected_type.struct_ref().type_args.len() > 0 {
+            return self.expected_type;
+        }
+
         // Hint 1: function return type matches the same struct
         if self.return_type.tag == IrTyTag::Struct {
             if self.return_type.struct_ref().id._value == ir_ty.struct_ref().id._value

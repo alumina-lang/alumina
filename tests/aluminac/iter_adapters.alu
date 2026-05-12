@@ -72,15 +72,16 @@ fn test_take_skip() -> i32 {
 }
 
 fn test_chain_zip() -> i32 {
-    // aluminac currently miscompiles `chain` past the first-leg exhaustion —
-    // the second leg reads freed/uninit memory. Same shape as sysroot's gated
-    // test_chain. Drop the chain coverage from this test; zip is exercised
-    // separately below and chain is tracked in PORTING_STATUS.
-    //
-    // let ca = Counter::new(3i32);
-    // let cb = Counter::new(2i32);
-    // let chained = ca.chain(&cb);
-    // ...
+    // chain
+    let ca = Counter::new(3i32);
+    let cb = Counter::new(2i32);
+    let chained = ca.chain(&cb);
+    if chained.next() != Option::some(0i32) { return 100i32; }
+    if chained.next() != Option::some(1i32) { return 101i32; }
+    if chained.next() != Option::some(2i32) { return 102i32; }
+    if chained.next() != Option::some(0i32) { return 103i32; }
+    if chained.next() != Option::some(1i32) { return 104i32; }
+    if !chained.next().is_none() { return 105i32; }
 
     0i32
 }

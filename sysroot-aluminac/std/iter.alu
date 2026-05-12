@@ -2121,13 +2121,6 @@ mod tests {
         assert_eq!(empty::<i32>().last(), Option::none());
     }
 
-    // aluminac doesn't extend the lifetime of the `&(10..12)` rvalue alloca
-    // long enough for the chained iterator's second leg, so `next()` past the
-    // first leg's exhaustion reads freed stack (0xFFFF-pattern uninit).
-    // test_chain_rev happens to consume the second leg first (via .rev()) so
-    // it dodges the issue. Re-enable once aluminac's rvalue-ref lifetimes
-    // match alumina-boot — tracked in PORTING_STATUS.
-    #[cfg(boot)]
     #[test]
     fn test_chain() {
         let range = (0..2).chain(&(10..12));
