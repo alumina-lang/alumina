@@ -2411,9 +2411,12 @@ mod tests {
     // in isolation). The `Option<()>` debug-fmt chain mono'd inside
     // `assert_eq_helper<Option<()>>` picks up tuple-formatter state from a
     // prior test's mono — symptom is `lhs != rhs` returning true while
-    // lhs.debug() == rhs.debug() == "some((65535, 65535))". Test-ordering
-    // type_map pollution; tracked in PORTING_STATUS as the broader per-call
-    // mono-context architectural debt.
+    // lhs.debug() == rhs.debug() == "some((65535, 65535))". A distinct bug
+    // from the chars-map miscompile (resolved 2026-05-12) that previously
+    // shared this comment; that one was id-vs-mangled_name ambiguity in
+    // `make_fn_ty` / `ir_functions` lookups. This one survives the fix —
+    // tracked in PORTING_STATUS as the broader per-call mono-context
+    // architectural debt.
     #[cfg(boot)]
     #[test]
     fn test_fuse() {
