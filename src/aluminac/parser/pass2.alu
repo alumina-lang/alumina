@@ -305,11 +305,21 @@ impl Pass2 {
         if pending.impl_generic_param_ids.len() > 0
             && pending.impl_generic_param_ids.len() == pending.impl_generic_param_names.len() {
             for ig in 0usize..pending.impl_generic_param_ids.len() {
-                self.ctx.scopes.add_item(pending.scope_idx, NamedItem {
-                    name: pending.impl_generic_param_names[ig],
-                    kind: NamedItemKind::generic_param(pending.impl_generic_param_ids[ig]),
-                    span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
-                });
+                let name = pending.impl_generic_param_names[ig];
+                // Only inject the impl's binding if the function's scope
+                // doesn't already have an entry under that name (which would
+                // be a method-own generic param `fn foo<T>(...)` shadowing
+                // the impl's `T`). Without this check we'd overwrite the
+                // method's `T` id with the impl's `T` id, breaking
+                // `impl Foo<T> { fn bar<T>(...) }`-style shadowing.
+                let existing = self.ctx.scopes.get(pending.scope_idx).items.get(&name);
+                if existing.is_none() {
+                    self.ctx.scopes.add_item(pending.scope_idx, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::generic_param(pending.impl_generic_param_ids[ig]),
+                        span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                    });
+                }
             }
         }
 
