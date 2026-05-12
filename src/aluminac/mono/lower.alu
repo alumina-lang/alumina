@@ -3064,8 +3064,62 @@ impl Mono {
             return Option::none();
         }
 
-        // Monomorphize the concrete method
-        Option::some(self.mono_function(concrete_def.unwrap(), type_args))
+        // Snapshot the protocol's proto-generic bindings (Self + protocol's
+        // other generics) around the concrete-impl mono call. The dispatcher
+        // bound these before reaching here, but the concrete impl method
+        // doesn't have `proto_method_proto_gp_ids` of its own — so
+        // `mono_function`'s own snapshot/restore on entry doesn't cover them.
+        // Without this, the bindings leak into the concrete method's body
+        // lowering (and from there into any nested mono triggered by it),
+        // mis-resolving Placeholders that happen to share an id. See the
+        // chars-map dispatch entry in PORTING_STATUS for the trigger shape:
+        // `Outer::new().map(Result::unwrap)` returns 0 instead of the
+        // unwrapped value when there's no prior direct call to warm the cache.
+        // Gather all proto-related ids that might have bindings: the
+        // proto_method_proto_gp_ids (Self + protocol's others, in order) and
+        // proto_method_self_id (just Self, sometimes set independently).
+        let proto_gp_ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
+        let self_id_opt = self.ctx.proto_method_self_id.get(&def.id._value);
+        let n_ids: usize = 0;
+        if proto_gp_ids_opt.is_some() { n_ids = proto_gp_ids_opt.unwrap().len(); }
+        if self_id_opt.is_some() { n_ids = n_ids + 1; }
+        let collected_ids = self.ctx.arena.alloc_slice::<usize>(n_ids);
+        let idx: usize = 0;
+        if proto_gp_ids_opt.is_some() {
+            let pg = proto_gp_ids_opt.unwrap();
+            for k in 0usize..pg.len() {
+                collected_ids[idx] = pg[k];
+                idx = idx + 1;
+            }
+        }
+        if self_id_opt.is_some() {
+            collected_ids[idx] = self_id_opt.unwrap();
+            idx = idx + 1;
+        }
+        let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(n_ids);
+        let saved_had = self.ctx.arena.alloc_slice::<bool>(n_ids);
+        for k in 0usize..n_ids {
+            let prev = self.type_map.get(&collected_ids[k]);
+            if prev.is_some() {
+                saved_vals[k] = prev.unwrap();
+                saved_had[k] = true;
+            } else {
+                saved_had[k] = false;
+            }
+            self.type_map.remove(&collected_ids[k]);
+        }
+
+        let result = self.mono_function(concrete_def.unwrap(), type_args);
+
+        // Restore the bindings the dispatcher had set, so the caller's
+        // context isn't disturbed by the redirect.
+        for k in 0usize..n_ids {
+            if saved_had[k] {
+                self.type_map.insert(collected_ids[k], saved_vals[k]);
+            }
+        }
+
+        Option::some(result)
     }
 
     // Check if a type conforms to a user-defined protocol.
