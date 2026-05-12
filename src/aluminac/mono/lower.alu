@@ -127,10 +127,25 @@ impl Mono {
     }
 
     fn mk_block(self: &mut Mono, stmts: &[&IrExpr]) -> &IrExpr {
-        let ty = if stmts.len() > 0 { stmts[stmts.len() - 1].ty } else { self.ctx.void_ty };
+        // alumina-boot's fill_block (src/alumina-boot/src/ir/builder.rs)
+        // treats a diverging statement as the block's *return* — anything
+        // after it is dead code that the IR drops entirely. parse_block
+        // appends a synthetic Void when the trailing statement has `;`, so a
+        // block like `{ unwrap_panic(); }` (else-arm in a Result::unwrap-style
+        // helper) lands here as [unwrap_panic_call (!), Void (())]. Without
+        // this trim, the synthetic Void becomes the block's value and the
+        // surrounding if-expression sees `()` instead of `!`, breaking
+        // unification with a value-producing then-arm.
+        let n = stmts.len();
+        let effective_stmts = stmts;
+        if n >= 2usize && stmts[n - 1usize].tag == IrTag::Void && stmts[n - 2usize].ty.is_never() {
+            effective_stmts = stmts[..n - 1usize];
+        }
+        let m = effective_stmts.len();
+        let ty = if m == 0usize { self.ctx.void_ty } else { effective_stmts[m - 1usize].ty };
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::Block;
-        e._data.block.items = stmts;
+        e._data.block.items = effective_stmts;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 

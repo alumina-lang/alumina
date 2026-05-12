@@ -268,39 +268,90 @@ impl ExprParser {
             pass2.process_macros_from(node, macros_start);
         }
 
-        let stmts: Vector<&Expr> = Vector::new();
-        defer stmts.free();
-
+        // Two-pass collection: first gather raw statement nodes (filtering
+        // cfg-suppressed ones), then decide which one is the block's *value*
+        // following alumina-boot's rule (see make_return_expression in
+        // src/alumina-boot/src/ast/expressions.rs:240):
+        //
+        //   - If the last non-suppressed statement is an `expression_statement`
+        //     whose inner kind is one of the block-ending expressions
+        //     (Block, If, Switch, While, Loop, For, StaticFor) AND has no
+        //     trailing `;`, that statement's *expression* is the block's value.
+        //   - Otherwise the block's value is `()` (Void).
+        //
+        // The tree-sitter grammar puts trailing block-ending expressions
+        // into the same Statements field as `expr;` statements (see grammar
+        // rule expression_statement) — they are distinguished only by the
+        // presence of `;`. parse_block previously flattened the whole list
+        // and let `mk_block` use the last statement's type, which made
+        // `{ memcpy(...); }` get `&mut c_void` instead of `()`.
+        let raw_stmts: Vector<Node> = Vector::new();
+        defer raw_stmts.free();
         let cursor = node.walk();
         defer cursor.free();
         for child in children_by!(node, FieldKind::Statements, &cursor) {
-            if child.is_named() {
-                // Skip a statement entirely if it carries a cfg attribute
-                // that evaluates false. Without this, the cfg-suppressed
-                // alloc_void from parse_expr is still pushed, which is
-                // mostly harmless EXCEPT when the trailing block in a
-                // function body has cfg-suppressed alternatives — see the
-                // result-expr handling below.
-                let inner_opt = child_by!(child, FieldKind::Inner);
-                if !inner_opt.is_none() {
-                    let inner_kind = NODE_KINDS[inner_opt.unwrap().symbol() as usize];
-                    if inner_kind == NodeKind::ExpressionStatement {
-                        let attrs_node = child_by!(inner_opt.unwrap(), FieldKind::Attributes);
-                        if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
-                            continue;
+            if !child.is_named() { continue; }
+            let inner_opt = child_by!(child, FieldKind::Inner);
+            if !inner_opt.is_none() {
+                let inner_kind = NODE_KINDS[inner_opt.unwrap().symbol() as usize];
+                if inner_kind == NodeKind::ExpressionStatement {
+                    let attrs_node = child_by!(inner_opt.unwrap(), FieldKind::Attributes);
+                    if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                        continue;
+                    }
+                }
+            }
+            raw_stmts.push(child);
+        }
+
+        let stmts: Vector<&Expr> = Vector::new();
+        defer stmts.free();
+
+        // Promote a trailing expression_ending_with_block to the block's
+        // result. If found, lower it via parse_expr (which unwraps the
+        // expression_statement to its inner expression — the value-producing
+        // form). Statements with explicit `;` keep their expression but get
+        // a synthesized Void appended at the end so the block's value is `()`.
+        let has_result_value = false;
+        if raw_stmts.len() > 0 {
+            let last = raw_stmts[raw_stmts.len() - 1];
+            let last_inner_opt = child_by!(last, FieldKind::Inner);
+            if !last_inner_opt.is_none() {
+                let last_inner = last_inner_opt.unwrap();
+                let last_inner_kind = NODE_KINDS[last_inner.symbol() as usize];
+                if last_inner_kind == NodeKind::ExpressionStatement {
+                    let stmt_inner_opt = child_by!(last_inner, FieldKind::Inner);
+                    if !stmt_inner_opt.is_none() {
+                        let stmt_inner_kind = NODE_KINDS[stmt_inner_opt.unwrap().symbol() as usize];
+                        let is_block_ending = stmt_inner_kind == NodeKind::Block
+                            || stmt_inner_kind == NodeKind::IfExpression
+                            || stmt_inner_kind == NodeKind::SwitchExpression
+                            || stmt_inner_kind == NodeKind::WhileExpression
+                            || stmt_inner_kind == NodeKind::LoopExpression
+                            || stmt_inner_kind == NodeKind::ForExpression
+                            || stmt_inner_kind == NodeKind::StaticForExpression;
+                        if is_block_ending {
+                            // Check that the statement has no trailing `;` —
+                            // if it does, the value is still discarded.
+                            if last_inner.end_byte() == stmt_inner_opt.unwrap().end_byte() {
+                                has_result_value = true;
+                            }
                         }
                     }
                 }
-                let expr = block_parser.parse_expr(child);
-                stmts.push(expr);
             }
         }
 
-        // Also check for a result expression. If the result is itself a
-        // cfg-suppressed ExpressionStatement (e.g. sysroot's `Instant::now`
-        // body: two `#[cfg(...)] { ... }` block alternatives where only
-        // one is active), drop it — the block's value will come from the
-        // last preceding non-suppressed statement instead.
+        let n_stmts = raw_stmts.len();
+        for i in 0usize..n_stmts {
+            let expr = block_parser.parse_expr(raw_stmts[i]);
+            stmts.push(expr);
+        }
+
+        // Also handle the FieldKind::Result child, which the tree-sitter
+        // grammar uses when a block has a trailing non-`;` expression that
+        // isn't a block-ending form (e.g. `{ x + 1 }`). When present, this
+        // child is the block's result.
         let result_node = child_by!(node, FieldKind::Result);
         if !result_node.is_none() {
             let result_kind = NODE_KINDS[result_node.unwrap().symbol() as usize];
@@ -313,7 +364,13 @@ impl ExprParser {
             }
             if !suppressed {
                 stmts.push(block_parser.parse_expr(result_node.unwrap()));
+                has_result_value = true;
             }
+        }
+
+        // If no expression produces a value, the block's value is `()`.
+        if !has_result_value {
+            stmts.push(self.alloc_void(span));
         }
 
         let result = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
