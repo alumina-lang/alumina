@@ -833,13 +833,6 @@ mod tests {
         assert_eq!("needle".find("superlongstring"), Option::none());
     }
 
-    // aluminac: compiles after u128/i128 got checked_add/_sub/_mul, but
-    // fails at runtime — one of the assert_eq! comparisons mismatches
-    // and assert_eq_helper's debug-format chain panics with "error
-    // occurred during formatting". Likely an Option<u128>/<i128> debug
-    // fmt path that aluminac doesn't fully exercise. alumina-boot's
-    // make test-std still runs the test. Tracked in PORTING_STATUS.md.
-    #[cfg(boot)]
     #[test]
     fn test_parse_integer() {
         assert_eq!(parse_integer::<usize>("0", 10), Option::some(0usize));
@@ -867,18 +860,24 @@ mod tests {
         assert_eq!(parse_integer::<i8>("128", 10), Option::none());
         assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128 as i8));
         assert_eq!(parse_integer::<i8>("-129", 10), Option::none());
+        // aluminac: skip the i128::MAX literal cases. parse_integer's runtime
+        // value is correct, but aluminac's parser truncates integer literals
+        // beyond u64 range to u64 (see the u128/i128 const-eval entry in
+        // PORTING_STATUS.md), so the literal RHS comparison value here
+        // doesn't match parse_integer's output. alumina-boot's make test-std
+        // still exercises this path.
+        #[cfg(boot)]
         assert_eq!(
             parse_integer::<i128>("170141183460469231731687303715884105727", 10),
             Option::some(170141183460469231731687303715884105727i128)
         );
+        #[cfg(boot)]
         assert_eq!(
             parse_integer::<i128>("170141183460469231731687303715884105728", 10),
             Option::none()
         );
     }
 
-    // aluminac: same mono-context pollution as test_parse_integer above.
-    #[cfg(boot)]
     #[test]
     fn test_parse_integer_radix() {
         assert_eq!(parse_integer::<u8>("ff", 16), Option::some(255u8));
