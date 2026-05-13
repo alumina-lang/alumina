@@ -1119,6 +1119,7 @@ impl Mono {
             is_variadic: def.is_variadic,
             abi: def.abi,
             span: def.span,
+            type_args: type_args,
         };
         self.ctx.ir_functions.push(placeholder);
         self.ctx.fn_cache.insert(cache_key, idx);
@@ -3390,7 +3391,50 @@ impl Mono {
         } else if ty.tag == IrTyTag::FnPointer {
             "fn(...)"
         } else if ty.tag == IrTyTag::Fn {
-            ty.fn_item_ref().mangled_name
+            // Render `name<arg1, arg2, ...>` source-readably for the source
+            // type printer (`std::typing::type_name<f<u32>>()` should yield
+            // "f<u32>", not the mangled `_ALfNNN` form). Look up the IrFunction
+            // by (id, mangled_name) to recover the type_args this fn was mono'd
+            // with — multiple monos of the same source `id` share the IrFnRef's
+            // id, so the mangled_name disambiguates which mono we want.
+            let fn_ref = ty.fn_item_ref();
+            let src_name: &[u8] = fn_ref.mangled_name;
+            let src_type_args: &[&IrTy] = &[];
+            for i in 0usize..self.ctx.ir_functions.len() {
+                if self.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    src_name = self.ctx.ir_functions[i].name;
+                    src_type_args = self.ctx.ir_functions[i].type_args;
+                    break;
+                }
+            }
+            if src_type_args.len() == 0 {
+                src_name
+            } else {
+                // Build "name<arg1, arg2, ...>".
+                let arg_names = self.ctx.arena.alloc_slice::<&[u8]>(src_type_args.len());
+                let total = src_name.len() + 2usize; // "name<>"
+                for i in 0usize..src_type_args.len() {
+                    arg_names[i] = self.ir_type_name(src_type_args[i]);
+                    total = total + arg_names[i].len();
+                    if i > 0 { total = total + 2usize; } // ", "
+                }
+                let buf = self.ctx.arena.alloc_slice::<u8>(total);
+                src_name.copy_to_nonoverlapping(&buf[0]);
+                buf[src_name.len()] = '<';
+                let off = src_name.len() + 1usize;
+                for i in 0usize..arg_names.len() {
+                    if i > 0 {
+                        buf[off] = ',';
+                        buf[off + 1usize] = ' ';
+                        off = off + 2usize;
+                    }
+                    arg_names[i].copy_to_nonoverlapping(&buf[off]);
+                    off = off + arg_names[i].len();
+                }
+                buf[off] = '>';
+                buf as &[u8]
+            }
         } else if ty.tag == IrTyTag::Void {
             "()"
         } else {
@@ -5808,6 +5852,7 @@ impl Mono {
             is_variadic: false,
             abi: Option::none(),
             span: expr.span,
+            type_args: &[],
         };
         self.ctx.ir_functions.push(placeholder);
 
