@@ -341,12 +341,12 @@ The remaining compiler-side work clusters into three real items. Closing these u
 
   The generic-const compiler feature (item #2 above) was the prerequisite — `internal::FIELDS<E>` / `ENUM_VARIANTS<E>` / `VTABLE<Protos, T>` patterns now work end-to-end.
 
-  One sysroot test carries a `#[cfg(boot)]` gate:
-  - `test_type` — first ~30 assertions pass (basic Type<u8> reflection, pointer / array Type methods). The first failure is the tuple branch: `matches::<typeof(desc.element_types()), (Type<u8>, Type<u16>, Type<u32>)>()` returns false because aluminac doesn't yet implement `tuple_map_of<Tup, T>` — that type alias uses type-level tuple slicing (`Tup.(1..)`) and splat in tuple construction (`expr...` in type position), neither of which aluminac has.
+  Only the test_type tuple branch is still `#[cfg(boot)]`-gated — `matches::<typeof(desc.element_types()), (Type<u8>, Type<u16>, Type<u32>)>()` uses `tuple_map_of<Tup, T>`, a type alias whose body needs type-level tuple slicing (`Tup.(1..)`) and splat in tuple construction (`expr...` in type position), neither of which aluminac has. The rest of test_type (Type<u8> reflection, pointer / array methods, Field reflection on a struct) now runs under aluminac.
 
-  Four previously-gated tests are now ungated:
-  - `test_dyn`, `test_dyn_if_coercion`, `test_dyn_if_coercion_switch` — fixed by the if/switch dyn-coercion fix (`lower_control_flow`'s If branch + `lower_switch_as_if_else` now propagate `expected_type` into each arm via `lower_expr_coerced` when the outer type is `&dyn Proto`). Each arm's value gets its own dyn vtable construction; before, the arm-result-type unification picked one arm's type and broadcast it to all arms.
+  All other typing tests now run under aluminac:
+  - `test_dyn`, `test_dyn_if_coercion`, `test_dyn_if_coercion_switch` — fixed by the if/switch dyn-coercion fix (`lower_control_flow`'s If branch + `lower_switch_as_if_else` now propagate `expected_type` into each arm via `lower_expr_coerced` when the outer type is `&dyn Proto`). Each arm's value gets its own dyn vtable construction.
   - `test_type_name_inception` — fixed by tracking type-args on IrFunction and using them in `ir_type_name(IrTyTag::Fn)` to render the source-readable `name<arg1, arg2>` form. Before, function-as-type-arg paths bottomed out at the mangled name.
+  - `test_type` (except the tuple_map_of assertion above) — Field reflection works; only the tuple-element-types section is gated.
 
   Two aluminac-specific tests (`tests/aluminac/typing_extended.alu`, `util_unicode.alu`) used the old sysroot-aluminac free-function API (`is_void::<T>()`, `size_of::<T>()`, `name_of::<T>()`). Ported to sysroot's new API: `Type::<T>::new().is_*()` for protocol checks, `std::mem::size_of::<T>()` / `align_of::<T>()` for layout, `std::typing::type_name::<T>()` for names.
 - [DONE] **`std/math.alu`** — unified. sysroot's version is identical content; the previous "depends on when-dispatch" concern turned out to be moot — sysroot's math.alu is generic but doesn't use complex when-based dispatch. The unified file's embedded test module (`test_abs`, `test_div_floor`, `test_various_math`) runs under aluminac via `make test-std-aluminac`.

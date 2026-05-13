@@ -1165,15 +1165,6 @@ mod tests {
         }
     }
 
-    // The first ~25 assertions of test_type pass under aluminac (basic
-    // Type<u8> reflection — debug_name, size, align, is_primitive et al.).
-    // The later parts of the test exercise Field reflection (`desc.fields()`
-    // followed by `*fields.0.as_mut_ptr(&inst) = 42`) and `desc.uninitialized()`;
-    // one of those assertions fails silently (assert_eq!'s diagnostic fmt
-    // also breaks, so we don't get the specific assertion's line). Tracked
-    // separately when aluminac's reflection-lang-items work closes (item #3
-    // in PORTING_STATUS.md).
-    #[cfg(boot)]
     #[test]
     fn test_type() {
         let desc: Type<u8> = Type::new();
@@ -1216,6 +1207,11 @@ mod tests {
         let desc: Type<(u8, u16, u32)> = Type::new();
         assert!(desc.is_tuple());
         assert_eq!(desc.len(), 3);
+        // The tuple_map_of<T, U> typeop (`element_types` return-type
+        // computation) uses type-level tuple slicing (`Tup.(1..)`) and splat
+        // in tuple construction, neither of which aluminac implements yet.
+        // Gated under cfg(boot) until those features land.
+        #[cfg(boot)]
         assert!(matches::<typeof(desc.element_types()), (Type<u8>, Type<u16>, Type<u32>)>());
 
         struct Foo {
