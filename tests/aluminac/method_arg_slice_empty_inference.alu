@@ -1,0 +1,36 @@
+// Test: method-call argument lowering propagates the expected parameter
+// type so nested generic calls can solve free type-args from context.
+//
+// Regression: `obj.method(slice::empty())` used to lower the slice::empty()
+// call without an expected-type hint, so the generic `Ptr` defaulted to
+// void and the resulting `slice<void>` failed to coerce to the method's
+// `&mut [u8]` parameter. Free-function calls already propagated the hint;
+// the method-call dispatcher (try_lower_method_call) was the odd one out.
+//
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+use std::mem::{Pointer, slice, dangling};
+
+fn empty<Ptr: Pointer>() -> slice<Ptr> {
+    slice::<Ptr> { _ptr: dangling::<Ptr>(), _len: 0 }
+}
+
+struct Stream {}
+impl Stream {
+    fn new() -> Stream { Stream {} }
+    // Mirrors io::Readable::read_exact's parameter shape (`&mut [u8]`).
+    fn read_exact(self: &mut Stream, buf: &mut [u8]) -> bool {
+        buf.len() == 0
+    }
+    // Const-slice form to exercise the const-pointer side of the inference.
+    fn read_const(self: &mut Stream, buf: &[u8]) -> bool {
+        buf.len() == 0
+    }
+}
+
+fn main() -> i32 {
+    let s = Stream::new();
+    if !s.read_exact(empty()) { return 1; }
+    if !s.read_const(empty()) { return 2; }
+    0
+}

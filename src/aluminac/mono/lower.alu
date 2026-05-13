@@ -5515,10 +5515,15 @@ impl Mono {
 
         // Rest of the args
         for i in 0usize..expr.args().len() {
-            ir_args[1 + i] = self.lower_expr(expr.args()[i]);
-            // Check args, +1 for self param
+            // Propagate the parameter type as expected_type so nested call
+            // inference can solve free generics from context (e.g.
+            // `slice::empty()` infers `Ptr` from `&mut [u8]`).
             if (1usize + i) < ir_fn.params.len() {
-                ir_args[1usize + i] = self.check_and_coerce(ir_args[1usize + i], ir_fn.params[1usize + i].ty, expr.args()[i].span);
+                let pty = ir_fn.params[1usize + i].ty;
+                ir_args[1 + i] = self.lower_expr_coerced(expr.args()[i], pty);
+                ir_args[1usize + i] = self.check_and_coerce(ir_args[1usize + i], pty, expr.args()[i].span);
+            } else {
+                ir_args[1 + i] = self.lower_expr(expr.args()[i]);
             }
         }
 
