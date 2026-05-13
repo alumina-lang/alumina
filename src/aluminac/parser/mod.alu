@@ -517,6 +517,19 @@ fn parse_float_with_suffix(text: &[u8]) -> (f64, Option<BuiltinType>) {
     (value, suffix)
 }
 
+// Re-parse a float literal as f32 (via strtof) and return the f32 value as f64.
+// Used to avoid double-rounding: parsing "7.038531e-26" via strtod and casting
+// the f64 to f32 yields a different bit pattern from parsing directly with
+// strtof on some values — different enough that ryu's f2d picks a longer
+// shortest-decimal representation. Used at parse time for suffixed f32 literals
+// AND at lower time when an unsuffixed literal is implicitly cast to f32.
+fn parse_float_as_f32(text: &[u8]) -> f32 {
+    let cstr = std::ffi::CString::from_slice(text);
+    defer cstr.free();
+    let end: &mut libc::c_char = null;
+    libc::strtof(cstr.ptr, &end)
+}
+
 fn parse_binop(text: &[u8]) -> BinOp {
     switch text {
         "+" => BinOp::Add,

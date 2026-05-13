@@ -1447,6 +1447,24 @@ impl Mono {
             m.span = expr.span;
             return r;
         }
+        // Unsuffixed float literal being coerced to f32: re-parse via strtof
+        // to avoid double-rounding (strtod-then-fptrunc gives a different
+        // bit pattern from strtof for some values, breaking ryu's shortest-
+        // decimal output). The raw text is stashed on the lit's str_val by
+        // parse_float_literal for exactly this case.
+        if expr.tag == ExprTag::FloatLit
+            && expr.type_suffix().is_none()
+            && expected_ty.tag == IrTyTag::Builtin
+            && expected_ty.builtin() == BuiltinType::F32
+            && expr.str_val().len() > 0
+        {
+            let v32 = aluminac::parser::parse_float_as_f32(expr.str_val());
+            let result = IrExpr::void_expr(expected_ty);
+            result.tag = IrTag::FloatLit;
+            result._data.lit.float_val = v32 as f64;
+            result.span = expr.span;
+            return self.ctx.arena.alloc(result);
+        }
         // Char literals default to u32 (Unicode codepoint) but coerce to the
         // expected integer builtin when one is supplied — e.g. `Option::some('\n')`
         // matched against `Option<u8>` should produce u8(10), not u32(10).

@@ -400,6 +400,10 @@ impl ExprParser {
         let e = self.make_expr(ExprTag::FloatLit, span);
         e._data.lit.float_val = value;
         e._data.lit.type_suffix = suffix;
+        // Stash the raw text on the lit so lower-time f32 coercion can re-parse
+        // via strtof and avoid double-rounding. FloatLit doesn't otherwise use
+        // str_val, so the slot is free.
+        e._data.lit.str_val = text;
         self.ctx.alloc_expr(e)
     }
 
