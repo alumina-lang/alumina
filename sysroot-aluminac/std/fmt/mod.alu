@@ -180,6 +180,21 @@ mod internal {
         }
     }
 
+    /// Generic integer formatter wrapper. Dispatches to the appropriate
+    /// signed/unsigned helper at mono time. Used by sysroot/std/builtins.alu's
+    /// per-type fmt impls so they call a single shared helper.
+    fn format_integer<T: builtins::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {
+        when std::typing::is_same::<T, u128>() {
+            format_integer_unsigned_128::<F>(val as u128, fmt)
+        } else when std::typing::is_same::<T, i128>() {
+            format_integer_signed_128::<F>(val as i128, fmt)
+        } else when val is builtins::Signed {
+            format_integer_signed::<F>(val as i64, fmt)
+        } else {
+            format_integer_unsigned::<F>(val as u64, fmt)
+        }
+    }
+
     /// 128-bit unsigned formatting (decimal). u128 max needs up to 39 digits.
     fn format_integer_unsigned_128<F: Formatter<F>>(val: u128, fmt: &mut F) -> Result {
         let buf: [u8; 39];

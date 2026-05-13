@@ -218,7 +218,7 @@ impl u8 {
     fn greater_than(lhs: &u8, rhs: &u8) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &u8, rhs: &u8) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &u8, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+        std::fmt::internal::format_integer::<u8, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &u8, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 1usize));
@@ -274,7 +274,7 @@ impl u16 {
     fn greater_than(lhs: &u16, rhs: &u16) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &u16, rhs: &u16) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &u16, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+        std::fmt::internal::format_integer::<u16, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &u16, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 2usize));
@@ -335,7 +335,7 @@ impl u32 {
     fn greater_than(lhs: &u32, rhs: &u32) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &u32, rhs: &u32) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &u32, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+        std::fmt::internal::format_integer::<u32, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &u32, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 4usize));
@@ -396,7 +396,7 @@ impl u64 {
     fn greater_than(lhs: &u64, rhs: &u64) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &u64, rhs: &u64) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &u64, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_unsigned::<F>(*self, f)
+        std::fmt::internal::format_integer::<u64, F>(*self, 10u16, 0usize, f)
     }
     /// Rotate bits left by n positions.
     fn rotate_left(self: &u64, n: usize) -> u64 {
@@ -463,7 +463,7 @@ impl u128 {
     fn greater_than(lhs: &u128, rhs: &u128) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &u128, rhs: &u128) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &u128, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_unsigned_128::<F>(*self, f)
+        std::fmt::internal::format_integer::<u128, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &u128, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 16usize));
@@ -520,7 +520,7 @@ impl usize {
     fn greater_than(lhs: &usize, rhs: &usize) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &usize, rhs: &usize) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &usize, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_unsigned::<F>(*self as u64, f)
+        std::fmt::internal::format_integer::<usize, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &usize, hasher: &mut H) {
         std::eprintln!("    usize::hash called self={}", *self);
@@ -578,7 +578,7 @@ impl i8 {
     fn greater_than(lhs: &i8, rhs: &i8) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &i8, rhs: &i8) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &i8, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+        std::fmt::internal::format_integer::<i8, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &i8, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 1usize));
@@ -636,7 +636,7 @@ impl i16 {
     fn greater_than(lhs: &i16, rhs: &i16) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &i16, rhs: &i16) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &i16, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+        std::fmt::internal::format_integer::<i16, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &i16, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 2usize));
@@ -694,7 +694,7 @@ impl i32 {
     fn greater_than(lhs: &i32, rhs: &i32) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &i32, rhs: &i32) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &i32, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+        std::fmt::internal::format_integer::<i32, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &i32, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 4usize));
@@ -774,7 +774,7 @@ impl i64 {
     fn greater_than(lhs: &i64, rhs: &i64) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &i64, rhs: &i64) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &i64, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_signed::<F>(*self, f)
+        std::fmt::internal::format_integer::<i64, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &i64, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 8usize));
@@ -851,7 +851,7 @@ impl i128 {
     fn greater_than(lhs: &i128, rhs: &i128) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &i128, rhs: &i128) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &i128, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_signed_128::<F>(*self, f)
+        std::fmt::internal::format_integer::<i128, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &i128, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 16usize));
@@ -922,7 +922,7 @@ impl isize {
     fn greater_than(lhs: &isize, rhs: &isize) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &isize, rhs: &isize) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &isize, f: &mut F) -> std::fmt::Result {
-        std::fmt::internal::format_integer_signed::<F>(*self as i64, f)
+        std::fmt::internal::format_integer::<isize, F>(*self, 10u16, 0usize, f)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &isize, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, std::mem::size_of::<isize>()));
