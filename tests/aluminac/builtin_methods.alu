@@ -1,6 +1,10 @@
 // ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+//
+// Uses `write!(&buf, ...)` directly on a StringBuf. Avoid the
+// `StringWriter` wrapper — sysroot's StringWriter is Writable-only
+// (not a Formatter), so it can't be a sink for fmt::write!. StringBuf
+// implements Formatter directly via write_str / write_byte.
 use std::string::StringBuf;
-use std::io::StringWriter;
 
 fn test_integer_static_methods() -> i32 {
     // u8
@@ -48,20 +52,19 @@ fn test_integer_comparison() -> i32 {
 fn test_integer_formatting() -> i32 {
     let s = StringBuf::new();
     defer s.free();
-    let w = StringWriter::new(&s);
-    let _ = write!(&w, "{}", 42i32);
+    let _ = write!(&s, "{}", 42i32);
     if s.as_slice() != "42" { return 30i32; }
 
     s.clear();
-    let _ = write!(&w, "{}", 255u8);
+    let _ = write!(&s, "{}", 255u8);
     if s.as_slice() != "255" { return 31i32; }
 
     s.clear();
-    let _ = write!(&w, "{}", -123i32);
+    let _ = write!(&s, "{}", -123i32);
     if s.as_slice() != "-123" { return 32i32; }
 
     s.clear();
-    let _ = write!(&w, "{}", 0i32);
+    let _ = write!(&s, "{}", 0i32);
     if s.as_slice() != "0" { return 33i32; }
 
     0i32
@@ -70,12 +73,11 @@ fn test_integer_formatting() -> i32 {
 fn test_bool_formatting() -> i32 {
     let s = StringBuf::new();
     defer s.free();
-    let w = StringWriter::new(&s);
-    let _ = write!(&w, "{}", true);
+    let _ = write!(&s, "{}", true);
     if s.as_slice() != "true" { return 40i32; }
 
     s.clear();
-    let _ = write!(&w, "{}", false);
+    let _ = write!(&s, "{}", false);
     if s.as_slice() != "false" { return 41i32; }
 
     0i32
@@ -129,17 +131,16 @@ fn test_float_methods() -> i32 {
 fn test_float_formatting() -> i32 {
     let s = StringBuf::new();
     defer s.free();
-    let w = StringWriter::new(&s);
 
-    let _ = write!(&w, "{}", 3.14f64);
+    let _ = write!(&s, "{}", 3.14f64);
     if s.as_slice() != "3.14" { return 70i32; }
 
     s.clear();
-    let _ = write!(&w, "{}", 0.0f64);
+    let _ = write!(&s, "{}", 0.0f64);
     if s.as_slice() != "0" { return 71i32; }
 
     s.clear();
-    let _ = write!(&w, "{}", 1.0f32);
+    let _ = write!(&s, "{}", 1.0f32);
     if s.as_slice() != "1" { return 72i32; }
 
     0i32

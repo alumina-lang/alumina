@@ -42,7 +42,7 @@ Notes on remaining macro audit gaps:
 
 The remaining compiler-side work clusters into three real items. Closing these unblocks most of the stdlib `[TODO]`s en masse; chasing stdlib files one at a time without fixing these is depth-first work against shallow leaves.
 
-**Current headline blocker (2026-05-13):** Surfaces when attempting to swap sysroot/std/io/mod.alu. Progress this session:
+**Headline blocker for this session — RESOLVED (2026-05-13).** sysroot/std/io/mod.alu fully unified; sysroot-aluminac/std/io/mod.alu is byte-identical to sysroot's. `make porting-gates` green, bootstrap stage 2 == stage 3 byte-identical, `make test-std-aluminac` 198/198, `make test-aluminac` 162/162. The chain of compiler / sysroot / test fixes needed to get there is captured in the `std/io/mod.alu` entry below. Five layers in order:
 
 1. ~~`mem::slice::empty()` doesn't infer `Ptr` from expected `&mut [u8]` at sysroot-aluminac/std/io/mod.alu:1018 (test_null).~~ **Resolved 2026-05-13.** The free-function path already inferred `Ptr` from `expected_type` (see "Type-arg inference: `slice<Ptr>` from expected `&[T]` / `&mut [T]`" below), but the method-call dispatcher (`try_lower_method_call`) lowered each arg via `lower_expr(expr.args()[i])` *without* setting `expected_type`, then ran `check_and_coerce` against the parameter type after the fact. The check fired on a slice already bound to `slice<void>`. Aligning the method-call path to do `lower_expr_coerced(arg, param_ty)` (matching the free-function call path and every other arg-coercion site in lower.alu) lets `slice::empty()` solve `Ptr` from the parameter shape. Regression test: `tests/aluminac/method_arg_slice_empty_inference.alu`.
 
@@ -386,7 +386,16 @@ Blocks unifying io/mod.alu, fmt/mod.alu, string/mod.alu, typing.alu.
 
   fs/unix.alu's embedded `mod tests` (test_open, test_read_directory, etc.) is `#[cfg(all(test, test_std, boot))]`-gated since it depends on `std::random` (not ported), `std::process::env`, and other infrastructure that's TODO. Alumina-boot's `make test-std` still runs the gated module.
 
-- [PARTIAL] **`std/io/mod.alu`** + **`std/io/unix.alu`** — `io/unix.alu` is already byte-identical between sysroots (the OS-syscall layer needs no aluminac-specific changes). `io/mod.alu` (the Read/Write protocol layer) still needs work — gated on protocol-trait design and dyn dispatch in the sysroot.
+- [DONE] **`std/io/mod.alu`** + **`std/io/unix.alu`** — unified 2026-05-13. Both files are now byte-identical between sysroots (`diff -q` is silent). `make test-std-aluminac` grew 190 → 198 (added: `test_take`, `test_chain`, `test_copy`, `test_null`, `test_take_eof`, `test_slice_reader`, `test_read_byte`, `test_lines`). `make test-aluminac` stays at 162. Bootstrap stage 2 == stage 3, byte-identical.
+
+  Five compiler fixes were needed to make the swap green; the chain stayed broken at each layer until all five were in place, so they all live in the same headline-blocker arc (above):
+  1. **`try_lower_method_call` propagates expected param type** for arg lowering — let `slice::empty()` infer `Ptr` from the `&mut [u8]` parameter at `test_null`'s `read_exact(mem::slice::empty())` call. Commit 3287c898.
+  2. **`process/mod.alu` switched from `io::errno_try!` to `errno_try!` via `use io::unix::errno_try;`** — sysroot's unified io/mod.alu no longer re-exports `errno_try` (only `io::unix::errno_try` exists). Without the import, aluminac's macro-resolution silently dropped the `errno_try!(libc::poll(...))` call from `read_to_end_2`, and the loop spun on uninitialized fds. Commit 89f895c1.
+  3. **`StringBuf::iter` / `iter_ref` / `iter_mut`** added to sysroot-aluminac so `LineIterator::next`'s `self.line_buf.iter().next_back()` resolves to the slice iterator instead of silently lowering to `()`. Commit 6bfb3146.
+  4. **CharLit honors expected_type** in `lower_expr_coerced`, plus FnRef/Defered call inference prefers expected-type's args over CharLit-defaulted ones when the return type is `Generic` with a 1:1 Placeholder match. Without this, `Option::some('\n')` matched against `Option<u8>` produced `Option<u32>` and the trailing-newline check silently returned false. Commit 6bfb3146.
+  5. **`try_lower_method_call` passes `[elem,ptr]` for 2-generic slice methods** (mirrors `call_method_on_type` and `lower_defered_call`). Without this, `slice::equals<T, Ptr>` was being mono'd with `T=&u8` instead of `T=u8`, and the body's `size_of::<T>()` returned the pointer size (8) instead of 1, so `memcmp(p, q, len * 8)` read past the slice end and returned non-zero for byte-identical content. Commit 9f12b573.
+
+  Three aluminac-specific tests (`tests/aluminac/builtin_methods.alu`, `option_result_ext.alu`, `string_extended.alu`) had been using `StringWriter::new(&buf)` as a `fmt::write!` sink — sysroot's StringWriter is `Writable`-only (not a Formatter), so they now write into the `StringBuf` directly (which IS a Formatter via its `write_str` / `write_byte` methods).
 
 - [DONE] **Self-host bootstrap regression on substantial-sysroot-file swaps.** **Resolved 2026-05-13** by two compiler fixes:
 

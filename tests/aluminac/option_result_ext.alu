@@ -1,6 +1,7 @@
 // ALUMINAC_FLAGS: --sysroot sysroot-aluminac
 use std::string::StringBuf;
-use std::io::StringWriter;
+// Use StringBuf directly as a fmt Formatter sink — sysroot's
+// StringWriter is Writable-only.
 
 fn test_option_combinators() -> i32 {
     // map
@@ -143,8 +144,7 @@ fn test_result_combinators() -> i32 {
 fn test_string_writer_formatter() -> i32 {
     let s = StringBuf::new();
     defer s.free();
-    let w = StringWriter::new(&s);
-    let _ = write!(&w, "hello {} world {}", 42i32, "test");
+    let _ = write!(&s, "hello {} world {}", 42i32, "test");
     if s.as_slice() != "hello 42 world test" { return 70i32; }
     0i32
 }

@@ -3,7 +3,8 @@ use std::string::{StringBuf, split, replace, replace_fmt, find, find_char, conta
 use std::string::{starts_with, ends_with, trim, trim_start, trim_end, trim_prefix, trim_suffix};
 use std::string::{is_whitespace, is_digit, to_lower, to_upper, join};
 use std::string::{parse_i64, parse_i32, parse_usize};
-use std::io::StringWriter;
+// Use StringBuf directly as a fmt Formatter sink — sysroot's
+// StringWriter is Writable-only (not a Formatter).
 use std::hash::hash_of;
 
 fn test_stringbuf_get() -> i32 {
@@ -140,12 +141,11 @@ fn test_split_count() -> i32 {
 }
 
 fn test_replace_fmt() -> i32 {
-    // Test non-allocating replace_fmt via StringWriter
+    // Test non-allocating replace_fmt via direct StringBuf as Formatter sink
     let s = StringBuf::new();
     defer s.free();
-    let w = StringWriter::new(&s);
     let adapter = replace_fmt("hello world", "world", "earth");
-    adapter.fmt(&w).unwrap();
+    adapter.fmt(&s).unwrap();
     if s.as_slice() != "hello earth" { return 70i32; }
 
     // Test allocating replace (which now uses replace_fmt internally)
