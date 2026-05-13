@@ -1224,6 +1224,17 @@ impl FnCodegen {
             indices[0] = lhs_val;
             return LLVMBuildInBoundsGEP2(self.ctx.builder, pointee_ty, rhs_val, &indices[0], 1u32, self.temp_cname());
         }
+        // ptr - int → inbounds GEP with negated index. Mirrors the ptr + int path
+        // above; without this, the generic fallthrough does ptrtoint+sub+bitcast,
+        // which truncates the pointer to the integer literal's width (typically i32)
+        // and produces an invalid bitcast on 64-bit targets.
+        if op == BinOp::Sub && lhs_kind == LLVMTypeKind::Pointer && rhs_kind == LLVMTypeKind::Integer {
+            let pointee_ty = self.ctx.llvm_type(lhs.ty.inner());
+            let neg_idx = LLVMBuildNeg(self.ctx.builder, rhs_val, self.temp_cname());
+            let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+            indices[0] = neg_idx;
+            return LLVMBuildInBoundsGEP2(self.ctx.builder, pointee_ty, lhs_val, &indices[0], 1u32, self.temp_cname());
+        }
         // Pointer subtraction: ptr - ptr → ptrtoint both, sub as isize,
         // divide by sizeof(pointee) for element distance. Matches C
         // semantics and sysroot's `string::find` (which subtracts two

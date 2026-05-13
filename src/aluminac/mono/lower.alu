@@ -2457,8 +2457,25 @@ impl Mono {
     // Lower binary/unary/assignment ops: ExprTag::Binary, ExprTag::Unary, ExprTag::Assign, EXPR_COMPOUND_ASSIGN
     fn lower_binop(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Binary {
-            let ir_lhs = self.lower_expr(expr.lhs());
-            let ir_rhs = self.lower_expr_coerced(expr.rhs(), ir_lhs.ty);
+            // If the LHS is an unsuffixed integer literal and the RHS is a typed
+            // expression, lower the RHS first so we can coerce the literal to the
+            // RHS's type. Otherwise `10 * m` where m: u64 defaults `10` to i32 and
+            // then casts m down to i32, truncating values beyond i32::MAX.
+            // Surfaced by ryu's parse64 mantissa accumulation
+            // (`m10 = 10 * m10 + ...`).
+            let lhs_is_untyped_int = expr.lhs().tag == ExprTag::IntLit
+                && expr.lhs().type_suffix().is_none();
+            let rhs_is_untyped_int = expr.rhs().tag == ExprTag::IntLit
+                && expr.rhs().type_suffix().is_none();
+            let ir_lhs: &IrExpr;
+            let ir_rhs: &IrExpr;
+            if lhs_is_untyped_int && !rhs_is_untyped_int {
+                ir_rhs = self.lower_expr(expr.rhs());
+                ir_lhs = self.lower_expr_coerced(expr.lhs(), ir_rhs.ty);
+            } else {
+                ir_lhs = self.lower_expr(expr.lhs());
+                ir_rhs = self.lower_expr_coerced(expr.rhs(), ir_lhs.ty);
+            }
 
             // For comparison operators on struct types, try operator overloading
             let is_comparison = expr.bin_op() == BinOp::Eq

@@ -1,0 +1,565 @@
+// Translated from Rust to Alumina. The Rust port can be found at https://github.com/dtolnay/ryu
+// The original C code can be found at https://github.com/ulfjack/ryu and carries the following license:
+//
+// Copyright 2018 Ulf Adams
+//
+// The contents of this file may be used under the terms of the Apache License,
+// Version 2.0.
+//
+//    (See accompanying file LICENSE-Apache or copy at
+//     http://www.apache.org/licenses/LICENSE-2.0)
+//
+// Alternatively, the contents of this file may be used under the terms of
+// the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE-Boost or copy at
+//     https://www.boost.org/LICENSE_1_0.txt)
+//
+// Unless required by applicable law or agreed to in writing, this software
+// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.
+
+use common::*;
+use d2s_intrinsics::*;
+use d2s_full_table::*;
+
+const DOUBLE_MANTISSA_BITS: u32 = 52;
+const DOUBLE_EXPONENT_BITS: u32 = 11;
+const DOUBLE_BIAS: i32 = 1023;
+const DOUBLE_POW5_INV_BITCOUNT: i32 = 125;
+const DOUBLE_POW5_BITCOUNT: i32 = 125;
+
+#[inline]
+fn decimal_length17(v: u64) -> u32 {
+    // This is slightly faster than a loop.
+    // The average output length is 16.38 digits, so we check high-to-low.
+    // Function precondition: v is not an 18, 19, or 20-digit number.
+    // (17 digits are sufficient for round-tripping.)
+    debug_assert!(v < 100000000000000000);
+
+    if v >= 10000000000000000 {
+        17
+    } else if v >= 1000000000000000 {
+        16
+    } else if v >= 100000000000000 {
+        15
+    } else if v >= 10000000000000 {
+        14
+    } else if v >= 1000000000000 {
+        13
+    } else if v >= 100000000000 {
+        12
+    } else if v >= 10000000000 {
+        11
+    } else if v >= 1000000000 {
+        10
+    } else if v >= 100000000 {
+        9
+    } else if v >= 10000000 {
+        8
+    } else if v >= 1000000 {
+        7
+    } else if v >= 100000 {
+        6
+    } else if v >= 10000 {
+        5
+    } else if v >= 1000 {
+        4
+    } else if v >= 100 {
+        3
+    } else if v >= 10 {
+        2
+    } else {
+        1
+    }
+}
+
+// A floating decimal representing m * 10^e.
+struct FloatingDecimal64 {
+    mantissa: u64,
+    // Decimal exponent's range is -324 to 308
+    // inclusive, and can fit in i16 if needed.
+    exponent: i32,
+}
+
+#[inline]
+fn d2d(ieee_mantissa: u64, ieee_exponent: u32) -> FloatingDecimal64 {
+    let (e2, m2) = if ieee_exponent == 0 {
+        (
+            // We subtract 2 so that the bounds computation has 2 additional bits.
+            1 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS as i32 - 2,
+            ieee_mantissa,
+        )
+    } else {
+        (
+            ieee_exponent as i32 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS as i32 - 2,
+            (1u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa,
+        )
+    };
+    let even = (m2 & 1) == 0;
+    let accept_bounds = even;
+
+    // Step 2: Determine the interval of valid decimal representations.
+    let mv = 4u64 * m2;
+    // Implicit bool -> int conversion. True is 1, false is 0.
+    let mm_shift = (ieee_mantissa != 0 || ieee_exponent <= 1) as u32;
+    // We would compute mp and mm like this:
+    // uint64_t mp = 4 * m2 + 2;
+    // uint64_t mm = mv - 1 - mm_shift;
+
+    // Step 3: Convert to a decimal power base using 128-bit arithmetic.
+    let vr: u64;
+    let vp: u64;
+    let vm: u64;
+    let e10: i32;
+    let vm_is_trailing_zeros = false;
+    let vr_is_trailing_zeros = false;
+    if e2 >= 0 {
+        // I tried special-casing q == 0, but there was no effect on performance.
+        // This expression is slightly faster than max(0, log10_pow2(e2) - 1).
+        let q = log10_pow2(e2) - (e2 > 3) as u32;
+        e10 = q as i32;
+        let k = DOUBLE_POW5_INV_BITCOUNT + pow5bits(q as i32) - 1;
+        let i = -e2 + q as i32 + k;
+        vr = mul_shift_all_64(
+                m2,
+                {
+                    debug_assert!(q < DOUBLE_POW5_INV_SPLIT.len() as u32);
+                    &DOUBLE_POW5_INV_SPLIT[q as usize]
+                },
+                i as u32,
+                &vp,
+                &vm,
+                mm_shift,
+            );
+
+        if q <= 21 {
+            // This should use q <= 22, but I think 21 is also safe. Smaller values
+            // may still be safe, but it's more difficult to reason about them.
+            // Only one of mp, mv, and mm can be a multiple of 5, if any.
+            let mv_mod5 = (mv as u32).wrapping_sub(5u32.wrapping_mul(div5(mv) as u32));
+            if mv_mod5 == 0 {
+                vr_is_trailing_zeros = multiple_of_power_of_5(mv, q);
+            } else if accept_bounds {
+                // Same as min(e2 + (~mm & 1), pow5_factor(mm)) >= q
+                // <=> e2 + (~mm & 1) >= q && pow5_factor(mm) >= q
+                // <=> true && pow5_factor(mm) >= q, since e2 >= q.
+                vm_is_trailing_zeros = multiple_of_power_of_5(mv - 1 - mm_shift as u64, q);
+            } else {
+                // Same as min(e2 + 1, pow5_factor(mp)) >= q.
+                vp -= multiple_of_power_of_5(mv + 2, q) as u64;
+            }
+        }
+    } else {
+        // This expression is slightly faster than max(0, log10_pow5(-e2) - 1).
+        let q = log10_pow5(-e2) - (-e2 > 1) as u32;
+        e10 = q as i32 + e2;
+        let i = -e2 - q as i32;
+        let k = pow5bits(i) - DOUBLE_POW5_BITCOUNT;
+        let j = q as i32 - k;
+        vr = mul_shift_all_64(
+                m2,
+                {
+                    debug_assert!(i < DOUBLE_POW5_SPLIT.len() as i32);
+                    &DOUBLE_POW5_SPLIT[i as usize]
+                },
+                j as u32,
+                &vp,
+                &vm,
+                mm_shift,
+            );
+
+        if q <= 1 {
+            // {vr,vp,vm} is trailing zeros if {mv,mp,mm} has at least q trailing 0 bits.
+            // mv = 4 * m2, so it always has at least two trailing 0 bits.
+            vr_is_trailing_zeros = true;
+            if accept_bounds {
+                // mm = mv - 1 - mm_shift, so it has 1 trailing 0 bit iff mm_shift == 1.
+                vm_is_trailing_zeros = mm_shift == 1;
+            } else {
+                // mp = mv + 2, so it always has at least one trailing 0 bit.
+                vp -= 1;
+            }
+        } else if q < 63 {
+            // TODO(ulfjack): Use a tighter bound here.
+            // We want to know if the full product has at least q trailing zeros.
+            // We need to compute min(p2(mv), p5(mv) - e2) >= q
+            // <=> p2(mv) >= q && p5(mv) - e2 >= q
+            // <=> p2(mv) >= q (because -e2 >= q)
+            vr_is_trailing_zeros = multiple_of_power_of_2(mv, q);
+        }
+    }
+
+    // Step 4: Find the shortest decimal representation in the interval of valid representations.
+    let removed = 0i32;
+    let last_removed_digit = 0u8;
+    // On average, we remove ~2 digits.
+    let output = if vm_is_trailing_zeros || vr_is_trailing_zeros {
+        // General case, which happens rarely (~0.7%).
+        loop {
+            let vp_div10 = div10(vp);
+            let vm_div10 = div10(vm);
+            if vp_div10 <= vm_div10 {
+                break;
+            }
+            let vm_mod10 = (vm as u32).wrapping_sub(10u32.wrapping_mul(vm_div10 as u32));
+            let vr_div10 = div10(vr);
+            let vr_mod10 = (vr as u32).wrapping_sub(10u32.wrapping_mul(vr_div10 as u32));
+            vm_is_trailing_zeros = vm_is_trailing_zeros && (vm_mod10 == 0);
+            vr_is_trailing_zeros = vr_is_trailing_zeros && (last_removed_digit == 0);
+            last_removed_digit = vr_mod10 as u8;
+            vr = vr_div10;
+            vp = vp_div10;
+            vm = vm_div10;
+            removed += 1;
+        }
+        if vm_is_trailing_zeros {
+            loop {
+                let vm_div10 = div10(vm);
+                let vm_mod10 = (vm as u32).wrapping_sub(10u32.wrapping_mul(vm_div10 as u32));
+                if vm_mod10 != 0 {
+                    break;
+                }
+                let vp_div10 = div10(vp);
+                let vr_div10 = div10(vr);
+                let vr_mod10 = (vr as u32).wrapping_sub(10u32.wrapping_mul(vr_div10 as u32));
+                vr_is_trailing_zeros = vr_is_trailing_zeros && (last_removed_digit == 0);
+                last_removed_digit = vr_mod10 as u8;
+                vr = vr_div10;
+                vp = vp_div10;
+                vm = vm_div10;
+                removed += 1;
+            }
+        }
+        if vr_is_trailing_zeros && last_removed_digit == 5 && vr % 2 == 0 {
+            // Round even if the exact number is .....50..0.
+            last_removed_digit = 4;
+        }
+        // We need to take vr + 1 if vr is outside bounds or we need to round up.
+        vr + ((vr == vm && (!accept_bounds || !vm_is_trailing_zeros)) || last_removed_digit >= 5)
+            as u64
+    } else {
+        // Specialized for the common case (~99.3%). Percentages below are relative to this.
+        let round_up = false;
+        let vp_div100 = div100(vp);
+        let vm_div100 = div100(vm);
+        // Optimization: remove two digits at a time (~86.2%).
+        if vp_div100 > vm_div100 {
+            let vr_div100 = div100(vr);
+            let vr_mod100 = (vr as u32).wrapping_sub(100u32.wrapping_mul(vr_div100 as u32));
+            round_up = vr_mod100 >= 50;
+            vr = vr_div100;
+            vp = vp_div100;
+            vm = vm_div100;
+            removed += 2;
+        }
+        // Loop iterations below (approximately), without optimization above:
+        // 0: 0.03%, 1: 13.8%, 2: 70.6%, 3: 14.0%, 4: 1.40%, 5: 0.14%, 6+: 0.02%
+        // Loop iterations below (approximately), with optimization above:
+        // 0: 70.6%, 1: 27.8%, 2: 1.40%, 3: 0.14%, 4+: 0.02%
+        loop {
+            let vp_div10 = div10(vp);
+            let vm_div10 = div10(vm);
+            if vp_div10 <= vm_div10 {
+                break;
+            }
+            let vr_div10 = div10(vr);
+            let vr_mod10 = (vr as u32).wrapping_sub(10u32.wrapping_mul(vr_div10 as u32));
+            round_up = vr_mod10 >= 5;
+            vr = vr_div10;
+            vp = vp_div10;
+            vm = vm_div10;
+            removed += 1;
+        }
+        // We need to take vr + 1 if vr is outside bounds or we need to round up.
+        vr + (vr == vm || round_up) as u64
+    };
+    let exp = e10 + removed;
+
+    FloatingDecimal64 {
+        exponent: exp,
+        mantissa: output,
+    }
+}
+
+#[cfg(all(test_std, test))]
+#[docs(hide)]
+mod tests {
+    fn ieee_parts_to_double(sign: bool, ieee_exponent: u32, ieee_mantissa: u64) -> f64 {
+        assert!(ieee_exponent <= 2047);
+        assert!(ieee_mantissa <= (1u64 << 53) - 1);
+        f64::from_bits(((sign as u64) << 63) | ((ieee_exponent as u64) << 52) | ieee_mantissa)
+    }
+
+    macro check($val, $expected) {
+        let buf: [u8; 100];
+        let size = pretty::format64($val, &buf[0]);
+        assert_eq!(buf[..size] as &[u8], $expected);
+    }
+
+    #[test]
+    fn test_ryu() {
+        check!(0.3, "0.3");
+        check!(1234000000000000.0, "1234000000000000.0");
+        check!(1.234e16, "1.234e16");
+        check!(2.71828, "2.71828");
+        check!(1.1e128, "1.1e128");
+        check!(1.1e-64, "1.1e-64");
+        check!(2.718281828459045, "2.718281828459045");
+        check!(5.0e-324, "5e-324");
+        check!(1.7976931348623157e308, "1.7976931348623157e308");
+    }
+
+    #[test]
+    fn test_basic() {
+        check!(0.0, "0.0");
+        check!(-0.0, "-0.0");
+        check!(1.0, "1.0");
+        check!(-1.0, "-1.0");
+        // Not handled in this port
+        // check!(f64::nan(), "NaN");
+        // check!(f64::infinity(), "inf");
+        // check!(f64::neg_infinity(), "-inf");
+    }
+
+    #[test]
+    fn test_switch_to_subnormal() {
+        check!(2.2250738585072014e-308, "2.2250738585072014e-308");
+    }
+
+    #[test]
+    fn test_min_and_max() {
+        assert_eq!(f64::from_bits(0x7fefffffffffffff), 1.7976931348623157e308);
+        check!(1.7976931348623157e308, "1.7976931348623157e308");
+        assert_eq!(f64::from_bits(1), 5.0e-324);
+        check!(5.0e-324, "5e-324");
+    }
+
+    #[test]
+    fn test_lots_of_trailing_zeros() {
+        check!(2.9802322387695312e-8, "2.9802322387695312e-8");
+    }
+
+    #[test]
+    fn test_regression() {
+        check!(-2.109808898695963e16, "-2.109808898695963e16");
+        check!(4.940656e-318, "4.940656e-318");
+        check!(1.18575755e-316, "1.18575755e-316");
+        check!(2.989102097996e-312, "2.989102097996e-312");
+        check!(9060801153433600.0, "9060801153433600.0");
+        check!(4.708356024711512e18, "4.708356024711512e18");
+        check!(9.409340012568248e18, "9.409340012568248e18");
+        check!(1.2345678, "1.2345678");
+    }
+
+    #[test]
+    fn test_looks_like_pow5() {
+        // These numbers have a mantissa that is a multiple of the largest power of
+        // 5 that fits, and an exponent that causes the computation for q to result
+        // in 22, which is a corner case for Ryū.
+        assert_eq!(f64::from_bits(0x4830F0CF064DD592), 5.764607523034235e39);
+        check!(5.764607523034235e39, "5.764607523034235e39");
+        assert_eq!(f64::from_bits(0x4840F0CF064DD592), 1.152921504606847e40);
+        check!(1.152921504606847e40, "1.152921504606847e40");
+        assert_eq!(f64::from_bits(0x4850F0CF064DD592), 2.305843009213694e40);
+        check!(2.305843009213694e40, "2.305843009213694e40");
+    }
+
+    #[test]
+    fn test_output_length() {
+        check!(1.0, "1.0"); // already tested in Basic
+        check!(1.2, "1.2");
+        check!(1.23, "1.23");
+        check!(1.234, "1.234");
+        check!(1.2345, "1.2345");
+        check!(1.23456, "1.23456");
+        check!(1.234567, "1.234567");
+        check!(1.2345678, "1.2345678"); // already tested in Regression
+        check!(1.23456789, "1.23456789");
+        check!(1.234567895, "1.234567895"); // 1.234567890 would be trimmed
+        check!(1.2345678901, "1.2345678901");
+        check!(1.23456789012, "1.23456789012");
+        check!(1.234567890123, "1.234567890123");
+        check!(1.2345678901234, "1.2345678901234");
+        check!(1.23456789012345, "1.23456789012345");
+        check!(1.234567890123456, "1.234567890123456");
+        check!(1.2345678901234567, "1.2345678901234567");
+
+        // Test 32-bit chunking
+        check!(4.294967294, "4.294967294"); // 2^32 - 2
+        check!(4.294967295, "4.294967295"); // 2^32 - 1
+        check!(4.294967296, "4.294967296"); // 2^32
+        check!(4.294967297, "4.294967297"); // 2^32 + 1
+        check!(4.294967298, "4.294967298"); // 2^32 + 2
+    }
+
+    // Test min, max shift values in shiftright128
+    #[test]
+    fn test_min_max_shift() {
+        let max_mantissa = (1u64 << 53) - 1;
+
+        // 32-bit opt-size=0:  49 <= dist <= 50
+        // 32-bit opt-size=1:  30 <= dist <= 50
+        // 64-bit opt-size=0:  50 <= dist <= 50
+        // 64-bit opt-size=1:  30 <= dist <= 50
+        assert_eq!(1.7800590868057611E-307, ieee_parts_to_double(false, 4, 0));
+        check!(1.7800590868057611e-307, "1.7800590868057611e-307");
+        // 32-bit opt-size=0:  49 <= dist <= 49
+        // 32-bit opt-size=1:  28 <= dist <= 49
+        // 64-bit opt-size=0:  50 <= dist <= 50
+        // 64-bit opt-size=1:  28 <= dist <= 50
+        assert_eq!(
+            2.8480945388892175E-306,
+            ieee_parts_to_double(false, 6, max_mantissa)
+        );
+        check!(2.8480945388892175e-306, "2.8480945388892175e-306");
+        // 32-bit opt-size=0:  52 <= dist <= 53
+        // 32-bit opt-size=1:   2 <= dist <= 53
+        // 64-bit opt-size=0:  53 <= dist <= 53
+        // 64-bit opt-size=1:   2 <= dist <= 53
+        assert_eq!(2.446494580089078E-296, ieee_parts_to_double(false, 41, 0));
+        check!(2.446494580089078e-296, "2.446494580089078e-296");
+        // 32-bit opt-size=0:  52 <= dist <= 52
+        // 32-bit opt-size=1:   2 <= dist <= 52
+        // 64-bit opt-size=0:  53 <= dist <= 53
+        // 64-bit opt-size=1:   2 <= dist <= 53
+        assert_eq!(
+            4.8929891601781557E-296,
+            ieee_parts_to_double(false, 40, max_mantissa)
+        );
+        check!(4.8929891601781557e-296, "4.8929891601781557e-296");
+
+        // 32-bit opt-size=0:  57 <= dist <= 58
+        // 32-bit opt-size=1:  57 <= dist <= 58
+        // 64-bit opt-size=0:  58 <= dist <= 58
+        // 64-bit opt-size=1:  58 <= dist <= 58
+        assert_eq!(1.8014398509481984E16, ieee_parts_to_double(false, 1077, 0));
+        check!(1.8014398509481984e16, "1.8014398509481984e16");
+        // 32-bit opt-size=0:  57 <= dist <= 57
+        // 32-bit opt-size=1:  57 <= dist <= 57
+        // 64-bit opt-size=0:  58 <= dist <= 58
+        // 64-bit opt-size=1:  58 <= dist <= 58
+        assert_eq!(
+            3.6028797018963964E16,
+            ieee_parts_to_double(false, 1076, max_mantissa)
+        );
+        check!(3.6028797018963964e16, "3.6028797018963964e16");
+        // 32-bit opt-size=0:  51 <= dist <= 52
+        // 32-bit opt-size=1:  51 <= dist <= 59
+        // 64-bit opt-size=0:  52 <= dist <= 52
+        // 64-bit opt-size=1:  52 <= dist <= 59
+        assert_eq!(2.900835519859558E-216, ieee_parts_to_double(false, 307, 0));
+        check!(2.900835519859558e-216, "2.900835519859558e-216");
+        // 32-bit opt-size=0:  51 <= dist <= 51
+        // 32-bit opt-size=1:  51 <= dist <= 59
+        // 64-bit opt-size=0:  52 <= dist <= 52
+        // 64-bit opt-size=1:  52 <= dist <= 59
+        assert_eq!(
+            5.801671039719115E-216,
+            ieee_parts_to_double(false, 306, max_mantissa)
+        );
+        check!(5.801671039719115e-216, "5.801671039719115e-216");
+
+        // https://github.com/ulfjack/ryu/commit/19e44d16d80236f5de25800f56d82606d1be00b9#commitcomment-30146483
+        // 32-bit opt-size=0:  49 <= dist <= 49
+        // 32-bit opt-size=1:  44 <= dist <= 49
+        // 64-bit opt-size=0:  50 <= dist <= 50
+        // 64-bit opt-size=1:  44 <= dist <= 50
+        assert_eq!(
+            3.196104012172126E-27,
+            ieee_parts_to_double(false, 934, 0x000FA7161A4D6E0C)
+        );
+        check!(3.196104012172126e-27, "3.196104012172126e-27");
+    }
+
+    #[test]
+    fn test_small_integers() {
+        check!(9007199254740991.0, "9007199254740991.0"); // 2^53-1
+        check!(9007199254740992.0, "9007199254740992.0"); // 2^53
+
+        check!(1.0, "1.0");
+        check!(12.0, "12.0");
+        check!(123.0, "123.0");
+        check!(1234.0, "1234.0");
+        check!(12345.0, "12345.0");
+        check!(123456.0, "123456.0");
+        check!(1234567.0, "1234567.0");
+        check!(12345678.0, "12345678.0");
+        check!(123456789.0, "123456789.0");
+        check!(1234567890.0, "1234567890.0");
+        check!(1234567895.0, "1234567895.0");
+        check!(12345678901.0, "12345678901.0");
+        check!(123456789012.0, "123456789012.0");
+        check!(1234567890123.0, "1234567890123.0");
+        check!(12345678901234.0, "12345678901234.0");
+        check!(123456789012345.0, "123456789012345.0");
+        check!(1234567890123456.0, "1234567890123456.0");
+
+        // 10^i
+        check!(1.0, "1.0");
+        check!(10.0, "10.0");
+        check!(100.0, "100.0");
+        check!(1000.0, "1000.0");
+        check!(10000.0, "10000.0");
+        check!(100000.0, "100000.0");
+        check!(1000000.0, "1000000.0");
+        check!(10000000.0, "10000000.0");
+        check!(100000000.0, "100000000.0");
+        check!(1000000000.0, "1000000000.0");
+        check!(10000000000.0, "10000000000.0");
+        check!(100000000000.0, "100000000000.0");
+        check!(1000000000000.0, "1000000000000.0");
+        check!(10000000000000.0, "10000000000000.0");
+        check!(100000000000000.0, "100000000000000.0");
+        check!(1000000000000000.0, "1000000000000000.0");
+
+        // 10^15 + 10^i
+        check!(1000000000000001.0, "1000000000000001.0");
+        check!(1000000000000010.0, "1000000000000010.0");
+        check!(1000000000000100.0, "1000000000000100.0");
+        check!(1000000000001000.0, "1000000000001000.0");
+        check!(1000000000010000.0, "1000000000010000.0");
+        check!(1000000000100000.0, "1000000000100000.0");
+        check!(1000000001000000.0, "1000000001000000.0");
+        check!(1000000010000000.0, "1000000010000000.0");
+        check!(1000000100000000.0, "1000000100000000.0");
+        check!(1000001000000000.0, "1000001000000000.0");
+        check!(1000010000000000.0, "1000010000000000.0");
+        check!(1000100000000000.0, "1000100000000000.0");
+        check!(1001000000000000.0, "1001000000000000.0");
+        check!(1010000000000000.0, "1010000000000000.0");
+        check!(1100000000000000.0, "1100000000000000.0");
+
+        // Largest power of 2 <= 10^(i+1)
+        check!(8.0, "8.0");
+        check!(64.0, "64.0");
+        check!(512.0, "512.0");
+        check!(8192.0, "8192.0");
+        check!(65536.0, "65536.0");
+        check!(524288.0, "524288.0");
+        check!(8388608.0, "8388608.0");
+        check!(67108864.0, "67108864.0");
+        check!(536870912.0, "536870912.0");
+        check!(8589934592.0, "8589934592.0");
+        check!(68719476736.0, "68719476736.0");
+        check!(549755813888.0, "549755813888.0");
+        check!(8796093022208.0, "8796093022208.0");
+        check!(70368744177664.0, "70368744177664.0");
+        check!(562949953421312.0, "562949953421312.0");
+        check!(9007199254740992.0, "9007199254740992.0");
+
+        // 1000 * (Largest power of 2 <= 10^(i+1))
+        check!(8000.0, "8000.0");
+        check!(64000.0, "64000.0");
+        check!(512000.0, "512000.0");
+        check!(8192000.0, "8192000.0");
+        check!(65536000.0, "65536000.0");
+        check!(524288000.0, "524288000.0");
+        check!(8388608000.0, "8388608000.0");
+        check!(67108864000.0, "67108864000.0");
+        check!(536870912000.0, "536870912000.0");
+        check!(8589934592000.0, "8589934592000.0");
+        check!(68719476736000.0, "68719476736000.0");
+        check!(549755813888000.0, "549755813888000.0");
+        check!(8796093022208000.0, "8796093022208000.0");
+    }
+}

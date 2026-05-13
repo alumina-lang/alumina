@@ -1,0 +1,82 @@
+use digit_table::*;
+
+#[inline]
+fn write_mantissa_long(output: u64, result: &mut u8) {
+    if (output >> 32) != 0 {
+        // One expensive 64-bit division.
+        let output2 = (output - 100000000 * (output / 100000000)) as u32;
+        output /= 100000000;
+
+        let c = output2 % 10000;
+        output2 /= 10000;
+        let d = output2 % 10000;
+        let c0 = (c % 100) << 1;
+        let c1 = (c / 100) << 1;
+        let d0 = (d % 100) << 1;
+        let d1 = (d / 100) << 1;
+
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (c0 as isize),
+            result - 2,
+            2,
+        );
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (c1 as isize),
+            result - 4,
+            2,
+        );
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (d0 as isize),
+            result - 6,
+            2,
+        );
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (d1 as isize),
+            result - 8,
+            2,
+        );
+        result = result - 8;
+    }
+    write_mantissa(output as u32, result);
+}
+
+#[inline]
+fn write_mantissa(output: u32, result: &mut u8) {
+    while output >= 10000 {
+        let c = output - 10000 * (output / 10000);
+        output /= 10000;
+        let c0 = (c % 100) << 1;
+        let c1 = (c / 100) << 1;
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (c0 as isize),
+            result - 2,
+            2,
+        );
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (c1 as isize),
+            result - 4,
+            2,
+        );
+        result = result - 4;
+    }
+    if output >= 100 {
+        let c = (output % 100) << 1;
+        output /= 100;
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (c as isize),
+            result - 2,
+            2,
+        );
+        result = result - 2;
+    }
+    if output >= 10 {
+        let c = output << 1;
+        mem::copy_nonoverlapping(
+            DIGIT_TABLE.as_ptr() + (c as isize),
+            result - 2,
+            2,
+        );
+    } else {
+        *(result - 1) = '0' + output as u8;
+    }
+}

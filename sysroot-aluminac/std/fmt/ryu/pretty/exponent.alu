@@ -1,0 +1,47 @@
+use digit_table::*;
+
+#[inline]
+fn write_exponent3(k: isize, result: &mut u8) -> usize {
+    let sign = k < 0;
+    if sign {
+        *result = '-';
+        result = result + 1;
+        k = -k;
+    }
+
+    debug_assert!(k < 1000);
+    if k >= 100 {
+        *result = '0' + (k / 100) as u8;
+        k %= 100;
+        let d = DIGIT_TABLE.as_ptr() + (k * 2);
+        mem::copy_nonoverlapping(d, result + 1, 2);
+        sign as usize + 3
+    } else if k >= 10 {
+        let d = DIGIT_TABLE.as_ptr() + (k * 2);
+        mem::copy_nonoverlapping(d, result, 2);
+        sign as usize + 2
+    } else {
+        *result = '0' + k as u8;
+        sign as usize + 1
+    }
+}
+
+#[inline]
+fn write_exponent2(k: isize, result: &mut u8) -> usize {
+    let sign = k < 0;
+    if sign {
+        *result = '-';
+        result = result + 1;
+        k = -k;
+    }
+
+    debug_assert!(k < 100);
+    if k >= 10 {
+        let d = DIGIT_TABLE.as_ptr() + (k * 2);
+        mem::copy_nonoverlapping(d, result, 2);
+        sign as usize + 2
+    } else {
+        *result = '0' + k as u8;
+        sign as usize + 1
+    }
+}
