@@ -1361,6 +1361,12 @@ impl Pass2 {
     }
 
     fn build_static(self: &mut Pass2, node: Node, pending: &PendingStatic) {
+        let generic_params: &[GenericParam] = if pending.has_generic_params {
+            self.parse_generic_params(node, pending.scope_idx)
+        } else {
+            &[]
+        };
+
         let type_node = child_by!(node, FieldKind::Type);
         let ty: Option<&Ty> = if !type_node.is_none() {
             Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
@@ -1386,6 +1392,7 @@ impl Pass2 {
             init: init,
             attributes: pending.attributes,
             is_const: pending.is_const,
+            generic_params: generic_params,
         };
         self.ctx.items.push(item);
     }

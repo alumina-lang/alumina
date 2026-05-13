@@ -855,6 +855,14 @@ impl Pass1 {
         let attributes = self.parse_attributes(node);
         if self.skip_item { self.skip_item = false; return; }
 
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        let has_generic_params = !type_args.is_none();
+        let body_scope = if has_generic_params {
+            self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope))
+        } else {
+            self.current_scope
+        };
+
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
             name: name,
             kind: NamedItemKind::static_kind(id),
@@ -864,12 +872,20 @@ impl Pass1 {
         self.ctx.pending_statics.push(PendingStatic {
             node_start: node.start_byte() as u32,
             node_end: node.end_byte() as u32,
-            scope_idx: self.current_scope,
+            scope_idx: body_scope,
             id: id,
             name: name,
             attributes: attributes,
             is_const: false,
+            has_generic_params: has_generic_params,
         });
+
+        if has_generic_params {
+            let prev = self.current_scope;
+            self.current_scope = body_scope;
+            self.visit_node(type_args.unwrap());
+            self.current_scope = prev;
+        }
     }
 
     fn visit_const_p1(self: &mut Pass1, node: Node) {
@@ -877,6 +893,14 @@ impl Pass1 {
         let id = self.ctx.next_id();
         let attributes = self.parse_attributes(node);
         if self.skip_item { self.skip_item = false; return; }
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        let has_generic_params = !type_args.is_none();
+        let body_scope = if has_generic_params {
+            self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope))
+        } else {
+            self.current_scope
+        };
 
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
             name: name,
@@ -887,12 +911,20 @@ impl Pass1 {
         self.ctx.pending_statics.push(PendingStatic {
             node_start: node.start_byte() as u32,
             node_end: node.end_byte() as u32,
-            scope_idx: self.current_scope,
+            scope_idx: body_scope,
             id: id,
             name: name,
             attributes: attributes,
             is_const: true,
+            has_generic_params: has_generic_params,
         });
+
+        if has_generic_params {
+            let prev = self.current_scope;
+            self.current_scope = body_scope;
+            self.visit_node(type_args.unwrap());
+            self.current_scope = prev;
+        }
     }
 
     fn visit_macro_def_p1(self: &mut Pass1, node: Node) {

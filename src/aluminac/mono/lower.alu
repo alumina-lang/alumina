@@ -5870,6 +5870,76 @@ impl Mono {
         mono::intrinsics::lower_intrinsic(self, name, type_args, ir_type_args, expr)
     }
 
+    // Instantiate a generic const at a turbofish-value site: `NAME::<T1, T2, ...>`.
+    // Binds the const's generic_params to the resolved type args, lowers the init
+    // expression with those bindings, and for consts inlines the const-evaluated
+    // value. Snapshot/restore mirrors mono_function's so nested instantiations
+    // don't leak bindings into the caller.
+    fn instantiate_generic_const(self: &mut Mono, def: &StaticDef, expr: &Expr) -> &IrExpr {
+        // Resolve type args (with defaults for missing slots).
+        let resolved = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
+        for i in 0usize..def.generic_params.len() {
+            if i < expr.type_args().len() {
+                resolved[i] = self.resolve_type(expr.type_args()[i]);
+            } else if def.generic_params[i].default_ty.is_some() {
+                resolved[i] = self.resolve_type(def.generic_params[i].default_ty.unwrap());
+            } else {
+                resolved[i] = self.ctx.void_ty;
+            }
+        }
+
+        // Snapshot the generic-param bindings we're about to overwrite so nested
+        // calls in the init expr don't leave stale bindings on exit.
+        let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
+        let saved_had = self.ctx.arena.alloc_slice::<bool>(def.generic_params.len());
+        for i in 0usize..def.generic_params.len() {
+            let key = def.generic_params[i].id._value;
+            let prev = self.type_map.get(&key);
+            if prev.is_some() {
+                saved_vals[i] = prev.unwrap();
+                saved_had[i] = true;
+            } else {
+                saved_had[i] = false;
+            }
+            self.type_map.insert(key, resolved[i]);
+        }
+
+        // Lower the init expression. For consts, also try const-eval so the value
+        // is inlined at every use site (no per-instantiation global).
+        let ty = if def.ty.is_some() {
+            self.resolve_type(def.ty.unwrap())
+        } else {
+            self.ctx.void_ty
+        };
+        let init_ir = if !ty.is_void() {
+            self.lower_expr_coerced(def.init.unwrap(), ty)
+        } else {
+            self.lower_expr(def.init.unwrap())
+        };
+        let result = if def.is_const {
+            let (cv, _panic, _warn, _note) = self.try_const_eval_with_diags(init_ir);
+            if cv.is_some() {
+                self.constvalue_to_ir(cv.unwrap(), init_ir.ty)
+            } else {
+                init_ir
+            }
+        } else {
+            init_ir
+        };
+
+        // Restore type_map.
+        for i in 0usize..def.generic_params.len() {
+            let key = def.generic_params[i].id._value;
+            if saved_had[i] {
+                self.type_map.insert(key, saved_vals[i]);
+            } else {
+                self.type_map.remove(&key);
+            }
+        }
+
+        result
+    }
+
     fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Call || expr.tag == ExprTag::TurbofishValue {
             // Check for intrinsic calls first
@@ -5905,6 +5975,19 @@ impl Mono {
                 // Fall through to normal field access (function pointer in struct field)
                 // Suppress field error since method error will be reported if this also fails
                 self.suppress_field_error = true;
+            }
+
+            // Turbofish-value reference to a generic const/static: `MY_CONST::<T>`.
+            // Bind the const's generic_params to the resolved type args, lower
+            // the init expression with those bindings, and (for consts) inline
+            // the const-evaluated value. For non-generic statics the normal
+            // StaticRef path handles it; we only intercept when there are
+            // generic params to substitute.
+            if expr.tag == ExprTag::TurbofishValue && expr.lhs().tag == ExprTag::StaticRef {
+                let sd_opt = self.ctx.static_defs.get(&expr.lhs().id()._value);
+                if sd_opt.is_some() && sd_opt.unwrap().generic_params.len() > 0 {
+                    return self.instantiate_generic_const(sd_opt.unwrap(), expr);
+                }
             }
 
             // Check for turbofish generic calls: func::<T>(args)
