@@ -1115,12 +1115,16 @@ impl ExprParser {
         // intent for macros that pull in helpers. The hygiene caveat is
         // that the hint pre-binds to whatever was in scope at definition,
         // not the expansion site.
-        let resolved = self.ctx.scopes.resolve(self.scope_idx, field_name);
-        if resolved.is_some() {
-            let item = resolved.unwrap();
-            if item.kind.tag == scope::NamedItemTag::Function {
-                e._data.field.id2 = Id { _value: item.kind.id()._value + 1usize };
-            }
+        // Walk the scope chain looking specifically for a free FUNCTION named
+        // `field_name`. Plain `scopes.resolve` returns the first match — which
+        // for a name like `find` inside `impl SplitIterator { fn next() { … } }`
+        // is the mixin'd `IteratorExt::find` (now Method-tagged per pass2's
+        // mixin registration), shadowing the local module's free fn. The UFCS
+        // hint should only fire for honest free functions, so skip past any
+        // non-Function and keep walking up.
+        let fn_item = self.ctx.scopes.resolve_function_for_ufcs(self.scope_idx, field_name);
+        if fn_item.is_some() {
+            e._data.field.id2 = Id { _value: fn_item.unwrap()._value + 1usize };
         }
 
         self.ctx.alloc_expr(e)

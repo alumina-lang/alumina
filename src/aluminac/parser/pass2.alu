@@ -146,13 +146,26 @@ impl Pass2 {
                     if item.kind.tag == NamedItemTag::Function || item.kind.tag == NamedItemTag::Method {
                         let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&item.name);
                         if existing.is_none() {
+                            // Register as Method (not Function) so parse_field's
+                            // UFCS-hint resolution doesn't promote a mixin'd
+                            // protocol method into a free-function candidate.
+                            // Surfaced by sysroot's `SplitIterator::next` →
+                            // `self.data.find(self.sep)`: the parser's
+                            // scopes.resolve walk hit the impl scope's mixin'd
+                            // `IteratorExt::find` BEFORE the local module's
+                            // free fn `string::find`, set the UFCS hint to the
+                            // wrong id, and try_ufcs_call mono'd iter's find
+                            // body with Self unbound. try_lower_method_call's
+                            // fn_id extraction handles both tags via id2() for
+                            // Method, so dispatch on the impl type still works.
+                            let fn_id_val = item.kind.id();
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
-                                kind: NamedItemKind::function(item.kind.id()),
+                                kind: NamedItemKind::method(fn_id_val, fn_id_val),
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
                             if mixin_ty_args.len() > 0 {
-                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id()._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, fn_id_val._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
                             }
                         }
                     }
@@ -1277,14 +1290,19 @@ impl Pass2 {
                         // Only add if not already present (direct methods take priority)
                         let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&item.name);
                         if existing.is_none() {
+                            // See the same-shape comment on the earlier mirror
+                            // of this loop (process_mixins). Method tag (not
+                            // Function) so parser's UFCS-hint resolution
+                            // doesn't grab mixin'd protocol methods.
+                            let fn_id_val = item.kind.id();
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
-                                kind: NamedItemKind::function(item.kind.id()),
+                                kind: NamedItemKind::method(fn_id_val, fn_id_val),
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
                             // Store mixin type args so mono can substitute protocol generics
                             if mixin_ty_args.len() > 0 {
-                                self.ctx.scopes.set_mixin_info(impl_scope_idx, item.kind.id()._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, fn_id_val._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
                             }
                         }
                     }

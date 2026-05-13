@@ -298,6 +298,44 @@ impl ScopeArena {
         Option::none()
     }
 
+    // Walk the scope chain looking for a free Function named `name`, skipping
+    // past non-Function matches at intermediate scopes. Used by parse_field's
+    // UFCS-hint resolution: a method named `find` mixin'd into the receiver's
+    // impl scope is registered as NamedItemTag::Method, but plain `resolve`
+    // would still return that Method as the first match — shadowing a same-
+    // named free fn in an outer module scope. For UFCS-hint purposes we want
+    // the free fn specifically, so step over non-Function matches.
+    fn resolve_function_for_ufcs(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<Id> {
+        let s = scope_idx;
+        loop {
+            let scope = self.get(s);
+            let found = scope.items.get(&name);
+            if found.is_some() {
+                let item = found.unwrap();
+                if item.kind.tag == NamedItemTag::Function {
+                    return Option::some(item.kind.id());
+                }
+                if item.kind.tag == NamedItemTag::UseAlias {
+                    let target = self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+                    if target.is_some() && target.unwrap().kind.tag == NamedItemTag::Function {
+                        return Option::some(target.unwrap().kind.id());
+                    }
+                }
+                // Non-Function match: skip past it, but check star-imports
+                // and parents — those may carry the actual free fn.
+            }
+            for import_idx in scope.star_imports {
+                let imp_found = self.get(import_idx).items.get(&name);
+                if imp_found.is_some() && imp_found.unwrap().kind.tag == NamedItemTag::Function {
+                    return Option::some(imp_found.unwrap().kind.id());
+                }
+            }
+            if scope.parent.is_none() { break; }
+            s = scope.parent.unwrap();
+        }
+        Option::none()
+    }
+
     // Resolve a multi-segment path (e.g. std::io::println)
     fn resolve_path(self: &ScopeArena, scope_idx: u32, segments: &[&[u8]]) -> Option<NamedItem> {
         if segments.len() == 0 {
