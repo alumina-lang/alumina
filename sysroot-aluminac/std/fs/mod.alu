@@ -1,180 +1,751 @@
-// Simplified filesystem types for self-hosted compiler bootstrap
-// Uses libc directly for all operations
+//! Working with files and directories
 
-extern "C" fn opendir(name: &u8) -> &mut void;
-extern "C" fn readdir(dirp: &mut void) -> &dirent;
-extern "C" fn closedir(dirp: &mut void) -> i32;
-extern "C" fn stat(path: &u8, buf: &mut void) -> i32;
-
-// dirent struct - only need d_name and d_type
-// On Linux x86_64: d_ino(8) + d_off(8) + d_reclen(2) + d_type(1) + d_name(256)
-struct dirent {
-    d_ino: u64,
-    d_off: i64,
-    d_reclen: u16,
-    d_type: u8,
-    d_name: [u8; 256],
+#[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
+{
+    use unix::{
+        OpenOptions, File, DirIterator, DirEntry, FileType,
+        DirBuilder,  read_directory, create_directory,
+        FileAttr, remove_file, remove_directory, canonicalize
+    };
 }
 
-enum FileType {
-    Unknown,
-    File,
-    Directory,
-    Symlink,
+/// Type of the path segment
+enum PathSegmentKind {
+    /// Root path segment (e.g. `/` on Unix)
+    Root,
+    /// Normal path segment (e.g. a directory or file name)
+    Normal,
+    /// Path segment representing current directory (".")
+    CurDir,
+    /// Path segment representing parent directory ("..")
+    ParentDir
 }
 
+impl PathSegmentKind {
+    /// @ cmp::Equatable::equals
+    fn equals(self: &PathSegmentKind, other: &PathSegmentKind) -> bool {
+        *self == *other
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &PathSegmentKind, f: &mut F) -> fmt::Result {
+        switch *self {
+            PathSegmentKind::Root => f.write_str("root"),
+            PathSegmentKind::Normal => f.write_str("normal"),
+            PathSegmentKind::CurDir => f.write_str("curdir"),
+            PathSegmentKind::ParentDir => f.write_str("parentdir"),
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<PathSegmentKind>;
+}
+
+/// A filesystem path segment
+struct PathSegment {
+    kind: PathSegmentKind,
+    value: &[u8]
+}
+
+impl PathSegment {
+    /// Returns the root path segment (e.g. `/` on Unix)
+    fn root() -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::Root,
+            value: ""
+        }
+    }
+
+    /// Returns a normal path segment (e.g. a directory or file name)
+    fn normal(value: &[u8]) -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::Normal,
+            value: value
+        }
+    }
+
+    /// Returns path segment representing current directory (".")
+    fn current_dir() -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::CurDir,
+            value: ""
+        }
+    }
+
+    /// Returns path segment representing parent directory ("..")
+    fn parent_dir() -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::ParentDir,
+            value: ""
+        }
+    }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &PathSegment, other: &PathSegment) -> bool {
+        self.kind == other.kind && switch self.kind {
+            PathSegmentKind::Normal => self.value == other.value,
+            _ => true
+        }
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &PathSegment, f: &mut F) -> fmt::Result {
+        switch self.kind {
+            PathSegmentKind::Root => f.write_str("/"),
+            PathSegmentKind::Normal => f.write_str(self.value),
+            PathSegmentKind::CurDir => f.write_str("."),
+            PathSegmentKind::ParentDir => f.write_str(".."),
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<PathSegment>;
+}
+
+/// Iterator over the segments of a path
+struct PathIterator {
+    remainder: &[u8],
+    at_start: bool
+}
+
+impl PathIterator {
+    use string::find;
+
+    /// @ iter::Iterator::next
+    fn next(self: &mut PathIterator) -> Option<PathSegment> {
+        loop {
+            if self.remainder.len() == 0 {
+                return Option::none();
+            }
+
+            let maybe_sep = self.remainder.find("/");
+            let orig = self.remainder;
+            let segment = if maybe_sep.is_some() {
+                self.remainder = orig[maybe_sep.unwrap() + 1..];
+                orig[..maybe_sep.unwrap()]
+            } else {
+                self.remainder = mem::slice::empty();
+                orig
+            };
+
+            let at_start = mem::replace(&self.at_start, false);
+
+            if segment.len() == 0 {
+                if at_start && maybe_sep.is_some() {
+                    return Option::some(PathSegment {
+                        kind: PathSegmentKind::Root,
+                        value: segment
+                    });
+                } else if self.remainder.len() != 0 {
+                    continue;
+                } else {
+                    return Option::none();
+                }
+            } else if segment == "." {
+                return Option::some(PathSegment {
+                    kind: PathSegmentKind::CurDir,
+                    value: segment
+                });
+            } else if segment == ".." {
+                return Option::some(PathSegment {
+                    kind: PathSegmentKind::ParentDir,
+                    value: segment
+                });
+            } else {
+                return Option::some(PathSegment {
+                    kind: PathSegmentKind::Normal,
+                    value: segment
+                });
+            }
+        }
+    }
+
+    mixin iter::Iterator<PathIterator, PathSegment>;
+    mixin iter::IteratorExt<PathIterator, PathSegment>;
+}
+
+/// A filesystem path
+///
+/// This is a non-owning variant (a view). For the owned path buffer, see [PathBuf].
+///
+/// ## Example
+/// ```
+/// use std::fs::Path;
+///
+/// let p = Path::new("/home/user/file.txt");
+///
+/// assert!(p.is_absolute());
+/// assert_eq!(p.parent(), Option::some(Path::new("/home/user")));
+/// ```
 struct Path {
-    _data: &[u8],
+    inner: &[u8]
 }
 
 impl Path {
-    fn new(s: &[u8]) -> Path {
-        Path { _data: s }
+    /// Create a path from a string slice
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// let _ = Path::new("/home/user/file.txt");
+    /// ```
+    fn new(inner: &[u8]) -> Path {
+        Path { inner: inner }
     }
 
-    fn as_slice(self: &Path) -> &[u8] {
-        self._data
+    /// @ iter::Iterable::iter
+    fn iter(self: &Path) -> PathIterator {
+        PathIterator {
+            remainder: self.inner,
+            at_start: true
+        }
     }
+
+    /// @ mem::AsSlice::as_slice
+    fn as_slice(self: &Path) -> &[u8] {
+        self.inner
+    }
+
+    /// Returns `true` if the path is absolute, `false` otherwise
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert!(Path::new("/home/user/file.txt").is_absolute());
+    /// assert!(!Path::new("file.txt").is_absolute());
+    /// ```
+    fn is_absolute(self: &Path) -> bool {
+        self
+            .iter()
+            .next()
+            .map(|v: PathSegment| -> bool { v.kind == PathSegmentKind::Root})
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if the path is relative, `false` otherwise
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert!(Path::new("file.txt").is_relative());
+    /// assert!(!Path::new("/home/user/file.txt").is_relative());
+    /// ```
+    fn is_relative(self: &Path) -> bool {
+        !self.is_absolute()
+    }
+
+    /// Returns the parent path of the path
+    ///
+    /// If the path has no parent, then `Option::none()` is returned.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert_eq!(Path::new("/home/user/file.txt").parent(), Option::some(Path::new("/home/user")));
+    /// assert_eq!(Path::new("/home/user").parent(), Option::some(Path::new("/home")));
+    /// assert_eq!(Path::new("/home").parent(), Option::some(Path::new("/")));
+    /// assert_eq!(Path::new("/").parent(), Option::none());
+    /// ```
+    fn parent(self: &Path) -> Option<Path> {
+        use string::ends_with;
+
+        let iter = self.iter().peekable();
+        let last: Option<PathSegment> = Option::none();
+        loop {
+            if iter.peek().is_none() {
+                if last.is_none() || last.unwrap().kind == PathSegmentKind::Root {
+                    return Option::none();
+                } else {
+                    let ret = mem::slice::from_raw(&self.inner[0], (&last.unwrap().value[0] - &self.inner[0]) as usize);
+                    if ret.len() > 1 && ret.ends_with("/") {
+                        ret = ret[..ret.len()-1];
+                    }
+                    return Option::some(Path::new(ret));
+                }
+            }
+            last = iter.next();
+        }
+    }
+
+    /// Strips the prefix from the path.
+    ///
+    /// If the path does not start with the prefix, then `Option::none()` is returned.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// let p = Path::new("/home/user/file.txt");
+    ///
+    /// let stripped1 = p.strip_prefix(Path::new("/home/user"));
+    /// let stripped2 = p.strip_prefix(Path::new("/something/else"));
+    ///
+    /// assert_eq!(stripped1, Option::some(Path::new("file.txt")));
+    /// assert_eq!(stripped2, Option::none());
+    /// ```
+    fn strip_prefix(self: &Path, prefix: Path) -> Option<Path> {
+        let i1 = self.iter();
+        let i2 = prefix.iter();
+        loop {
+            let copy = i1;
+
+            let s1 = i1.next();
+            let s2 = i2.next();
+
+            if s1.is_some() && s2.is_some() {
+                if s1.unwrap() == s2.unwrap() {
+                    continue;
+                } else {
+                    return Option::none();
+                }
+            }
+
+            if s1.is_none() && s2.is_some() {
+                return Option::none();
+            }
+
+            return Option::some(Path::new(copy.remainder));
+        }
+    }
+
+    /// Returns `true` if `other` is a prefix of the current path, `false` otherwise
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// let p = Path::new("/home/user/file.txt");
+    ///
+    /// assert!(p.starts_with(Path::new("/home/user")));
+    /// assert!(!p.starts_with(Path::new("/something/else")));
+    /// ```
+    fn starts_with(self: &Path, other: Path) -> bool {
+        self.strip_prefix(other).is_some()
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &Path, f: &mut F) -> fmt::Result {
+        let has_root = false;
+
+        for (idx, i) in self.iter().enumerate() {
+            if idx == 0 {
+                if i.kind == PathSegmentKind::Root {
+                    has_root = true;
+                }
+            } else if idx > 1 || !has_root {
+                f.write_str("/")?;
+            }
+            i.fmt(f)?;
+        }
+
+        fmt::Result::ok(())
+    }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &Path, other: &Path) -> bool {
+        let a = self.iter();
+        let b = other.iter();
+
+        loop {
+            let s1 = a.next();
+            let s2 = b.next();
+
+            if s1.is_some() && s2.is_some() {
+                if s1.unwrap() != s2.unwrap() {
+                    return false;
+                }
+            } else if s1.is_some() || s2.is_some() {
+                return false;
+            } else {
+                return true;
+            }
+        }
+    }
+
+    mixin cmp::Equatable<Path>;
 }
 
+/// An owned (heap-allocated) path buffer
+///
+/// ## Example
+/// ```
+/// use std::fs::{PathBuf, Path};
+///
+/// let path = PathBuf::from_str("/home");
+/// defer path.free();
+///
+/// path.push(Path::new("alumina/"));
+/// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+///
+/// path.push(Path::new("/hello/world"));
+/// assert_eq!(path.as_path(), Path::new("/hello/world"));
+/// ```
 struct PathBuf {
-    inner: std::string::StringBuf,
+    inner: string::StringBuf
 }
 
 impl PathBuf {
-    fn from_str(s: &[u8]) -> PathBuf {
-        PathBuf { inner: std::string::StringBuf::from_slice(s) }
-    }
+    use string::StringBuf;
 
-    fn from_path(p: Path) -> PathBuf {
-        PathBuf { inner: std::string::StringBuf::from_slice(p._data) }
-    }
-
-    fn as_path(self: &PathBuf) -> Path {
-        Path { _data: self.inner.as_slice() }
-    }
-
-    fn push(self: &mut PathBuf, p: Path) {
-        if self.inner.len() > 0usize {
-            self.inner.push('/' as u8);
+    /// Create a new empty path buffer
+    fn new() -> PathBuf {
+        PathBuf {
+            inner: StringBuf::new()
         }
-        self.inner.extend_from_slice(p._data);
     }
 
+    /// Create a new path buffer from a [Path] instance
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_path(Path::new("/home/alumina"));
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
+    fn from_path(path: Path) -> PathBuf {
+        from_str(path.inner)
+    }
+
+    /// Create a new path buffer from a string slice
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
+    fn from_str(path: &[u8]) -> PathBuf {
+        PathBuf {
+            inner: StringBuf::from_slice(path)
+        }
+    }
+
+    /// View path as [Path] object
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
+    fn as_path(self: &PathBuf) -> Path {
+        Path::new(self.inner[..])
+    }
+
+    /// @ mem::AsSlice::as_slice
+    fn as_slice(self: &PathBuf) -> &[u8] {
+        self.inner[..]
+    }
+
+    /// @ mem::AsSliceMut::as_slice_mut
+    fn as_slice_mut(self: &mut PathBuf) -> &mut [u8] {
+        self.inner[..]
+    }
+
+    /// Extend the path buffer from an iterator of path segments
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path, PathSegment};
+    ///
+    /// let path = PathBuf::from_str("/home");
+    /// defer path.free();
+    ///
+    /// path.extend(&[
+    ///     PathSegment::parent_dir(),
+    ///     PathSegment::current_dir(),
+    ///     PathSegment::normal("alumina"),
+    /// ].iter());
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/.././alumina"));
+    /// ```
+    fn extend<It: iter::Iterator<It, PathSegment>>(self: &mut PathBuf, iter: &mut It) {
+        use fmt::write;
+        let has_root = false;
+
+        for (_, i) in iter.enumerate() {
+            if i.kind == PathSegmentKind::Root {
+                self.inner.clear();
+                has_root = true;
+            }
+
+            if self.inner.len() > 0 || !has_root {
+                self.inner.push('/');
+            }
+
+            write!(&self.inner, "{}", i).unwrap();
+        }
+    }
+
+    /// Create a new path buffer with the base path of `self` and
+    /// extension `suffix`.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// let new_path = path.with_suffix(Path::new("foo/bar"));
+    /// defer new_path.free();
+    ///
+    /// assert_eq!(new_path.as_path(), Path::new("/home/alumina/foo/bar"));
+    /// ```
+    fn with_suffix(self: &PathBuf, suffix: Path) -> PathBuf {
+        let ret = self.clone();
+        ret.push(suffix);
+        ret
+    }
+
+    /// Extend the path buffer with a [Path] instance
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home");
+    /// defer path.free();
+    ///
+    /// path.push(Path::new("alumina"));
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
+    fn push(self: &mut PathBuf, suffix: Path) {
+        self.extend(&suffix.iter());
+    }
+
+    /// Pop the last path segment from the path buffer
+    ///
+    /// Returns `true` if the path buffer was modified, `false` otherwise.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// assert!(path.pop());
+    /// assert_eq!(path.as_path(), Path::new("/home"));
+    ///
+    /// assert!(path.pop());
+    /// assert_eq!(path.as_path(), Path::new("/"));
+    ///
+    /// assert!(!path.pop());
+    /// assert_eq!(path.as_path(), Path::new("/"));
+    /// ```
+    fn pop(self: &mut PathBuf) -> bool {
+        self.as_path().parent().map(|=self, p: Path| -> bool {
+            self.inner.truncate(p.inner.len());
+            true
+        })
+        .unwrap_or(false)
+    }
+
+    /// Create a new path buffer from an iterator of path segments
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path, PathSegment};
+    ///
+    /// let path = PathBuf::from_iter(&[
+    ///     PathSegment::normal("home"),
+    ///     PathSegment::normal("alumina"),
+    /// ].iter());
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
+    fn from_iter<It: iter::Iterator<It, PathSegment>>(iter: &mut It) -> PathBuf {
+        let ret = PathBuf::new();
+        ret.extend(iter);
+        ret
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &PathBuf, f: &mut F) -> fmt::Result {
+        self.as_path().fmt(f)
+    }
+
+    /// @ mem::Clonable::clone
+    fn clone(self: &PathBuf) -> PathBuf {
+        PathBuf {
+            inner: self.inner.clone()
+        }
+    }
+
+    /// @ std::mem::Borrowable::borrow
+    #[inline]
+    fn borrow(self: &PathBuf) -> Path {
+        Path::new(self.inner.borrow())
+    }
+
+    /// @ mem::Freeable::free
     fn free(self: &mut PathBuf) {
         self.inner.free();
     }
-}
 
-struct DirEntry {
-    _name: &[u8],
-    _file_type: FileType,
-}
-
-impl DirEntry {
-    fn name(self: &DirEntry) -> &[u8] {
-        self._name
-    }
-
-    fn file_type(self: &DirEntry) -> FileType {
-        self._file_type
-    }
-
-}
-
-struct DirIter {
-    _dir: &mut void,
-    _arena: &mut void, // not used - names point into dirent
-}
-
-impl DirIter {
-    fn next(self: &mut DirIter) -> std::option::Option<std::result::Result<DirEntry, i32>> {
-        if self._dir as usize == 0usize {
-            return std::option::Option::none();
-        }
-        let ent = readdir(self._dir);
-        if ent as &void as usize == 0usize {
-            return std::option::Option::none();
-        }
-        // Get name length
-        let name_len: usize = 0;
-        while name_len < 256usize && ent.d_name[name_len] != 0u8 {
-            name_len = name_len + 1usize;
-        }
-        let name = std::mem::slice_from_raw_const::<u8>(&ent.d_name[0] as &u8, name_len);
-
-        let ft = if ent.d_type == 4u8 { // DT_DIR
-            FileType::Directory
-        } else if ent.d_type == 8u8 { // DT_REG
-            FileType::File
-        } else {
-            FileType::Unknown
-        };
-
-        std::option::Option::some(std::result::Result::ok(DirEntry {
-            _name: name,
-            _file_type: ft,
-        }))
-    }
-
-    fn close(self: &mut DirIter) {
-        if self._dir as usize != 0usize {
-            closedir(self._dir);
-            self._dir = 0usize as &mut void;
-        }
+    /// @ mem::Movable::move
+    fn move(self: &mut PathBuf) -> PathBuf {
+        PathBuf { inner: self.inner.move() }
     }
 }
 
-fn read_directory(path: Path) -> std::result::Result<DirIter, i32> {
-    // Need null-terminated path
-    let s = path._data;
-    let buf = std::mem::slice_alloc::<u8>(s.len() + 1usize);
-    s.copy_to_nonoverlapping(&buf[0]);
-    buf[s.len()] = 0u8;
-    let dir = opendir(&buf[0]);
-    std::mem::slice_free::<u8>(buf);
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_path_iter() {
+        let path = Path::new("/").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Root, value: "" }));
+        assert_eq!(path.next(), Option::none());
 
-    if dir as usize == 0usize {
-        return std::result::Result::err(-1i32);
+        let path = Path::new("/home/alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Root, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("/home/alumina/").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Root, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("./home/alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::CurDir, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("home/../alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::ParentDir, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("").iter();
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("home").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("home///").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("home///alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
     }
-    std::result::Result::ok(DirIter {
-        _dir: dir,
-        _arena: 0usize as &mut void,
-    })
-}
 
-struct File {
-    _dummy: i32,
-}
+    use fmt::format_in;
 
-impl File {
-    fn read_to_string(path: Path) -> std::result::Result<std::string::StringBuf, i32> {
-        let s = path._data;
-        let buf = std::mem::slice_alloc::<u8>(s.len() + 1usize);
-        s.copy_to_nonoverlapping(&buf[0]);
-        buf[s.len()] = 0u8;
+    #[test]
+    fn test_path_fmt() {
+        let buf: [u8; 512];
 
-        let fd = libc::open(&buf[0] as &libc::c_char, 0i32);
-        std::mem::slice_free::<u8>(buf);
-
-        if fd < 0i32 {
-            return std::result::Result::err(-1i32);
+        macro chk($path, $expected) {
+            let path = Path::new($path);
+            let ret = format_in!(&buf, "{}", path).unwrap();
+            assert_eq!(ret, $expected);
         }
 
-        let size = libc::lseek(fd, 0i64, 2i32) as usize;
-        libc::lseek(fd, 0i64, 0i32);
+        chk!("", "");
+        chk!("/", "/");
+        chk!("/.", "/.");
+        chk!("/foo", "/foo");
+        chk!("/foo/bar", "/foo/bar");
+        chk!("foo/bar", "foo/bar");
+        chk!("foo/bar/", "foo/bar");
+        chk!("foo/////bar/", "foo/bar");
+        chk!("./../////bar/", "./../bar");
+    }
 
-        let result = std::string::StringBuf::new();
-        if size > 0usize {
-            result.reserve(size);
-            let read_buf = std::mem::slice_alloc::<u8>(size);
-            let n = libc::read(fd, &read_buf[0] as &mut libc::c_void, size);
-            if n > 0isize {
-                result.extend_from_slice(std::mem::slice_from_raw_const::<u8>(&read_buf[0] as &u8, n as usize));
-            }
-            std::mem::slice_free::<u8>(read_buf);
-        }
-        libc::close(fd);
-        std::result::Result::ok(result)
+    #[test]
+    fn test_is_absolute() {
+        assert!(Path::new("/").is_absolute());
+        assert!(Path::new("/foo").is_absolute());
+
+        assert!(Path::new("").is_relative());
+        assert!(Path::new("./foo").is_relative());
+        assert!(Path::new("foo").is_relative());
+    }
+
+    #[test]
+    fn test_strip_prefix() {
+        assert_eq!(Path::new("").strip_prefix(Path::new("")), Option::some(Path::new("")));
+        assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/")), Option::some(Path::new("foo/bar")));
+        assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/foo/")), Option::some(Path::new("bar")));
+
+        assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/quux")), Option::none());
+        assert_eq!(Path::new("foo/bar").strip_prefix(Path::new("/")), Option::none());
+    }
+
+    #[test]
+    fn test_from_iter() {
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter());
+        defer path_buf.free();
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world"));
+
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter().chain(&Path::new("foo/bar/").iter()));
+        defer path_buf.free();
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world/foo/bar"));
+
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter().chain(&Path::new("/foo/bar/").iter()));
+        defer path_buf.free();
+        assert_eq!(path_buf.as_path(), Path::new("/foo/bar"));
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter());
+        defer path_buf.free();
+
+        path_buf.push(Path::new(""));
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world"));
+
+        path_buf.push(Path::new("hello"));
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world/hello"));
+
+        path_buf.push(Path::new("/world/foo"));
+        assert_eq!(path_buf.as_path(), Path::new("/world/foo"));
+
+        assert!(path_buf.pop());
+        assert_eq!(path_buf.as_path(), Path::new("/world"));
+
+        assert!(path_buf.pop());
+        assert_eq!(path_buf.as_path(), Path::new("/"));
+
+        assert!(!path_buf.pop());
+        assert_eq!(path_buf.as_path(), Path::new("/"));
+    }
+
+    #[test]
+    fn test_parent() {
+        assert_eq!(Path::new("").parent(), Option::none());
+        assert_eq!(Path::new("/").parent(), Option::none());
+        assert_eq!(Path::new(".").parent(), Option::some(Path::new("")));
+        assert_eq!(Path::new("./").parent(), Option::some(Path::new("")));
+        assert_eq!(Path::new("hello").parent(), Option::some(Path::new("")));
+        assert_eq!(Path::new("/hello").parent(), Option::some(Path::new("/")));
+        assert_eq!(Path::new("/hello/world").parent(), Option::some(Path::new("/hello")));
+        assert_eq!(Path::new("hello/world").parent(), Option::some(Path::new("hello")));
     }
 }

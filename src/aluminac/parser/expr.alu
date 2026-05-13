@@ -23,6 +23,11 @@ struct ExprParser {
     scope_idx: u32,
 }
 
+struct _AnchorWalk {
+    item: scope::NamedItem,
+    is_terminal: bool,
+}
+
 impl ExprParser {
     fn new(ctx: &mut ParseContext, scope_idx: u32) -> ExprParser {
         ExprParser { ctx: ctx, scope_idx: scope_idx }
@@ -521,6 +526,175 @@ impl ExprParser {
         }
     }
 
+    // Walk `segments` looking for a TypeAlias / GenericParam anchor that the
+    // strict resolve_path can't return (it filters those out). The walk is
+    // tolerant of mid-path TypeAliases (`fmt::Result::ok` where `Result` is
+    // an alias) and of local-scope GenericParams that share a name with a
+    // sibling struct (`Self::equals` inside a protocol where some `#[lang]`
+    // struct also named `Self` is visible up the chain). Walks the parent
+    // chain at segment 0, descending into modules/struct-scopes only when
+    // the match is scope-bearing (Module/Struct/Enum/Protocol/BuiltinType).
+    // At each level a GenericParam / TypeAlias entry short-circuits as the
+    // anchor when only one trailing method segment remains.
+    fn find_typealias_or_generic_anchor(self: &ExprParser, segments: &[&[u8]]) -> Option<scope::NamedItem> {
+        if segments.len() < 2 { return Option::none(); }
+        let cur_scope = self.scope_idx;
+        let parent_chain = true;
+        let i: usize = 0;
+        loop {
+            if i + 1 >= segments.len() { return Option::none(); }
+            let anchor = if parent_chain {
+                self.find_anchor_in_parent_chain(cur_scope, segments[i])
+            } else {
+                self.lookup_in_module(cur_scope, segments[i])
+            };
+            if anchor.is_none() { return Option::none(); }
+            let res = anchor.unwrap();
+            if res.is_terminal {
+                if i + 2 == segments.len() {
+                    return Option::some(res.item);
+                }
+                return Option::none();
+            }
+            cur_scope = res.item.kind.scope_idx;
+            parent_chain = false;
+            i = i + 1;
+        }
+    }
+
+    fn find_anchor_in_parent_chain(self: &ExprParser, scope_idx: u32, name: &[u8]) -> Option<_AnchorWalk> {
+        let cur = scope_idx;
+        loop {
+            let scope = self.ctx.scopes.get(cur);
+            let found = scope.items.get(&name);
+            if found.is_some() {
+                let res = self.classify_anchor_item(found.unwrap());
+                if !res.is_none() { return res; }
+                // Found something but it's not a usable anchor or descend
+                // target at this level (e.g. Method, Local). Keep walking up.
+            }
+            // Star imports use module-style lookup (no parent walk needed).
+            for import_idx in scope.star_imports {
+                let imp_found = self.ctx.scopes.get(import_idx).items.get(&name);
+                if imp_found.is_some() {
+                    let res = self.classify_anchor_item(imp_found.unwrap());
+                    if !res.is_none() { return res; }
+                }
+            }
+            if scope.parent.is_none() { return Option::none(); }
+            cur = scope.parent.unwrap();
+        }
+    }
+
+    fn lookup_in_module(self: &ExprParser, scope_idx: u32, name: &[u8]) -> Option<_AnchorWalk> {
+        let scope = self.ctx.scopes.get(scope_idx);
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            let r = self.classify_anchor_item(found.unwrap());
+            if !r.is_none() { return r; }
+        }
+        for import_idx in scope.star_imports {
+            let imp_found = self.ctx.scopes.get(import_idx).items.get(&name);
+            if imp_found.is_some() {
+                let r = self.classify_anchor_item(imp_found.unwrap());
+                if !r.is_none() { return r; }
+            }
+        }
+        Option::none()
+    }
+
+    fn classify_anchor_item(self: &ExprParser, item_in: scope::NamedItem) -> Option<_AnchorWalk> {
+        let item = item_in;
+        // Follow use-aliases: `use io::Result;` makes `Result` an alias to
+        // the underlying io::Result type alias / struct. Resolving through
+        // the use lets us treat it like the target item for descend / anchor
+        // classification.
+        if item.kind.tag == scope::NamedItemTag::UseAlias {
+            let followed = self.ctx.scopes.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+            if followed.is_some() {
+                item = followed.unwrap();
+            } else {
+                // resolve_path returns None for TypeAlias targets — retry
+                // through resolve_in_module which preserves the terminal
+                // TypeAlias / GenericParam.
+                let segs = item.kind.path_segments();
+                if segs.len() == 0 { return Option::none(); }
+                let inner = self.lookup_in_chain_through_use(item.kind.scope_idx, segs);
+                if inner.is_none() { return Option::none(); }
+                item = inner.unwrap();
+            }
+        }
+        let tag = item.kind.tag;
+        if tag == scope::NamedItemTag::GenericParam || tag == scope::NamedItemTag::TypeAlias {
+            return Option::some(_AnchorWalk { item: item, is_terminal: true });
+        }
+        let descendable = (tag == scope::NamedItemTag::Module
+            || tag == scope::NamedItemTag::Struct
+            || tag == scope::NamedItemTag::Enum
+            || tag == scope::NamedItemTag::Protocol
+            || tag == scope::NamedItemTag::BuiltinType)
+            && item.kind.scope_idx != 0u32;
+        if descendable {
+            return Option::some(_AnchorWalk { item: item, is_terminal: false });
+        }
+        Option::none()
+    }
+
+    fn lookup_in_chain_through_use(self: &ExprParser, scope_idx: u32, segments: &[&[u8]]) -> Option<scope::NamedItem> {
+        // Walk a use-alias's path, descending into module/struct scopes and
+        // tolerating TypeAlias / GenericParam at the terminal. Mirrors what
+        // resolve_path would do but without filtering out TypeAlias.
+        if segments.len() == 0 { return Option::none(); }
+        let cur_scope = scope_idx;
+        let i: usize = 0;
+        loop {
+            let scope = self.ctx.scopes.get(cur_scope);
+            let found = scope.items.get(&segments[i]);
+            if found.is_none() {
+                // Try star imports
+                let imp_found_opt: Option<scope::NamedItem> = Option::none();
+                for import_idx in scope.star_imports {
+                    let imp_found = self.ctx.scopes.get(import_idx).items.get(&segments[i]);
+                    if imp_found.is_some() {
+                        imp_found_opt = imp_found;
+                        break;
+                    }
+                }
+                if imp_found_opt.is_none() {
+                    // Walk parent (only for first segment)
+                    if i == 0 && !scope.parent.is_none() {
+                        cur_scope = scope.parent.unwrap();
+                        continue;
+                    }
+                    return Option::none();
+                }
+                found = imp_found_opt;
+            }
+            let item = found.unwrap();
+            if i + 1 == segments.len() {
+                if item.kind.tag == scope::NamedItemTag::UseAlias {
+                    return self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
+                }
+                return Option::some(item);
+            }
+            if item.kind.tag == scope::NamedItemTag::UseAlias {
+                let target = self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
+                if target.is_none() { return Option::none(); }
+                item = target.unwrap();
+            }
+            // Descend through module/struct/etc only
+            let descendable = (item.kind.tag == scope::NamedItemTag::Module
+                || item.kind.tag == scope::NamedItemTag::Struct
+                || item.kind.tag == scope::NamedItemTag::Enum
+                || item.kind.tag == scope::NamedItemTag::Protocol
+                || item.kind.tag == scope::NamedItemTag::BuiltinType)
+                && item.kind.scope_idx != 0u32;
+            if !descendable { return Option::none(); }
+            cur_scope = item.kind.scope_idx;
+            i = i + 1;
+        }
+    }
+
     fn parse_scoped_identifier(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let pass2 = Pass2 { ctx: self.ctx };
         let segments = pass2.collect_type_path_segments(node);
@@ -566,19 +740,21 @@ impl ExprParser {
                 return self.ctx.alloc_expr(e);
             }
         } else {
-            // Check if the first segment resolves to a GenericParam or TypeAlias.
-            // If so, create a Defered expression to resolve at monomorphization time.
+            // Resolve through TypeAlias / GenericParam anchors that occur
+            // anywhere in the path (not just segment 0). Walk segments one at
+            // a time descending into module/struct/enum/protocol scopes; on
+            // hitting a TypeAlias / GenericParam mid-path, build a Defered so
+            // mono dispatches via lower_defered_call. Without this, paths like
+            // `fmt::Result::ok(())` (Result is a type alias) bottom out as
+            // "expression is not callable" at the call site.
             if segments.len() >= 2 {
-                let first_resolved = self.ctx.scopes.resolve(self.scope_idx, segments[0]);
-                if first_resolved.is_some() {
-                    let first_item = first_resolved.unwrap();
-                    if first_item.kind.tag == scope::NamedItemTag::GenericParam
-                        || first_item.kind.tag == scope::NamedItemTag::TypeAlias {
-                        let e = self.make_expr(ExprTag::Defered, span);
-                        e._data.id_ref.id = first_item.kind.id();
-                        e._data.id_ref.str_val = segments[segments.len() - 1];
-                        return self.ctx.alloc_expr(e);
-                    }
+                let anchor_item = self.find_typealias_or_generic_anchor(segments);
+                if !anchor_item.is_none() {
+                    let item = anchor_item.unwrap();
+                    let e = self.make_expr(ExprTag::Defered, span);
+                    e._data.id_ref.id = item.kind.id();
+                    e._data.id_ref.str_val = segments[segments.len() - 1];
+                    return self.ctx.alloc_expr(e);
                 }
             }
             let e = self.make_expr(ExprTag::Local, span);
@@ -1243,6 +1419,16 @@ impl ExprParser {
     }
 
     fn parse_let(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Honour `#[cfg(...)]` on let declarations: if the condition is false,
+        // drop the let entirely (no scope binding, no initializer side-effect).
+        // Without this, two cfg-paired `let x = ...` lines (the readdir /
+        // readdir64 split in `std/fs/unix.alu`) both parse, both run, and the
+        // second shadows the first — silently consuming directory entries.
+        let attrs_node = child_by!(node, FieldKind::Attributes);
+        if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+            return self.alloc_void(span);
+        }
+
         let name_node = child_by!(node, FieldKind::Name);
         let type_node = child_by!(node, FieldKind::Type);
         let value_node = child_by!(node, FieldKind::Value);
