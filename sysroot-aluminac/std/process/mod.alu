@@ -1,5 +1,12 @@
 //! A module for working with processes.
 
+// Pull the unix-side errno_try macro into module scope. Mirrors sysroot's
+// `process/unix.alu` which does `use io::unix::errno_try;` at the top.
+// Without this, aluminac's macro-resolution falls back silently and any
+// `errno_try!(libc::poll(...))` / `errno_try!(libc::fork())` in this file
+// vanishes from the IR — diagnosed during the io/mod.alu swap attempt.
+use io::unix::errno_try;
+
 /// Exits the process with a given return code.
 fn exit(code: i32) -> ! {
     libc::exit(code as libc::c_int)
@@ -211,7 +218,7 @@ impl Child {
         self.close()?;
 
         let status: libc::c_int = 0i32;
-        io::errno_try!(libc::waitpid(self.pid, &status, 0i32));
+        errno_try!(libc::waitpid(self.pid, &status, 0i32));
 
         let res = Output {
             status: ExitStatus::from_wait_status(status),
@@ -232,14 +239,14 @@ impl Child {
         }
 
         let status: libc::c_int = 0i32;
-        io::errno_try!(libc::waitpid(self.pid, &status, 0i32));
+        errno_try!(libc::waitpid(self.pid, &status, 0i32));
 
         Result::ok(ExitStatus::from_wait_status(status))
     }
 
     /// Kill the child process.
     fn kill(self: &mut Child) -> io::Result<()> {
-        io::errno_try!(libc::kill(self.pid, libc::SIGKILL));
+        errno_try!(libc::kill(self.pid, libc::SIGKILL));
         Result::ok(())
     }
 
@@ -411,7 +418,7 @@ impl Command {
         let fail_tx = fail_pair.1;
         defer fail_rx.close();
 
-        let pid = io::errno_try!(libc::fork());
+        let pid = errno_try!(libc::fork());
         if pid == 0i32 {
             std::panicking::internal::PANIC_HOOK = std::mem::zeroed::<Option<std::panicking::internal::PanicHook>>();
 
@@ -486,7 +493,7 @@ fn set_current_dir(path: &[u8]) -> io::Result<()> {
     let cpath = std::ffi::CString::from_slice(path);
     defer cpath.free();
 
-    io::errno_try!(libc::chdir(cpath.ptr as &libc::c_char));
+    errno_try!(libc::chdir(cpath.ptr as &libc::c_char));
 
     Result::ok(())
 }
@@ -527,7 +534,7 @@ mod internal {
         fds[1].events = libc::POLLIN;
 
         loop {
-            io::errno_try!(libc::poll(&fds[0], 2u64, -1i32));
+            errno_try!(libc::poll(&fds[0], 2u64, -1i32));
 
             if fds[0].revents != 0i16 {
                 if maybe_read_to_end(src1, dst1)? {
@@ -610,7 +617,7 @@ mod internal {
 
         fn install(self: &mut ChildStdio, target_fd: libc::c_int) -> io::Result<()> {
             if self.theirs.is_some() {
-                io::errno_try!(libc::dup2(self.theirs.unwrap().value, target_fd));
+                errno_try!(libc::dup2(self.theirs.unwrap().value, target_fd));
             }
             Result::ok(())
         }

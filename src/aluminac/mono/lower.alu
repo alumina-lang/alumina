@@ -1419,8 +1419,18 @@ impl Mono {
             }
             ExprTag::StaticFor => self.lower_static_for(expr),
             _ => {
-                // Unhandled expression tag — may be an unexpanded macro builtin (e.g. file!())
-                // inside a macro body. Stay silent; proper fix is to expand these in the parser.
+                // Unhandled expression tag — may be an unexpanded macro
+                // invocation (`MacroInvocation`) that fell through parser
+                // resolution. The cleaner fix is for the parser to either
+                // expand or diagnose; today we silently produce `()` and
+                // a number of sysroot-aluminac call sites rely on this for
+                // unreachable `else when { compile_fail!(...) }` arms and
+                // for not-yet-ported helpers like `test::assert_panics!`.
+                // Promoting this to an error surfaces real silent bugs
+                // (e.g. `errno_try!(libc::poll(...))` vanishing when the
+                // macro isn't in scope, which is what was breaking the
+                // io/mod.alu swap) — track it in PORTING_STATUS rather
+                // than fixing here in one slice.
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
             }

@@ -1884,7 +1884,12 @@ impl ExprParser {
             return self.do_expand_macro(entry, args, span);
         }
 
-        // Fallback: unresolved macro invocation
+        // Unresolved macro at expansion time. Cannot diagnose here: some
+        // call sites land in unreachable `else when` branches that are
+        // dropped at mono time (e.g. `compile_fail!(...)` inside a
+        // type-guarded fallback), so a parse-time error would fire false
+        // positives. Mono's `lower_expr` default case diagnoses if the
+        // unresolved invocation actually reaches lowering.
         let e = self.make_expr(ExprTag::MacroInvocation, span);
         e._data.macro_expr.str_val = name;
         e._data.macro_expr.args = args;
