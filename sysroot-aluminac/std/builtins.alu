@@ -394,6 +394,18 @@ struct u128 {}
 impl u128 {
     fn min_value() -> u128 { 0u128 }
     fn max_value() -> u128 { 0u128 - 1u128 }
+    fn checked_add(lhs: u128, rhs: u128) -> Option<u128> {
+        let r = lhs + rhs; // wraps in LLVM IR
+        if r < lhs { Option::none() } else { Option::some(r) }
+    }
+    fn checked_sub(lhs: u128, rhs: u128) -> Option<u128> {
+        if rhs > lhs { Option::none() } else { Option::some(lhs - rhs) }
+    }
+    fn checked_mul(lhs: u128, rhs: u128) -> Option<u128> {
+        if lhs == 0u128 { return Option::some(0u128); }
+        let r = lhs * rhs; // wraps in LLVM IR
+        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+    }
     fn count_ones(self: u128) -> u32 {
         std::intrinsics::llvm::<u128>("llvm.ctpop", self) as u32
     }
@@ -712,7 +724,40 @@ impl i64 {
 #[lang(builtin_i128)]
 struct i128 {}
 impl i128 {
+    fn min_value() -> i128 { 1i128 << 127i128 }
+    fn max_value() -> i128 { (1i128 << 127i128) - 1i128 }
     fn abs(self: &i128) -> i128 { if *self < 0i128 { -*self } else { *self } }
+    fn checked_add(lhs: i128, rhs: i128) -> Option<i128> {
+        let ua = lhs as u128;
+        let ub = rhs as u128;
+        let ur = ua + ub;
+        let r = ur as i128;
+        if rhs >= 0i128 {
+            if r < lhs { return Option::none(); }
+        } else {
+            if r > lhs { return Option::none(); }
+        }
+        Option::some(r)
+    }
+    fn checked_sub(lhs: i128, rhs: i128) -> Option<i128> {
+        let ua = lhs as u128;
+        let ub = rhs as u128;
+        let ur = ua - ub;
+        let r = ur as i128;
+        if rhs >= 0i128 {
+            if r > lhs { return Option::none(); }
+        } else {
+            if r < lhs { return Option::none(); }
+        }
+        Option::some(r)
+    }
+    fn checked_mul(lhs: i128, rhs: i128) -> Option<i128> {
+        if lhs == 0i128 || rhs == 0i128 { return Option::some(0i128); }
+        if lhs == i128::min_value() && rhs == -1i128 { return Option::none(); }
+        if rhs == i128::min_value() && lhs == -1i128 { return Option::none(); }
+        let r = lhs * rhs;
+        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+    }
     fn count_ones(self: i128) -> u32 {
         std::intrinsics::llvm::<i128>("llvm.ctpop", self) as u32
     }

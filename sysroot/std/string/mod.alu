@@ -833,14 +833,12 @@ mod tests {
         assert_eq!("needle".find("superlongstring"), Option::none());
     }
 
-    // aluminac: this test triggers a mono of parse_integer<usize> /
-    // <isize> / <u8> / etc. that fails with "checked_mul on type ''".
-    // The SAME parse_integer body works when called from a user fn,
-    // but fails when reached through the test-runner's assert_eq! chain
-    // in --test --cfg test_std mode. Likely test-ordering type_map
-    // pollution from preceding test monos. Tracked under "Per-call
-    // mono context" architectural item in PORTING_STATUS.md. Gate
-    // under cfg(boot) — alumina-boot's make test-std still covers it.
+    // aluminac: compiles after u128/i128 got checked_add/_sub/_mul, but
+    // fails at runtime — one of the assert_eq! comparisons mismatches
+    // and assert_eq_helper's debug-format chain panics with "error
+    // occurred during formatting". Likely an Option<u128>/<i128> debug
+    // fmt path that aluminac doesn't fully exercise. alumina-boot's
+    // make test-std still runs the test. Tracked in PORTING_STATUS.md.
     #[cfg(boot)]
     #[test]
     fn test_parse_integer() {
