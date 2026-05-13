@@ -1,0 +1,29 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: aluminac used to silently drop `#[cfg(...)]` on let
+// declarations. Paired cfg-on / cfg-not branches both registered their
+// names, the second shadowing the first via the by-name scope HashMap.
+// Subtle effect on sysroot's `std/fs/unix.alu::DirIterator::next`: each
+// loop iteration called BOTH readdir AND readdir64, consuming dirent
+// entries two-at-a-time and silently skipping half the sysroot at
+// load_sysroot time. This test pins the per-let-stmt cfg eval.
+
+static COUNTER: i32 = 0;
+
+fn bump() -> i32 {
+    COUNTER = COUNTER + 1i32;
+    COUNTER
+}
+
+fn main() -> i32 {
+    // If both branches' init expressions ran (the cfg-on-let bug),
+    // COUNTER would be 2. With the fix only the `not(...)` branch
+    // runs, so COUNTER = 1.
+    #[cfg(unset_cfg_for_test)]
+    let v = bump();
+    #[cfg(not(unset_cfg_for_test))]
+    let v = bump();
+
+    let _ = v;
+    if COUNTER != 1i32 { return 100i32 + COUNTER; }
+    0i32
+}
