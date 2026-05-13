@@ -5337,6 +5337,38 @@ impl Mono {
             return Option::none();
         }
         let def = fn_def.unwrap();
+
+        // For Slice receivers, the earlier setup of `method_type_args`
+        // (line ~5210) only knew `Ptr`, so it set `method_type_args = [Ptr]`.
+        // Now that we have `def`, mirror `call_method_on_type`'s and
+        // `lower_defered_call`'s Slice branches: methods declared
+        // `<T, Ptr>` get `[elem_ty, ptr_ty]`, and methods declared
+        // `<T, Ptr, H>` get `[elem_ty, ptr_ty, void]`. Without this,
+        // `slice::equals<T, Ptr>` was being mono'd with `T` bound to the
+        // pointer type (since `method_type_args[0]` slot fell through to
+        // the single Ptr value), and the body's `size_of::<T>()` returned
+        // pointer size (8) instead of element size (1). The
+        // resulting `memcmp(p, q, len * 8)` read past the slice end and
+        // returned non-zero for "Lorem" vs "Lorem" — which is what
+        // `s1.equals(&s2)` was failing on after the io/mod.alu swap.
+        if resolved_ty.tag == IrTyTag::Slice && method_type_args.len() == 1
+            && def.generic_params.len() > 1 {
+            let elem_ty = self.slice_elem_ty(resolved_ty);
+            let ptr_ty = method_type_args[0];
+            if def.generic_params.len() == 3 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(3);
+                ta[0] = elem_ty;
+                ta[1] = ptr_ty;
+                ta[2] = self.ctx.void_ty;
+                method_type_args = ta;
+            } else if def.generic_params.len() == 2 {
+                let ta = self.ctx.arena.alloc_slice::<&IrTy>(2);
+                ta[0] = elem_ty;
+                ta[1] = ptr_ty;
+                method_type_args = ta;
+            }
+        }
+
         // For mixin'd methods, resolve the mixin's type args. The mixin
         // records `proto_args` for the protocol it injects (Self + protocol's
         // other generics, in declaration order). Bind those into `type_map`

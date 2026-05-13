@@ -1,0 +1,42 @@
+// Test: slice methods declared with two generic params (e.g.
+// `fn equals<T, Ptr>(...)`) get both T and Ptr bound correctly when
+// dispatched through the method-call path.
+//
+// Regression: `try_lower_method_call` set `method_type_args = [ptr_ty]`
+// (single element) for slice receivers, regardless of how many generics
+// the method declared. Inside `slice::equals<T, Ptr>`, the method body
+// uses `size_of::<T>()` to compute the memcmp length. With T bound to
+// the pointer type instead of the element type, `size_of::<T>()`
+// returned the pointer size (8 on 64-bit) instead of 1, and
+// `memcmp(p1, p2, len * 8)` read 35 bytes past the end of a 5-byte
+// slice — sometimes returning non-zero even for byte-identical
+// content. Surfaced via `Option<Result<&[u8], io::Error>>::equals`
+// failing in the io/mod.alu swap.
+//
+// `call_method_on_type` and `lower_defered_call` already pass
+// `[elem_ty, ptr_ty]` for 2-generic slice methods; `try_lower_method_call`
+// is now aligned.
+//
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+fn main() -> i32 {
+    let s1: &[u8] = "Lorem";
+    let s2: &[u8] = "Lorem";
+    let s3: &[u8] = "ipsum";
+
+    // Method-call form dispatches through try_lower_method_call.
+    if !s1.equals(&s2) { return 1; }
+    if s1.equals(&s3) { return 2; }
+
+    // Operator form dispatches through call_method_on_type (already
+    // correct); test it too to lock in the symmetry.
+    if !(s1 == s2) { return 3; }
+    if s1 == s3 { return 4; }
+
+    // Indirect form: slice unwrapped from a generic wrapper, method-called.
+    let v1: Option<Result<&[u8], &[u8]>> = Option::some(Result::ok::<&[u8], &[u8]>("Lorem"));
+    let v2: Option<Result<&[u8], &[u8]>> = Option::some(Result::ok::<&[u8], &[u8]>("Lorem"));
+    if !(v1 == v2) { return 5; }
+
+    0
+}
