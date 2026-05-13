@@ -1446,6 +1446,19 @@ impl Mono {
             m.span = expr.span;
             return r;
         }
+        // Char literals default to u32 (Unicode codepoint) but coerce to the
+        // expected integer builtin when one is supplied — e.g. `Option::some('\n')`
+        // matched against `Option<u8>` should produce u8(10), not u32(10).
+        // Without this, the `Option<u8>` comparison fails type-check at runtime
+        // (different IR types) and downstream code paths silently use a
+        // not-equal result — which is how `io::LineIterator::next` failed to
+        // strip trailing newlines and test_lines blew up.
+        if expr.tag == ExprTag::CharLit && expected_ty.tag == IrTyTag::Builtin {
+            let r = self.mk_int_lit(expected_ty, expr.int_val());
+            let m = r as &void as &mut IrExpr;
+            m.span = expr.span;
+            return r;
+        }
         // For null literals, adopt the expected pointer type
         if expr.tag == ExprTag::NullLit && expected_ty.tag == IrTyTag::Pointer {
             let result = IrExpr::void_expr(expected_ty);
@@ -2157,6 +2170,50 @@ impl Mono {
             for i in 0usize..method_type_args.len() {
                 if method_type_args[i].is_void() {
                     has_unresolved = true;
+                }
+            }
+            if has_unresolved {
+                // First try expected return-type shape — this beats arg
+                // inference for cases like `Option::some('\n')` matched to
+                // `Option<u8>`, where the bare char literal naively infers
+                // T=u32 and shadows the correct T=u8 from the expected type.
+                // Mirrors the FnRef-call branch in lower_call (~line 5934)
+                // which does the same lookup; without it, `lower_expr_coerced`
+                // on a CharLit can't propagate the expected type through.
+                if self.expected_type != self.ctx.void_ty {
+                    let exp = self.expected_type;
+                    if exp.tag == IrTyTag::Struct && exp.struct_ref().type_args.len() == def.generic_params.len() {
+                        // Map declared return type's placeholders to exp's
+                        // concrete args. Only fills generic_params that
+                        // appear directly in the return type as
+                        // Placeholder(gp.id) — the common case for
+                        // Option::some / Result::ok / etc.
+                        let ret = def.return_type;
+                        if ret.tag == TyTag::Generic && ret.elems().len() == def.generic_params.len() {
+                            let merged0 = self.ctx.arena.alloc_slice::<&IrTy>(method_type_args.len());
+                            for i in 0usize..method_type_args.len() {
+                                merged0[i] = method_type_args[i];
+                            }
+                            for ri in 0usize..ret.elems().len() {
+                                if ret.elems()[ri].tag == TyTag::Placeholder {
+                                    let target_gp = ret.elems()[ri].id()._value;
+                                    for gi in 0usize..def.generic_params.len() {
+                                        if def.generic_params[gi].id._value == target_gp
+                                            && merged0[gi].is_void() {
+                                            merged0[gi] = exp.struct_ref().type_args[ri];
+                                        }
+                                    }
+                                }
+                            }
+                            method_type_args = merged0;
+                            has_unresolved = false;
+                            for i in 0usize..method_type_args.len() {
+                                if method_type_args[i].is_void() {
+                                    has_unresolved = true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             if has_unresolved {
@@ -5941,9 +5998,62 @@ impl Mono {
 
                         // Infer type args from argument types
                         let inferred = self.infer_type_args(def, expr.args());
-                        // If inference from args failed (e.g. Option::none() with no args),
-                        // try to infer from expected return type context
-                        let call_ta = inferred;
+                        // If the expected return type structurally matches the
+                        // function's declared return type AND the call has any
+                        // unsuffixed integer-style literal arg (`IntLit` /
+                        // `CharLit`), prefer the expected_type's type-args
+                        // over the arg-inferred ones. Without this, a bare
+                        // char literal arg like `Option::some('\n')` infers
+                        // T=u32 (the CharLit default), shadowing the correct
+                        // T=u8 from the surrounding comparison — which is
+                        // how `LineIterator::next`'s newline check silently
+                        // produced "not equal" and the test_lines test
+                        // looped forever / crashed. The literal-arg guard
+                        // keeps the existing behavior for ordinary fn calls
+                        // (e.g. `from_fn(|&i| ...)` whose closure-arg
+                        // inference of `F`/`T` shouldn't be overridden by
+                        // a maybe-misleading expected type).
+                        let prefer_expected = false;
+                        if self.expected_type != self.ctx.void_ty
+                            && self.expected_type.tag == IrTyTag::Struct
+                            && self.expected_type.struct_ref().type_args.len() == def.generic_params.len()
+                            && def.return_type.tag == TyTag::Generic
+                            && def.return_type.elems().len() == def.generic_params.len() {
+                            // Check the return is a Placeholder over the same
+                            // generic_param ids in the same order. Bails on
+                            // anything more complex (e.g. Result<E, T>-style
+                            // reordering) — those keep falling through to
+                            // arg inference.
+                            let shapes_match = true;
+                            for ri in 0usize..def.return_type.elems().len() {
+                                let el = def.return_type.elems()[ri];
+                                if el.tag != TyTag::Placeholder
+                                    || el.id()._value != def.generic_params[ri].id._value {
+                                    shapes_match = false;
+                                    break;
+                                }
+                            }
+                            if shapes_match {
+                                // Restrict to CharLit only — IntLit's existing
+                                // path through lower_expr_coerced already
+                                // honors expected_type for unsuffixed
+                                // integers. Triggering prefer_expected for
+                                // IntLit shifted from_fn's `T`-inference in
+                                // ways that broke `test_from_fn`; keep that
+                                // path on arg inference until needed.
+                                for ai in 0usize..expr.args().len() {
+                                    if expr.args()[ai].tag == ExprTag::CharLit {
+                                        prefer_expected = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        let call_ta: &[&IrTy] = if prefer_expected {
+                            self.expected_type.struct_ref().type_args
+                        } else {
+                            inferred
+                        };
                         if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
                             // Try to extract type args from expected_type (e.g. Option<usize>)
                             if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref().type_args.len() == def.generic_params.len() {

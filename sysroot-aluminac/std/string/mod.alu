@@ -81,6 +81,27 @@ impl StringBuf {
         self._data[0usize..self._length]
     }
 
+    /// Iterate over the bytes of the string by value.
+    ///
+    /// Mirrors sysroot's StringBuf::iter so callers like
+    /// `io::LineIterator::next` (which checks `self.line_buf.iter().next_back()`)
+    /// resolve `.iter()` on a `StringBuf` to the slice iterator. Without this,
+    /// aluminac silently lowered the unresolved method to `()` and downstream
+    /// `.next_back()` produced wrong-but-running code that segfaulted at runtime.
+    fn iter(self: &StringBuf) -> std::mem::SliceIterator<&u8> {
+        self._data[0usize..self._length].iter()
+    }
+
+    /// Iterate over byte references.
+    fn iter_ref(self: &StringBuf) -> std::mem::SliceRefIterator<&u8> {
+        self._data[0usize..self._length].iter_ref()
+    }
+
+    /// Iterate over mutable byte references.
+    fn iter_mut(self: &mut StringBuf) -> std::mem::SliceRefIterator<&mut u8> {
+        self._data[0usize..self._length].iter_mut()
+    }
+
     /// Reserve capacity for at least `additional` more bytes.
     fn reserve(self: &mut StringBuf, additional: usize) {
         let needed = self._length + additional;
