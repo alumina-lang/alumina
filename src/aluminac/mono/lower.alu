@@ -5588,6 +5588,37 @@ impl Mono {
             }
         }
 
+        // Validate Fn-protocol bounds on inferred type args. If a generic
+        // param carries a `Fn(...)` bound (TyTag::FnPointer) but the
+        // inferred type isn't a callable (Fn / FnPointer / Closure), this
+        // isn't the right method — fall back to UFCS. Surfaced by
+        // `self.data.find(self.sep)` where `data: &[u8]`: the slice's
+        // mixin'd `find<F: Fn(T) -> bool>` is matched first, F gets bound to
+        // `&[u8]`, and the body's `fun(value)` fails to lower. The right
+        // resolution is the free fn `string::find(self: &[u8], needle: &[u8])`.
+        for g in 0usize..def.generic_params.len() {
+            let has_fn_bound = false;
+            for b in 0usize..def.generic_params[g].bounds.len() {
+                if def.generic_params[g].bounds[b].tag == TyTag::FnPointer {
+                    has_fn_bound = true;
+                    break;
+                }
+            }
+            if !has_fn_bound { continue; }
+            if g >= combined_type_args.len() { continue; }
+            let inferred_ty = combined_type_args[g];
+            if inferred_ty as &void as usize == 0usize { continue; }
+            if inferred_ty.is_void() { continue; }
+            if inferred_ty.tag != IrTyTag::Fn
+                && inferred_ty.tag != IrTyTag::FnPointer
+                && inferred_ty.tag != IrTyTag::Closure {
+                if field_expr.id2()._value != 0 {
+                    return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
+                }
+                return Option::none();
+            }
+        }
+
         // For protocol methods (from mixins), set up Self type substitution
         let self_id_opt = self.ctx.proto_method_self_id.get(&fn_id._value);
         if self_id_opt.is_some() {
