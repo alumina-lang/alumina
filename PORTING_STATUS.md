@@ -292,7 +292,7 @@ Known follow-up resolved 2026-05-13: f2s::tests::test_regression now passes in f
 - [DONE] **`std/ffi.alu`** — unified; aluminac test count grows with embedded ffi tests.
 - [DONE] **`std/string/mod.alu`** — unified 2026-05-13. `sysroot/std/string/mod.alu` and `sysroot-aluminac/std/string/mod.alu` are now byte-identical. Bootstrap green, `make test-std-aluminac` 198 → 208, `make test-aluminac` 163 → 164. Three sysroot tests carry `#[cfg(boot)]` gates with explanatory comments:
   - `test_parse_integer` / `test_parse_integer_radix` — aluminac mono'ing `parse_integer<usize>` through the test-runner's `assert_eq!` chain fails with "checked_mul on type ''"; the SAME `parse_integer` body succeeds when called from a user fn (verified by `/tmp/test_parse_more.alu`-style isolated repros). Likely test-ordering type_map pollution from preceding test monos — same class as the broader "per-call mono context" architectural debt (item #4).
-  - `test_parse_float` — depends on `std::fmt::ryu` (not yet ported to aluminac).
+  - ~~`test_parse_float` — depends on `std::fmt::ryu` (not yet ported to aluminac).~~ **Resolved 2026-05-13.** ryu ported (see entry above); `parse_float<T: FloatingPoint>` routes through `fmt::ryu::parse64` / `parse32`. Test ungated and passes under aluminac.
 
   Three compiler fixes landed in service of this unification (described in detail above):
   - UFCS Fn-bound check in `try_lower_method_call` (commit a5b388ba).
