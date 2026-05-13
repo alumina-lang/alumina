@@ -1149,13 +1149,6 @@ mod tests {
         assert_eq!(b as &mut void, &a as &mut void);
     }
 
-    // Aluminac's if-branch result-type unification doesn't propagate the
-    // explicit `&dyn Foo<Self>` annotation back into each branch's coercion,
-    // so the if-result type stays unbound and the runtime dispatch picks the
-    // wrong vtable. The block-value unification work tracked under "Block
-    // value: `expr;` produces `()`" in PORTING_STATUS.md is the principled
-    // fix.
-    #[cfg(boot)]
     #[test]
     fn test_dyn_if_coercion() {
         for cond in [true, false] {
@@ -1169,10 +1162,6 @@ mod tests {
         }
     }
 
-    // Same shape as test_dyn_if_coercion above — aluminac's switch-arm
-    // result-type unification doesn't propagate the `&dyn Foo<Self>`
-    // annotation through arms.
-    #[cfg(boot)]
     #[test]
     fn test_dyn_if_coercion_switch() {
         for i in 0..5 {

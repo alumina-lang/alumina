@@ -2353,10 +2353,27 @@ impl Mono {
         // omits a default on a value-producing switch. So we always pass a
         // concrete `else_expr` down the chain: either the user's default body
         // or a synthesized Void IrExpr.
+        // If the switch is in an rvalue position with a known expected_type
+        // (e.g. `let p: &dyn Foo = switch i { 0 => &Quux{}, 1 => &Frob{}, ... }`),
+        // propagate it to each arm so coercion (notably dyn vtable build) runs
+        // per-arm. Mirrors the same fix in the If branch above.
+        let outer_expected = self.expected_type;
+        let propagate_to_arms = !outer_expected.is_void()
+            && !outer_expected.is_never()
+            && outer_expected.tag == IrTyTag::Struct
+            && {
+                let dyn_id = self.ctx.get_lang_item("dyn");
+                dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
+            };
+
         let default_body: &IrExpr = self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         for i in 0usize..arms.len() {
             if arms[i].pattern.len() == 0 {
-                default_body = self.lower_expr(arms[i].body);
+                default_body = if propagate_to_arms {
+                    self.lower_expr_coerced(arms[i].body, outer_expected)
+                } else {
+                    self.lower_expr(arms[i].body)
+                };
             }
         }
 
@@ -2388,7 +2405,11 @@ impl Mono {
             }
 
             let arm = &arms[actual_i];
-            let arm_body = self.lower_expr(arm.body);
+            let arm_body = if propagate_to_arms {
+                self.lower_expr_coerced(arm.body, outer_expected)
+            } else {
+                self.lower_expr(arm.body)
+            };
 
             // Build condition: tmp == pat[0] || tmp == pat[1] || ...
             let cond: &IrExpr = null;
@@ -2513,15 +2534,42 @@ impl Mono {
     fn lower_control_flow(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::If {
             let ir_cond = self.lower_expr(expr.cond());
-            let ir_then = self.lower_expr(expr.lhs());
+
+            // If the if is in an rvalue position with a known expected_type
+            // (e.g. `let p: &dyn Foo = if cond { &Quux{} } else { &Frob{} };`),
+            // propagate that expectation into both arms so each arm's value
+            // gets coerced individually. Without this, the arms unify on the
+            // "most structured" type (often the first arm's, e.g. `&Quux`),
+            // and the else-arm's `&Frob` gets misdispatched. Particularly
+            // load-bearing for dyn coercion where each arm needs its own
+            // vtable.
+            let outer_expected = self.expected_type;
+            let propagate = !outer_expected.is_void()
+                && !outer_expected.is_never()
+                && outer_expected.tag == IrTyTag::Struct
+                && {
+                    let dyn_id = self.ctx.get_lang_item("dyn");
+                    dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
+                };
+
+            let ir_then = if propagate {
+                self.lower_expr_coerced(expr.lhs(), outer_expected)
+            } else {
+                self.lower_expr(expr.lhs())
+            };
             let ir_else: Option<&IrExpr> = if expr.opt_expr().is_some() {
-                // Set expected_type hint from then branch for else branch inference
-                let saved_expected = self.expected_type;
-                if !ir_then.ty.is_void() && !ir_then.ty.is_never() {
-                    self.expected_type = ir_then.ty;
-                }
-                let else_result = self.lower_expr(expr.opt_expr().unwrap());
-                self.expected_type = saved_expected;
+                let else_result = if propagate {
+                    self.lower_expr_coerced(expr.opt_expr().unwrap(), outer_expected)
+                } else {
+                    // Set expected_type hint from then branch for else branch inference.
+                    let saved_expected = self.expected_type;
+                    if !ir_then.ty.is_void() && !ir_then.ty.is_never() {
+                        self.expected_type = ir_then.ty;
+                    }
+                    let r = self.lower_expr(expr.opt_expr().unwrap());
+                    self.expected_type = saved_expected;
+                    r
+                };
                 Option::some(else_result)
             } else {
                 Option::none()
