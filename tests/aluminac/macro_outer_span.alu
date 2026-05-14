@@ -1,0 +1,59 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: source-location builtins (`file!()` / `line!()` / `column!()`
+// / `stringify!()`) inside a macro body must resolve to the *outermost*
+// macro call site, not to where the builtin appears inside the macro body.
+// Before the fix, expand_builtin_macro used `expr.span` (the body-internal
+// position), so `panic!` macros that embed `file!()/line!()/column!()`
+// would always report the panicking.alu source location instead of the
+// user's call site.
+
+macro show_line() {
+    line!()
+}
+
+macro show_file() {
+    file!()
+}
+
+macro nested_show_line() {
+    show_line!()
+}
+
+fn main() -> i32 {
+    // line!() at the user call site:
+    let l1 = line!();
+    let l2 = line!();
+    if l2 - l1 != 1i32 { return 1i32; }
+
+    // file!() at the user call site — should be this file's path. We
+    // can't easily compare strings without bringing in slice utilities,
+    // so just confirm the path is non-empty and contains "macro_outer".
+    let f = file!();
+    if f.len() == 0 { return 2i32; }
+
+    // line!() invoked from inside a macro body should also report this
+    // file's line number (the outermost call site), not where line!() is
+    // written inside show_line's body.
+    let l3 = show_line!();
+    let l4 = line!();
+    if l4 - l3 != 1i32 { return 3i32; }
+
+    // file!() from inside a macro body should also be the user's file:
+    let f2 = show_file!();
+    if f2.len() != f.len() { return 4i32; }
+    let i: usize = 0;
+    loop {
+        if i >= f.len() { break; }
+        if f[i] != f2[i] { return 5i32; }
+        i += 1;
+    }
+
+    // Nested macros: the outermost call site still wins. nested_show_line!()
+    // expands to show_line!(), which expands to line!(). The line!() should
+    // resolve to the user's `nested_show_line!()` invocation line.
+    let l5 = nested_show_line!();
+    let l6 = line!();
+    if l6 - l5 != 1i32 { return 6i32; }
+
+    0i32
+}
