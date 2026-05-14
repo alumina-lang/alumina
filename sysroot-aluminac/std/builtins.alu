@@ -942,6 +942,9 @@ impl f32 {
     fn is_nan(self: &f32) -> bool { *self != *self }
     fn is_infinite(self: &f32) -> bool { *self == f32::infinity() || *self == f32::neg_infinity() }
     fn is_finite(self: &f32) -> bool { !self.is_nan() && !self.is_infinite() }
+    fn is_sign_negative(self: f32) -> bool {
+        std::util::transmute::<f32, u32>(self) & 0x80000000u32 != 0u32
+    }
     fn abs(self: &f32) -> f32 { libc::fabsf(*self) }
     fn sqrt(self: &f32) -> f32 { libc::sqrtf(*self) }
     fn ceil(self: &f32) -> f32 { libc::ceilf(*self) }
@@ -974,15 +977,7 @@ impl f32 {
     fn greater_than(lhs: &f32, rhs: &f32) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &f32, rhs: &f32) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &f32, f: &mut F) -> std::fmt::Result {
-        // Simple float formatting: convert to f64 and format
-        let v = *self as f64;
-        let buf: [u8; 32];
-        let len = libc::snprintf(&buf[0] as &mut libc::c_char, 32usize, &"%.6g\0"[0] as &libc::c_char, v);
-        if len > 0i32 && len < 32i32 {
-            f.write_str(buf[0usize..len as usize])
-        } else {
-            f.write_str("NaN")
-        }
+        std::fmt::internal::format_float::<f32, F>(*self, f, 15u16)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &f32, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 4usize));
@@ -1002,6 +997,9 @@ impl f64 {
     fn is_nan(self: &f64) -> bool { *self != *self }
     fn is_infinite(self: &f64) -> bool { *self == f64::infinity() || *self == f64::neg_infinity() }
     fn is_finite(self: &f64) -> bool { !self.is_nan() && !self.is_infinite() }
+    fn is_sign_negative(self: f64) -> bool {
+        std::util::transmute::<f64, u64>(self) & 0x8000000000000000u64 != 0u64
+    }
     fn abs(self: &f64) -> f64 { libc::fabs(*self) }
     fn sqrt(self: &f64) -> f64 { libc::sqrt(*self) }
     fn ceil(self: &f64) -> f64 { libc::ceil(*self) }
@@ -1034,13 +1032,7 @@ impl f64 {
     fn greater_than(lhs: &f64, rhs: &f64) -> bool { *lhs > *rhs }
     fn greater_than_or_equal(lhs: &f64, rhs: &f64) -> bool { *lhs >= *rhs }
     fn fmt<F: std::fmt::Formatter<F>>(self: &f64, f: &mut F) -> std::fmt::Result {
-        let buf: [u8; 32];
-        let len = libc::snprintf(&buf[0] as &mut libc::c_char, 32usize, &"%.15g\0"[0] as &libc::c_char, *self);
-        if len > 0i32 && len < 32i32 {
-            f.write_str(buf[0usize..len as usize])
-        } else {
-            f.write_str("NaN")
-        }
+        std::fmt::internal::format_float::<f64, F>(*self, f, 15u16)
     }
     fn hash<H: std::hash::Hasher<H>>(self: &f64, hasher: &mut H) {
         hasher.write(std::mem::slice_from_raw_const::<u8>(self as &u8, 8usize));

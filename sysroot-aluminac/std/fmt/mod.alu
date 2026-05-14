@@ -263,6 +263,18 @@ mod internal {
         Result::ok(())
     }
 
+    /// Generic float formatter wrapper. Dispatches at compile time to the
+    /// f32 / f64 helper based on T. Mirrors sysroot's API surface so the
+    /// per-type fmt impls in `sysroot-aluminac/std/builtins.alu` can call
+    /// a single shared helper (`format_float::<T, F>(val, fmt, precision)`).
+    fn format_float<T: builtins::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, _precision: u16) -> Result {
+        when std::typing::is_same::<T, f64>() {
+            format_float_f64::<F>(val as f64, fmt)
+        } else {
+            format_float_f32::<F>(val as f32, fmt)
+        }
+    }
+
     /// Float formatting using snprintf
     fn format_float_f64<F: Formatter<F>>(val: f64, fmt: &mut F) -> Result {
         // Handle special cases
