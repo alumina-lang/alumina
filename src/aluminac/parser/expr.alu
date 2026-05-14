@@ -714,6 +714,13 @@ impl ExprParser {
                 let fn_id = item.kind.id2();
                 let e = self.make_expr(ExprTag::FnRef, span);
                 e._data.id_ref.id = fn_id;
+                // Carry the impl_scope_idx (set in process_mixins). Mono uses
+                // it to look up the mixin's type-args via get_mixin_type_args
+                // and bind the protocol's generics (Self + others) for static
+                // calls like `f64::nan()` — without a receiver or first arg
+                // to infer Self from, the binding source is the path's
+                // containing impl scope.
+                e._data.id_ref.id2 = Id { _value: item.kind.scope_idx as usize };
                 return self.ctx.alloc_expr(e);
             } else if item.kind.tag == scope::NamedItemTag::Static {
                 let id = item.kind.id();

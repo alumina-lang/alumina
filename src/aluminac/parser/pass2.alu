@@ -159,9 +159,14 @@ impl Pass2 {
                             // fn_id extraction handles both tags via id2() for
                             // Method, so dispatch on the impl type still works.
                             let fn_id_val = item.kind.id();
+                            // Mirror process_mixins: stash impl_scope_idx so
+                            // static path-calls like `Type::static_method()`
+                            // can bind the protocol's generics.
+                            let mk = NamedItemKind::method(fn_id_val, fn_id_val);
+                            mk.scope_idx = impl_scope_idx;
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
-                                kind: NamedItemKind::method(fn_id_val, fn_id_val),
+                                kind: mk,
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
                             if mixin_ty_args.len() > 0 {
@@ -1300,9 +1305,16 @@ impl Pass2 {
                             // Function) so parser's UFCS-hint resolution
                             // doesn't grab mixin'd protocol methods.
                             let fn_id_val = item.kind.id();
+                            // Stash impl_scope_idx in the Method's scope_idx
+                            // field. Static path-calls like `f64::nan()` use it
+                            // to bind the protocol's generics from the mixin's
+                            // own type-args at call time — without it, Self
+                            // stays unbound and the body lowers to void.
+                            let mk = NamedItemKind::method(fn_id_val, fn_id_val);
+                            mk.scope_idx = impl_scope_idx;
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
-                                kind: NamedItemKind::method(fn_id_val, fn_id_val),
+                                kind: mk,
                                 span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
                             });
                             // Store mixin type args so mono can substitute protocol generics
