@@ -354,13 +354,127 @@ impl DiagnosticContext {
                 let file = &self.files[diag.span.file_id as usize];
                 let (line, col) = file.line_col(diag.span.start);
                 let _ = write!(&f, "\n  --> {}:{}:{}", file.path, line, col);
+                // Render the source snippet for errors and warnings, but
+                // suppress for Notes (mono instantiation chains can be 5-10
+                // frames deep and rendering each as a full snippet floods).
+                let render_snippet = switch diag.level {
+                    DiagLevel::Error => true,
+                    DiagLevel::Warning => true,
+                    _ => false,
+                };
+                if render_snippet {
+                    self.render_source_snippet(&f, file, diag.span, line, col);
+                }
             }
             let _ = f.write_str("\n");
+        }
+    }
+
+    /// Render a source snippet for the span, with a caret underline beneath
+    /// the offending column. Format (matches rust/alumina-boot conventions):
+    ///
+    ///    |
+    /// 76 |         buf.free();
+    ///    |         ^^^^^^^^^^
+    ///
+    /// Multi-line spans render only the first line and elide the rest with
+    /// `...`. Lines longer than MAX_SNIPPET_COLS are truncated.
+    fn render_source_snippet(
+        self: &DiagnosticContext,
+        f: &mut _StderrFmt,
+        file: &SourceFile,
+        span: ast::Span,
+        line: u32,
+        col: u32,
+    ) {
+        let MAX_SNIPPET_COLS: u32 = 200u32;
+        // Find the line bytes via line_starts. `line` is 1-based; the line's
+        // start offset is line_starts[line-1], and its end is line_starts[line]
+        // (or contents.len() for the last line). Excludes the trailing newline.
+        let line_idx = (line - 1u32) as usize;
+        if line_idx >= file.line_starts.len() {
+            return;
+        }
+        let start_off = file.line_starts[line_idx] as usize;
+        let end_off = if line_idx + 1 < file.line_starts.len() {
+            file.line_starts[line_idx + 1] as usize
+        } else {
+            file.contents.len()
+        };
+        // Trim trailing \n / \r so we don't double-newline the output.
+        while end_off > start_off
+            && (file.contents[end_off - 1] == '\n' || file.contents[end_off - 1] == '\r') {
+            end_off = end_off - 1;
+        }
+
+        let line_bytes = file.contents[start_off..end_off];
+        let truncated = false;
+        if line_bytes.len() > MAX_SNIPPET_COLS as usize {
+            line_bytes = line_bytes[0usize..MAX_SNIPPET_COLS as usize];
+            truncated = true;
+        }
+
+        // Compute the line-number gutter width (digits in line number).
+        let gutter_width = count_digits(line);
+
+        // Top spacer line:  "    |"
+        let _ = f.write_str("\n");
+        write_spaces(f, gutter_width + 1u32);
+        let _ = f.write_str("|");
+
+        // Source line:     " 76 | <source>"
+        let _ = f.write_str("\n ");
+        let _ = write!(f, "{}", line);
+        let _ = f.write_str(" | ");
+        let _ = f.write_str(line_bytes);
+        if truncated {
+            let _ = f.write_str(" ...");
+        }
+
+        // Caret line:      "    |     ^^^^^"
+        // Caret starts at (col - 1) bytes into the source. Caret length =
+        // min(span_length, remaining_line_bytes). At least 1 character.
+        let _ = f.write_str("\n");
+        write_spaces(f, gutter_width + 1u32);
+        let _ = f.write_str("| ");
+        // Column padding: col is 1-based; we want (col - 1) leading spaces.
+        write_spaces(f, col - 1u32);
+        let span_len = if span.end > span.start { (span.end - span.start) as usize } else { 1usize };
+        let line_remaining = if line_bytes.len() > (col - 1u32) as usize {
+            line_bytes.len() - (col - 1u32) as usize
+        } else {
+            1usize
+        };
+        let caret_len = if span_len < line_remaining { span_len } else { line_remaining };
+        if caret_len == 0usize { caret_len = 1usize; }
+        let j: usize = 0;
+        while j < caret_len {
+            let _ = f.write_byte('^');
+            j = j + 1;
         }
     }
 
     fn free(self: &mut DiagnosticContext) {
         self.files.free();
         self.errors.free();
+    }
+}
+
+fn count_digits(n: u32) -> u32 {
+    if n == 0u32 { return 1u32; }
+    let count: u32 = 0;
+    let v = n;
+    while v > 0u32 {
+        v = v / 10u32;
+        count = count + 1u32;
+    }
+    count
+}
+
+fn write_spaces(f: &mut _StderrFmt, n: u32) {
+    let i: u32 = 0;
+    while i < n {
+        let _ = f.write_byte(' ');
+        i = i + 1u32;
     }
 }
