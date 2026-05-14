@@ -625,13 +625,18 @@ impl Pass2 {
                     }
                 }
                 // Unqualified-name failures fall through to Ty::unresolved
-                // silently for now. Adding a parse-time diagnostic here
-                // surfaces real-but-tolerated patterns in sysroot — most
-                // notably `Self` outside protocol-method context, and
-                // unimported protocol names like `Primitive` in mem.alu's
-                // `when lhs[0] is Primitive` (alumina-boot resolves these
-                // via mechanisms aluminac doesn't fully mirror yet).
-                // Tracked as the remaining Missing item under entry #7.
+                // silently. Adding a parse-time diagnostic here surfaces
+                // real-but-tolerated patterns we don't yet handle: `Self`
+                // outside protocol-method context (used in `&dyn Proto<Self>`
+                // signatures in plain fns), unqualified protocol references
+                // like `Pointer` / `Equatable` in bound positions even when
+                // imported via `use`, and unqualified struct refs like
+                // `RangeFull`. Each is a real resolver gap that needs its
+                // own slice — tracked as item #7 in "Highest-leverage
+                // remaining work". Diagnostic was added and reverted
+                // 2026-05-14 after surfacing >3 such cases in the test
+                // suite (dyn_dispatch_compiles, method_arg_slice_empty,
+                // mixin_self_via_operator, range_equatable).
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             NodeKind::PointerOf => {

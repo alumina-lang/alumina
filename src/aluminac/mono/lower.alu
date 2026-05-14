@@ -3548,7 +3548,14 @@ impl Mono {
         };
         let next_call = self.resolve_method_call_on_type(iter_ty, "next", ir_iter_ref, &[]);
         if next_call.is_none() {
-            self.emit_diag(diagnostics::CodeDiagnostic::unresolved_function(expr.span, "next"));
+            // Report against the receiver type so the user sees which iterator
+            // shape lacks .next() — not just "could not resolve 'next'".
+            let unwrapped_iter_ty = iter_ty;
+            while unwrapped_iter_ty.tag == IrTyTag::Pointer {
+                unwrapped_iter_ty = unwrapped_iter_ty.inner();
+            }
+            let ty_name = self.ir_type_name(unwrapped_iter_ty);
+            self.emit_diag(diagnostics::CodeDiagnostic::unresolved_method(expr.span, "next", ty_name));
             return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         }
         let ir_next_call = next_call.unwrap();
@@ -3879,7 +3886,8 @@ impl Mono {
             // Find field index on the dereferenced struct type
             let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val());
             if !field_found && expr.str_val().len() > 0usize && !self.suppress_field_error {
-                self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(expr.span, expr.str_val()));
+                let ty_name = self.ir_type_name(actual_obj.ty);
+                self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(expr.span, expr.str_val(), ty_name));
             }
             self.mk_field(actual_obj, field_idx, field_ty)
         } else if expr.tag == ExprTag::TupleIndex {
@@ -6461,7 +6469,22 @@ impl Mono {
             } else {
                 // Not a function pointer or closure - method resolution failed
                 if expr.lhs().tag == ExprTag::FieldAccess && expr.lhs().str_val().len() > 0usize {
-                    self.emit_diag(diagnostics::CodeDiagnostic::unresolved_method(expr.span, expr.lhs().str_val(), ""));
+                    // Recover the receiver's type for the error message. The
+                    // FieldAccess was already lowered (into ir_callee, which
+                    // is now void / not-callable); re-lower the receiver with
+                    // suppress_field_error set so we don't double-emit. After
+                    // auto-deref through pointer layers we have the type the
+                    // method was actually looked up on.
+                    let prev_suppress = self.suppress_field_error;
+                    self.suppress_field_error = true;
+                    let recv = self.lower_expr(expr.lhs().lhs());
+                    self.suppress_field_error = prev_suppress;
+                    let recv_ty = recv.ty;
+                    while recv_ty.tag == IrTyTag::Pointer {
+                        recv_ty = recv_ty.inner();
+                    }
+                    let ty_name = self.ir_type_name(recv_ty);
+                    self.emit_diag(diagnostics::CodeDiagnostic::unresolved_method(expr.span, expr.lhs().str_val(), ty_name));
                 } else {
                     self.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
                 }

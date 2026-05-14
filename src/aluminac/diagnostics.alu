@@ -171,8 +171,8 @@ impl CodeDiagnostic {
         CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::TupleIndexOutOfBounds)
     }
 
-    fn unresolved_field(span: Span, name: &[u8]) -> CodeDiagnostic {
-        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnresolvedField, name)
+    fn unresolved_field(span: Span, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::UnresolvedField, name, type_name)
     }
 
     fn unresolved_method(span: Span, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
@@ -258,8 +258,13 @@ impl CodeDiagnostic {
             CodeDiagKind::UnresolvedType => f.write_str("could not resolve type"),
             CodeDiagKind::InvalidDeref => f.write_str("cannot dereference non-pointer type"),
             CodeDiagKind::TupleIndexOutOfBounds => f.write_str("tuple index out of bounds"),
-            CodeDiagKind::UnresolvedField =>
-                write!(f, "could not resolve field '{}'", self._data.name.name),
+            CodeDiagKind::UnresolvedField => {
+                if self._data.pair.type_name.len() > 0usize {
+                    write!(f, "could not resolve field '{}' on type '{}'", self._data.pair.name, self._data.pair.type_name)
+                } else {
+                    write!(f, "could not resolve field '{}'", self._data.pair.name)
+                }
+            },
             CodeDiagKind::UnresolvedMethod =>
                 write!(f, "could not resolve method '{}' on type '{}'", self._data.pair.name, self._data.pair.type_name),
             CodeDiagKind::UnresolvedFunction =>
