@@ -146,13 +146,10 @@ macro writeln($fmt, $fmt_str, $arg...) {
 /// assert_eq!(s[..] as &[u8], "1 + 2 = 3");
 /// ```
 macro format($fmt_str, $arg...) {
-    let buf = string::StringBuf::with_capacity($fmt_str.len());
-    let ret = fmt::write!(&buf, $fmt_str, $arg$...);
-    if ret.is_ok() {
-        Result::ok::<string::StringBuf, Error>(buf)
-    } else {
-        buf.free();
-        Result::err::<string::StringBuf, Error>(Error::new())
+    {
+        let _fmt_buf = string::StringBuf::with_capacity($fmt_str.len());
+        let _fmt_ret = fmt::write!(&_fmt_buf, $fmt_str, $arg$...);
+        std::fmt::internal::_finish_format(&_fmt_buf, _fmt_ret)
     }
 }
 
@@ -170,12 +167,10 @@ macro format($fmt_str, $arg...) {
 /// assert_eq!(f, "1 + 2 = 3");
 /// ```
 macro format_in($buf, $fmt_str, $arg...) {
-    let fmt = SliceFormatter::new($buf);
-    let ret = fmt::write!(&fmt, $fmt_str, $arg$...);
-    if ret.is_ok() {
-        Result::ok::<&[u8], Error>(fmt.get())
-    } else {
-        Result::err::<&[u8], Error>(Error::new())
+    {
+        let _fmt_in_sf = SliceFormatter::new($buf);
+        let _fmt_in_ret = fmt::write!(&_fmt_in_sf, $fmt_str, $arg$...);
+        std::fmt::internal::_finish_format_in(&_fmt_in_sf, _fmt_in_ret)
     }
 }
 
@@ -283,6 +278,24 @@ mod internal {
     #[inline(always)]
     fn dyn_format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<Self, F> {
         self
+    }
+
+    fn _finish_format(buf: &string::StringBuf, ret: Result) -> std::result::Result<string::StringBuf, Error> {
+        if ret.is_ok() {
+            std::result::Result::ok::<string::StringBuf, Error>(*buf)
+        } else {
+            let p = buf as &mut string::StringBuf;
+            p.free();
+            std::result::Result::err::<string::StringBuf, Error>(Error::new())
+        }
+    }
+
+    fn _finish_format_in(sf: &SliceFormatter, ret: Result) -> std::result::Result<&[u8], Error> {
+        if ret.is_ok() {
+            std::result::Result::ok::<&[u8], Error>(sf.get())
+        } else {
+            std::result::Result::err::<&[u8], Error>(Error::new())
+        }
     }
 
     /// Receiver macro for [format_args] that constructs an array of type-erased pointers to
