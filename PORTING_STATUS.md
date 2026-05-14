@@ -517,9 +517,17 @@ Known follow-up resolved 2026-05-13: f2s::tests::test_regression now passes in f
   - The compile-time `Option<()>::fmt` instantiation in the panic chain is fixed by the strict protocol-bound check (see "Strict conformance check" under "Per-feature status").
   - The runtime spawn() panic was a switch-arm-type-unification codegen bug: `ChildStdio::new`'s `switch kind { Piped => (Option::some(fd), Option::some(fd)), Inherit => (Option::none(), Option::none()) }` arms had different mono'd Option types (Option<i32> vs Option<void>); aluminac bitcast-blasted the void-tuple over the i32-tuple slot at the merge, corrupting `theirs` from None→Some at runtime so `install`'s dup2 path fired with garbage. Fixed in `lower_switch_as_if_else` by a pre-pass that determines the unified arm type and propagates it via `expected_type` into each arm's lowering. Mirror of the if-arm propagation that was already in place. Regression test: `tests/aluminac/switch_arm_type_unify.alu`.
 
-  After both fixes, sysroot's `Forked::spawn()` works end-to-end under aluminac (verified on tests 1-3 of `process_basic.alu`). One remaining runtime issue blocks the full test pass: `Command::new(...).args(&["hello"]).spawn()` runs `/bin/echo` but echo prints `(\n` instead of `hello\n`. The argv passed to `execv` is mangled — likely a closure-capture or ExecParams pointer issue in sysroot's `ExecParams::new` (it builds argv via `args_idxs.iter().map(|&ptr, idx| ptr + idx)` chain). Needs deeper investigation.
+  After both fixes, sysroot's `Forked::spawn()` works end-to-end under aluminac (verified on tests 1-3 of `process_basic.alu`). One remaining runtime issue blocks the full test pass: `Command::new(...).args(&["hello"]).spawn()` runs `/bin/echo` but echo prints `(\n` instead of `hello\n`. **Root cause: closure-capture in iterator chain.** Repro:
+  ```alumina
+  let x: &u8 = "hello".as_ptr();
+  let xs = Vector::<i32>::new(); xs.push(1); xs.push(2);
+  let r = xs.iter().map(|&x, _v: i32| -> &u8 { x }).to_vector();
+  // r[0] and r[1] both point to a different heap address than the
+  // outer x; the closure's `&x` capture isn't reading the outer x.
+  ```
+  Same closure used directly via a generic `apply<F: Fn(...)>(f, v)` works correctly — only the iter-map path is broken. Stored-in-struct (`Holder { f: closure }`) and direct-call paths also work. The bug is specifically in how `xs.iter().map(closure)` constructs MapIterator with the closure: somehow the closure's captured-by-ref `&x` ends up pointing at a wrong memory location after being moved into MapIterator's `_fun` field.
   Missing:
-  - Diagnose the argv mangling in `Command::spawn` / `ExecParams::new` (closure-capture-by-ref-of-pointer with iterator chain).
+  - Diagnose the closure-capture-by-ref bug when the closure is stored in `MapIterator._fun` via the iter().map(...) chain. Likely a temporary-lifetime / move-semantics issue specific to method-chained iterators returning structs containing closures.
   - Update `tests/aluminac/process_basic.alu` for the API differences once it works (Command::new takes fs::Path; current_dir returns fs::PathBuf; getenv → env().get).
 - [TODO] **`std/runtime/mod.alu`** — backtrace + panic runtime. Depends on debug info + dyn.
 - [TODO] **`std/runtime/backtrace.alu`** — uses libc + closures for frame iteration. Depends on debug info + closures verified.
