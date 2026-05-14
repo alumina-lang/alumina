@@ -2407,18 +2407,14 @@ mod tests {
         assert_eq!(iter.next(), Option::none());
     }
 
-    // Fails under aluminac when run as part of the full test suite (passes
-    // in isolation). The `Option<()>` debug-fmt chain mono'd inside
-    // `assert_eq_helper<Option<()>>` picks up tuple-formatter state from a
-    // prior test's mono — symptom is `lhs != rhs` returning true while
-    // lhs.debug() == rhs.debug() == "some((65535, 65535))". A distinct bug
-    // from the chars-map miscompile (resolved 2026-05-12) that previously
-    // shared this comment; that one was id-vs-mangled_name ambiguity in
-    // `make_fn_ty` / `ir_functions` lookups. This one survives the fix —
-    // tracked in PORTING_STATUS as the broader per-call mono-context
-    // architectural debt.
-    #[cfg(boot)]
+    // `assert_eq!` on Option<()> renders the inner value as a 2-tuple of
+    // garbage integers — debug-fmt is reading the wrong layout for the
+    // Option<()> instance. Surfaces only as part of the full test suite
+    // (passes in isolation). Tracked under the per-call mono-context
+    // architectural debt; the impl/AST-id-mismatch fix (2026-05-14) closed
+    // test_flatten_2 but this one remains.
     #[test]
+    #[cfg(boot)]
     fn test_fuse() {
         let index = 0;
         let iter = from_fn(|&index| -> Option<()> {
@@ -2502,12 +2498,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(boot)]
-    /// SIGSEGV under aluminac after fmt/mod.alu unification when run as part
-    /// of the full test suite (passes in isolation). Likely the per-call
-    /// mono-context architectural debt that gates test_fuse — same shape of
-    /// test-ordering type_map pollution. Re-enable when item #4 in the
-    /// highest-leverage list is addressed.
     fn test_flatten_2() {
         let iter = [Option::some(1), Option::none(), Option::some(2), Option::some(3)].iter().flatten();
 

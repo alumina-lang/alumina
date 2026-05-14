@@ -1018,13 +1018,8 @@ impl Mono {
 
         // Snapshot any *prior* type_map bindings for this fn's generic
         // params. After body lowering we restore the entries that were
-        // bound before, so a recursive mono of the same function with
-        // different type_args (e.g. `Result::unwrap` re-entering itself
-        // through `?` in `format_integer`) doesn't leave the outer
-        // context's bindings overwritten. Entries that were *unbound*
-        // before stay set on exit — the dispatcher paths rely on that
-        // leaky-context behavior to fill in method-only generics that
-        // no caller ever binds explicitly.
+        // bound before so a recursive mono with different type_args
+        // doesn't leave the outer context's bindings overwritten.
         let saved_gp = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
         let had_gp = self.ctx.arena.alloc_slice::<bool>(def.generic_params.len());
         for gi in 0usize..def.generic_params.len() {
@@ -1037,12 +1032,6 @@ impl Mono {
                 had_gp[gi] = false;
             }
         }
-        // Same snapshot for proto generics (Self + protocol's others) of
-        // protocol-derived methods. Dispatchers (`bind_proto_generics`,
-        // `infer_proto_generics_from_call`) set these before this call;
-        // restoring them on exit keeps recursive instantiations from
-        // clobbering each other and prevents nested calls' bindings from
-        // leaking into the outer mono frame.
         let proto_ids: &[usize] = &[];
         let proto_save_vals = self.ctx.arena.alloc_slice::<&IrTy>(0);
         let proto_save_had = self.ctx.arena.alloc_slice::<bool>(0);
@@ -1061,7 +1050,6 @@ impl Mono {
                 }
             }
         }
-        // Snapshot the protocol-method Self id (its bound type, when present).
         let self_id_v: usize = 0usize;
         let self_id_have = false;
         let self_id_val: &IrTy = self.ctx.void_ty;
@@ -1076,7 +1064,6 @@ impl Mono {
                 self_id_had = true;
             }
         }
-
 
         // Set up generic substitution
         if def.generic_params.len() > 0 && type_args.len() > 0 {
@@ -1182,18 +1169,12 @@ impl Mono {
 
         self.current_mono_key = prev_mono_key;
 
-        // Restore the *previously-bound* type_map entries (see snapshot
-        // above). Entries that had no prior binding are left set to whatever
-        // this mono installed, to preserve the leaky-context behavior.
+        // Restore the *previously-bound* type_map entries.
         for gi in 0usize..def.generic_params.len() {
             if had_gp[gi] {
                 self.type_map.insert(def.generic_params[gi].id._value, saved_gp[gi]);
             }
         }
-        // Same restore for proto generics (Self + protocol's others) +
-        // the Self id binding. Entries that had no prior binding stay
-        // wherever the dispatcher left them — matches the leaky-context
-        // policy applied to own generic_params above.
         for k in 0usize..proto_ids.len() {
             if proto_save_had[k] {
                 self.type_map.insert(proto_ids[k], proto_save_vals[k]);
@@ -2349,6 +2330,16 @@ impl Mono {
                 let mixin_ast_args = self.ctx.scopes.get_mixin_type_args(receiver_scope_idx, def.id._value);
                 if mixin_ast_args.is_some() {
                     let ast_args = mixin_ast_args.unwrap();
+                    // Walk the mixin's first AST arg against the receiver
+                    // type and bind every placeholder encountered. See
+                    // `bind_placeholders_from_ast_vs_ir` for why this is
+                    // more robust than looking up impl_generic_param_ids:
+                    // the parser creates fresh placeholder ids while
+                    // parsing the mixin's protocol type-args, so those
+                    // ids don't always match the impl block's gp ids.
+                    if ast_args.len() > 0 {
+                        self.bind_placeholders_from_ast_vs_ir(ast_args[0], concrete_ty);
+                    }
                     let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
                     for i in 0usize..ast_args.len() {
                         resolved[i] = self.resolve_type(ast_args[i]);
@@ -4087,6 +4078,12 @@ impl Mono {
         let mixin_args = self.ctx.scopes.get_mixin_type_args(scope_idx, fn_id._value);
         if mixin_args.is_some() {
             let ast_args = mixin_args.unwrap();
+            // Same AST-vs-IR placeholder binding as in try_lower_method_call —
+            // the impl-gp-ids fallback doesn't reliably catch the placeholder
+            // ids the mixin AST actually uses (see bind_placeholders_from_ast_vs_ir).
+            if ast_args.len() > 0 {
+                self.bind_placeholders_from_ast_vs_ir(ast_args[0], resolved_ty);
+            }
             let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, fn_id._value);
             if impl_gp_ids.is_some() && resolved_ty.tag == IrTyTag::Struct {
                 let ids = impl_gp_ids.unwrap();
@@ -5221,6 +5218,63 @@ impl Mono {
 
     // Recursively unify a parameter type pattern against a concrete IR type to extract
     // placeholder bindings for generic inference.
+    // Walk an AST `Ty` in parallel with an IR `IrTy`, binding any
+    // Placeholder encountered in the AST to the matching IR sub-type.
+    // Writes go directly into `self.type_map`.
+    //
+    // Used by mixin-dispatch paths to bind the placeholders the mixin's
+    // protocol type-arg AST uses against the concrete receiver type — the
+    // impl block's generic-param ids stored at PendingMixin time aren't
+    // always the same ids the mixin AST uses for placeholders, so writing
+    // via those ids alone misses the AST's placeholders. Walking the AST
+    // directly is robust to that mismatch.
+    fn bind_placeholders_from_ast_vs_ir(self: &mut Mono, ast_ty: &Ty, ir_ty: &IrTy) {
+        if ast_ty as &void as usize == 0usize { return; }
+        if ir_ty as &void as usize == 0usize { return; }
+        if ast_ty.tag == TyTag::Placeholder {
+            self.type_map.insert(ast_ty.id()._value, ir_ty);
+            return;
+        }
+        if ast_ty.tag == TyTag::Pointer && ir_ty.tag == IrTyTag::Pointer {
+            self.bind_placeholders_from_ast_vs_ir(ast_ty.inner(), ir_ty.inner());
+            return;
+        }
+        if ast_ty.tag == TyTag::Slice && ir_ty.tag == IrTyTag::Slice {
+            self.bind_placeholders_from_ast_vs_ir(ast_ty.inner(), ir_ty.inner());
+            return;
+        }
+        if ast_ty.tag == TyTag::Array && ir_ty.tag == IrTyTag::Array {
+            self.bind_placeholders_from_ast_vs_ir(ast_ty.inner(), ir_ty.inner());
+            return;
+        }
+        if ast_ty.tag == TyTag::Tuple && ir_ty.tag == IrTyTag::Tuple {
+            let n = std::cmp::min(ast_ty.elems().len(), ir_ty.elems().len());
+            for i in 0usize..n {
+                self.bind_placeholders_from_ast_vs_ir(ast_ty.elems()[i], ir_ty.elems()[i]);
+            }
+            return;
+        }
+        if ast_ty.tag == TyTag::Generic && ir_ty.tag == IrTyTag::Struct {
+            let s_args = ir_ty.struct_ref().type_args;
+            let n = std::cmp::min(ast_ty.elems().len(), s_args.len());
+            for i in 0usize..n {
+                self.bind_placeholders_from_ast_vs_ir(ast_ty.elems()[i], s_args[i]);
+            }
+            return;
+        }
+        if ast_ty.tag == TyTag::Generic && ir_ty.tag == IrTyTag::Slice && ast_ty.elems().len() == 1 {
+            // AST `slice<Ptr>` (Generic over lang(slice) struct) vs IR Slice.
+            // Reconstruct Ptr = &elem and unify against the single AST arg.
+            let ptr_ty = self.ctx.make_ptr_ty(ir_ty.inner(), ir_ty.is_const());
+            self.bind_placeholders_from_ast_vs_ir(ast_ty.elems()[0], ptr_ty);
+            return;
+        }
+        // Other AST/IR shape mismatches: nothing to bind here — either the
+        // AST has no placeholders to bind, or the unification context isn't
+        // structural (e.g. a typeop / dyn target). Leave for resolve_type's
+        // own fallbacks.
+    }
+
     fn unify_type_for_inference(
         self: &mut Mono,
         param_ty: &Ty,
@@ -5976,6 +6030,22 @@ impl Mono {
         let mixin_args = self.ctx.scopes.get_mixin_type_args(scope_idx, fn_id._value);
         if mixin_args.is_some() {
             let ast_args = mixin_args.unwrap();
+            // Unify the mixin's first AST arg (which conventionally is the
+            // shape of the impl type, e.g. `MapIterator<It,F,T,U>`) against
+            // the actual receiver IR type to bind the placeholders directly
+            // from the receiver's concrete type-args. This is more robust
+            // than `get_mixin_impl_generic_ids` because the impl block's
+            // generic-param ids stored at parse time don't always match
+            // the ids the mixin AST actually uses for placeholders (the
+            // parser creates fresh placeholder ids while parsing the
+            // mixin's protocol type-args).
+            if ast_args.len() > 0 {
+                self.bind_placeholders_from_ast_vs_ir(ast_args[0], resolved_ty);
+            }
+            // Legacy: also bind the impl_generic_param_ids list directly to
+            // the receiver's struct type_args, in case some other path
+            // depends on the same ids being bound. Cheap (4 inserts) and
+            // strictly additive.
             let impl_gp_ids = self.ctx.scopes.get_mixin_impl_generic_ids(scope_idx, fn_id._value);
             if impl_gp_ids.is_some() && resolved_ty.tag == IrTyTag::Struct {
                 let ids = impl_gp_ids.unwrap();
