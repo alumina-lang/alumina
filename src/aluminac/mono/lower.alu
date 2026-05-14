@@ -5272,6 +5272,45 @@ impl Mono {
                                     inferred[g] = ret_ty;
                                     found[g] = true;
                                 }
+                            } else if arg_expr.tag == ExprTag::Local || arg_expr.tag == ExprTag::Param || arg_expr.tag == ExprTag::FieldAccess {
+                                // Closure / fn-pointer / fn-item value referenced
+                                // through a local, parameter, or struct field
+                                // (e.g. `MapIterator::next` calls
+                                // `option.map(self._fun)`). Lower the arg to
+                                // recover its IR type, then dig out the return.
+                                // Without this, Tm in `Fn(T) -> Tm` stays
+                                // unbound and Option::map mono's Tm=void —
+                                // truncating the closure's pointer return into
+                                // a 1-byte Option payload, the bug behind
+                                // `xs.iter().map(closure).to_vector()`
+                                // returning garbage addresses.
+                                let arg_ir_ty = self.lower_expr(arg_expr).ty;
+                                let ret_ty: &IrTy = self.ctx.void_ty;
+                                if arg_ir_ty.tag == IrTyTag::Closure {
+                                    let cfn = arg_ir_ty.closure_fn();
+                                    for fi in 0usize..self.ctx.ir_functions.len() {
+                                        if self.ctx.ir_functions[fi].id._value == cfn.id._value
+                                            && self.ctx.ir_functions[fi].mangled_name == cfn.mangled_name {
+                                            ret_ty = self.ctx.ir_functions[fi].return_type;
+                                            break;
+                                        }
+                                    }
+                                } else if arg_ir_ty.tag == IrTyTag::Fn {
+                                    let fnref = arg_ir_ty.fn_item_ref();
+                                    for fi in 0usize..self.ctx.ir_functions.len() {
+                                        if self.ctx.ir_functions[fi].id._value == fnref.id._value
+                                            && self.ctx.ir_functions[fi].mangled_name == fnref.mangled_name {
+                                            ret_ty = self.ctx.ir_functions[fi].return_type;
+                                            break;
+                                        }
+                                    }
+                                } else if arg_ir_ty.tag == IrTyTag::FnPointer {
+                                    ret_ty = arg_ir_ty.ret_ty();
+                                }
+                                if !ret_ty.is_void() {
+                                    inferred[g] = ret_ty;
+                                    found[g] = true;
+                                }
                             } else if arg_expr.tag == ExprTag::TurbofishValue && arg_expr.lhs().tag == ExprTag::FnRef {
                                 // Turbofish-applied function reference: e.g.
                                 // `Result::unwrap::<u32, Error>` passed as a value.
@@ -5874,7 +5913,7 @@ impl Mono {
                                     found_count = found_count + 1usize;
                                 }
                             } else {
-                                // General case: lower the arg and check if it's a function pointer or Fn
+                                // General case: lower the arg and check if it's a function pointer, Fn item, or closure
                                 let arg_ir = self.lower_expr(arg_expr);
                                 if arg_ir.ty.tag == IrTyTag::FnPointer {
                                     inferred[g] = arg_ir.ty.ret_ty();
@@ -5891,6 +5930,25 @@ impl Mono {
                                     for fi in 0usize..self.ctx.ir_functions.len() {
                                         if self.ctx.ir_functions[fi].id._value == fn_ref.id._value
                                             && self.ctx.ir_functions[fi].mangled_name == fn_ref.mangled_name {
+                                            inferred[g] = self.ctx.ir_functions[fi].return_type;
+                                            found_count = found_count + 1usize;
+                                            break;
+                                        }
+                                    }
+                                } else if arg_ir.ty.tag == IrTyTag::Closure {
+                                    // Closure value (e.g. `MapIterator::next` calls
+                                    // `option.map(self._fun)` — self._fun's IR type
+                                    // is Closure). Look up the underlying fn's
+                                    // mono'd return type. Without this, Tm in
+                                    // `Fn(T) -> Tm` stays unbound and Option::map
+                                    // mono's Tm=void — truncating the closure's
+                                    // pointer return into a 1-byte Option payload.
+                                    // Surfaced as the `iter().map(closure).next()`
+                                    // returning garbage addresses bug.
+                                    let cfn = arg_ir.ty.closure_fn();
+                                    for fi in 0usize..self.ctx.ir_functions.len() {
+                                        if self.ctx.ir_functions[fi].id._value == cfn.id._value
+                                            && self.ctx.ir_functions[fi].mangled_name == cfn.mangled_name {
                                             inferred[g] = self.ctx.ir_functions[fi].return_type;
                                             found_count = found_count + 1usize;
                                             break;
@@ -5924,6 +5982,15 @@ impl Mono {
                                             for fi in 0usize..self.ctx.ir_functions.len() {
                                                 if self.ctx.ir_functions[fi].id._value == fn_ref2.id._value
                                                     && self.ctx.ir_functions[fi].mangled_name == fn_ref2.mangled_name {
+                                                    resolved_ret = self.ctx.ir_functions[fi].return_type;
+                                                    break;
+                                                }
+                                            }
+                                        } else if arg_ir2.ty.tag == IrTyTag::Closure {
+                                            let cfn2 = arg_ir2.ty.closure_fn();
+                                            for fi in 0usize..self.ctx.ir_functions.len() {
+                                                if self.ctx.ir_functions[fi].id._value == cfn2.id._value
+                                                    && self.ctx.ir_functions[fi].mangled_name == cfn2.mangled_name {
                                                     resolved_ret = self.ctx.ir_functions[fi].return_type;
                                                     break;
                                                 }
