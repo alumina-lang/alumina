@@ -337,8 +337,28 @@ impl DiagnosticContext {
 
     fn emit_all(self: &DiagnosticContext) {
         let f = _StderrFmt::new();
+        // Dedup adjacent identical diagnostics by (kind, span). The mono
+        // pass can re-emit the same error if a generic instantiates twice
+        // with the same shape — only show it once.
+        let prev_kind: i32 = -1i32;
+        let prev_file: u32 = 0u32;
+        let prev_start: u32 = 0u32;
+        let prev_end: u32 = 0u32;
         for i in 0usize..self.errors.len() {
             let diag = &self.errors[i];
+            // Compare against the previous unsuppressed diagnostic.
+            let cur_kind = diag.kind as i32;
+            if i > 0usize
+                && cur_kind == prev_kind
+                && diag.span.file_id == prev_file
+                && diag.span.start == prev_start
+                && diag.span.end == prev_end {
+                continue;
+            }
+            prev_kind = cur_kind;
+            prev_file = diag.span.file_id;
+            prev_start = diag.span.start;
+            prev_end = diag.span.end;
             let level_str: &[u8] = switch diag.level {
                 DiagLevel::Error => "error",
                 DiagLevel::Warning => "warning",

@@ -72,10 +72,17 @@ impl Mono {
     // ---- IR node construction helpers ----
     // These reduce the 3-4 line boilerplate for constructing common IR nodes.
 
-    // Emit a CodeDiagnostic error with mono stack notes (guarded by !has_errors)
+    // Emit a CodeDiagnostic. The actual error always goes through —
+    // multiple cascading failures from the same root cause used to be
+    // hidden behind a !has_errors guard, which masked second-order
+    // problems. Dedup in emit_all suppresses adjacent duplicate spans.
+    // Mono stack notes still fire only for the FIRST error per
+    // compilation so deep instantiation chains don't repeat on every
+    // cascading error.
     fn emit_diag(self: &mut Mono, diag: diagnostics::CodeDiagnostic) {
-        if !self.ctx.diag.has_errors {
-            self.ctx.diag.emit(diag);
+        let first_error = !self.ctx.diag.has_errors;
+        self.ctx.diag.emit(diag);
+        if first_error {
             self.ctx.emit_mono_stack_notes();
         }
     }
