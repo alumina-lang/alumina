@@ -32,20 +32,19 @@ fn test_format_in_macro() -> i32 {
 fn test_float_format() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
-    internal::format_float_f64::<SliceFormatter>(3.14f64, &f).unwrap();
+    internal::format_float::<f64, SliceFormatter>(3.14f64, &f, 15u16).unwrap();
     let s = f.get();
-    // snprintf with %g may produce "3.14"
     if s != "3.14" { return 20i32; }
 
     let buf2: [u8; 64];
     let f2 = SliceFormatter::new(&buf2);
-    internal::format_float_f64::<SliceFormatter>(0.0f64, &f2).unwrap();
+    internal::format_float::<f64, SliceFormatter>(0.0f64, &f2, 15u16).unwrap();
     let s2 = f2.get();
-    if s2 != "0" { return 21i32; }
+    if s2 != "0.0" { return 21i32; }
 
     let buf3: [u8; 64];
     let f3 = SliceFormatter::new(&buf3);
-    internal::format_float_f64::<SliceFormatter>(-1.5f64, &f3).unwrap();
+    internal::format_float::<f64, SliceFormatter>(-1.5f64, &f3, 15u16).unwrap();
     let s3 = f3.get();
     if s3 != "-1.5" { return 22i32; }
 
@@ -56,33 +55,35 @@ fn test_float_special() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
     let nan = 0.0f64 / 0.0f64;
-    internal::format_float_f64::<SliceFormatter>(nan, &f).unwrap();
+    internal::format_float::<f64, SliceFormatter>(nan, &f, 15u16).unwrap();
     if f.get() != "NaN" { return 30i32; }
 
     let buf2: [u8; 64];
     let f2 = SliceFormatter::new(&buf2);
     let inf = 1.0f64 / 0.0f64;
-    internal::format_float_f64::<SliceFormatter>(inf, &f2).unwrap();
+    internal::format_float::<f64, SliceFormatter>(inf, &f2, 15u16).unwrap();
     if f2.get() != "inf" { return 31i32; }
 
     let buf3: [u8; 64];
     let f3 = SliceFormatter::new(&buf3);
     let neg_inf = -1.0f64 / 0.0f64;
-    internal::format_float_f64::<SliceFormatter>(neg_inf, &f3).unwrap();
+    internal::format_float::<f64, SliceFormatter>(neg_inf, &f3, 15u16).unwrap();
     if f3.get() != "-inf" { return 32i32; }
 
     0i32
 }
 
 fn test_bool_format() -> i32 {
+    // Sysroot doesn't expose a free-fn format_bool — bool's Formattable impl
+    // inlines the write_str call. Use the protocol method directly.
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
-    internal::format_bool::<SliceFormatter>(true, &f).unwrap();
+    true.fmt::<SliceFormatter>(&f).unwrap();
     if f.get() != "true" { return 40i32; }
 
     let buf2: [u8; 64];
     let f2 = SliceFormatter::new(&buf2);
-    internal::format_bool::<SliceFormatter>(false, &f2).unwrap();
+    false.fmt::<SliceFormatter>(&f2).unwrap();
     if f2.get() != "false" { return 41i32; }
 
     0i32
