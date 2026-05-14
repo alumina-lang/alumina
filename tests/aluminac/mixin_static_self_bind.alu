@@ -1,0 +1,89 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+
+// Static `Type::method()` calls into a mixin'd protocol method must bind
+// `Self` to the impl's mixin type-args.
+//
+// After the proto-Self-uniformity refactor, protocol generics (Self +
+// others) live in `proto_method_proto_gp_ids` rather than each FnDef's
+// own `generic_params`, and dispatchers bind them via
+// `bind_proto_generics` / `infer_proto_generics_from_call`. Instance
+// calls and direct-with-args calls infer Self from the receiver / first
+// arg, but a static call with no arguments has neither — the
+// dispatcher reads the impl_scope_idx (stashed on the resolved Method
+// by `process_mixins`) and looks up the mixin's own type-args via
+// `get_mixin_type_args`.
+//
+// Without the bind, the body `0 as Self` lowers with Self=void and
+// the call returns 0, so downstream `.is_*()` calls on the result
+// fail to dispatch ("could not resolve method 'X' on type '()').
+
+protocol Constants<Self> {
+    fn zero() -> Self {
+        0 as Self
+    }
+    fn one() -> Self {
+        1 as Self
+    }
+    fn neg_one() -> Self {
+        // `0 - 1` wraps for unsigned (giving MAX) and gives -1 for signed.
+        (0 as Self) - (1 as Self)
+    }
+}
+
+struct A {}
+impl A {
+    mixin Constants<i32>;
+}
+
+struct B {}
+impl B {
+    mixin Constants<u8>;
+}
+
+fn main() -> i32 {
+    // Static call into the mixin'd Constants::zero() should produce
+    // i32 zero, not unit/void. With the bug, Self stays unbound and
+    // the call returned 0 typed as ().
+    let zero_a = A::zero();
+    when zero_a is i32 {} else { return 1; }
+    if zero_a != 0i32 { return 2; }
+
+    let one_a = A::one();
+    when one_a is i32 {} else { return 3; }
+    if one_a != 1i32 { return 4; }
+
+    let neg = A::neg_one();
+    when neg is i32 {} else { return 5; }
+    if neg != -1i32 { return 6; }
+
+    // B's mixin binds Self=u8. Same protocol method, different impl
+    // — must not share state via type_map.
+    let zero_b = B::zero();
+    when zero_b is u8 {} else { return 7; }
+    if zero_b != 0u8 { return 8; }
+
+    let one_b = B::one();
+    when one_b is u8 {} else { return 9; }
+    if one_b != 1u8 { return 10; }
+
+    let neg_b = B::neg_one();
+    when neg_b is u8 {} else { return 11; }
+    if neg_b != 255u8 { return 12; }
+
+    // Real-world repro: `f64::infinity()` from sysroot's FloatOps mixin
+    // — the original bug was diagnosed here. With the fix, the
+    // result has the right bit pattern (sign 0, exponent all-1s,
+    // mantissa 0).
+    let inf = f64::infinity();
+    if std::util::transmute::<f64, u64>(inf) != 0x7ff0000000000000u64 { return 13; }
+    if !inf.is_infinite() { return 14; }
+
+    let neg_inf = f64::neg_infinity();
+    if std::util::transmute::<f64, u64>(neg_inf) != 0xfff0000000000000u64 { return 15; }
+
+    let nan = f64::nan();
+    if nan == nan { return 16; }
+    if !nan.is_nan() { return 17; }
+
+    0
+}
