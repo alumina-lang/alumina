@@ -529,7 +529,7 @@ Known follow-up resolved 2026-05-13: f2s::tests::test_regression now passes in f
 
   4. **`process::getenv(name)` free fn was a sysroot-aluminac-only API.** sysroot's process exposes `env() -> EnvVars` with `EnvVars::get(name)` on the iterator instead. `sysroot-aluminac/test.alu` used the old free fn; updated to `std::process::env().get("CLICOLOR")` / `"CLICOLOR_FORCE"` to match the new shape. `tests/aluminac/process_basic.alu` test 7 likewise. Test 4 / test 5 also updated for `Command::new` now taking `fs::Path` (was `&[u8]`).
 - [TODO] **`std/runtime/mod.alu`** — backtrace + panic runtime. Depends on debug info + dyn.
-- [TODO] **`std/runtime/backtrace.alu`** — uses libc + closures for frame iteration. Depends on debug info + closures verified.
+- [DONE] **`std/runtime/backtrace.alu`** — unified 2026-05-14. Pure `extern "C"` bindings to libbacktrace plus two `type Foo = fn(...)` callback aliases. The file is referenced by sysroot's panicking.alu only inside `#[cfg(all(debug, libbacktrace, not(no_backtrace)))]`, which never evaluates true under aluminac's default cfgs (libbacktrace isn't set), so this is functionally inert in the standard build. Copying it over brings the two `runtime/` directories to byte-parity except for `mod.alu` (entrypoint_glue + coroutines — separate slice) and `minicoro.alu` (out of scope, cfg(coroutines)-gated).
 - [DONE] **`std/runtime/minicoro.alu`** — minicoro coroutine glue. Out of scope per PORTING.md; gated under `cfg(coroutines)` in sysroot, never reached by aluminac.
 - [TODO] **`std/random/mod.alu`** + **`std/random/ziggurat.alu`** — RNG trait + Gaussian. Depends on protocol traits + closures.
 - [TODO] **`std/regex/mod.alu`** + **`std/regex/internal.alu`** — DFA regex engine. Depends on dyn + closures.
