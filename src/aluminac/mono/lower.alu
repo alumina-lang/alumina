@@ -2436,11 +2436,33 @@ impl Mono {
                 dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
             };
 
+        // Pre-pass: lower the first non-default arm's body to determine the
+        // arms' unified result type. Subsequent arms get this type propagated
+        // as expected_type so e.g. a `Kind::Inherit => (Option::none(), Option::none())`
+        // arm doesn't mono `Option::none<void>()` and bitcast-blast the
+        // pad bits when paired with a `Kind::Piped => (Option::some(7i32), ...)`
+        // arm — the bug that gated `std/process` unification at runtime.
+        // Mirrors the if-arm expected_type propagation a few lines above.
+        let unified_arm_ty: &IrTy = self.ctx.void_ty;
+        for i in 0usize..arms.len() {
+            if arms[i].pattern.len() > 0 {
+                // Probe the first arm's type (without committing to its IR —
+                // we re-lower below for ordering / propagation reasons).
+                let probe = self.lower_expr(arms[i].body);
+                if !probe.ty.is_void() && !probe.ty.is_never() {
+                    unified_arm_ty = probe.ty;
+                }
+                break;
+            }
+        }
+
         let default_body: &IrExpr = self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         for i in 0usize..arms.len() {
             if arms[i].pattern.len() == 0 {
                 default_body = if propagate_to_arms {
                     self.lower_expr_coerced(arms[i].body, outer_expected)
+                } else if !unified_arm_ty.is_void() {
+                    self.lower_expr_coerced(arms[i].body, unified_arm_ty)
                 } else {
                     self.lower_expr(arms[i].body)
                 };
@@ -2477,6 +2499,8 @@ impl Mono {
             let arm = &arms[actual_i];
             let arm_body = if propagate_to_arms {
                 self.lower_expr_coerced(arm.body, outer_expected)
+            } else if !unified_arm_ty.is_void() {
+                self.lower_expr_coerced(arm.body, unified_arm_ty)
             } else {
                 self.lower_expr(arm.body)
             };
