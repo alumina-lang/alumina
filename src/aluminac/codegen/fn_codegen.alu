@@ -703,10 +703,19 @@ impl FnCodegen {
                     }
                 }
             } else {
+                let llvm_field_count = LLVMCountStructElementTypes(llvm_ty);
                 for i in 0usize..expr.items().len() {
                     let field_val = self.gen_expr(expr.items()[i]);
                     let fv_ty = LLVMTypeOf(field_val);
                     if !self.is_void_type(fv_ty) {
+                        // Defensive: if AST items index exceeds LLVM struct
+                        // fields (can happen when a generic struct mono'd in
+                        // a recursive context has its body lowered before its
+                        // LLVM type fully synced), skip rather than crash
+                        // inside LLVMStructGetTypeAtIndex.
+                        if (i as u32) >= llvm_field_count {
+                            continue;
+                        }
                         // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
                         let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, i as u32);
                         let coerced = self.coerce_value(field_val, expected_ty);
