@@ -37,6 +37,10 @@ struct Mono {
     // placeholders through type_map, and a single shared mono would lock in
     // whichever outer's types arrived first.
     current_mono_key: u64,
+    // Recursion depth counter for `check_method_bounds_satisfied`. Capped to
+    // prevent unbounded chains on pathologically nested types
+    // (e.g. Option<Option<Option<...>>>).
+    bound_check_depth: usize,
 }
 
 impl Mono {
@@ -52,6 +56,7 @@ impl Mono {
             suppress_field_error: false,
             const_replacements: HashMap::new(),
             current_mono_key: 0u64,
+            bound_check_depth: 0usize,
         }
     }
 
@@ -66,6 +71,7 @@ impl Mono {
             expected_type: ctx.void_ty,
             suppress_field_error: false,
             current_mono_key: 0u64,
+            bound_check_depth: 0usize,
         }
     }
 
@@ -3383,15 +3389,127 @@ impl Mono {
             return proto.methods.len() == 0;
         }
 
-        // Check each protocol method exists in the type's scope
+        // Check each protocol method exists in the type's scope, AND that the
+        // type's method's generic-bounds are satisfiable for this receiver. The
+        // bound check matters for cases like `Option<()> is Formattable`:
+        // Option's `fmt<T: Formattable<T, F>, F>` body calls `T.fmt(...)` which
+        // fails to mono for T=(). Without the bound check, conformance would be
+        // true (fmt found by name) and downstream code (panic chain via
+        // dyn_format_arg, iter::test_fuse, ...) tries to mono Option<()>::fmt
+        // and crashes mid-mono with a confusing diagnostic.
         for i in 0usize..proto.methods.len() {
             let method = &proto.methods[i];
             let found = self.ctx.scopes.get(scope_idx).items.get(&method.name);
             if found.is_none() {
                 return false;
             }
+            let item = found.unwrap();
+            let fn_id_val = if item.kind.tag == scope::NamedItemTag::Method {
+                item.kind.id2()._value
+            } else if item.kind.tag == scope::NamedItemTag::Function {
+                item.kind.id()._value
+            } else {
+                continue;
+            };
+            let m_def = self.ctx.fn_defs.get(&fn_id_val);
+            if m_def.is_none() { continue; }
+            if !self.check_method_bounds_satisfied(m_def.unwrap(), ty) {
+                return false;
+            }
         }
         true
+    }
+
+    /// Verify that `m_def`'s generic-parameter bounds (if any) are satisfiable
+    /// when `m_def`'s self-parameter is bound to `receiver_ty`. Used by
+    /// `check_protocol_conformance` to make the by-name check stricter — a
+    /// method with a `T: Formattable<T, F>` bound only counts toward conformance
+    /// if the receiver's type-arg actually conforms.
+    ///
+    /// Caps recursion depth to prevent unbounded chains (cycle protection).
+    fn check_method_bounds_satisfied(self: &mut Mono, m_def: &FnDef, receiver_ty: &IrTy) -> bool {
+        if m_def.generic_params.len() == 0 { return true; }
+        if m_def.params.len() == 0 { return true; }
+
+        // Cycle / depth guard: bound-check recursion shouldn't run away on
+        // pathologically nested types (e.g. Option<Option<...>>). 16 is deeper
+        // than any sane sysroot type and well below stack-overflow risk.
+        if self.bound_check_depth >= 16usize { return true; }
+        self.bound_check_depth = self.bound_check_depth + 1usize;
+
+        // Match self_param against receiver_ty to bind method generics.
+        let self_param_ty = m_def.params[0].ty;
+        let self_arg_ty = receiver_ty;
+        if self_param_ty.tag == TyTag::Pointer {
+            self_param_ty = self_param_ty.inner();
+            if self_arg_ty.tag == IrTyTag::Pointer {
+                self_arg_ty = self_arg_ty.inner();
+            }
+        }
+
+        let n = m_def.generic_params.len();
+        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
+        let found = self.ctx.arena.alloc_slice::<bool>(n);
+        for i in 0usize..n {
+            inferred[i] = self.ctx.void_ty;
+            found[i] = false;
+        }
+        self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, m_def.generic_params);
+
+        // Snapshot any prior bindings on the method's generics, install the
+        // newly-inferred ones, then check bounds.
+        let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(n);
+        let saved_had = self.ctx.arena.alloc_slice::<bool>(n);
+        for i in 0usize..n {
+            let gp_id = m_def.generic_params[i].id._value;
+            let prev = self.type_map.get(&gp_id);
+            if prev.is_some() {
+                saved_vals[i] = prev.unwrap();
+                saved_had[i] = true;
+            } else {
+                saved_had[i] = false;
+            }
+            if found[i] {
+                self.type_map.insert(gp_id, inferred[i]);
+            }
+        }
+
+        let result = true;
+        for i in 0usize..n {
+            if !found[i] { continue; }
+            let gp = &m_def.generic_params[i];
+            for b in 0usize..gp.bounds.len() {
+                let bound_ty = gp.bounds[b];
+                let bound_ir = self.resolve_type(bound_ty);
+                // Only check Protocol bounds for now; non-Protocol bounds
+                // (e.g. concrete-type equality bounds) are out of scope here.
+                if bound_ir.tag == IrTyTag::Protocol {
+                    let proto_def = self.ctx.protocol_defs.get(&bound_ir.proto_id());
+                    if proto_def.is_some() {
+                        // Skip lang-item Any/None/etc. — those are handled in
+                        // the call-site `is`-check, not via methods.
+                        if !self.check_protocol_conformance(inferred[i], proto_def.unwrap()) {
+                            result = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !result { break; }
+        }
+
+        // Restore bindings.
+        for i in 0usize..n {
+            let gp_id = m_def.generic_params[i].id._value;
+            if saved_had[i] {
+                self.type_map.insert(gp_id, saved_vals[i]);
+            } else {
+                self.type_map.remove(&gp_id);
+            }
+        }
+
+        self.bound_check_depth = self.bound_check_depth - 1usize;
+        result
     }
 
     // Compute the size of a type in bytes (for const evaluation of size_of)
