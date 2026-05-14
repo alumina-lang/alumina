@@ -1848,12 +1848,21 @@ impl Mono {
         for i in 0usize..n {
             let id = ids[i];
             let arg = args[i];
-            // Skip null / void slots — leave whatever type_map binding (if
-            // any) the caller already set up. This matches the dyn vtable
-            // build's existing pattern where unknown slots are left for the
-            // dispatcher to fill in.
+            // Skip null slots only — those are "unknown slot" sentinels
+            // (used by the dyn-vtable build path for placeholders the
+            // dispatcher fills in elsewhere). DO bind to Void: it's the
+            // actual concrete unit type `()` in aluminac (`make_tuple_ty(&[])`
+            // returns `void_ty`). Skipping void here was the root cause of
+            // test_fuse's "Option<()> rendered as Option<integer>" symptom:
+            // for `from_fn(closure_returning_Option<()>).fuse()`, the
+            // mixin-args resolution produced `[FromFnIterator<...>, void]`,
+            // bind_proto_generics skipped the second slot, IteratorExt's T
+            // stayed bound to whatever a prior test's mono had left
+            // (e.g. i32 from `iter.next()` returning `Option<i32>`), and
+            // `fuse()`'s return type `FusedIterator<Self, T>` came out as
+            // `FusedIterator<FromFnIterator<...>, i32>` — propagating the
+            // wrong T through `next()` and into the assert_eq mono.
             if arg as &void as usize == 0usize { continue; }
-            if arg.is_void() { continue; }
             self.type_map.insert(id, arg);
         }
         n
