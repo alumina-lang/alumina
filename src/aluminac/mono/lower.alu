@@ -41,6 +41,31 @@ struct Mono {
     // prevent unbounded chains on pathologically nested types
     // (e.g. Option<Option<Option<...>>>).
     bound_check_depth: usize,
+    // Stack of active `loop { ... }` contexts. Pushed on entry to a loop,
+    // popped on exit. Each entry tracks the slot the `break value;` paths
+    // assign into and the resolved break-value type — set on the first
+    // break with a value, then re-used by subsequent breaks in the same
+    // loop. Empty stack means no enclosing loop (or a `break` outside a
+    // loop, which is rejected upstream).
+    loop_contexts: Vector<LoopContext>,
+    // True while walking args inside `infer_type_args` (recursively).
+    // Guards the direct-Placeholder return-type-from-hint branch from
+    // picking up the OUTER caller's expected_type / return_type — see
+    // the comment in `infer_type_args` for context.
+    inside_arg_inference: bool,
+}
+
+struct LoopContext {
+    // Fresh local id for the result slot. Only registered in local_defs if
+    // a break-with-value lowered through this context (`has_value` flips
+    // to true and the type is committed).
+    result_slot_id: Id,
+    // Unified break-value type. Starts as Void; on the first break with a
+    // value, set to the value's IR type. Subsequent breaks should produce
+    // the same type — aluminac's inference is too weak to unify divergent
+    // shapes here, so the first break wins.
+    break_value_ty: &IrTy,
+    has_value: bool,
 }
 
 impl Mono {
@@ -57,6 +82,8 @@ impl Mono {
             const_replacements: HashMap::new(),
             current_mono_key: 0u64,
             bound_check_depth: 0usize,
+            loop_contexts: Vector::new(),
+            inside_arg_inference: false,
         }
     }
 
@@ -72,6 +99,8 @@ impl Mono {
             suppress_field_error: false,
             current_mono_key: 0u64,
             bound_check_depth: 0usize,
+            loop_contexts: Vector::new(),
+            inside_arg_inference: false,
         }
     }
 
@@ -1498,11 +1527,22 @@ impl Mono {
             result.span = expr.span;
             return self.ctx.arena.alloc(result);
         }
-        // Set expected_type hint for type inference in function calls
+        // Set expected_type hint for type inference in function calls.
+        // Also clear `inside_arg_inference`: this call site has an
+        // explicit, intentional hint (not leakage from an outer arg-walk),
+        // so the direct-Placeholder return-type-from-hint branch should
+        // fire normally inside. Without this, calls like
+        // `Option { _inner: mem::uninitialized() }` lowered through a
+        // struct-lit field would see the flag still true (the parent's
+        // arg-walk left it set) and refuse to bind mem::uninitialized's T
+        // from the field's type — instead it'd default to void.
         let saved_expected = self.expected_type;
+        let saved_in_arg_inf = self.inside_arg_inference;
         self.expected_type = expected_ty;
+        self.inside_arg_inference = false;
         let lowered = self.lower_expr(expr);
         self.expected_type = saved_expected;
+        self.inside_arg_inference = saved_in_arg_inf;
         let coerced = self.coerce_int(lowered, expected_ty);
         self.coerce_to_type(coerced, expected_ty)
     }
@@ -2723,11 +2763,57 @@ impl Mono {
             result._data.if_data.lhs = ir_body;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Loop {
+            // `loop { break value; }` produces `value` as the loop's
+            // result. To support that without restructuring the IR's
+            // Loop node, we allocate a fresh local that each `break
+            // value;` assigns into, then wrap the loop in a block whose
+            // trailing expression loads that local. Mirrors alumina-boot's
+            // `lower_loop` (src/alumina-boot/src/ir/mono/mod.rs:4523) —
+            // it uses `local_types` keyed on a synthesized `loop_result`
+            // id and reads the slot after the break label.
+            //
+            // The break-value type is committed on the FIRST break-with-
+            // value seen during body lowering; subsequent breaks must
+            // match (they typically do — same fn writing the same shape).
+            // A loop with no break-value lowers to the existing void Loop.
+            let slot_id = self.ctx.id_gen.next_id();
+            self.loop_contexts.push(LoopContext {
+                result_slot_id: slot_id,
+                break_value_ty: self.ctx.void_ty,
+                has_value: false,
+            });
             let ir_body = self.lower_expr(expr.lhs());
-            let result = IrExpr::void_expr(self.ctx.void_ty);
-            result.tag = IrTag::Loop;
-            result._data.single.lhs = ir_body;
-            self.ctx.arena.alloc(result)
+            let ctx_popped = self.loop_contexts.pop().unwrap();
+
+            let loop_expr = IrExpr::void_expr(self.ctx.void_ty);
+            loop_expr.tag = IrTag::Loop;
+            loop_expr._data.single.lhs = ir_body;
+            let loop_alloc = self.ctx.arena.alloc(loop_expr) as &IrExpr;
+
+            if !ctx_popped.has_value {
+                loop_alloc
+            } else {
+                let break_ty = ctx_popped.break_value_ty;
+                // Register the result slot as a local of the break type.
+                self.local_types.insert(slot_id._value, break_ty);
+                self.local_defs.push(IrLocalDef {
+                    id: slot_id,
+                    ty: break_ty,
+                    name: "",
+                    span: Span::empty(),
+                });
+                // { Let _slot; Loop { body }; _slot }
+                let let_slot = self.mk_let_uninit(slot_id, break_ty);
+                let load_slot = self.mk_local(slot_id, break_ty);
+                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+                stmts[0] = let_slot;
+                stmts[1] = loop_alloc;
+                stmts[2] = load_slot;
+                let block = IrExpr::void_expr(break_ty);
+                block.tag = IrTag::Block;
+                block._data.block.items = stmts;
+                self.ctx.arena.alloc(block) as &IrExpr
+            }
         } else if expr.tag == ExprTag::For {
             // Desugar: for i in start..end { body }
             // Into: let i = start; let _end = end; while i < _end { body; i = i + 1; }
@@ -2811,15 +2897,53 @@ impl Mono {
             let ir_value = self.lower_expr(expr.lhs());
             self.lower_switch_as_if_else(ir_value, expr.switch_arms())
         } else if expr.tag == ExprTag::Break {
-            let ir_val: Option<&IrExpr> = if expr.opt_expr().is_some() {
-                Option::some(self.lower_expr(expr.opt_expr().unwrap()))
+            // `break value;` flows the value through the enclosing loop's
+            // result slot. Without this, the value is evaluated for side
+            // effects and discarded — the codegen-side Break path drops
+            // its argument because gen_loop doesn't return a value. We
+            // lower to { _slot = value; break; } so the slot read after
+            // the loop sees the right value. Mirrors alumina-boot's
+            // `lower_break` (src/alumina-boot/src/ir/mono/mod.rs:4572).
+            if expr.opt_expr().is_some() && self.loop_contexts.len() > 0 {
+                let ctx_idx = self.loop_contexts.len() - 1usize;
+                // Determine the break value type by lowering with the
+                // already-committed type as expected_type if available,
+                // else fall back to the outer expected_type so the very
+                // first break can pick up a hint from `let x: Option<…> =
+                // loop { break Option::none() … }` shaped contexts.
+                let preview_ty = self.loop_contexts[ctx_idx].break_value_ty;
+                let ir_val = if !preview_ty.is_void() {
+                    self.lower_expr_coerced(expr.opt_expr().unwrap(), preview_ty)
+                } else {
+                    self.lower_expr(expr.opt_expr().unwrap())
+                };
+                if !self.loop_contexts[ctx_idx].has_value && !ir_val.ty.is_void() {
+                    self.loop_contexts[ctx_idx].break_value_ty = ir_val.ty;
+                    self.loop_contexts[ctx_idx].has_value = true;
+                }
+                let slot_id = self.loop_contexts[ctx_idx].result_slot_id;
+                let slot_ty = self.loop_contexts[ctx_idx].break_value_ty;
+                let slot_local = self.mk_local(slot_id, slot_ty);
+                let assign = self.mk_assign(slot_local, ir_val);
+                let break_only = IrExpr::void_expr(self.ctx.never_ty);
+                break_only.tag = IrTag::Break;
+                break_only._data.ret.opt_expr = Option::none();
+                let break_alloc = self.ctx.arena.alloc(break_only) as &IrExpr;
+                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                stmts[0] = assign;
+                stmts[1] = break_alloc;
+                self.mk_block(stmts)
             } else {
-                Option::none()
-            };
-            let result = IrExpr::void_expr(self.ctx.never_ty);
-            result.tag = IrTag::Break;
-            result._data.ret.opt_expr = ir_val;
-            self.ctx.arena.alloc(result)
+                let ir_val: Option<&IrExpr> = if expr.opt_expr().is_some() {
+                    Option::some(self.lower_expr(expr.opt_expr().unwrap()))
+                } else {
+                    Option::none()
+                };
+                let result = IrExpr::void_expr(self.ctx.never_ty);
+                result.tag = IrTag::Break;
+                result._data.ret.opt_expr = ir_val;
+                self.ctx.arena.alloc(result)
+            }
         } else if expr.tag == ExprTag::Continue {
             let result = IrExpr::void_expr(self.ctx.never_ty);
             result.tag = IrTag::Continue;
@@ -5224,14 +5348,63 @@ impl Mono {
             found[i] = false;
         }
 
-        // Match each parameter against the corresponding argument
+        // Match each parameter against the corresponding argument.
+        // Lower each arg with NO expected_type / return_type hint — the
+        // arg's type should come from its own context (its own subterms),
+        // not from the OUTER call's expected return type. Otherwise an
+        // inner call whose return type is a direct Placeholder (e.g.
+        // `util::cast<T1,T2>(t:T1) -> T2`) picks up the OUTER caller's
+        // expected_type / return_type as its own return-type hint (see
+        // the "direct placeholder in return type" branch at line ~5500),
+        // mis-binding T2 to the outer caller's expected return type.
+        // Mirrors alumina-boot's tentative arg lowering in
+        // `lower_function_call` (`child.lower_expr(e, None)` at
+        // src/alumina-boot/src/ir/mono/mod.rs:3035) — boot passes None
+        // for both hint and outer return context during inference.
+        //
+        // The `inside_arg_inference` flag additionally guards the
+        // direct-Placeholder return-type-from-hint branch in nested
+        // `infer_type_args` calls (e.g. `util::cast`'s own inference run
+        // while walking `Option::some`'s args). Without the flag, that
+        // branch would still fire on `self.return_type` (the outer's,
+        // still set), since clearing only fires at the *call we
+        // arrived from*. The flag stays sticky through arbitrary
+        // recursion depth.
         let num_params = def.params.len();
+        let saved_expected = self.expected_type;
+        let saved_return = self.return_type;
+        let saved_in_arg_inf = self.inside_arg_inference;
+        self.expected_type = self.ctx.void_ty;
+        self.return_type = self.ctx.void_ty;
+        self.inside_arg_inference = true;
         for p in 0usize..num_params {
             if p >= args.len() { break; }
             let param_ty = def.params[p].ty;
-            let arg_ty = self.lower_expr(args[p]).ty;
+            let arg_expr = args[p];
+            let arg_ty = self.lower_expr(arg_expr).ty;
+            // When the arg comes back as Void from a Call-like expression,
+            // skip unification: aluminac eagerly mono's the inner call
+            // with any-unresolved-slot=void during tentative inference,
+            // and the resulting void return is "inference failed" — not a
+            // real unit value. Binding the outer's generic to that void
+            // would lock it in before the call-site's expected-type
+            // fallback can fill it from the surrounding context. A unit
+            // literal `()` (ExprTag::TupleLit with 0 args), an empty
+            // block, or any non-Call expression that legitimately
+            // evaluates to () keeps the existing behavior so
+            // `assert_eq!((), ())` still binds T=void.
+            if arg_ty.tag == IrTyTag::Void
+                && (arg_expr.tag == ExprTag::Call
+                    || arg_expr.tag == ExprTag::MethodCall
+                    || arg_expr.tag == ExprTag::TurbofishValue
+                    || arg_expr.tag == ExprTag::Defered) {
+                continue;
+            }
             self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
         }
+        self.expected_type = saved_expected;
+        self.return_type = saved_return;
+        self.inside_arg_inference = saved_in_arg_inf;
 
         // Try to infer remaining generics from Fn bounds.
         // For F: Fn(A) -> R, if the actual argument for F is a lambda or function,
@@ -5459,8 +5632,18 @@ impl Mono {
                     }
                 }
             }
-            // Direct placeholder in return type: fn foo<T>() -> T
-            if ret_ty_ast.tag == TyTag::Placeholder && !hint_ty.is_void() {
+            // Direct placeholder in return type: fn foo<T>() -> T.
+            // Skipped when we're inside arg-inference for an OUTER call —
+            // otherwise an inner call like `util::cast(x)` (return type
+            // direct-Placeholder T2) would bind T2 to the *outer*
+            // call's expected_type / return_type. The arg-inference
+            // path's `expected_type` clearing zeros the current frame's
+            // hint, but a nested `infer_type_args` for the inner call
+            // could still see a stale return_type from outside arg-walking
+            // unless the flag guards this branch too.
+            if ret_ty_ast.tag == TyTag::Placeholder
+                && !hint_ty.is_void()
+                && !self.inside_arg_inference {
                 for g in 0usize..num_generics {
                     if !found[g] && def.generic_params[g].id._value == ret_ty_ast.id()._value {
                         inferred[g] = hint_ty;

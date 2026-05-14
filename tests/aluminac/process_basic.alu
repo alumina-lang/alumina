@@ -89,7 +89,7 @@ fn main(args: &[&[u8]]) -> i32 {
 
     // Test 4: Command with piped stdout
     {
-        let cmd = std::process::Command::new("/bin/echo");
+        let cmd = std::process::Command::new(std::fs::Path::new("/bin/echo"));
         cmd.args(&["hello", "world"]);
         cmd.stdout(std::process::Stdio::Piped);
         let result = cmd.spawn();
@@ -115,7 +115,7 @@ fn main(args: &[&[u8]]) -> i32 {
 
     // Test 5: ExitStatus
     {
-        let cmd = std::process::Command::new("/bin/sh");
+        let cmd = std::process::Command::new(std::fs::Path::new("/bin/sh"));
         cmd.args(&["-c", "exit 42"]);
         let child = cmd.spawn().unwrap();
         let status = child.wait().unwrap();
@@ -140,21 +140,25 @@ fn main(args: &[&[u8]]) -> i32 {
         }
         let d = dir.unwrap();
         defer d.free();
-        if d.len() == 0usize {
+        // sysroot's current_dir returns fs::PathBuf; coerce to &[u8].
+        let bytes = d.as_path().as_slice();
+        if bytes.len() == 0usize {
             eprintln!("FAIL test 6: empty current dir");
             return 1i32;
         }
-        eprintln!("PASS test 6: current_dir = '{}'", d.as_slice());
+        eprintln!("PASS test 6: current_dir = '{}'", bytes);
     }
 
-    // Test 7: getenv
+    // Test 7: env().get("PATH") — getenv free fn is sysroot-aluminac-only;
+    // sysroot's API is `env().get(name)`.
     {
-        let path = std::process::getenv("PATH");
+        let e = std::process::env();
+        let path = e.get("PATH");
         if path.is_none() {
             eprintln!("FAIL test 7: PATH not set");
             return 1i32;
         }
-        eprintln!("PASS test 7: getenv PATH exists");
+        eprintln!("PASS test 7: env().get(\"PATH\") exists");
     }
 
     eprintln!("All process tests passed");

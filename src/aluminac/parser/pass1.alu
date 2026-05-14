@@ -855,6 +855,33 @@ impl Pass1 {
         let attributes = self.parse_attributes(node);
         if self.skip_item { self.skip_item = false; return; }
 
+        // `extern "C" static foo: T;` — the grammar exposes `extern` as a
+        // separate field on static_declaration. Convert it to an
+        // AttrTag::Extern attribute so the mono pass (which scans the
+        // attribute list looking for Extern to decide whether to emit
+        // the global as external linkage) sees it. Without this, an
+        // extern static silently emits as an internal global initialized
+        // to zero, and references resolve to that zero — the symptom
+        // that surfaced with sysroot's `process::unix::internal::environ`
+        // staying null after the std/process unification.
+        let extern_node = child_by!(node, FieldKind::Extern);
+        if !extern_node.is_none() {
+            let abi: &[u8] = "C";
+            let abi_node = child_by!(node, FieldKind::Abi);
+            if !abi_node.is_none() {
+                let abi_text = self.ctx.node_text(abi_node.unwrap());
+                if abi_text.len() >= 2 && abi_text[0] == '"' {
+                    abi = self.ctx.intern_str(abi_text[1..abi_text.len()-1]);
+                }
+            }
+            let new_attrs = self.ctx.arena.alloc_slice::<Attribute>(attributes.len() + 1);
+            for ai in 0usize..attributes.len() {
+                new_attrs[ai] = attributes[ai];
+            }
+            new_attrs[attributes.len()] = Attribute::extern_attr(abi);
+            attributes = new_attrs as &[Attribute];
+        }
+
         let type_args = child_by!(node, FieldKind::TypeArguments);
         let has_generic_params = !type_args.is_none();
         let body_scope = if has_generic_params {
