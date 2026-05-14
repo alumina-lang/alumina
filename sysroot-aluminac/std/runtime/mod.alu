@@ -1,28 +1,525 @@
 //! Run time glue code (program entrypoint, tests, ...)
-//!
-//! Stub for sysroot-aluminac. Sysroot's full runtime module covers
-//! entrypoint glue, panic/backtrace, and program-level lifecycle. This
-//! minimal version exposes just `in_const_context` / `is_const_evaluable` /
-//! `const_eval`, the const-context probes that downstream sysroot code
-//! (xxhash, mem, fmt) consults to choose runtime vs const-eval paths.
 
-/// Returns `true` when evaluated in a const context, `false` otherwise.
+/// Returns `true` when evaluated in a const context and `false` otherwise.
+///
+/// ## Example
+/// ```
+/// use std::runtime::in_const_context;
+///
+/// const IN_CONST_CONTEXT: bool = in_const_context();
+///
+/// assert!(IN_CONST_CONTEXT);
+/// assert!(!in_const_context());
+/// ```
 #[inline(ir)]
 fn in_const_context() -> bool {
     intrinsics::in_const_context()
 }
 
-/// True when the argument is a const-evaluable expression.
+/// Returns `true` when the argument is an expression that can be evaluated
+/// at compile time.
+///
+/// ## Example
+/// ```
+/// use std::runtime::is_const_evaluable;
+/// use libc::abort;
+///
+/// assert!(is_const_evaluable!(1 + 1));
+/// assert!(!is_const_evaluable!(abort()));
+/// ```
 macro is_const_evaluable($arg) {
     intrinsics::is_const_evaluable($arg)
 }
 
-/// Evaluate an expression at const time.
+/// Forces the evaluation of the argument at compile time.
+///
+/// ## Example
+/// ```
+/// use std::runtime::const_eval;
+///
+/// assert_eq!(const_eval!(1 + 1), 2);
+/// ```
+/// ```compile_fail
+/// use std::runtime::const_eval;
+/// use libc::abort;
+///
+/// const_eval!(abort()); // compile error
+/// ```
 macro const_eval($arg) {
     intrinsics::const_eval($arg)
 }
 
-/// Bake a const-evaluated value into rodata.
+
+/// Bakes dynamic memory allocations into static items during constant evaluation.
+///
+/// ## Example
+/// ```
+/// use std::collections::HashMap;
+/// use std::runtime::const_bake;
+///
+/// const HASH: HashMap<u32, u32> = {
+///     let m: HashMap<u32, u32> = HashMap::new();
+///     m.insert(1, 2);
+///     m.insert(3, 4);
+///     m.const_bake!()
+/// };
+///
+/// // The hashmap is constructed at compile time, and stored in rodata, so this is a simple lookup at runtime.
+/// // Trying to modify the hashmap at runtime is undefined behavior.
+/// assert_eq!(HASH.get(&1).unwrap(), 2);
+/// assert_eq!(HASH.get(&3).unwrap(), 4);
+/// ```
 macro const_bake($arg) {
     intrinsics::const_bake($arg)
+}
+
+
+/// Coroutine object
+///
+/// Coroutine object is a reference to a running coroutine, which receives values of type `RecvT` and
+/// yields values of type `YieldT`. It is used to control the execution of the coroutine and to pass
+/// values to and from it.
+///
+/// A special case of coroutine is a generator (`RecvT` is not provided, defaults to `()`), which does
+/// not receive any values, but only yields values. Generators also implement the [iter::Iterator] trait,
+/// allowing them to be used in for loops.
+///
+/// ## Example
+/// ```
+/// fn* coroutine() -> Coroutine<i32, i32> {
+///     for i in 0..3 {
+///         let val = yield i;
+///         println!("[in] got {}", val);
+///     }
+/// }
+///
+/// let gen = coroutine();
+/// for i in 0..3 {
+///     let val = gen.send(i);
+///     println!("[out] got {}", val.unwrap());
+/// }
+///
+/// // Output:
+/// // [in] got 0
+/// // [out] got 0
+/// // [in] got 1
+/// // [out] got 1
+/// // [in] got 2
+/// // [out] got 2
+/// ```
+#[lang(coroutine)]
+struct Coroutine<YieldT, RecvT = ()> {
+    _coro: &mut minicoro::mco_coro
+}
+
+#[inline(ir)]
+fn return_address() -> &void {
+    //intrinsics::codegen_func::
+}
+
+
+impl Coroutine<YieldT, RecvT> {
+    use minicoro::*;
+    use internal::_ensure_coroutines;
+    use mem::size_of;
+
+    /// Cancels the coroutine
+    ///
+    /// This method can be used to gracefully stop the coroutine early, allowing any `defer` statements
+    /// in it to run. If the coroutine already ran to completion, this method has no effect.
+    ///
+    /// It is still necessary to call [free] to free the coroutine's resources after it has been closed.
+    ///
+    /// See [close] for an example of usage.
+    fn cancel(self: &mut Coroutine<YieldT, RecvT>) {
+        use internal::_minicoro_check as chk;
+
+        _ensure_coroutines!({
+            switch mco_status(self._coro) {
+                mco_state::MCO_DEAD => {}
+                mco_state::MCO_SUSPENDED => {
+                    self._coro.user_data = std::mem::dangling();
+                    mco_resume(self._coro).chk!();
+                }
+            }
+        })
+    }
+
+    /// Returns `true` if the coroutine has completed.
+    ///
+    /// ## Example
+    /// ```
+    /// fn* gen() -> Coroutine<()> { }
+    ///
+    /// let gen = gen();
+    /// defer gen.free();
+    ///
+    /// assert!(!gen.is_complete()); // Coroutines start in a suspended state.
+    /// gen.next();
+    /// assert!(gen.is_complete());
+    /// ```
+    #[inline(always)]
+    fn is_complete(self: &Coroutine<YieldT, RecvT>) -> bool {
+        _ensure_coroutines!({
+            mco_status(self._coro) == mco_state::MCO_DEAD
+        })
+    }
+
+    /// Sends a value to the coroutine and resumes its execution.
+    ///
+    /// This method can be used to send a value to the coroutine and resume its execution. The coroutine
+    /// will continue executing from the point where it last yielded, or from the beginning if it has
+    /// not been started yet.
+    ///
+    /// If the coroutine runs to completion after the value is sent, this method will return `Option::none()`.
+    /// If the coroutine yields a value, this method will return `Option::some(value)`.
+    fn send(self: &mut Coroutine<YieldT, RecvT>, val: RecvT) -> Option<YieldT> {
+        use internal::_minicoro_check as chk;
+
+        _ensure_coroutines!({
+            when !typing::is_zero_sized::<RecvT>() {
+                mco_push(self._coro, &val as &(), mem::size_of::<RecvT>()).chk!();
+            }
+            mco_resume(self._coro).chk!();
+            switch mco_status(self._coro) {
+                mco_state::MCO_DEAD => Option::none(),
+                mco_state::MCO_SUSPENDED => {
+                    let value: YieldT;
+                    when !typing::is_zero_sized::<YieldT>() {
+                        mco_pop(self._coro, &value as &mut (), size_of::<YieldT>()).chk!();
+                    }
+                    Option::some(value)
+                }
+                _ => unreachable!()
+            }
+        })
+    }
+
+    /// Cancels the coroutine and frees its resources.
+    ///
+    /// Cancels the coroutine, allowing any `defer` statements in it to run, and frees the coroutine's
+    /// resources.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::fs::{Path, File};
+    /// use std::string::starts_with;
+    /// use std::io::{BufferedReader, lines as io_lines};
+    ///
+    /// fn* read_lines(path: Path) -> Coroutine<&[u8]> {
+    ///     let file = File::open(path).unwrap();
+    ///     defer file.close();
+    ///
+    ///     let reader = BufferedReader::new(&file, 1024 * 64);
+    ///     defer reader.free();
+    ///
+    ///     let lines = reader.io_lines();
+    ///     defer lines.free();
+    ///
+    ///     for line in lines {
+    ///         yield line.unwrap();
+    ///     }
+    /// }
+    ///
+    /// let lines = read_lines(Path::new("/proc/stat"));
+    /// defer lines.close();
+    ///
+    /// for line in lines {
+    ///     // All resources will be freed, even if we break out early.
+    ///     if !line.starts_with("cpu") {
+    ///         break;
+    ///     }
+    ///     println!("{}", line);
+    /// }
+    /// ```
+    fn close(self: &mut Coroutine<YieldT, RecvT>) {
+        self.cancel();
+        self.free();
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Coroutine<YieldT, RecvT>) {
+        use internal::_minicoro_check as chk;
+
+        if self._coro != null {
+            mco_destroy(self._coro).chk!();
+        }
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut Coroutine<YieldT, RecvT>) -> Coroutine<YieldT, RecvT> {
+        let ret = *self;
+        self._coro = null;
+        ret
+    }
+}
+
+impl Coroutine<T> {
+    /// @ iter::Iterator::next
+    #[inline(always)]
+    fn next(self: &mut Coroutine<T>) -> Option<T> {
+        if self.is_complete() {
+            return Option::none();
+        }
+        self.send(())
+    }
+
+    mixin iter::Iterator<Coroutine<T>, T>;
+    mixin iter::IteratorExt<Coroutine<T>, T>;
+}
+
+/// Returns `true` if the current code is running in a coroutine.
+///
+/// ## Example
+/// ```
+/// use std::runtime::in_coroutine;
+///
+/// fn* gen() -> Coroutine<bool> {
+///     yield in_coroutine();
+/// }
+///
+/// let gen = gen();
+/// defer gen.free();
+///
+/// assert!(!in_coroutine());
+/// assert!(gen.next().unwrap());
+/// ```
+fn in_coroutine() -> bool {
+    internal::_ensure_coroutines!({
+        minicoro::mco_running() != null
+    })
+}
+
+#[cfg(not(output_type = "library"))]
+mod internal {
+    use builtins::{return_type_of, arguments_of, NamedFunction};
+    use mem::{slice, size_of};
+
+    macro _ensure_coroutines($body) {
+        when cfg!("coroutines") {
+            $body
+        } else {
+            panic!("coroutines require runtime support (--cfg coroutines)")
+        }
+    }
+
+    macro _minicoro_check($result) {
+        let result = $result;
+        when cfg!("debug") {
+            if result != minicoro::mco_result::MCO_SUCCESS {
+                panic!("{}", ffi::CString::from_raw(minicoro::mco_result_description(result))[..]);
+            }
+        }
+    }
+
+    /// Glue code for creating a generator.
+    ///
+    /// Calls to this function are generated by the compiler when a generator function is called. Not
+    /// meant to be called directly.
+    #[lang(coroutine_new)]
+    #[inline(always)]
+    fn coroutine_new<Func: NamedFunction, Args: builtins::Tuple, YieldT, RecvT>(args: Args) -> Coroutine<YieldT, RecvT> {
+        use minicoro::*;
+        use _minicoro_check as chk;
+
+        _ensure_coroutines!({
+            fn _coroutine_entry<Fun, Args>(coro: &mut mco_coro) {
+                let f = std::util::unit::<Fun>();
+                let args: Args;
+                when !typing::is_zero_sized::<Args>() {
+                    mco_pop(coro, &args as &mut (), size_of::<Args>()).chk!();
+                }
+                f.invoke(args);
+            }
+
+            let coro: &mut mco_coro;
+            mco_create(&coro, &mco_desc_init(
+                _coroutine_entry::<Func, Args>,
+                0
+            )).chk!();
+
+            when !typing::is_zero_sized::<Args>() {
+                mco_push(coro, &args as &(), size_of::<Args>()).chk!();
+            }
+            Coroutine::<YieldT, RecvT> {
+                _coro: coro
+            }
+        })
+    }
+
+    /// Implementation of the `yield` keyword.
+    ///
+    /// It is not recommended to call this function directly, use the `yield` keyword instead, but it
+    /// can be used to yield from a function that is not a generator, but has a generator in its call
+    /// stack.
+    ///
+    /// Returns `true` if the generator was cancelled and `false` otherwise.
+    ///
+    /// Calling this function outside of a generator or yielding a different type than the generator
+    /// expects is undefined behavior.
+    #[lang(coroutine_yield)]
+    #[inline(always)]
+    fn coroutine_yield<YieldT, RecvT>(val: &YieldT, out: &mut RecvT) -> bool {
+        use minicoro::*;
+        use _minicoro_check as chk;
+
+        _ensure_coroutines!({
+            let running = mco_running();
+            when !typing::is_zero_sized::<YieldT>() {
+                mco_push(running, val as &(), size_of::<YieldT>()).chk!();
+            }
+            mco_yield(running).chk!();
+            if running.user_data == std::mem::dangling() {
+                return true;
+            }
+
+            when !typing::is_zero_sized::<RecvT>() {
+                mco_pop(running, out as &mut (), size_of::<RecvT>()).chk!();
+            }
+
+            false
+        })
+    }
+
+    /// Maximum number of program arguments that can be stack-allocated.
+    ///
+    /// See [allocate_args] for details.
+    const STACK_ARGS_MAX: usize = 1024;
+
+    /// Allocates the space for program arguments
+    ///
+    /// It allocates the memory for the slice on the stack, hence a macro. This is done to avoid
+    /// a dependency on `malloc` for simple programs, but it is potentially problematic if a large
+    /// number of arguments is passed as a significant portion of the stack space will be consumed.
+    /// The size of the slice is `argc * sizeof(usize) * 2` as only the pointers and lengths are
+    /// stored in the slice, the contents of the arguments stays in the memory region pointed to by
+    /// `argv`.
+    ///
+    /// If number of arguments exceeds [STACK_ARGS_MAX], the function will fall back to using malloc.
+    ///
+    /// This is not great and probably a reason why Rust has `env::args()` instead of an argument
+    /// to the `main` function, but I kind of like the C-style arguments to main, so for now this
+    /// is the approach.
+    macro allocate_args($argc) {
+        let argc = $argc as usize;
+
+        if argc > STACK_ARGS_MAX {
+            mem::stack_alloc::<&[u8]>(argc)
+        } else {
+            mem::slice::alloc::<&[u8]>(argc)
+        }
+    }
+
+    #[cfg(not(custom_entrypoint))]
+    {
+        /// Program entrypoint glue.
+        ///
+        /// This is equivalent to C's `main`, not `_start` as we still want to use the C runtime for
+        /// invoking the static constructors.
+        ///
+        /// It converts the `argc` and `argv` arguments to a slice of strings, initializes the main thread
+        /// associated data (if threading is enabled) and then invokes the user-defined `main` function.
+        #[export]
+        #[cfg_attr(target_os="macos", link_name("_main"))]
+        #[cfg_attr(not(target_os="macos"), link_name("main"))]
+        #[lang(entrypoint_glue)]
+        fn entrypoint<UserMain: NamedFunction>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
+            let func = std::util::unit::<UserMain>();
+
+            #[cfg(threading)]
+            std::thread::internal::threading_init();
+
+            let ret = when typing::matches::<arguments_of<UserMain>, (&[&[u8]])>() {
+                let args = allocate_args!(argc);
+                for i in 0usize..(argc as usize) {
+                    #[allow(unnecessary_cast)]
+                    args[i] = slice::from_raw(*(argv + i) as &u8, util::cast(libc::strlen(*(argv + i))));
+                }
+
+                func(args)
+            } else when typing::matches::<arguments_of<UserMain>, ()>() {
+                func()
+            } else {
+                compile_fail!("invalid signature for the main function")
+            };
+
+
+            when ret is ! {
+                std::intrinsics::unreachable()
+            } else when ret is void {
+                libc::EXIT_SUCCESS
+            } else when ret is builtins::Integer {
+                ret as libc::c_int
+            } else {
+                compile_fail!("invalid signature for the main function")
+            }
+        }
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_in_const_context() {
+        assert!(!in_const_context());
+    }
+
+    #[test]
+    fn test_is_const_evaluable() {
+        assert!(is_const_evaluable!(1 + 1));
+        assert!(!is_const_evaluable!(libc::abort()));
+    }
+
+    #[test]
+    fn test_const_eval() {
+        assert_eq!(const_eval!(1 + 1), 2);
+    }
+
+    #[test]
+    #[cfg(coroutines)]
+    fn test_generator() {
+        fn* basic_gen() -> Coroutine<i32> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+
+        let gen = basic_gen();
+        defer gen.free();
+
+        assert_eq!(gen.next(), Option::some(1));
+        assert_eq!(gen.next(), Option::some(2));
+        assert_eq!(gen.next(), Option::some(3));
+        assert_eq!(gen.next(), Option::none());
+    }
+
+    #[test]
+    #[cfg(coroutines)]
+    fn test_generator_cancel() {
+        fn* gen(flag: &mut bool) -> Coroutine<i32> {
+            defer { *flag = true };
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+
+        let flag = false;
+
+        let gen = gen(&flag);
+        defer gen.free();
+
+        assert_eq!(gen.next(), Option::some(1));
+        assert!(!flag);
+        gen.cancel();
+        assert_eq!(gen.next(), Option::none());
+        assert!(flag);
+    }
+
+    #[cfg(all(coroutines, debug))]
+    #[test]
+    fn test_yield_outside_coroutine() {
+       test::assert_panics!(internal::coroutine_yield(&(), &()));
+    }
 }

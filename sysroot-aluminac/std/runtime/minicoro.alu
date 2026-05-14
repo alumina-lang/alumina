@@ -1,0 +1,81 @@
+#![docs(no_index)]
+
+//! Bindings to the `minicoro` library.
+//!
+//! This provides runtime support for stackful coroutines in Alumina
+
+enum mco_state {
+    MCO_DEAD = 0 as libc::c_int,
+    MCO_NORMAL,
+    MCO_RUNNING,
+    MCO_SUSPENDED
+}
+
+enum mco_result {
+    MCO_SUCCESS = 0 as libc::c_int,
+    MCO_GENERIC_ERROR,
+    MCO_INVALID_POINTER,
+    MCO_INVALID_COROUTINE,
+    MCO_NOT_SUSPENDED,
+    MCO_NOT_RUNNING,
+    MCO_MAKE_CONTEXT_ERROR,
+    MCO_SWITCH_CONTEXT_ERROR,
+    MCO_NOT_ENOUGH_SPACE,
+    MCO_OUT_OF_MEMORY,
+    MCO_INVALID_ARGUMENTS,
+    MCO_INVALID_OPERATION,
+    MCO_STACK_OVERFLOW
+}
+
+struct mco_coro {
+    context: &mut void,
+    state: mco_state,
+    func: fn(&mut mco_coro),
+    prev_co: &mut mco_coro,
+    user_data: &mut void,
+    coro_size: usize,
+    allocator_data: &mut void,
+    dealloc_cb: fn(&mut void, usize, &mut void),
+    stack_base: &mut void,
+    stack_size: usize,
+    storage: &mut u8,
+    bytes_stored: usize,
+    storage_size: usize,
+    asan_prev_stack: &mut void,
+    tsan_prev_fiber: &mut void,
+    tsan_fiber: &mut void,
+    magic_number: usize,
+}
+
+struct mco_desc {
+    func: fn(&mut mco_coro),
+    user_data: &mut void,
+
+    alloc_cb: fn(usize, &mut void) -> &mut void,
+    dealloc_cb: fn(&mut void, usize, &mut void),
+    allocator_data: &mut void,
+    storage_size: usize,
+
+    coro_size: usize,
+    stack_size: usize,
+}
+
+extern "C" fn mco_desc_init(func: fn(&mut mco_coro), stack_size: usize) -> mco_desc;
+extern "C" fn mco_init(co: &mut mco_coro, desc: &mut mco_desc) -> mco_result;
+extern "C" fn mco_uninit(co: &mut mco_coro) -> mco_result;
+extern "C" fn mco_create(out_co: &mut &mut mco_coro, desc: &mut mco_desc) -> mco_result;
+extern "C" fn mco_destroy(co: &mut mco_coro) -> mco_result;
+extern "C" fn mco_resume(co: &mut mco_coro) -> mco_result;
+extern "C" fn mco_yield(co: &mut mco_coro) -> mco_result;
+extern "C" fn mco_status(co: &mut mco_coro) -> mco_state;
+extern "C" fn mco_get_user_data(co: &mut mco_coro) -> &mut void;
+
+extern "C" fn mco_push(co: &mut mco_coro, src: &void, len: usize) -> mco_result;
+extern "C" fn mco_pop(co: &mut mco_coro, dest: &mut void, len: usize) -> mco_result;
+extern "C" fn mco_peek(co: &mut mco_coro, dest: &mut void, len: usize) -> mco_result;
+extern "C" fn mco_get_bytes_stored(co: &mut mco_coro) -> usize;
+extern "C" fn mco_get_storage_size(co: &mut mco_coro) -> usize;
+
+extern "C" fn mco_running() -> &mut mco_coro;
+extern "C" fn mco_result_description(res: mco_result) -> &libc::c_char;
+
