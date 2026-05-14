@@ -120,25 +120,26 @@ fn test_float_methods() -> i32 {
     // f64 methods
     let v = 2.0f64;
     if v.sqrt() != 1.4142135623730951f64 { return 60i32; }
-    if v.abs() != 2.0f64 { return 61i32; }
+    if std::math::abs(v) != 2.0f64 { return 61i32; }
 
     let neg = -3.5f64;
-    if neg.abs() != 3.5f64 { return 62i32; }
+    if std::math::abs(neg) != 3.5f64 { return 62i32; }
     if neg.ceil() != -3.0f64 { return 63i32; }
     if neg.floor() != -4.0f64 { return 64i32; }
 
-    // min/max
+    // min/max — sysroot exposes std::cmp::min / std::cmp::max as free functions
+    // rather than as methods on the float types.
     let a = 1.5f64;
-    if a.min(2.5f64) != 1.5f64 { return 65i32; }
-    if a.max(2.5f64) != 2.5f64 { return 66i32; }
+    if std::cmp::min(a, 2.5f64) != 1.5f64 { return 65i32; }
+    if std::cmp::max(a, 2.5f64) != 2.5f64 { return 66i32; }
 
     // f32 methods
     let v32 = 4.0f32;
     if v32.sqrt() != 2.0f32 { return 67i32; }
 
     let a32 = 1.5f32;
-    if a32.min(2.5f32) != 1.5f32 { return 68i32; }
-    if a32.max(2.5f32) != 2.5f32 { return 69i32; }
+    if std::cmp::min(a32, 2.5f32) != 1.5f32 { return 68i32; }
+    if std::cmp::max(a32, 2.5f32) != 2.5f32 { return 69i32; }
 
     // nan/infinity
     if !f64::nan().is_nan() { return 70i32; }

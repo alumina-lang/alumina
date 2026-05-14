@@ -21,8 +21,10 @@ fn test_count_ones() -> i32 {
     if (0u64).count_ones() != 0u32 { return 30i32; }
     if (18446744073709551615u64).count_ones() != 64u32 { return 31i32; }
 
-    if (0i32).count_ones() != 0u32 { return 40i32; }
-    if (-1i32).count_ones() != 32u32 { return 41i32; }
+    // sysroot's BitOps mixin is bounded `<Self: Unsigned>`; bit-population on
+    // signed types is exercised by casting to the matching unsigned width.
+    if ((0i32) as u32).count_ones() != 0u32 { return 40i32; }
+    if ((-1i32) as u32).count_ones() != 32u32 { return 41i32; }
 
     // 128-bit: u128::MAX (= 0u128 - 1) has 128 bits set.
     if (0u128).count_ones() != 0u32 { return 50i32; }
@@ -62,9 +64,9 @@ fn test_swap_bytes() -> i32 {
     // 64-bit
     if (0x0123456789ABCDEFu64).swap_bytes() != 0xEFCDAB8967452301u64 { return 30i32; }
 
-    // signed
-    if (0x0123i16).swap_bytes() != 0x2301i16 { return 40i32; }
-    if (0x01234567i32).swap_bytes() != 0x67452301i32 { return 41i32; }
+    // signed: BitOps lives on Unsigned, so cast through the matching unsigned width.
+    if ((0x0123i16) as u16).swap_bytes() as i16 != 0x2301i16 { return 40i32; }
+    if ((0x01234567i32) as u32).swap_bytes() as i32 != 0x67452301i32 { return 41i32; }
 
     // usize is 64-bit on this host.
     if (0x0123456789ABCDEFusize).swap_bytes() != 0xEFCDAB8967452301usize { return 50i32; }
@@ -97,9 +99,10 @@ fn test_leading_trailing_zeros() -> i32 {
     if (0u64).trailing_zeros() != 64u32 { return 31i32; }
 
     // signed: width is the same; ctlz counts MSB-zeros, so a positive i32 with
-    // MSB clear leads with 1 zero (sign bit), then more.
-    if (1i32).leading_zeros() != 31u32 { return 40i32; }
-    if (-1i32).leading_zeros() != 0u32 { return 41i32; }
+    // MSB clear leads with 1 zero (sign bit), then more. BitOps lives on the
+    // matching Unsigned type, so cast first.
+    if ((1i32) as u32).leading_zeros() != 31u32 { return 40i32; }
+    if ((-1i32) as u32).leading_zeros() != 0u32 { return 41i32; }
 
     0i32
 }
