@@ -1,46 +1,32 @@
-// Simplified standard library for self-hosted compiler bootstrap
+// Simplified standard library for self-hosted compiler bootstrap.
 // Modules are auto-loaded from directory structure by the sysroot loader.
+//
+// The `panic!` macro is provided by `std::panicking` (and brought in via the
+// prelude). The assert family below mirrors sysroot's `internal::assert` /
+// `internal::assert_eq` / `internal::assert_ne` shape so that future
+// unification of `std/mod.alu` is mechanical.
 
-macro panic($reason, $args...) {
-    {
-        let _file: &[u8] = file!();
-        let _line: i32 = line!();
-        let _col: i32 = column!();
-        eprint!("panic at {}:{}:{}: ", _file, _line, _col);
-        eprintln!($reason, $args$...);
-        panicking::internal::panic_with_hook(_file, _line, _col);
-    }
-}
+// Builtin macros (handled by the compiler).
+#[builtin] macro line() {}
+#[builtin] macro column() {}
+#[builtin] macro file() {}
+#[builtin] macro env($s) {}
+#[builtin] macro cfg($s) {}
+#[builtin] macro include_bytes($file) {}
+#[builtin] macro stringify($expr) {}
 
 macro assert($cond) {
     if !$cond {
-        let _file: &[u8] = file!();
-        let _line: i32 = line!();
-        let _col: i32 = column!();
-        eprint!("panic at {}:{}:{}: ", _file, _line, _col);
-        eprintln!("assertion failed");
-        panicking::internal::panic_with_hook(_file, _line, _col);
+        internal::panic_assert(file!(), line!(), column!());
     }
 }
 
-// `assert_eq!` / `assert_ne!` route through `internal::assert_*_helper`
-// functions so that aluminac's "first param wins" type-arg inference
-// propagates the LHS's concrete type to the RHS at re-lowering time.
-//
-// The previous inline form (`let _a = $a; let _b = $b; …`) lacked
-// bidirectional inference through `let _b = $b`: generic-return calls
-// like `Option::none()` (no args, no context) silently bound their T
-// to void, the RHS came out as `Option<void>`, and the later debug-fmt
-// chain tripped over `self._inner.fmt(...)` on an unresolved tuple.
-//
-// Sysroot uses the same fn-helper pattern (`std::internal::assert_eq`).
-
-macro assert_eq($a, $b) {
-    panicking::internal::assert_eq_helper(file!(), line!(), column!(), $a, $b);
+macro assert_eq($lhs, $rhs) {
+    internal::assert_eq(file!(), line!(), column!(), $lhs, $rhs);
 }
 
-macro assert_ne($a, $b) {
-    panicking::internal::assert_ne_helper(file!(), line!(), column!(), $a, $b);
+macro assert_ne($lhs, $rhs) {
+    internal::assert_ne(file!(), line!(), column!(), $lhs, $rhs);
 }
 
 macro debug_assert($cond) {
@@ -53,4 +39,64 @@ macro unreachable() {
 
 macro todo() {
     panic!("not yet implemented")
+}
+
+mod internal {
+    use panicking::internal::panic_impl;
+
+    #[cold]
+    #[inline(never)]
+    fn panic_assert(file: &[u8], line: i32, column: i32) -> ! {
+        panic_impl(
+            file, line, column,
+            &fmt::format_args!(
+                fmt::internal::dyn_format_args,
+                "assertion failed"
+            )
+        )
+    }
+
+    #[inline(always)]
+    fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) {
+        #[cold]
+        #[inline(never)]
+        fn panic_assert_eq(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+            use std::fmt::debug;
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    fmt::internal::dyn_format_args,
+                    "assertion failed ({} != {})",
+                    lhs.debug(),
+                    rhs.debug()
+                )
+            )
+        }
+
+        if !(lhs == rhs) {
+            panic_assert_eq(file, line, column, lhs, rhs);
+        }
+    }
+
+    #[inline(always)]
+    fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) {
+        #[cold]
+        #[inline(never)]
+        fn panic_assert_ne(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+            use std::fmt::debug;
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    fmt::internal::dyn_format_args,
+                    "assertion failed ({} == {})",
+                    lhs.debug(),
+                    rhs.debug()
+                )
+            )
+        }
+
+        if lhs == rhs {
+            panic_assert_ne(file, line, column, lhs, rhs);
+        }
+    }
 }

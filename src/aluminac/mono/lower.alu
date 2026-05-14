@@ -4020,6 +4020,19 @@ impl Mono {
         } else if expr.tag == ExprTag::Cast {
             let ir_inner = self.lower_expr(expr.lhs());
             let ir_ty = self.resolve_type(expr.ty());
+            // Fn item (ZST) → fn pointer: emit a FnRef so codegen can take
+            // the function's address. Otherwise gen_cast falls through to
+            // `coerce_value` on a ZST source and produces a broken pointer
+            // (segfaults at call time). Mirrors the implicit-coerce path in
+            // `try_coerce`. Required by `callable::as_callback`'s
+            // `util::unit::<u<F>>() as fn(...)` pattern.
+            if ir_inner.ty.tag == IrTyTag::Fn && ir_ty.tag == IrTyTag::FnPointer {
+                let fn_ref = ir_inner.ty.fn_item_ref();
+                let result = IrExpr::void_expr(ir_ty);
+                result.tag = IrTag::FnRef;
+                result._data.fn_ref = fn_ref;
+                return self.ctx.arena.alloc(result);
+            }
             self.mk_cast(ir_inner, ir_ty)
         } else if expr.tag == ExprTag::TypeCheck {
             // "expr is Protocol" - protocol conformance check
@@ -4200,12 +4213,6 @@ impl Mono {
                 // Non-named type: resolve and compare
                 let check_ir_ty = self.resolve_type(check_ty);
                 is_match = val_ty as &void == check_ir_ty as &void;
-                // DBG: print only when BOTH are Slice but they don't match (the suspected bug shape)
-                if val_ty.tag == IrTyTag::Slice && check_ir_ty.tag == IrTyTag::Slice && !is_match {
-                    std::io::eprintln!("[DBG-tc-SLICE] BOTH SLICE BUT MISMATCH: val ptr={} inner.tag={} const={}, check ptr={} inner.tag={} const={}",
-                        val_ty as &void as usize, val_ty.inner().tag as i32, val_ty.is_const() as i32,
-                        check_ir_ty as &void as usize, check_ir_ty.inner().tag as i32, check_ir_ty.is_const() as i32);
-                }
             }
 
             self.mk_bool_lit(is_match)
@@ -4355,11 +4362,26 @@ impl Mono {
         }
 
         // Resolve impl scope so we can look up method implementations.
+        // For Slice impl_ty, dispatch lands on the `#[lang(slice)]` struct's
+        // methods with the slice's element-pointer type as the Ptr generic.
         let impl_scope_idx: u32 = 0u32;
+        let slice_ptr_ty: &IrTy = self.ctx.void_ty;
+        let slice_lang_struct_id: usize = 0usize;
         if impl_ty.tag == IrTyTag::Struct {
             impl_scope_idx = impl_ty.struct_ref().scope_idx;
         } else if impl_ty.tag == IrTyTag::Enum {
             impl_scope_idx = impl_ty.enum_ref().scope_idx;
+        } else if impl_ty.tag == IrTyTag::Slice {
+            let lang_id = self.ctx.get_lang_item("slice");
+            if lang_id.is_some() {
+                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                if sd.is_some() {
+                    impl_scope_idx = sd.unwrap().scope_idx;
+                    slice_lang_struct_id = lang_id.unwrap();
+                    let elem_ty = self.slice_elem_ty(impl_ty);
+                    slice_ptr_ty = self.ctx.make_ptr_ty(elem_ty, impl_ty.is_const());
+                }
+            }
         } else if impl_ty.tag == IrTyTag::Builtin {
             let lang_name = Mono::builtin_lang_name(impl_ty.builtin());
             if lang_name.len() > 0 {
@@ -4447,6 +4469,10 @@ impl Mono {
                 let proto_args = proto_ty.proto_type_args();
                 let impl_args: &[&IrTy] = if impl_ty.tag == IrTyTag::Struct {
                     impl_ty.struct_ref().type_args
+                } else if impl_ty.tag == IrTyTag::Slice {
+                    let buf = self.ctx.arena.alloc_slice::<&IrTy>(1);
+                    buf[0] = slice_ptr_ty;
+                    buf
                 } else {
                     &[]
                 };
@@ -4462,6 +4488,14 @@ impl Mono {
                         let n = std::cmp::min(impl_struct_def.generic_params.len(), impl_ty.struct_ref().type_args.len());
                         for gi in 0usize..n {
                             self.type_map.insert(impl_struct_def.generic_params[gi].id._value, impl_ty.struct_ref().type_args[gi]);
+                        }
+                    }
+                } else if impl_ty.tag == IrTyTag::Slice && slice_lang_struct_id != 0usize {
+                    let slice_struct_def_opt = self.ctx.struct_defs.get(&slice_lang_struct_id);
+                    if slice_struct_def_opt.is_some() {
+                        let slice_struct_def = slice_struct_def_opt.unwrap();
+                        if slice_struct_def.generic_params.len() >= 1 {
+                            self.type_map.insert(slice_struct_def.generic_params[0].id._value, slice_ptr_ty);
                         }
                     }
                 }

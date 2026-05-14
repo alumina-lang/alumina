@@ -1178,6 +1178,16 @@ impl FnCodegen {
             _ => {},
         }
 
+        // Unit type `()` collapses to IrTyTag::Void in aluminac (see
+        // make_tuple_ty). `() == ()` is always true and `() != ()` always
+        // false. Handle this BEFORE evaluating the operands — the safety
+        // net below would otherwise short-circuit to undef as soon as it
+        // sees a Void-typed value (which is correct for arithmetic but not
+        // for equality on the unit type).
+        if (op == BinOp::Eq || op == BinOp::Ne) && lhs.ty.tag == IrTyTag::Void {
+            return LLVMConstInt(self.ctx.i8_type, if op == BinOp::Eq { 1u64 } else { 0u64 }, 0i32);
+        }
+
         let lhs_val = self.gen_expr(lhs);
         let rhs_val = self.gen_expr(rhs);
 

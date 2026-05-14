@@ -324,7 +324,7 @@ impl Forked {
         }
         if fork_ret == 0i32 {
             // In child - reset panic hook
-            std::panicking::internal::PANIC_HOOK = std::mem::zeroed::<Option<std::panicking::internal::PanicHook>>();
+            std::panicking::internal::PANIC_HOOK = Option::none();
 
             // Install redirected file descriptors
             stdin.install(libc::STDIN_FILENO).unwrap();
@@ -420,7 +420,7 @@ impl Command {
 
         let pid = errno_try!(libc::fork());
         if pid == 0i32 {
-            std::panicking::internal::PANIC_HOOK = std::mem::zeroed::<Option<std::panicking::internal::PanicHook>>();
+            std::panicking::internal::PANIC_HOOK = Option::none();
 
             stdin.install(libc::STDIN_FILENO).unwrap();
             stdout.install(libc::STDOUT_FILENO).unwrap();

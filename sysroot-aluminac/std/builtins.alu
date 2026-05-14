@@ -147,6 +147,29 @@ impl tuple {
 
 #[lang(builtin_callable)]
 struct callable {}
+impl callable {
+    /// Call a function with arguments passed as a tuple.
+    #[inline(ir)]
+    fn invoke<Args, Ret, F: Fn(Args...) -> Ret>(f: F, args: Args) -> Ret {
+        intrinsics::tuple_invoke(f, args)
+    }
+
+    /// Converts a pointer-to-closure to a C-style (state, function pointer) pair.
+    /// The function pointer takes the state as its first argument followed by
+    /// the closure's normal arguments. See sysroot's docs for details.
+    #[inline]
+    fn as_callback<Args, Ret, F: Closure + Fn(Args...) -> Ret>(
+        f: &mut F
+    ) -> (&mut void, fn(&mut void, Args...) -> Ret) {
+        use underlying_function_of as u;
+        (
+            f as &mut void,
+            util::unit::<u<F>>()
+                as fn(arguments_of<u<F>>...) -> Ret
+                as fn(&mut void, Args...) -> Ret,
+        )
+    }
+}
 
 // Lang item structs for builtin type methods.
 // These map to the corresponding builtin types and provide methods on them.

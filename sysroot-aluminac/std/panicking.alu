@@ -1,106 +1,492 @@
-//! Panic support for the self-hosted compiler sysroot.
+//! Panic support macros and functions
 
-/// Information about a panic.
+/// Ungracefully terminate the thread or process with an error message.
+///
+/// Use this macro to bail on conditions that the program cannot reasonably be expected to
+/// recover from (e.g. when a condition means a certain programming bug).
+///
+/// Since panics usually cannot be recovered from, prefer to use [structured error handling](std::result::Result) as
+/// a general purpose failure handling mechanism.
+///
+/// Panicking in Alumina does not perform any stack unwinding.
+///
+/// See also [thread::spawn] for details on how panics are handled in a multithreaded program.
+///
+/// When compiled in debug mode, `panic` prints the provided message along with the stack trace (on platforms
+/// that support it)
+///
+/// ## Example
+/// ```
+/// let value = 42;
+/// switch value % 2 {
+///     0 => println!("even"),
+///     1 => println!("odd"),
+///     _ => panic!("{} is somehow neither odd nor even", value),
+/// }
+/// ```
+///
+/// Expressions that unconditionally panic have a [never type](std::builtins::never).
+macro panic($reason, $args...) {
+    internal::panic_impl(
+        file!(),
+        line!(),
+        column!(),
+        &fmt::format_args!(
+            fmt::internal::dyn_format_args,
+            $reason,
+            $args$...
+        )
+    )
+}
+
 struct PanicInfo {
+    /// Source file where the panic occurred.
     file: &[u8],
+    /// Line number where the panic occurred.
     line: i32,
+    /// Column number where the panic occurred.
     column: i32,
+    /// Formatting arguments passed to the panic macro.
+    ///
+    /// See [fmt::format_args] for details.
+    args: &[&dyn fmt::Formattable<Self, internal::PanicFormatter>]
 }
 
 /// Catch a panic and return it as a result.
 ///
-/// Executes the closure and returns `Result::ok` on success, or `Result::err` with a
-/// `PanicInfo` if the closure panics. Does not unwind the stack.
+/// This function will execute the provided closure and return `Result::ok` if the closure
+/// completes successfully, or `Result::err` if the closure panics.
+///
+/// This is primarily meant to support unit tests that need to verify that a certain function
+/// panics under certain conditions.
+///
+/// `catch_panic` only affects the panics occurring on the calling thread.
+///
+/// ## Example
+/// ```
+/// use std::panicking::catch_panic;
+///
+/// let result = catch_panic(|| {
+///     panic!("test panic");
+/// });
+///
+/// assert!(result.is_err());
+/// ```
+///
+/// It is **not recommended** to use this function for general
+/// error handling, as Alumina panics do not unwind the stack, which means that any resources
+/// that need to be cleaned up will not be cleaned up.
+///
+/// See also [test::assert_panics] for a more convenient way to test for panics.
+///
+/// ```dubious
+/// use std::panicking::catch_panic;
+/// use std::collections::Vector;
+///
+/// let result = catch_panic(|| {
+///     let vec = Vector::from_slice(&[1, 2, 3, 4, 5]); // will never be freed
+///     defer vec.free();
+///
+///     panic!("test panic");
+/// });
+///
+/// assert!(result.is_err());
+/// ```
+#[inline(never)]
 fn catch_panic<T, F: Fn() -> T>(f: F) -> Result<T, PanicInfo> {
-    let prev_hook = internal::PANIC_HOOK;
+    use internal::{jmp_buf, setjmp, longjmp};
 
-    let buf: internal::jmp_buf;
+    let ret: Result<T, PanicInfo>;
+    let prev_panic_hook = internal::PANIC_HOOK;
+
+    let buf: jmp_buf;
     let panic_info: PanicInfo;
+    internal::set_panic_hook.invoke(|&buf, &panic_info, pi: &PanicInfo| {
+            panic_info = *pi;
+            longjmp(&buf, 1);
+        }.as_callback()
+    );
+    let ret = if setjmp(&buf) == 0 {
+        Result::ok(f())
+    } else {
+        Result::err(panic_info)
+    };
 
-    internal::PANIC_HOOK = Option::some(internal::PanicHook {
-        buf: &buf as &mut void,
-        info: &panic_info as &mut void,
-    });
-
-    let val = internal::_setjmp(&buf);
-    if val != 0i32 {
-        internal::PANIC_HOOK = prev_hook;
-        internal::PANICKING = false;
-        return Result::err(panic_info);
-    }
-
-    let result: T = f();
-    internal::PANIC_HOOK = prev_hook;
-    Result::ok(result)
+    internal::PANIC_HOOK = prev_panic_hook;
+    // Up until this point, if anything else goes wrong after panic hook, the process
+    // will terminate.
+    internal::PANICKING = false;
+    ret
 }
 
+#[docs(no_index)]
 mod internal {
-    // jmp_buf on x86_64 Linux is 200 bytes (25 * 8)
-    type jmp_buf = [libc::c_long; 25];
+    use fmt::{Formatter, Formattable};
+    use sync::{Atomic, Ordering};
 
-    #[returns_twice]
-    extern "C" fn _setjmp(buf: &jmp_buf) -> libc::c_int;
-    extern "C" fn longjmp(buf: &jmp_buf, val: libc::c_int) -> !;
+    #[cfg(all(boot, not(any(target_os = "macos", target_os = "android"))))]
+    {
+        type jmp_buf = [libc::intptr_t; 5];
 
-    struct PanicHook {
-        buf: &mut void,
-        info: &mut void,
+        #[inline(ir)]
+        fn setjmp(buf: &jmp_buf) -> libc::c_int {
+            intrinsics::codegen_func::<libc::c_int>("__builtin_setjmp", &buf[0] as &mut ())
+        }
+
+        #[inline(ir)]
+        fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> ! {
+            intrinsics::codegen_func::<!>("__builtin_longjmp", &buf[0] as &mut (), arg);
+        }
+    }
+    /// Aluminac doesn't recognise `intrinsics::codegen_func`, so on Linux it
+    /// uses libc's `_setjmp` / `longjmp` extern directly (skipping signal-mask
+    /// save/restore, matching the GCC-builtin path's behaviour). The symbol
+    /// is renamed via `#[link_name("_setjmp")]` so the function is callable
+    /// as `setjmp` while linking to glibc's `_setjmp`. `setjmp` MUST be
+    /// called directly — wrapping in a non-extern fn would drop the
+    /// returns_twice annotation at the actual call site and LLVM would
+    /// reorder around the call as if it returned once.
+    ///
+    /// The jmp_buf size matches glibc's `__jmp_buf` for x86_64 / aarch64
+    /// Linux (200 bytes — 25 c_longs).
+    #[cfg(all(not(boot), not(any(target_os = "macos", target_os = "android"))))]
+    {
+        type jmp_buf = [libc::c_long; 25];
+
+        #[returns_twice]
+        #[link_name("_setjmp")]
+        extern "C" fn setjmp(buf: &jmp_buf) -> libc::c_int;
+        extern "C" fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> !;
+    }
+    #[cfg(any(target_os = "macos", target_os = "android"))]
+    {
+        #[cfg(target_os = "macos")]
+        {
+            // Clang on MacOS aarch64 does not seem to support __builtin_setjmp/__builtin_longjmp yet
+            #[cfg(target_arch = "x86_64")]
+            type jmp_buf = [libc::c_int; ((9 * 2) + 3 + 16)];
+            #[cfg(target_arch = "aarch64")]
+            type jmp_buf = [libc::c_int; ((14 + 8 + 2) * 2)];
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            // https://android.googlesource.com/platform/bionic/+/refs/heads/main/libc/include/setjmp.h
+            #[cfg(target_arch = "aarch64")]
+            type jmp_buf = [libc::c_long; 32];
+        }
+
+        #[returns_twice]
+        extern "C" fn setjmp(buf: &jmp_buf) -> libc::c_int;
+        extern "C" fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> !;
+    }
+
+    // glibc runtime backtrace support
+    #[cfg(all(debug, target_env = "gnu", not(no_backtrace), not(target_os = "android")))]
+    {
+        extern "C" fn backtrace_symbols_fd(buffer: &mut &void, size: libc::c_int, fd: libc::c_int);
+    }
+
+    /// Small formatter with as few dependencies as possible.
+    ///
+    /// PanicFormatter has no buffering, no checking for unwritten bytes. It just writes
+    /// directly to fd 2. This is both for reliability, to allow higher-level IO
+    /// code to panic safely but also to break potential circular dependencies in static
+    /// initialization.
+    ///
+    /// If the buffer is provided, it will write the message there instead. This is used
+    /// to capture the panics when using managed threads and during constant evaluation.
+    /// Unlike [fmt::SliceFormatter], this will try to write as much as possible to the
+    /// buffer, even if it is not large enough to hold the entire message.
+    struct PanicFormatter {
+        buf: Option<&mut [u8]>,
+        written: usize
+    }
+
+    impl PanicFormatter {
+        /// Create a new formatter that writes to fd 2.
+        fn new() -> PanicFormatter {
+            PanicFormatter { buf: Option::none(), written: 0 }
+        }
+
+        /// Create a new formatter that writes to the provided buffer.
+        fn with_buffer(buf: &mut [u8]) -> PanicFormatter {
+            PanicFormatter { buf: Option::some(buf), written: 0 }
+        }
+
+        fn write_str(self: &mut PanicFormatter, buf: &[u8]) -> Result<(), fmt::Error> {
+            if self.buf.is_some() {
+                let tgt = self.buf.as_mut_ptr().unwrap();
+                let n = cmp::min(tgt.len(), buf.len());
+
+                buf[..n].copy_to_nonoverlapping(tgt.as_ptr());
+                *tgt = (*tgt)[n..];
+                self.written += n;
+
+                if n < buf.len() {
+                    Result::err(fmt::Error::new())
+                } else {
+                    Result::ok(())
+                }
+            } else {
+                let written = libc::write(libc::STDERR_FILENO, &buf[0] as &void, buf.len());
+                if written > 0 {
+                    self.written += written as usize;
+
+                    if written as usize == buf.len() {
+                        Result::ok(())
+                    } else {
+                        Result::err(fmt::Error::new())
+                    }
+                } else {
+                    Result::err(fmt::Error::new())
+                }
+            }
+        }
+        mixin Formatter<PanicFormatter>;
     }
 
     #[thread_local] static PANICKING: bool;
-    #[thread_local] static PANIC_HOOK: Option<PanicHook>;
+    #[thread_local] static PANIC_HOOK: Option<(&mut void, fn(&mut void, &PanicInfo))>;
 
-    /// Stub PanicFormatter — referenced by sysroot's `std/result.alu`
-    /// (`when err is fmt::Formattable<E, panicking::internal::PanicFormatter>`)
-    /// so the path resolves cleanly. Without a Formatter impl the conformance
-    /// check returns false and the fallback "{}: <unfmt>" branch fires, which
-    /// matches the prior silent-void behaviour.
-    struct PanicFormatter {}
-
-    /// Helper for the `assert_eq!` macro. The macro defers to this function so
-    /// that aluminac's "first param wins" type-arg inference for `T` propagates
-    /// the LHS's concrete type to the RHS at re-lowering time. Without this,
-    /// inline calls like `assert_eq!(x, Option::none())` would lower the RHS
-    /// in a void expected_type context and silently bind Option's T to void.
-    #[cold]
-    fn assert_eq_helper<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) {
-        use std::fmt::debug;
-        if lhs != rhs {
-            std::io::eprint!("panic at {}:{}:{}: ", file, line, column);
-            std::io::eprintln!("assertion failed: {} != {}", lhs.debug(), rhs.debug());
-            panic_with_hook(file, line, column);
-        }
+    fn set_panic_hook(arg: &mut void, f: fn(&mut void, &PanicInfo)) {
+        PANIC_HOOK = Option::some((arg, f));
     }
 
-    /// Mirror of [assert_eq_helper] for `assert_ne!`.
-    #[cold]
-    fn assert_ne_helper<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) {
-        use std::fmt::debug;
-        if lhs == rhs {
-            std::io::eprint!("panic at {}:{}:{}: ", file, line, column);
-            std::io::eprintln!("assertion failed: {} == {}", lhs.debug(), rhs.debug());
-            panic_with_hook(file, line, column);
+    #[inline(never)]
+    fn print_panic_message(info: &PanicInfo, backtrace: bool) -> Result<(), fmt::Error> {
+        let formatter = PanicFormatter::new();
+        fmt::write!(
+            &formatter,
+            "panic at {}:{}:{}: ",
+            info.file, info.line, info.column
+        )?;
+        let _ = fmt::internal::write_fmt(info.args, &formatter);
+        formatter.write_byte('\n')?;
+
+        #[allow(pure_statement)]
+        if backtrace {
+            #[cfg(all(debug, libbacktrace, not(no_backtrace)))]
+            {
+                // Preferably use libbacktrace to print a backtrace.
+                use ffi::CString;
+                use runtime::backtrace::{backtrace_create_state, backtrace_full};
+
+                fn backtrace_error_callback(
+                    state: &mut void,
+                    message: &libc::c_char,
+                    _errno: libc::c_int
+                ) {
+                    let formatter = state as &mut PanicFormatter;
+                    let msg = CString::from_raw(message);
+                    let _ = fmt::write!(formatter, "error while printing backtrace: {}\n", msg);
+                }
+
+                fn demangle_alumina(name: &[u8]) -> Option<&[u8]> {
+                    use string::{starts_with, is_digit};
+                    use option::try;
+
+                    if name.starts_with("_AL0") {
+                        return Option::some("<anonymous>");
+                    }
+
+                    if !name.starts_with("_AL")
+                        || name.len() < 5
+                        || !name[3].is_digit() {
+                        return Option::none();
+                    }
+
+                    let end_index = 3usize;
+                    while name[end_index].is_digit() {
+                        end_index += 1;
+                        if end_index == name.len() {
+                            return Option::none();
+                        }
+                    }
+
+                    let len = usize::parse(name[3..end_index])?;
+                    Option::some(name[end_index..end_index + len])
+                }
+
+                fn backtrace_callback(
+                    state: &mut void,
+                    _pc: usize,
+                    filename: &libc::c_char,
+                    lineno: libc::c_int,
+                    function: &libc::c_char
+                ) -> libc::c_int {
+                    let formatter = state as &mut PanicFormatter;
+                    let res = if filename != null && function != null {
+                        let function = ffi::CString::from_raw(function)[..];
+                        let filename = ffi::CString::from_raw(filename)[..];
+
+                        let demangled = demangle_alumina(function)
+                            .unwrap_or(function);
+
+                        fmt::writeln!(formatter, "--> {} at {}:{}", demangled, filename, lineno)
+                    } else {
+                        fmt::writeln!(formatter, "--> <unknown>")
+                    };
+
+                    res.is_err() as libc::c_int
+                }
+
+
+                #[cfg(threading)]
+                let state = backtrace_create_state(null, 1, backtrace_error_callback, null);
+                #[cfg(not(threading))]
+                let state = backtrace_create_state(null, 0, backtrace_error_callback, null);
+
+                if state != null {
+                    fmt::writeln!(&formatter, "stack backtrace:")?;
+                    let ret = backtrace_full(
+                        state,
+                        2, // skip this function and panic_impl
+                        backtrace_callback,
+                        backtrace_error_callback,
+                        &formatter as &mut void
+                    );
+                    if ret != 0 {
+                        return Result::err(fmt::Error::new());
+                    }
+                }
+            }
+
+            #[cfg(all(debug, target_env = "gnu", not(libbacktrace), not(no_backtrace), not(target_os = "android")))]
+            {
+                // Fallback use glibc's backtrace
+                let buf: [&mut void; 128];
+                let size = libc::backtrace(&buf[0], 128);
+                backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
+            }
         }
+
+        Result::ok(())
     }
 
-    fn panic_with_hook(file: &[u8], line: i32, column: i32) -> ! {
-        if std::mem::replace::<bool>(&PANICKING, true) {
+    #[const(always)]
+    #[diag::hide_from_backtrace]
+    fn const_panic_impl(
+        bare: bool,
+        file: &[u8],
+        line: i32,
+        column: i32,
+        args: &[&dyn Formattable<Self, PanicFormatter>]
+    ) -> Result<!, fmt::Error> {
+        let buf: [u8; 1024];
+        let formatter = PanicFormatter::with_buffer(&buf);
+
+        if !bare {
+            fmt::write!(&formatter, "panic during constant evaluation at {}:{}:{}: ", file, line, column)?;
+        }
+
+        for arg in args {
+            arg.fmt(&formatter)?;
+        }
+
+        std::intrinsics::const_panic(buf[..formatter.written]);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn panic_impl(
+        file: &[u8],
+        line: i32,
+        column: i32,
+        args: &[&dyn Formattable<Self, PanicFormatter>]
+    ) -> ! {
+        if runtime::in_const_context() {
+            let _ = const_panic_impl(false, file, line, column, args);
+
+            // The above line should never return, but if it does, something went wrong with constructing
+            // the error message (e.g. it is too long, or the custom formatter returned an error)
+            std::intrinsics::const_panic("panic during constant evaluation (could not construct error message)");
+        } else {
+            #[cfg(panic_trap)]
             std::intrinsics::trap();
-        }
 
-        // If there's a panic hook (set by catch_panic), use it
-        if PANIC_HOOK.is_some() {
-            let hook = PANIC_HOOK.unwrap();
-            let info_ptr = hook.info as &mut PanicInfo;
-            *info_ptr = PanicInfo {
-                file: file,
-                line: line,
-                column: column,
-            };
-            let buf_ptr = hook.buf as &mut jmp_buf;
-            longjmp(buf_ptr, 1i32);
-        }
+            #[cfg(panic_abort)]
+            libc::abort();
 
-        libc::abort();
+            #[cfg(all(not(panic_trap), not(panic_abort)))] {
+                if mem::replace(&PANICKING, true) {
+                    // If we panic during a panic handler, nuclear abort.
+                    std::intrinsics::trap();
+                }
+
+                let panic_info = PanicInfo {
+                    file: file,
+                    line: line,
+                    column: column,
+                    args: args
+                };
+
+                if PANIC_HOOK.is_some() {
+                    let (state, callback) = PANIC_HOOK.unwrap();
+                    callback(state, &panic_info);
+                }
+
+                // Swallow errors from print_panic_message, because at this point, what can we do, panic?
+                // We still bail early if it fails.
+
+                // minicoro does not play well with unwinding, so if we are inside a coroutine,
+                // we suppress the backtrace to avoid segfaults
+                #[cfg(coroutines)]
+                let _ = print_panic_message(&panic_info, !runtime::in_coroutine());
+                #[cfg(not(coroutines))]
+                let _ = print_panic_message(&panic_info, true);
+
+                libc::abort();
+            }
+        }
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_catch_panic_panic() {
+        let result = catch_panic(|| {
+            panic!("test panic");
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_catch_panic_panic_twice() {
+        let result = catch_panic(|| {
+            panic!("test panic");
+        });
+
+        assert!(result.is_err());
+
+        let result = catch_panic(|| {
+            panic!("test panic");
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_catch_panic_no_panic() {
+        let result = catch_panic(|| {});
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_catch_panic_nested() {
+        let result = catch_panic(|| {
+            let result = catch_panic(|| {
+                panic!("test panic");
+            });
+
+            assert!(result.is_err());
+        });
+
+        assert!(result.is_ok());
     }
 }

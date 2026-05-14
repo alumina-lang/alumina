@@ -74,6 +74,14 @@ struct ParseContext {
     macro_param_names: &[&[u8]],      // param names for current macro being pre-parsed
     macro_variadic_param_idx: i32,    // variadic param index during pre-parse
 
+    // Outermost macro call site span — propagated through nested macro
+    // expansions so that `file!()` / `line!()` / `column!()` / `stringify!()`
+    // inside a macro body resolve to the user's call site rather than to
+    // wherever the builtin invocation appears inside the macro body itself.
+    // Set at the top-level do_expand_macro call (where prev was None) and
+    // restored on exit; nested do_expand_macro calls do not overwrite it.
+    macro_outer_span: Option<Span>,
+
     // Items ready for compilation
     items: Vector<Item>,
 }
@@ -204,6 +212,7 @@ impl ParseContext {
             in_macro_body: false,
             macro_param_names: &[],
             macro_variadic_param_idx: NO_VARIADIC,
+            macro_outer_span: Option::none(),
             items: Vector::new(),
         }
     }

@@ -1907,6 +1907,15 @@ impl ExprParser {
     // Expand a builtin macro (one with the #[builtin] attribute).
     // Dispatches to specialized logic based on macro name.
     fn expand_builtin_macro(self: &ExprParser, name: &[u8], args: &[&Expr], span: Span) -> &Expr {
+        // For source-location builtins, prefer the outermost macro call's
+        // span over the (potentially body-internal) `span` we were called
+        // with. Matches alumina-boot's "outermost macro invocation" rule.
+        let span = if (name == "file" || name == "line" || name == "column" || name == "stringify")
+            && self.ctx.macro_outer_span.is_some() {
+            self.ctx.macro_outer_span.unwrap()
+        } else {
+            span
+        };
         switch name {
         "cfg" => {
             // cfg!(flag) -> bool literal
@@ -2353,6 +2362,21 @@ impl ExprParser {
     // Entry point: expand a macro with pre-parsed body.
     // Sets up param_args and variadic_args, then calls expand_macro_expr.
     fn do_expand_macro(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
+        // Track the OUTERMOST macro call's span so that builtin location
+        // macros (file!/line!/column!/stringify!) inside the body resolve
+        // to the user's call site rather than to the macro body's position.
+        // Only the outermost expansion sets the span; nested expansions
+        // inherit it.
+        let prev_outer = self.ctx.macro_outer_span;
+        if prev_outer.is_none() {
+            self.ctx.macro_outer_span = Option::some(span);
+        }
+        let result = self.do_expand_macro_inner(entry, call_args, span);
+        self.ctx.macro_outer_span = prev_outer;
+        result
+    }
+
+    fn do_expand_macro_inner(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
         let param_count = entry.params.len();
         let param_args = self.ctx.arena.alloc_slice::<&Expr>(param_count);
         let variadic_args: &[&Expr] = &[];
