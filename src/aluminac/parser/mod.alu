@@ -101,6 +101,13 @@ struct PendingFunction {
     // impl block of the same struct (which overwrites K in the struct's
     // shared scope) would steer this method's `K` reference to the WRONG id.
     impl_generic_param_names: &[&[u8]],
+    // Byte range of the enclosing `impl Foo<...>` block (0/0 if none).
+    // Lets pass2 re-parse the impl's generic params *with bounds* — the
+    // ids/names lists above don't carry bounds, so impl-level bounds like
+    // `Rg: RangeOf<T>` would otherwise be lost when the impl generics are
+    // prepended to a method's generic_params.
+    impl_decl_start: u32,
+    impl_decl_end: u32,
 }
 
 struct PendingStruct {

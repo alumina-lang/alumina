@@ -90,7 +90,7 @@ impl Pass2 {
             if fi >= self.ctx.pending_functions.len() { break; }
             let pending = self.ctx.pending_functions[fi];
             let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
-            self.build_function(item_node, &pending);
+            self.build_function(root, item_node, &pending);
             fi = fi + 1usize;
         }
         let ti = type_aliases_start;
@@ -306,12 +306,12 @@ impl Pass2 {
             if i >= self.ctx.pending_functions.len() { break; }
             let pending = self.ctx.pending_functions[i];
             let node = self.find_node_at(root, pending.node_start, pending.node_end);
-            self.build_function(node, &pending);
+            self.build_function(root, node, &pending);
             i = i + 1usize;
         }
     }
 
-    fn build_function(self: &mut Pass2, node: Node, pending: &PendingFunction) {
+    fn build_function(self: &mut Pass2, root: Node, node: Node, pending: &PendingFunction) {
         // For methods inside an `impl Foo<K, V, ...>` block, re-register the
         // impl's generic params in this function's scope so name lookups bind
         // to THIS impl's ids. The struct's shared scope only retains whichever
@@ -347,15 +347,47 @@ impl Pass2 {
         // Prepend impl generic params if this is a method in a generic impl
         let generic_params = if pending.impl_generic_param_ids.len() > 0 {
             let impl_count = pending.impl_generic_param_ids.len();
+
+            // Re-parse the enclosing `impl Foo<...>` block's generic params
+            // so the prepended entries carry their *bounds* (e.g.
+            // `Rg: RangeOf<T>`). The ids/names lists on `pending` don't
+            // include bounds; without them, RangeOf-bound type inference for
+            // impl generics (e.g. `Uniform::new(range) -> Uniform<T,Rg>`
+            // deriving T from Rg=Range<i32>) can't fire and T mono's as void.
+            // parse_generic_params resolves placeholder ids via
+            // pending.scope_idx, where the impl generics were just
+            // re-registered above, so the parsed ids match
+            // impl_generic_param_ids and the bound Tys reference the right
+            // placeholders. Falls back to the old empty-bounds entries if the
+            // impl decl range is unavailable or the count doesn't line up.
+            let impl_gps: &[GenericParam] = &[];
+            if pending.impl_decl_end > pending.impl_decl_start {
+                let impl_node = self.find_node_at(root, pending.impl_decl_start, pending.impl_decl_end);
+                impl_gps = self.parse_generic_params(impl_node, pending.scope_idx);
+            }
+            let use_parsed = impl_gps.len() == impl_count;
+
             let total = impl_count + fn_generic_params.len();
             let combined = self.ctx.arena.alloc_slice::<GenericParam>(total);
             for i in 0usize..impl_count {
-                combined[i] = GenericParam {
-                    id: pending.impl_generic_param_ids[i],
-                    name: "_impl_generic",
-                    bounds: &[],
-                    default_ty: Option::none(),
-                };
+                if use_parsed {
+                    // Keep the per-impl id captured in pass1 (the parsed id
+                    // also resolves to it post-rebind, but the captured one
+                    // is authoritative for the multi-impl rebind machinery).
+                    combined[i] = GenericParam {
+                        id: pending.impl_generic_param_ids[i],
+                        name: impl_gps[i].name,
+                        bounds: impl_gps[i].bounds,
+                        default_ty: impl_gps[i].default_ty,
+                    };
+                } else {
+                    combined[i] = GenericParam {
+                        id: pending.impl_generic_param_ids[i],
+                        name: "_impl_generic",
+                        bounds: &[],
+                        default_ty: Option::none(),
+                    };
+                }
             }
             for i in 0usize..fn_generic_params.len() {
                 combined[impl_count + i] = fn_generic_params[i];

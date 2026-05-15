@@ -71,12 +71,27 @@ fn main() -> i32 {
     let e: i32 = take_field(&h, &g);
     if e != 5 { return 4; }
 
+    // (f) method-on-generic-struct path. `Holder::new(0i32..10i32)` must
+    //     itself derive T=i32 from `Rg: RangeOf<T>` — but the impl-level
+    //     bound `Rg: RangeOf<T>` is only available if pass2 re-parses the
+    //     impl block's generic params *with* their bounds when prepending
+    //     them to the assoc fn's generic_params. Before the fix, the
+    //     prepended impl generics had bounds=&[], so `new`'s T mono'd as
+    //     void → Holder<void, Range<i32>>, poisoning `sample`'s receiver
+    //     and `sample`'s `-> T` resolving to void (caller got 0).
+    let h2 = Holder::new(0i32..10i32);
+    let f: i32 = h2.sample(&g);
+    if f != 5 { return 5; }
+
     0
 }
 
 struct Holder<T: Integer, Rg: std::builtins::RangeOf<T>> { _r: Rg }
 impl Holder<T: Integer, Rg: std::builtins::RangeOf<T>> {
     fn new(r: Rg) -> Holder<T, Rg> { Holder::<T, Rg> { _r: r } }
+    fn sample<S: Gen<S>>(self: &Holder<T, Rg>, rng: &mut S) -> T {
+        rng.next(self._r)
+    }
 }
 fn take_field<T: Integer, Rg: std::builtins::RangeOf<T>, S: Gen<S>>(
     hld: &Holder<T, Rg>, rng: &mut S
