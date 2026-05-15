@@ -560,7 +560,30 @@ Known follow-up resolved 2026-05-13: f2s::tests::test_regression now passes in f
   - `test_distr_uniform` — `panic at random/mod.alu:1063:9: assertion failed (1 != 10)`. `UniformInteger::new(10..20)` then `dist.sample(rng)` expected in `[10,20)`; got 1. `UniformInteger::sample<R: Rng<R>>` calls `rng.next(self._range)` — the `_range` field (a `Range<i32>`) round-trips through the `Distribution` mixin and the value comes back as 1 (looks like the range bounds aren't reaching gen_integer — `_range.lower`/`.upper` read as 0/small).
   - `test_distr_weighted_index_float` — `panic at random/mod.alu:1185:9: assertion failed (1 != 0)`. `WeightedIndex<f64>` cumulative-weight sampling returns wrong bucket. Depends on `WeightedIndex::sample` binary-searching `_cumulative_weights` with `rng.next(0.0..total)` (a float range) — float `RangeOf<f64>` path through the same mixin dispatch.
 
-  Common thread: the mixin'd `Distribution::sample` / `RngExt::next` dispatch when the range value comes from a *struct field* or a *recursive call result* rather than a literal — the concrete range struct's fields don't reach `gen_integer` correctly (distinct from the RangeOf-bound *type* inference just fixed, which is now correct). Next step: instrument `UniformInteger::sample` → `rng.next(self._range)` and dump `self._range.lower/.upper` vs what `gen_integer` sees, mirroring the 2026-05-15 diagnosis method (libc::write markers, snprintf for values). This is the same "value carried through mixin dispatch is corrupted" family as several resolved io/process entries.
+  **Root cause sharpened 2026-05-15 (single bug, minimal repro in hand).** Bisected with a 30-line standalone repro. The failing common case is: a mixin'd generic method `next2<T2, U: RangeOf<T2>>(self, range: U) -> T2` (own generic `T2` bound *only* via the `RangeOf<T2>` bound on `U`) called with the `range` argument being a **field access whose declared type is a generic-struct param `Rg` itself bounded `RangeOf<T>`** (i.e. `rng.next2(u._range)` where `u: &Uniform<T, Rg: RangeOf<T>>`). Confirmed by elimination — all of these return the correct `15`:
+  - `c.next2(10i32..20i32)` (literal range)
+  - `c.next2(local_var)` (local of type `Range<i32>`)
+  - `outer_lit<T,R>(rng){ rng.next2(10..20) }` (generic outer fn, literal arg)
+  - `outer_param<T,Rg:RangeOf<T>,R>(rng, range:Rg){ rng.next2(range) }` (generic outer fn, range from a **parameter** of generic type `Rg`)
+
+  …and only the **field-access** form `freefn_sample<T,Rg,R>(u:&Uniform<T,Rg>, rng){ rng.next2(u._range) }` returns `0`. It fails standalone (no prior `next2` call), so it is **not** mono-cache pollution. Instrumentation shows `geni` (the turbofished callee inside `next2`) receives the **correct** `lo=10 hi=20` and `szT=4 szU=8` and takes the `when range is Range<T>` branch — i.e. the argument value and the turbofish-passed `T`/`U` are right — yet `next2`'s **return value** is dropped (caller reads `0`/void). Diagnosis: in the field-access-arg context, `next2`'s own return-type slot (`-> T2`, where `T2` is RangeOf-bound from `U`) resolves to **void** for codegen even though the body computes the right value with a concrete `T2` — a return-type-resolution asymmetry for mixin'd methods whose own generic is *bound-derived* (not directly present in a parameter), triggered specifically when the arg is a field access on a generic struct. This is the same "compiler-wide state where each mono should be distinct" / per-call-mono-context family as item #4 in "Highest-leverage remaining work".
+
+  **Minimal repro for the next session** (save as a standalone .alu, `--sysroot sysroot-aluminac`, expect `15`, gets `0`):
+  ```
+  mod internal { fn geni<S, T: Integer, U: RangeOf<T>>(s: &mut S, range: U) -> T {
+      when range is Range<T> { range.lower + (range.upper - range.lower) / (2 as T) } else { 0 as T } } }
+  protocol Rng2<Self> { fn raw(self: &mut Self) -> u32; }
+  protocol RngExt2<Self: Rng2<Self>> {
+      fn next2<T: Integer, U: RangeOf<T>>(self: &mut Self, range: U) -> T { internal::geni::<Self, T, U>(self, range) } }
+  struct Canned { v: u32 }
+  impl Canned { fn new()->Canned{Canned{v:0}} fn raw(self:&mut Canned)->u32{self.v} mixin Rng2<Canned>; mixin RngExt2<Canned>; }
+  struct Uniform<T: Integer, Rg: RangeOf<T>> { _range: Rg }
+  impl Uniform<T: Integer, Rg: RangeOf<T>> { fn new(range: Rg)->Uniform<T,Rg>{Uniform::<T,Rg>{_range:range}} }
+  fn freefn_sample<T: Integer, Rg: RangeOf<T>, R: Rng2<R>>(u:&Uniform<T,Rg>, rng:&mut R)->T { rng.next2(u._range) }
+  fn main()->i32{ let c=Canned::new(); let d=Uniform::new(10i32..20i32);
+      let r:i32=freefn_sample(&d,&c); libc::printf("r=%d\n".as_ptr() as &libc::c_char, r); if r==15 {0} else {1} }
+  ```
+  The 3 random test failures (`test_range_from`'s recursive `rng.next(range.lower..=T::max_value())`, `test_distr_uniform`'s `UniformInteger::sample{ rng.next(self._range) }`, `test_distr_weighted_index_float`'s `WeightedIndex::sample` over a float `_cumulative_weights`-derived range) are all instances of this one root cause. Fixing the field-access-arg return-type resolution for bound-derived-generic mixin'd methods should close all three; re-run the swap to confirm and gate any genuinely-separate remainder.
 - [TODO] **`std/regex/mod.alu`** + **`std/regex/internal.alu`** — DFA regex engine. Depends on dyn + closures.
 - [TODO] **`std/sync/mod.alu`** + **`std/sync/channel.alu`** — Mutex/RwLock/Arc + MPMC channels. Depends on threads + atomics.
 - [TODO] **`std/thread/mod.alu`** + **`std/thread/pool.alu`** + **`std/thread/parker/`** — pthread-backed threads + thread pool + futex/pthread parking. Depends on closures for thread bodies.
