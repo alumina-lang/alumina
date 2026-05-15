@@ -1694,15 +1694,34 @@ impl Mono {
                         Option::none()
                     };
                     let is_extern = false;
+                    let link_name: Option<&[u8]> = Option::none();
+                    let keep_name = false;
                     for attr in def.attributes {
                         if attr.tag == AttrTag::Extern {
                             is_extern = true;
+                        } else if attr.tag == AttrTag::LinkName {
+                            link_name = Option::some(attr.str_val());
+                        } else if attr.tag == AttrTag::Export {
+                            keep_name = true;
+                        } else if attr.tag == AttrTag::NoMangle {
+                            keep_name = true;
                         }
                     }
+                    let mangled = if link_name.is_some() {
+                        link_name.unwrap()
+                    } else if is_extern {
+                        def.name
+                    } else if keep_name {
+                        def.name
+                    } else {
+                        // Per-def mangling — two fn-local `const X` in
+                        // different fns would otherwise collide on def.name.
+                        self.ctx.mangle_global_name(def.name, def.id._value)
+                    };
                     self.ctx.ir_globals.push(IrGlobal {
                         id: def.id,
                         name: def.name,
-                        mangled_name: def.name,
+                        mangled_name: mangled,
                         ty: ty,
                         init: init,
                         is_const: def.is_const,
@@ -1719,11 +1738,21 @@ impl Mono {
                     }
                 }
 
+                // Look up the IrGlobal's mangled_name from the cache so the
+                // GlobalRef matches whatever the emit branch above produced.
+                let global_mangled = def.name;
+                for gi in 0usize..self.ctx.ir_globals.len() {
+                    if self.ctx.ir_globals[gi].id._value == def.id._value {
+                        global_mangled = self.ctx.ir_globals[gi].mangled_name;
+                        break;
+                    }
+                }
+
                 let result = IrExpr::void_expr(ty);
                 result.tag = IrTag::GlobalRef;
                 result._data.global_ref = IrGlobalRef {
                     id: def.id,
-                    mangled_name: def.name,
+                    mangled_name: global_mangled,
                 };
                 self.ctx.arena.alloc(result)
             } else {

@@ -358,6 +358,23 @@ impl MonoCtx {
         buf
     }
 
+    // Deterministic per-def global mangling. Two fn-local `const X` in
+    // different functions would collide on the bare source name; appending
+    // def.id._value (unique across defs) guarantees a unique LLVM symbol.
+    // Used for non-extern, non-export, non-link_name globals only.
+    fn mangle_global_name(self: &mut MonoCtx, base: &[u8], id: usize) -> &[u8] {
+        let id_str = format_usize(id, self.arena);
+        let total_len = 3usize + base.len() + 1usize + id_str.len();
+        let buf = self.arena.alloc_slice::<u8>(total_len);
+        buf[0] = '_';
+        buf[1] = 'A';
+        buf[2] = 'L';
+        base.copy_to_nonoverlapping(&buf[3]);
+        buf[3 + base.len()] = '_';
+        id_str.copy_to_nonoverlapping(&buf[3 + base.len() + 1]);
+        buf
+    }
+
     fn intern_builtin_ty(self: &mut MonoCtx, bt: BuiltinType) -> &IrTy {
         switch bt {
             BuiltinType::Void => self.void_ty,
