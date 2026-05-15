@@ -61,5 +61,25 @@ fn main() -> i32 {
     let d: i32 = internal::pick(2i32..8i32);
     if d != 5 { return 3; }
 
+    // (e) range arg is a *field access* whose declared type is a generic
+    //     struct param itself bounded `RangeOf<T>`. unify_type_for_inference
+    //     binds the holder's T to void (found=true) when T also appears
+    //     nested in another type-arg whose bound references it; the
+    //     RangeOf-bound derivation must override that void binding rather
+    //     than skip the slot as "already found".
+    let h = Holder::new(0i32..10i32);
+    let e: i32 = take_field(&h, &g);
+    if e != 5 { return 4; }
+
     0
+}
+
+struct Holder<T: Integer, Rg: std::builtins::RangeOf<T>> { _r: Rg }
+impl Holder<T: Integer, Rg: std::builtins::RangeOf<T>> {
+    fn new(r: Rg) -> Holder<T, Rg> { Holder::<T, Rg> { _r: r } }
+}
+fn take_field<T: Integer, Rg: std::builtins::RangeOf<T>, S: Gen<S>>(
+    hld: &Holder<T, Rg>, rng: &mut S
+) -> T {
+    rng.next(hld._r)
 }

@@ -5186,7 +5186,16 @@ impl Mono {
                 if !self.ctx.is_lang_item(bound_ir.proto_id(), "proto_range_of") { continue; }
                 let elem_gp_id = elem_arg.id()._value;
                 for g in 0usize..n {
-                    if found[g] { continue; }
+                    // A `RangeOf<g>` bound on a concrete range struct
+                    // unambiguously determines g = the range's element
+                    // type. Treat a prior void binding as "not found":
+                    // unify_type_for_inference can wrongly bind g to void
+                    // when g also appears nested in another type-arg whose
+                    // own bound references g (e.g. `&Uniform<T, Rg>` with
+                    // `struct Uniform<T, Rg: RangeOf<T>>` unified against a
+                    // concrete `Uniform<i32, Range<i32>>` binds T=void,
+                    // found=true). RangeOf-derivation is authoritative here.
+                    if found[g] && !inferred[g].is_void() { continue; }
                     if def.generic_params[g].id._value == elem_gp_id {
                         inferred[g] = ta[0];
                         found[g] = true;
