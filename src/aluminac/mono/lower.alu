@@ -6387,6 +6387,53 @@ impl Mono {
                 found_count = found_count + 1usize;
             }
 
+            // Expected-return-type inference for a mixin'd method whose own
+            // generic is a bare Placeholder in return position and has at
+            // least one protocol bound (e.g. `fn next_float<T: FloatingPoint>
+            // (rng) -> T`). Such a `T` is in no parameter and has no
+            // RangeOf-style bound to derive it from — it can only come from
+            // the call's expected type (`let uf: f64 = rng.next_float()`).
+            // Through the mixin dispatch this otherwise stays void and the
+            // body computes `x as void` = 0.
+            //
+            // The earlier *unguarded* version of this branch leaked
+            // `assert!(... >= ...)`'s `bool` (propagated through the `>=`
+            // operand) into an unrelated mixin method's T, regressing io's
+            // `assert_eq!(read_exact(..), Result::ok(()))`. Guard: bind only
+            // if the generic has >=1 protocol bound AND `expected_type`
+            // *satisfies* every such bound. `bool` does not conform to
+            // `FloatingPoint`/`Integer`/etc., so a leaked bool is rejected
+            // here; `f64` conforms to `FloatingPoint`, so `next_float`'s T
+            // binds correctly. Generics with no bound get no expected-type
+            // inference (conservative — the leak risk outweighs the rare
+            // unbounded return-only-generic case).
+            if def.return_type.tag == TyTag::Placeholder
+                && !self.expected_type.is_void()
+                && !self.inside_arg_inference {
+                for g in 0usize..num_generics {
+                    if !inferred[g].is_void() { continue; }
+                    if def.return_type.id()._value != def.generic_params[g].id._value { continue; }
+                    let gp = &def.generic_params[g];
+                    if gp.bounds.len() == 0 { continue; }
+                    let all_ok = true;
+                    for b in 0usize..gp.bounds.len() {
+                        let bound_ir = self.resolve_type(gp.bounds[b]);
+                        if bound_ir.tag == IrTyTag::Protocol {
+                            let pd = self.ctx.protocol_defs.get(&bound_ir.proto_id());
+                            if pd.is_some() && !self.check_protocol_conformance(self.expected_type, pd.unwrap()) {
+                                all_ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_ok {
+                        inferred[g] = self.expected_type;
+                        found[g] = true;
+                        found_count = found_count + 1usize;
+                    }
+                }
+            }
+
             if found_count > 0 {
                 combined_type_args = inferred;
             }
