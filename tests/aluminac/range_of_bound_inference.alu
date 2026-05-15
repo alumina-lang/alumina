@@ -1,0 +1,65 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: a generic that appears only via a `RangeOf<T>` bound on
+// another generic param (never as a parameter's own type) must be inferred
+// from the concrete range argument's element type — not left void.
+//
+// Shape mirrors std::random::RngExt::next<T: Integer, R: RangeOf<T>>(rng,
+// range: R) -> T, dispatched through a mixin. Before the fix, T stayed void
+// through the mixin'd-method path: `when range is Range<T>` collapsed (all
+// `Range<void>` comparisons false) and gen_uniform's rejection loop hung.
+// The element type must be derivable independent of the call's expected
+// type (works inside `assert!(... >= ...)`, comparisons, etc.).
+
+use std::builtins::Integer;
+use std::range::{Range, RangeFrom};
+
+mod internal {
+    fn pick<T: Integer, U: std::builtins::RangeOf<T>>(range: U) -> T {
+        when range is Range<T> {
+            range.lower + (range.upper - range.lower) / (2 as T)
+        } else when range is RangeFrom<T> {
+            range.lower + (7 as T)
+        } else {
+            std::compile_fail!("unsupported range")
+        }
+    }
+}
+
+protocol Gen<Self> { fn raw(self: &mut Self) -> u32; }
+
+protocol GenExt<Self: Gen<Self>> {
+    fn next<T: Integer, U: std::builtins::RangeOf<T>>(self: &mut Self, range: U) -> T {
+        internal::pick::<T, U>(range)
+    }
+}
+
+struct G { s: u32 }
+impl G {
+    fn new() -> G { G { s: 1 } }
+    fn raw(self: &mut G) -> u32 { self.s }
+    mixin Gen<G>;
+    mixin GenExt<G>;
+}
+
+fn main() -> i32 {
+    let g = G::new();
+
+    // (a) result bound to a typed let — T inferable from element type.
+    let a: i32 = g.next(0i32..10i32);
+    if a != 5 { return 1; }
+
+    // (b) result used directly in a comparison inside assert! — the
+    //     expected type at the call site is NOT i8; T must come from the
+    //     RangeOf<i8> bound on the RangeFrom<i8> argument.
+    std::assert!(g.next(10i8..) >= 10i8);
+
+    // (c) different element widths.
+    let c: u64 = g.next(0u64..100u64);
+    if c != 50 { return 2; }
+
+    // (d) direct (non-mixin) call path exercises the same inference.
+    let d: i32 = internal::pick(2i32..8i32);
+    if d != 5 { return 3; }
+
+    0
+}

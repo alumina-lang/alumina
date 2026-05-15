@@ -5153,6 +5153,51 @@ impl Mono {
         ty.inner()
     }
 
+    // Bound-derived inference for `RangeOf<T>`. A signature like
+    // `fn next<T: Integer, R: RangeOf<T>>(rng, range: R) -> T` can't infer
+    // T from any parameter (only `R` is a param, carrying the whole range);
+    // T is the range's *element* type. After arg unification has bound R to
+    // a concrete range struct (e.g. Range<i32>), derive T = R's element
+    // type-arg. Independent of expected_type, so it works in any call
+    // context (`let i: T = ...`, `assert!(next(x..) >= 10)`, etc.).
+    // Returns true if it bound at least one previously-unbound generic.
+    fn infer_from_range_of_bounds(
+        self: &mut Mono,
+        def: &FnDef,
+        inferred: &mut [&IrTy],
+        found: &mut [bool]
+    ) -> bool {
+        let n = def.generic_params.len();
+        let any = false;
+        for h in 0usize..n {
+            if !found[h] { continue; }
+            let range_ty = inferred[h];
+            if !self.is_range_ty(range_ty) { continue; }
+            let ta = range_ty.struct_ref().type_args;
+            if ta.len() < 1 { continue; }
+            for b in 0usize..def.generic_params[h].bounds.len() {
+                let bound_ty = def.generic_params[h].bounds[b];
+                if bound_ty.tag != TyTag::Generic { continue; }
+                if bound_ty.elems().len() < 1 { continue; }
+                let elem_arg = bound_ty.elems()[0];
+                if elem_arg.tag != TyTag::Placeholder { continue; }
+                let bound_ir = self.resolve_type(bound_ty);
+                if bound_ir.tag != IrTyTag::Protocol { continue; }
+                if !self.ctx.is_lang_item(bound_ir.proto_id(), "proto_range_of") { continue; }
+                let elem_gp_id = elem_arg.id()._value;
+                for g in 0usize..n {
+                    if found[g] { continue; }
+                    if def.generic_params[g].id._value == elem_gp_id {
+                        inferred[g] = ta[0];
+                        found[g] = true;
+                        any = true;
+                    }
+                }
+            }
+        }
+        any
+    }
+
     /// Coerce a value to an indexable type (slice or array).
     /// If already a slice or array, returns as-is.
     /// Otherwise, tries to call as_slice() on the type.
@@ -5651,6 +5696,13 @@ impl Mono {
                 }
             }
         }
+
+        // Bound-derived: `R: RangeOf<T>` ⟹ T = R's element type. Mirrors the
+        // mixin-path (try_lower_method_call) so direct calls like
+        // `internal::gen_integer(rng, 0i32..10i32)` and the recursive
+        // `rng.next(T::min_value()..range.upper)` inside gen_integer bind T
+        // without relying on the call-site expected type.
+        self.infer_from_range_of_bounds(def, inferred, found);
 
         // If we haven't inferred all generics from args, try return type inference.
         // If the function's return type is a named type with generic placeholders,
@@ -6311,6 +6363,19 @@ impl Mono {
                         }
                     }
                 }
+            }
+
+            // Bound-derived: `R: RangeOf<T>` ⟹ T = R's element type. A
+            // signature like `fn next<T: Integer, R: RangeOf<T>>(.., R) -> T`
+            // carries T in no parameter (only R, the whole range). Through
+            // the mixin'd-method dispatch, T would otherwise stay void —
+            // collapsing `when range is Range<T>` and hanging gen_uniform's
+            // rejection loop. Independent of expected_type so it's correct
+            // in any call context; an expected-return-type fallback was
+            // tried and reverted (it leaked `assert!`'s bool through `>=`
+            // into T, regressing io's `assert_eq!(read_exact(..), ok(()))`).
+            if self.infer_from_range_of_bounds(def, inferred, found) {
+                found_count = found_count + 1usize;
             }
 
             if found_count > 0 {
