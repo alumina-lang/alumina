@@ -247,7 +247,22 @@ impl Mono {
     }
 
     fn mk_if(self: &mut Mono, cond: &IrExpr, then_br: &IrExpr, else_br: Option<&IrExpr>) -> &IrExpr {
-        let e = IrExpr::void_expr(then_br.ty);
+        // The if's value type is the type of whichever branch actually
+        // produces a value. A `then` of `never`/void (e.g. the switch
+        // desugar's `pat => return ...` arm becomes the `then`) must not
+        // collapse the whole expression's type — otherwise the enclosing
+        // `let`/struct-literal treats the binding as a ZST and silently
+        // drops the real value the *other* arm produced (observed: std/net
+        // `SocketAddr::new`'s union `inner` field never written).
+        let result_ty = if !then_br.ty.is_void() && !then_br.ty.is_never() {
+            then_br.ty
+        } else if else_br.is_some()
+            && !else_br.unwrap().ty.is_void() && !else_br.unwrap().ty.is_never() {
+            else_br.unwrap().ty
+        } else {
+            then_br.ty
+        };
+        let e = IrExpr::void_expr(result_ty);
         e.tag = IrTag::If;
         e._data.if_data.cond = cond;
         e._data.if_data.lhs = then_br;

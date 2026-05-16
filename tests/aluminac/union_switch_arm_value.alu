@@ -1,10 +1,20 @@
 // ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: a union literal that is the value of a `switch`/`if`
+// expression arm whose *sibling* arm diverges (`return`), bound to a
+// `let`, then stored into a struct field, must round-trip the union
+// payload. The switch desugars to `mk_if(cond, then=<return: never>,
+// else=<UnionLit>)`; `mk_if` used to take the *then* branch's type
+// unconditionally, so the whole expression's IR type collapsed to
+// `never`/void. The enclosing `let inner` then became a ZST and the
+// outer struct literal silently skipped storing it (garbage union).
+// This is exactly std/net `SocketAddr::new`'s
+// `let inner = switch addr.kind { V6 => return ..., V4 => SAInner{..} }`.
+
 struct V4 { s: u32 }
 union Inner { v4: V4, pad: [u8;16] }
 struct Ip { kind: i32, inner: Inner }
+
 fn make(k: i32, x: u32) -> Ip {
-    // mirror SocketAddr::new: union literal as a switch-arm value, with a
-    // sibling divergent (return) arm, bound to a local, then into a struct
     let inner = switch k {
         1 => { return Ip { kind: 9, inner: Inner { v4: V4 { s: 0xDEADu32 } } }; }
         0 => {
@@ -16,9 +26,25 @@ fn make(k: i32, x: u32) -> Ip {
     };
     Ip { kind: k, inner: inner }
 }
+
+// Same shape via a plain `if`, with the union exactly member-sized
+// ([1 x i64]) — proves it is not an undef-high-bytes artifact.
+union Small { v4: V4, also: u32 }
+struct Ip2 { kind: i32, inner: Small }
+fn make2(k: i32, x: u32) -> Ip2 {
+    let inner = if k == 1 { return Ip2 { kind: 9, inner: Small { v4: V4 { s: 0u32 } } }; }
+                else { Small { v4: V4 { s: x } } };
+    Ip2 { kind: k, inner: inner }
+}
+
 fn main() -> i32 {
     let ip = make(0, 0x0100007Fu32);
-    libc::printf("kind=%d inner.v4.s=%u (want 0 %u)\n".as_ptr() as &libc::c_char,
-        ip.kind, ip.inner.v4.s, 0x0100007Fu32);
-    if ip.kind == 0 && ip.inner.v4.s == 0x0100007Fu32 { 0 } else { 1 }
+    if ip.kind != 0 { return 1; }
+    if ip.inner.v4.s != 0x0100007Fu32 { return 2; }
+
+    let ip2 = make2(0, 0x0100007Fu32);
+    if ip2.kind != 0 { return 3; }
+    if ip2.inner.v4.s != 0x0100007Fu32 { return 4; }
+
+    0
 }
