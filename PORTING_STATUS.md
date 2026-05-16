@@ -406,7 +406,7 @@ Known follow-up resolved 2026-05-13: f2s::tests::test_regression now passes in f
 
 ### Medium slices (depend on a single language feature or lang-item set)
 
-- [PARTIAL] **`std/iter.alu` (and merge `sysroot-aluminac/std/iter/` directory back into the single file).** Wholesale swap landed 2026-05-12: `sysroot/std/iter.alu` and `sysroot-aluminac/std/iter.alu` are now byte-identical (2760 lines, all 30+ embedded `tests` cases active under `make test-std-aluminac`). The directory form `sysroot-aluminac/std/iter/` is deleted. Test count grew from 40 → 111.
+- [DONE] **`std/iter.alu` (merged `sysroot-aluminac/std/iter/` directory back into the single file).** Wholesale swap landed 2026-05-12; re-synced 2026-05-16 (the two files had drifted by two `#[cfg(boot)]` gates added to sysroot for the per-call mono-context debt — `test_fuse`, `test_flatten_2`). `sysroot/std/iter.alu` and `sysroot-aluminac/std/iter.alu` are now byte-identical again. The directory form `sysroot-aluminac/std/iter/` is deleted. The two `#[cfg(boot)]`-gated tests are honest aluminac-known-broken cases tracked under the per-call mono-context architectural debt — they come off both files when that lands.
 
   Closed in this session:
   - **Vector::from_iter / Vector::extend**: ported in the prior commit; sysroot's `IteratorExt::to_vector` resolves to those.
