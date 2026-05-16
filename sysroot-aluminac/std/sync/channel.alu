@@ -1,0 +1,544 @@
+//! Multi-threaded queues (channels)
+
+/// A simple bounded synchronous queue.
+///
+/// Uses a ring buffer and [Mutex] and [CondVar] to provide mutual exclusion and signalling.
+///
+/// ## Example
+/// ```
+/// use std::sync::channel::Channel;
+/// use std::thread::spawn;
+///
+/// // Space for 10 elements
+/// let chan: Channel<i32> = Channel::new(5);
+///
+/// let t = spawn(|&chan| {
+///     for i in 0..10 {
+///         chan.send(i).unwrap();
+///     }
+///     chan.close();
+/// });
+///
+/// // Prints all the values.
+/// for i in chan {
+///     println!("{}", i);
+/// }
+///
+/// t.join().unwrap();
+/// ```
+struct Channel<T> {
+    mutex: Mutex,
+    cond: CondVar,
+    buffer: &mut [T],
+    closed: bool,
+    reader: usize,
+    writer: usize
+}
+
+impl Channel<T> {
+    use time::Duration;
+
+    /// Creates a new channel with a given capacity
+    fn new(capacity: usize) -> Channel<T> {
+        assert!(capacity >= 1);
+
+        Channel {
+            mutex: Mutex::new(),
+            cond: CondVar::new(),
+            buffer: mem::slice::alloc::<T>(capacity + 1),
+            closed: false,
+            reader: 0,
+            writer: 0,
+        }
+    }
+
+    /// Send a value to the channel.
+    ///
+    /// This function will block if the channel is full.
+    fn send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
+        self._wait(Channel::_send_cond::<T>);
+        self._do_send(value)
+    }
+
+    /// Try to send a value to the channel.
+    ///
+    /// If the channel is full, this function will return [ChannelError::WouldBlock].
+    fn try_send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
+        self._try_wait(Channel::_send_cond::<T>)?;
+        self._do_send(value)
+    }
+
+    /// Try to send a value to the channel with a timeout.
+    ///
+    /// If the channel is full, this function will return [ChannelError::WouldBlock].
+    fn send_timeout(self: &mut Channel<T>, value: T, timeout: Duration) -> Result<(), ChannelError> {
+        self._wait_timeout(Channel::_send_cond::<T>, timeout)?;
+        self._do_send(value)
+    }
+
+    /// Receive a value from the channel.
+    ///
+    /// This function will block if the channel is empty.
+    fn recv(self: &mut Channel<T>) -> Result<T, ChannelError> {
+        self._wait(Channel::_recv_cond::<T>);
+        self._do_recv()
+    }
+
+    /// Try to receive a value from the channel.
+    ///
+    /// If the channel is empty, this function will return [ChannelError::WouldBlock].
+    fn try_recv(self: &mut Channel<T>) -> Result<T, ChannelError>  {
+        self._try_wait(Channel::_recv_cond::<T>)?;
+        self._do_recv()
+    }
+
+    /// Try to receive a value from the channel with a timeout.
+    ///
+    /// If the channel is empty, this function will return [ChannelError::WouldBlock].
+    fn recv_timeout(self: &mut Channel<T>, timeout: Duration) -> Result<T, ChannelError> {
+        self._wait_timeout(Channel::_recv_cond::<T>, timeout)?;
+        self._do_recv()
+    }
+
+    /// Close the channel.
+    ///
+    /// All subsequent calls to `send` will return [ChannelError::Closed]. After
+    /// all the values have been received, `recv` will return [ChannelError::Closed] too.
+    fn close(self: &mut Channel<T>) {
+        self.mutex.lock();
+        self.closed = true;
+        self.mutex.unlock();
+
+        self.cond.notify_all();
+    }
+
+    fn _recv_cond(self: &Channel<T>) -> bool {
+        self.reader != self.writer || self.closed
+    }
+
+    fn _send_cond(self: &Channel<T>) -> bool {
+        (self.reader != (self.writer + 1) % self.buffer.len()) || self.closed
+    }
+
+    fn _do_recv(self: &mut Channel<T>) -> Result<T, ChannelError> {
+        // Don't check self.closed, there may still be items to read
+        if self.reader == self.writer {
+            self.mutex.unlock();
+            return Result::err(ChannelError::Closed);
+        }
+
+        let value = self.buffer[self.reader];
+        self.reader = (self.reader + 1) % self.buffer.len();
+        let wake_all = self.closed && self.reader == self.writer;
+        self.mutex.unlock();
+
+        if wake_all {
+            // Wake all the remaining readers
+            self.cond.notify_all();
+        } else {
+            self.cond.notify_one();
+        }
+
+        Result::ok(value)
+    }
+
+    fn _do_send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
+        if self.closed {
+            self.mutex.unlock();
+            return Result::err(ChannelError::Closed);
+        }
+
+        self.buffer[self.writer] = value;
+        self.writer = (self.writer + 1) % self.buffer.len();
+
+        self.mutex.unlock();
+        self.cond.notify_one();
+        Result::ok(())
+    }
+
+    /// @ iter::Iterable::iter
+    fn iter(self: &mut Channel<T>) -> ChannelIterator<Channel<T>, T> {
+        ChannelIterator {
+            inner: self
+        }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Channel<T>) {
+        self.buffer.free();
+    }
+
+    mixin internal::ConditionExt<Channel<T>>;
+}
+
+/// An unbounded synchronous queue.
+///
+/// Uses [collections::Deque] as a growable ring buffer and [Mutex] and [CondVar] to provide mutual exclusion
+/// and signalling.
+///
+/// Sending a value to the `UnboundedChannel` will not block (except in the unlikely case of a highly contended
+/// mutex).
+///
+/// ## Example
+/// ```
+/// use std::sync::channel::UnboundedChannel;
+/// use std::thread::spawn;
+///
+/// let chan: UnboundedChannel<i32> = UnboundedChannel::new();
+///
+/// let t = spawn(|&chan| {
+///     for i in 0..10 {
+///         chan.send(i).unwrap();
+///     }
+///     chan.close();
+/// });
+///
+/// // Prints all the values.
+/// for i in chan {
+///     println!("{}", i);
+/// }
+///
+/// t.join().unwrap();
+/// ```
+struct UnboundedChannel<T> {
+    mutex: Mutex,
+    cond: CondVar,
+    deque: collections::Deque<T>,
+    closed: bool,
+}
+
+impl UnboundedChannel<T> {
+    use time::Duration;
+
+    /// Creates a new unbounded channel
+    fn new() -> UnboundedChannel<T> {
+        UnboundedChannel {
+            mutex: Mutex::new(),
+            cond: CondVar::new(),
+            deque: collections::Deque::new(),
+            closed: false,
+        }
+    }
+
+    /// Reduces the size of the underlying queue to the number of contained values.
+    fn shrink_to_fit(self: &mut UnboundedChannel<T>) {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        self.deque.shrink_to_fit();
+    }
+
+    /// Send a value to the channel.
+    ///
+    /// Returns [ChannelError::Closed] if the channel is closed.
+    fn send(self: &mut UnboundedChannel<T>, value: T) -> Result<(), ChannelError> {
+        self.mutex.lock();
+
+        if self.closed {
+            self.mutex.unlock();
+            return Result::err(ChannelError::Closed);
+        }
+
+        self.deque.push(value);
+        self.mutex.unlock();
+        self.cond.notify_one();
+
+        Result::ok(())
+    }
+
+    /// Receive a value from the channel.
+    ///
+    /// This function will block if the channel is empty.
+    fn recv(self: &mut UnboundedChannel<T>) -> Result<T, ChannelError> {
+        self._wait(UnboundedChannel::_recv_cond::<T>);
+        self._do_recv()
+    }
+
+    /// Try to receive a value from the channel.
+    ///
+    /// If the channel is empty, this function will return [ChannelError::WouldBlock].
+    fn try_recv(self: &mut UnboundedChannel<T>) -> Result<T, ChannelError>  {
+        self._try_wait(UnboundedChannel::_recv_cond::<T>)?;
+        self._do_recv()
+    }
+
+    /// Try to receive a value from the channel with a timeout.
+    ///
+    /// If the channel is empty, this function will return [ChannelError::WouldBlock].
+    fn recv_timeout(self: &mut UnboundedChannel<T>, timeout: Duration) -> Result<T, ChannelError> {
+        self._wait_timeout(UnboundedChannel::_recv_cond::<T>, timeout)?;
+        self._do_recv()
+    }
+
+    /// Close the channel.
+    ///
+    /// All subsequent calls to `send` will return [ChannelError::Closed]. After
+    /// all the values have been received, `recv` will return [ChannelError::Closed] too.
+    fn close(self: &mut UnboundedChannel<T>) {
+        self.mutex.lock();
+        self.closed = true;
+        self.mutex.unlock();
+
+        self.cond.notify_all();
+    }
+
+    fn _recv_cond(self: &UnboundedChannel<T>) -> bool {
+        !self.deque.is_empty() || self.closed
+    }
+
+    fn _do_recv(self: &mut UnboundedChannel<T>) -> Result<T, ChannelError> {
+        // Don't check self.closed, there may still be items to read
+        if self.deque.is_empty() {
+            self.mutex.unlock();
+            return Result::err(ChannelError::Closed);
+        }
+
+        let value = self.deque.pop_front().unwrap();
+        let wake_all = self.closed && self.deque.is_empty();
+        self.mutex.unlock();
+
+        if wake_all {
+            // Wake all the remaining readers
+            self.cond.notify_all();
+        } else {
+            self.cond.notify_one();
+        }
+
+        Result::ok(value)
+    }
+
+    /// @ iter::Iterable::iter
+    fn iter(self: &mut UnboundedChannel<T>) -> ChannelIterator<UnboundedChannel<T>, T> {
+        ChannelIterator {
+            inner: self
+        }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut UnboundedChannel<T>) {
+        self.deque.free();
+    }
+
+    mixin internal::ConditionExt<UnboundedChannel<T>>;
+}
+
+
+/// Iterator over values of [Channel] and [UnboundedChannel].
+struct ChannelIterator<Self, T> {
+    inner: &mut Self
+}
+
+impl ChannelIterator<Self, T> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut ChannelIterator<Self, T>) -> Option<T> {
+        let ret = self.inner.recv();
+        if ret.is_ok() {
+            Option::some(ret.unwrap())
+        } else {
+            assert_eq!(ret.unwrap_err(), ChannelError::Closed);
+            Option::none()
+        }
+    }
+
+    mixin iter::Iterator<ChannelIterator<Self, T>, T>;
+    mixin iter::IteratorExt<ChannelIterator<Self, T>, T>;
+}
+
+/// Error returned by [Channel] operations.
+enum ChannelError {
+    /// The channel is closed.
+    Closed,
+    /// Channel operation would block (e.g. because the channel
+    // is empty when receiving or full when sending).
+    WouldBlock
+}
+
+impl ChannelError {
+    use fmt::{write, Formatter, Result};
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &ChannelError, other: &ChannelError) -> bool {
+        *self as i32 == *other as i32
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: Formatter<F>>(self: &ChannelError, f: &mut F) -> Result {
+        switch *self {
+            ChannelError::Closed => write!(f, "channel closed"),
+            ChannelError::WouldBlock => write!(f, "channel would block"),
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<ChannelError>;
+}
+
+#[docs(no_index)]
+mod internal {
+    protocol ConditionExt<Self> {
+        use time::{Instant, Duration};
+
+        fn _wait<F: Fn(&Self) -> bool>(self: &mut Self, cond: F) {
+            self.mutex.lock();
+            while !cond(self) {
+                self.cond.wait(&self.mutex);
+            }
+        }
+
+        fn _try_wait<F: Fn(&Self) -> bool>(self: &mut Self, cond: F) -> Result<(), ChannelError> {
+            self.mutex.lock();
+            if !cond(self) {
+                self.mutex.unlock();
+                return Result::err(ChannelError::WouldBlock);
+            }
+
+            Result::ok(())
+        }
+
+        fn _wait_timeout<F: Fn(&Self) -> bool>(self: &mut Self, cond: F, timeout: Duration) -> Result<(), ChannelError> {
+            let start = Instant::now();
+            self.mutex.lock();
+
+            while !cond(self) {
+                let remaining = timeout.sub(
+                    &Instant::now().duration_since(&start)
+                );
+
+                if remaining.is_negative() {
+                    self.mutex.unlock();
+                    return Result::err(ChannelError::WouldBlock);
+                }
+                self.cond.wait_timeout(&self.mutex, remaining);
+            }
+
+            Result::ok(())
+        }
+    }
+}
+
+
+#[cfg(all(threading, test, test_std))]
+#[docs(hide)]
+mod tests {
+    use time::Duration;
+
+    #[test]
+    fn test_channel() {
+        let chan: Channel<i32> = Channel::new(3);
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.recv(), Result::ok(42));
+    }
+
+    #[test]
+    fn test_channel_closed() {
+        let chan: Channel<i32> = Channel::new(3);
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.send(42), Result::ok(()));
+        chan.close();
+
+        assert_eq!(chan.send(42), Result::err(ChannelError::Closed));
+        assert_eq!(chan.recv(), Result::ok(42));
+        assert_eq!(chan.recv(), Result::ok(42));
+        assert_eq!(chan.recv(), Result::err(ChannelError::Closed));
+    }
+
+    #[test]
+    fn test_channel_try() {
+        let chan: Channel<i32> = Channel::new(3);
+        assert_eq!(chan.try_send(42), Result::ok(()));
+        assert_eq!(chan.try_send(42), Result::ok(()));
+        assert_eq!(chan.try_send(42), Result::ok(()));
+        assert_eq!(chan.try_send(42), Result::err(ChannelError::WouldBlock));
+        assert_eq!(chan.try_recv(), Result::ok(42));
+        assert_eq!(chan.try_recv(), Result::ok(42));
+        assert_eq!(chan.try_recv(), Result::ok(42));
+        assert_eq!(chan.try_recv(), Result::err(ChannelError::WouldBlock));
+    }
+
+    #[test]
+    fn test_channel_timeout() {
+        let chan: Channel<i32> = Channel::new(3);
+        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::ok(()));
+        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::ok(()));
+        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::ok(()));
+        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::err(ChannelError::WouldBlock));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::err(ChannelError::WouldBlock));
+    }
+
+    #[test]
+    fn test_channel_iter() {
+        let chan: Channel<i32> = Channel::new(10);
+        assert_eq!(chan.send(1), Result::ok(()));
+        assert_eq!(chan.send(2), Result::ok(()));
+        assert_eq!(chan.send(3), Result::ok(()));
+        chan.close();
+
+        let it = chan.iter();
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_unbounded_channel() {
+        let chan: UnboundedChannel<i32> = UnboundedChannel::new();
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.recv(), Result::ok(42));
+    }
+
+    #[test]
+    fn test_unbounded_channel_closed() {
+        let chan: UnboundedChannel<i32> = UnboundedChannel::new();
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.send(42), Result::ok(()));
+        chan.close();
+
+        assert_eq!(chan.send(42), Result::err(ChannelError::Closed));
+        assert_eq!(chan.recv(), Result::ok(42));
+        assert_eq!(chan.recv(), Result::ok(42));
+        assert_eq!(chan.recv(), Result::err(ChannelError::Closed));
+    }
+
+    #[test]
+    fn test_unbounded_channel_try() {
+        let chan: UnboundedChannel<i32> = UnboundedChannel::new();
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.try_recv(), Result::ok(42));
+        assert_eq!(chan.try_recv(), Result::ok(42));
+        assert_eq!(chan.try_recv(), Result::ok(42));
+        assert_eq!(chan.try_recv(), Result::err(ChannelError::WouldBlock));
+    }
+
+    #[test]
+    fn test_unbounded_channel_timeout() {
+        let chan: UnboundedChannel<i32> = UnboundedChannel::new();
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.send(42), Result::ok(()));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
+        assert_eq!(chan.recv_timeout(Duration::zero()), Result::err(ChannelError::WouldBlock));
+    }
+
+    #[test]
+    fn test_unbounded_channel_iter() {
+        let chan: UnboundedChannel<i32> = UnboundedChannel::new();
+        assert_eq!(chan.send(1), Result::ok(()));
+        assert_eq!(chan.send(2), Result::ok(()));
+        assert_eq!(chan.send(3), Result::ok(()));
+        chan.close();
+
+        let it = chan.iter();
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::none());
+    }
+}

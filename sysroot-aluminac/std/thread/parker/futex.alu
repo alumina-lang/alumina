@@ -1,0 +1,99 @@
+#![cfg(any(target_os = "linux", target_os = "android"))]
+#![docs(no_index)]
+
+use sync::Ordering;
+use time::Duration;
+
+const PARKED: i32 = -1;
+const EMPTY: i32 = 0;
+const NOTIFIED: i32 = 1;
+
+struct Parker {
+    state: Atomic<i32>,
+}
+
+fn futex_wait(futex: &mut Atomic<i32>, expected: i32, timeout: Option<Duration>) {
+    let maybe_timespec = timeout.map(|d: Duration| -> libc::timespec {
+        libc::timespec {
+            tv_sec: util::cast(d.secs),
+            tv_nsec: util::cast(d.nanos)
+        }
+    });
+
+    libc::syscall(
+        libc::SYS_futex,
+        &futex._inner,
+        libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+        expected,
+        maybe_timespec.as_nullable_ptr()
+    );
+}
+
+fn futex_wake(futex: &mut Atomic<i32>) {
+    libc::syscall(
+        libc::SYS_futex,
+        &futex._inner,
+        libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+        1i32
+    );
+}
+
+impl Parker {
+    fn new() -> Parker {
+        Parker { state: Atomic::new(EMPTY) }
+    }
+
+    // Assumes this is only called by the thread that owns the Parker,
+    // which means that `self.state != PARKED`.
+    fn park(self: &mut Parker) {
+        // Change NOTIFIED=>EMPTY or EMPTY=>PARKED, and directly return in the
+        // first case.
+        if self.state.fetch_sub(1, Ordering::Acquire) == NOTIFIED {
+            return;
+        }
+        loop {
+            // Wait for something to happen, assuming it's still set to PARKED.
+            futex_wait(&self.state, PARKED, Option::none());
+            // Change NOTIFIED=>EMPTY and return in that case.
+            if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::Acquire, Ordering::Acquire).is_ok() {
+                return;
+            } else {
+                // Spurious wake up. We loop to try again.
+            }
+        }
+    }
+
+    // Assumes this is only called by the thread that owns the Parker,
+    // which means that `self.state != PARKED`.
+    fn park_timeout(self: &mut Parker, timeout: Duration) {
+        // Change NOTIFIED=>EMPTY or EMPTY=>PARKED, and directly return in the
+        // first case.
+        if self.state.fetch_sub(1, Ordering::Acquire) == NOTIFIED {
+            return;
+        }
+        // Wait for something to happen, assuming it's still set to PARKED.
+        futex_wait(&self.state, PARKED, Option::some(timeout));
+        // This is not just a store, because we need to establish a
+        // release-acquire ordering with unpark().
+        if self.state.exchange(EMPTY, Ordering::Acquire) == NOTIFIED {
+            // Woke up because of unpark().
+        } else {
+            // Timeout or spurious wake up.
+            // We return either way, because we can't easily tell if it was the
+            // timeout or not.
+        }
+    }
+
+    #[inline]
+    fn unpark(self: &mut Parker) {
+        // Change PARKED=>NOTIFIED, EMPTY=>NOTIFIED, or NOTIFIED=>NOTIFIED, and
+        // wake the thread in the first case.
+        //
+        // Note that even NOTIFIED=>NOTIFIED results in a write. This is on
+        // purpose, to make sure every unpark() has a release-acquire ordering
+        // with park().
+        if self.state.exchange(NOTIFIED, Ordering::Release) == PARKED {
+            futex_wake(&self.state);
+        }
+    }
+}

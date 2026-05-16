@@ -1,0 +1,351 @@
+//! Thread pool
+
+/// A handle that allow to wait on tasks spawned on a thread pool.
+struct TaskHandle<T> {
+    inner: &mut internal::JoinableTask<T>
+}
+
+impl TaskHandle<T> {
+    /// Returns the result of the task.
+    ///
+    /// If the task has not completed yet, this method will block the current thread.
+    fn wait(self: &TaskHandle<T>) -> T {
+        let ret = self.inner.ret.recv();
+        self.inner.free();
+        ret
+    }
+
+    /// Tries to return the result of the task.
+    ///
+    /// This method will not block the current thread. If the task has not completed yet,
+    /// this method will return [sync::channel::ChannelError::WouldBlock].
+    fn try_wait(self: &TaskHandle<T>) -> Result<T, sync::channel::ChannelError> {
+        let ret = self._chan.try_recv()?;
+        self.inner.free();
+        Result::ok(ret)
+    }
+
+    /// Ignores the result of the task.
+    ///
+    /// This will free the resources associated with the task.
+    fn detach(self: &TaskHandle<T>) {
+        self.inner.free();
+    }
+}
+
+/// A thread pool.
+///
+/// ## Example
+/// ```
+/// use std::thread::pool::ThreadPool;
+/// use std::sync::Atomic;
+///
+/// // Use 10 threads
+/// let pool = ThreadPool::unbounded(10);
+/// let counter = Atomic::new(0);
+///
+/// for _ in 0..1000 {
+///     pool
+///         .spawn_detached(|&counter| {
+///             counter.fetch_add(1, sync::Ordering::Relaxed);
+///         })
+///         .unwrap();
+/// }
+///
+/// // Wait for all remaining tasks to complete
+/// pool.join();
+///
+/// assert_eq!(counter.load(sync::Ordering::Relaxed), 1000);
+/// ```
+struct ThreadPool {
+    inner: &mut internal::ThreadPoolInner,
+}
+
+impl ThreadPool {
+    use sync::channel::{Channel, ChannelError};
+
+    /// Creates a new thread pool with an unbounded task queue.
+    fn unbounded(num_threads: usize) -> ThreadPool {
+        let inner = mem::alloc::<internal::ThreadPoolInner>();
+        inner.is_bounded = false;
+        inner.work_queue = internal::WorkQueue {
+            unbounded: sync::channel::UnboundedChannel::new()
+        };
+        inner.threads = mem::slice::alloc(num_threads);
+
+        let builder = Builder::new().catch_panic(false);
+        for i in 0usize..num_threads {
+            inner.threads[i] = builder
+                .spawn(|=inner| {
+                    for task in inner.work_queue.unbounded {
+                        task.run();
+                    }
+                })
+                .unwrap();
+        }
+
+        ThreadPool {
+            inner: inner,
+        }
+    }
+
+    /// Creates a new thread pool with a bounded task queue.
+    ///
+    /// `max_in_flight` is the maximum length of the task queue, if the queue is full,
+    /// calling [spawn] will block.
+    fn bounded(num_threads: usize, max_in_flight: usize) -> ThreadPool {
+        let inner = mem::alloc::<internal::ThreadPoolInner>();
+        inner.is_bounded = true;
+        inner.work_queue = internal::WorkQueue {
+            bounded: Channel::new(max_in_flight)
+        };
+        inner.threads = mem::slice::alloc(num_threads);
+
+        let builder = Builder::new().catch_panic(false);
+        for i in 0usize..num_threads {
+            inner.threads[i] = builder
+                .spawn(|=inner| {
+                    for task in inner.work_queue.bounded {
+                        task.run();
+                    }
+                })
+                .unwrap();
+        }
+
+        ThreadPool {
+            inner: inner,
+        }
+    }
+
+    /// Spawns a new task on the thread pool, returning a handle that can be used to wait for the result.
+    fn spawn<T, F: Fn() -> T>(self: &ThreadPool, f: F) -> Result<TaskHandle<T>, ChannelError> {
+        let (task, handle) = internal::Task::new_joinable(f);
+        if self.inner.is_bounded {
+            self.inner.work_queue.bounded.send(task)?;
+        } else {
+            self.inner.work_queue.unbounded.send(task)?;
+        }
+        Result::ok(handle)
+    }
+
+    /// Spawns a new task on the thread pool.
+    ///
+    /// This is similar to [spawn], but there is no completion handle.
+    fn spawn_detached<F: Fn()>(self: &ThreadPool, f: F) -> Result<(), ChannelError>  {
+        if self.inner.is_bounded {
+            self.inner.work_queue.bounded.send(internal::Task::new(f))?;
+        } else {
+            self.inner.work_queue.unbounded.send(internal::Task::new(f))?;
+        }
+        Result::ok(())
+    }
+
+    /// Completes the task queue, preventing new tasks to be spawned.
+    fn close(self: &ThreadPool) {
+        if self.inner.is_bounded {
+            self.inner.work_queue.bounded.close();
+        } else {
+            self.inner.work_queue.unbounded.close();
+        }
+    }
+
+    /// Closes the thread pool and waits for all remaining tasks to finish.
+    fn join(self: &ThreadPool) {
+        self.close();
+        for thread in self.inner.threads.iter() {
+            thread.join().unwrap();
+        }
+        self.inner.free();
+    }
+}
+
+#[docs(no_index)]
+mod internal {
+    struct JoinableTask<T> {
+        ref_count: Atomic<usize>,
+        ret: sync::Oneshot<T>
+    }
+
+    impl JoinableTask<T> {
+        fn new() -> JoinableTask<T> {
+            JoinableTask {
+                ref_count: Atomic::new(2usize),
+                ret: sync::Oneshot::new()
+            }
+        }
+        fn free(self: &mut JoinableTask<T>) {
+            if self.ref_count.fetch_sub(1, Ordering::SeqCst) == 1 {
+                mem::free(self);
+            }
+        }
+    }
+
+    struct JoinableTaskFunc<F, T> {
+        inner: JoinableTask<T>,
+        func: F
+    }
+
+    struct Task {
+        callback: fn(&mut void),
+        data: &mut void
+    }
+
+    impl Task {
+        use builtins::{FunctionPointer, NamedFunction};
+
+        fn new<F: Fn()>(f: F) -> Task {
+            Task {
+                callback: Task::_invoke_noreturn::<F>,
+                // Allocate the storage for the closure. If the function does not capture any
+                // variables, we can avoid an allocation
+                data: when f is NamedFunction {
+                    null
+                } else when f is FunctionPointer {
+                    f as &mut void
+                } else {
+                    let storage = mem::alloc::<F>();
+                    *storage = f;
+                    storage as &mut void
+                }
+            }
+        }
+
+        fn new_joinable<T, F: Fn() -> T>(f: F) -> (Task, TaskHandle<T>) {
+            let storage = mem::alloc::<JoinableTaskFunc<F, T>>();
+            storage.inner = JoinableTask::new();
+            storage.func = f;
+
+            (
+                Task { callback: Task::_invoke::<T, F>, data: storage as &mut void },
+                TaskHandle { inner: &storage.inner }
+            )
+        }
+
+        #[inline]
+        fn run(self: &Task) {
+            (self.callback)(self.data);
+        }
+
+        fn _invoke<T, F: Fn() -> T>(data: &mut void) {
+            let storage = data as &mut JoinableTaskFunc<F, T>;
+            storage.inner.ret.send((storage.func)());
+            storage.inner.free();
+        }
+
+        fn _invoke_noreturn<F: Fn()>(data: &mut void) {
+            when typing::is_named_function::<F>() {
+                let f = util::unit::<F>();
+                f();
+            } else when typing::is_function_pointer::<F>() {
+                (data as fn())();
+            } else {
+                (*(data as &mut F))();
+                mem::free(data);
+            }
+        }
+    }
+
+    union WorkQueue {
+        bounded: sync::channel::Channel<Task>,
+        unbounded: sync::channel::UnboundedChannel<Task>,
+    }
+
+    struct ThreadPoolInner {
+        is_bounded: bool,
+        threads: &mut [JoinHandle<()>],
+        work_queue: WorkQueue,
+    }
+
+    impl ThreadPoolInner {
+        fn free(self: &mut ThreadPoolInner) {
+            self.threads.free();
+            if self.is_bounded {
+                self.work_queue.bounded.free();
+            } else {
+                self.work_queue.unbounded.free();
+            }
+            mem::free(self);
+        }
+    }
+}
+
+
+#[cfg(all(threading, test_std, test))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_spawn() {
+        let pool = ThreadPool::bounded(10, 10);
+        let task = pool.spawn(|| -> i32 {
+            let ret = 0;
+            for i in 0..1000 {
+                ret += i;
+            }
+            ret
+        });
+
+        let ret = task.unwrap().wait();
+        assert_eq!(ret, 499500);
+
+        pool.join();
+    }
+
+    #[test]
+    fn test_spawn_detached() {
+        let pool = ThreadPool::bounded(10, 10);
+        let counter = sync::Atomic::new(0);
+
+        for _ in 0..100 {
+            pool.spawn_detached(|&counter| {
+                let ret = 0;
+                for i in 0..1000 {
+                    ret += i;
+                }
+                counter.fetch_add(ret, sync::Ordering::Relaxed);
+            }).unwrap();
+        }
+
+        pool.join();
+
+        assert_eq!(counter.load(sync::Ordering::Relaxed), 49950000);
+    }
+
+    #[test]
+    fn test_unbounded_spawn() {
+        let pool = ThreadPool::unbounded(10);
+        let task = pool.spawn(|| -> i32 {
+            let ret = 0;
+            for i in 0..1000 {
+                ret += i;
+            }
+            ret
+        });
+
+        let ret = task.unwrap().wait();
+        assert_eq!(ret, 499500);
+
+        pool.close();
+        pool.join();
+    }
+
+    #[test]
+    fn test_unbounded_spawn_detached() {
+        let pool = ThreadPool::unbounded(10);
+        let counter = sync::Atomic::new(0);
+
+        for _ in 0..100 {
+            pool.spawn_detached(|&counter| {
+                let ret = 0;
+                for i in 0..1000 {
+                    ret += i;
+                }
+                counter.fetch_add(ret, sync::Ordering::Relaxed);
+            }).unwrap();
+        }
+
+        pool.close();
+        pool.join();
+
+        assert_eq!(counter.load(sync::Ordering::Relaxed), 49950000);
+    }
+}

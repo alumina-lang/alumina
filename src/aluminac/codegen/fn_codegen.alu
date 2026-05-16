@@ -1000,29 +1000,41 @@ impl FnCodegen {
                 LLVMSetOrdering(inst, ord);
                 LLVMSetAlignment(inst, compute_type_size(FnCodegen::expr_ty(items[1]), self.ctx.pointer_size as usize) as u32);
                 LLVMGetUndef(self.ctx.void_type)
-            } else if op == "rmw" {
-                // rmw(op_code, ptr, value, ordering) -> T
-                // op_code 0..6 == LLVMAtomicRMWBinOp Xchg/Add/Sub/And/Nand/Or/Xor
-                let opcode = self.atomic_const_int(items[0], 0u64);
-                let ptr = self.gen_expr(items[1]);
-                let val = self.gen_expr(items[2]);
-                let ord = self.atomic_ord(items[3]);
-                LLVMBuildAtomicRMW(self.ctx.builder, opcode as i32 as LLVMAtomicRMWBinOp, ptr, val, ord, 0i32)
-            } else {
-                // cmpxchg(ptr, expected, desired, weak, succ_ord, fail_ord) -> bool
-                // Always emit a *strong* cmpxchg (valid substitute for weak —
-                // weak may fail spuriously, strong never does). Clamp the
-                // failure ordering to satisfy LLVM (not Release/AcqRel, and
-                // no stronger than success).
+            } else if op == "cmpxchg" {
+                // cmpxchg(ptr, &mut expected, desired, weak, succ, fail) -> bool
+                // Always strong (a valid substitute for weak — weak may fail
+                // spuriously, strong never does). Failure ordering clamped to
+                // LLVM-valid (not Release/AcqRel, ≤ success). Writes the
+                // actual prior value back through `expected` (C
+                // __atomic_compare_exchange_n in/out semantics).
                 let ptr = self.gen_expr(items[0]);
-                let exp = self.gen_expr(items[1]);
+                let exp_ptr = self.gen_expr(items[1]);  // &mut expected
+                let exp_ty = self.ctx.llvm_type(FnCodegen::expr_ty(items[2]));
+                let exp = LLVMBuildLoad2(self.ctx.builder, exp_ty, exp_ptr, self.temp_cname());
                 let des = self.gen_expr(items[2]);
                 let succ = self.atomic_ord(items[4]);
                 let fail = self.atomic_clamp_fail_ord(succ);
                 let cx = LLVMBuildAtomicCmpXchg(self.ctx.builder, ptr, exp, des, succ, fail, 0i32);
-                // cmpxchg yields { T, i1 }; the success bit is field 1.
+                // cmpxchg yields { T_actual, i1_success }.
+                let actual = LLVMBuildExtractValue(self.ctx.builder, cx, 0u32, self.temp_cname());
                 let okbit = LLVMBuildExtractValue(self.ctx.builder, cx, 1u32, self.temp_cname());
+                LLVMBuildStore(self.ctx.builder, actual, exp_ptr);
                 self.coerce_value(okbit, self.ctx.i8_type)
+            } else {
+                // "rmw:<op>" — op is encoded in the name (compile-time;
+                // aluminac doesn't inline the sync helpers so a runtime op
+                // arg wouldn't be a constant). rmw(ptr, value, ordering)->T
+                let rmwop = if op == "rmw:xchg" { LLVMAtomicRMWBinOp::Xchg }
+                    else if op == "rmw:add" { LLVMAtomicRMWBinOp::Add }
+                    else if op == "rmw:sub" { LLVMAtomicRMWBinOp::Sub }
+                    else if op == "rmw:and" { LLVMAtomicRMWBinOp::And }
+                    else if op == "rmw:nand" { LLVMAtomicRMWBinOp::Nand }
+                    else if op == "rmw:or" { LLVMAtomicRMWBinOp::Or }
+                    else { LLVMAtomicRMWBinOp::Xor };
+                let ptr = self.gen_expr(items[0]);
+                let val = self.gen_expr(items[1]);
+                let ord = self.atomic_ord(items[2]);
+                LLVMBuildAtomicRMW(self.ctx.builder, rmwop, ptr, val, ord, 0i32)
             }
         }
 

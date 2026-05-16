@@ -1,0 +1,114 @@
+#![docs(no_index)]
+
+use sync::{Atomic, Ordering, CondVar, Mutex};
+use time::Duration;
+
+const EMPTY: usize = 0;
+const PARKED: usize = 1;
+const NOTIFIED: usize = 2;
+
+struct Parker {
+    state: Atomic<usize>,
+    lock: Mutex,
+    cvar: CondVar,
+}
+
+impl Parker {
+    fn new() -> Parker {
+        Parker { state: Atomic::new(EMPTY), lock: Mutex::new(), cvar: CondVar::new() }
+    }
+
+
+    fn park(self: &mut Parker) {
+        // If we were previously notified then we consume this notification and
+        // return quickly.
+        if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            return;
+        }
+
+        // Otherwise we need to coordinate going to sleep
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        let ret = self.state.compare_exchange(EMPTY, PARKED, Ordering::SeqCst, Ordering::SeqCst);
+        if ret.is_err() {
+            if ret.unwrap_err() == NOTIFIED {
+                let old = self.state.exchange(EMPTY, Ordering::SeqCst);
+                assert_eq!(old, NOTIFIED);
+                return;
+            } else {
+                panic!("inconsistent park state")
+            }
+        }
+
+        loop {
+            self.cvar.wait(&self.lock);
+            if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                return;
+            }
+        }
+    }
+
+    fn park_timeout(self: &mut Parker, dur: Duration) {
+        // Like `park` above we have a fast path for an already-notified thread, and
+        // afterwards we start coordinating for a sleep.
+        // return quickly.
+        if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            return;
+        }
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        let ret = self.state.compare_exchange(EMPTY, PARKED, Ordering::SeqCst, Ordering::SeqCst);
+        if ret.is_err() {
+            if ret.unwrap_err() == NOTIFIED {
+                let old = self.state.exchange(EMPTY, Ordering::SeqCst);
+                assert_eq!(old, NOTIFIED);
+                return;
+            } else {
+                panic!("inconsistent park state")
+            }
+        }
+
+        // Wait with a timeout, and if we spuriously wake up or otherwise wake up
+        // from a notification we just want to unconditionally set the state back to
+        // empty, either consuming a notification or un-flagging ourselves as
+        // parked.
+        self.cvar.wait_timeout(&self.lock, dur);
+        switch self.state.exchange(EMPTY, Ordering::SeqCst) {
+            NOTIFIED => {} // got a notification, hurray!
+            PARKED => {}   // no notification, alas
+            _ => panic!("inconsistent park_timeout state"),
+        }
+    }
+
+    fn unpark(self: &mut Parker) {
+        // To ensure the unparked thread will observe any writes we made
+        // before this call, we must perform a release operation that `park`
+        // can synchronize with. To do that we must write `NOTIFIED` even if
+        // `state` is already `NOTIFIED`. That is why this must be a swap
+        // rather than a compare-and-swap that returns if it reads `NOTIFIED`
+        // on failure.
+        switch self.state.exchange(NOTIFIED, Ordering::SeqCst) {
+            EMPTY => return,    // no one was waiting
+            NOTIFIED => return, // already unparked
+            PARKED => {}        // gotta go wake someone up
+            _ => panic!("inconsistent state in unpark"),
+        }
+
+        // There is a period between when the parked thread sets `state` to
+        // `PARKED` (or last checked `state` in the case of a spurious wake
+        // up) and when it actually waits on `cvar`. If we were to notify
+        // during this period it would be ignored and then when the parked
+        // thread went to sleep it would never wake up. Fortunately, it has
+        // `lock` locked at this stage so we can acquire `lock` to wait until
+        // it is ready to receive the notification.
+        //
+        // Releasing `lock` before the call to `notify_one` means that when the
+        // parked thread wakes it doesn't get woken only to have to wait for us
+        // to release `lock`.
+        self.lock.lock();
+        self.lock.unlock();
+        self.cvar.notify_one()
+    }
+}

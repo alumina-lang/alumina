@@ -257,13 +257,26 @@ extern "intrinsic" fn with_span_of<T, E>(expr: E) -> E;
     // Atomic operations, backed by LLVM atomic instructions. alumina-boot
     // dispatches to the C `__atomic_*` builtins via codegen_func; aluminac
     // emits `load atomic` / `store atomic` / `atomicrmw` / `cmpxchg` /
-    // `fence` directly. `ordering` is the sysroot `sync::Ordering` enum
-    // cast to i32 (Relaxed=0, Acquire=2, Release=3, AcqRel=4, SeqCst=5);
-    // aluminac maps it to LLVMAtomicOrdering. `op` for atomic_rmw:
-    // 0=xchg 1=add 2=sub 3=and 4=nand 5=or 6=xor.
+    // `fence` directly. The RMW operation is encoded in the intrinsic
+    // *name* (not a runtime arg) because aluminac doesn't inline the
+    // sync helpers, so an op passed by value would not be a compile-time
+    // constant (LLVM atomicrmw's op must be static). `ordering` is the
+    // sysroot `sync::Ordering` cast to i32 (Relaxed=0/Acquire=2/Release=3
+    // /AcqRel=4/SeqCst=5); since it likewise arrives at runtime through
+    // the non-inlined helpers, aluminac conservatively emits SeqCst when
+    // it isn't a compile-time constant (always correct, just strongest).
+    // `atomic_cmpxchg` writes the actual prior value back through
+    // `expected` (C `__atomic_compare_exchange_n` in/out semantics) so
+    // the sync wrapper's `Result::err(expected)` reports the real value.
     extern "intrinsic" fn atomic_load<T>(ptr: &T, ordering: i32) -> T;
     extern "intrinsic" fn atomic_store<T>(ptr: &mut T, value: T, ordering: i32);
-    extern "intrinsic" fn atomic_rmw<T>(op: i32, ptr: &mut T, value: T, ordering: i32) -> T;
-    extern "intrinsic" fn atomic_cmpxchg<T>(ptr: &mut T, expected: T, desired: T, weak: bool, success_ordering: i32, failure_ordering: i32) -> bool;
+    extern "intrinsic" fn atomic_xchg<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_fetch_add<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_fetch_sub<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_fetch_and<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_fetch_nand<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_fetch_or<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_fetch_xor<T>(ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_cmpxchg<T>(ptr: &mut T, expected: &mut T, desired: T, weak: bool, success_ordering: i32, failure_ordering: i32) -> bool;
     extern "intrinsic" fn atomic_fence(ordering: i32);
 }

@@ -1,20 +1,28 @@
 // ALUMINAC_FLAGS: --sysroot sysroot-aluminac
-use std::intrinsics::{atomic_load, atomic_store, atomic_rmw, atomic_cmpxchg, atomic_fence};
+use std::intrinsics::{atomic_load, atomic_store, atomic_xchg, atomic_fetch_add, atomic_fetch_and, atomic_fetch_or, atomic_fetch_xor, atomic_cmpxchg, atomic_fence};
 fn main() -> i32 {
     let x: u64 = 10u64;
     atomic_store::<u64>(&x, 42u64, 5i32);
     let v = atomic_load::<u64>(&x, 5i32);
-    libc::printf("load=%llu (want 42)\n".as_ptr() as &libc::c_char, v);
-    let old = atomic_rmw::<u64>(1i32, &x, 8u64, 5i32);
-    libc::printf("rmw_add old=%llu (want 42) now=%llu (want 50)\n".as_ptr() as &libc::c_char,
-        old, atomic_load::<u64>(&x, 5i32));
-    let o2 = atomic_rmw::<u64>(0i32, &x, 99u64, 5i32);
-    libc::printf("xchg old=%llu (want 50) now=%llu (want 99)\n".as_ptr() as &libc::c_char,
-        o2, atomic_load::<u64>(&x, 5i32));
-    let ok1 = atomic_cmpxchg::<u64>(&x, 99u64, 7u64, false, 5i32, 0i32);
-    let ok2 = atomic_cmpxchg::<u64>(&x, 99u64, 1u64, false, 5i32, 0i32);
-    libc::printf("cmpxchg ok1=%d ok2=%d x=%llu (want 1 0 7)\n".as_ptr() as &libc::c_char,
-        ok1 as i32, ok2 as i32, atomic_load::<u64>(&x, 5i32));
+    if v != 42 { return 1; }
+    let old = atomic_fetch_add::<u64>(&x, 8u64, 5i32);
+    if old != 42 || atomic_load::<u64>(&x, 5i32) != 50 { return 2; }
+    let o2 = atomic_xchg::<u64>(&x, 0xF0u64, 5i32);
+    if o2 != 50 || atomic_load::<u64>(&x, 5i32) != 0xF0 { return 3; }
+    atomic_fetch_and::<u64>(&x, 0x3Cu64, 5i32);   // 0xF0 & 0x3C = 0x30
+    if atomic_load::<u64>(&x, 5i32) != 0x30 { return 4; }
+    atomic_fetch_or::<u64>(&x, 0x0Fu64, 5i32);    // 0x30 | 0x0F = 0x3F
+    if atomic_load::<u64>(&x, 5i32) != 0x3F { return 5; }
+    atomic_fetch_xor::<u64>(&x, 0xFFu64, 5i32);   // 0x3F ^ 0xFF = 0xC0
+    if atomic_load::<u64>(&x, 5i32) != 0xC0 { return 6; }
+    // cmpxchg: expected in/out. set x=7 via successful cas, then a failing cas
+    atomic_store::<u64>(&x, 99u64, 5i32);
+    let e1: u64 = 99u64;
+    let ok1 = atomic_cmpxchg::<u64>(&x, &e1, 7u64, false, 5i32, 0i32);
+    let e2: u64 = 99u64;  // wrong; actual is 7
+    let ok2 = atomic_cmpxchg::<u64>(&x, &e2, 1u64, false, 5i32, 0i32);
+    if !ok1 || ok2 || atomic_load::<u64>(&x, 5i32) != 7 { return 7; }
+    if e2 != 7 { return 8; }   // write-back: e2 updated to actual (7)
     atomic_fence(5i32);
-    if v == 42 && old == 42 && o2 == 50 && ok1 && !ok2 && atomic_load::<u64>(&x, 5i32) == 7 { 0 } else { 1 }
+    0
 }

@@ -1,0 +1,31 @@
+#![docs(no_index)]
+
+//! Thread "parking". Adapted from Rust's `Parker` implementation.
+//!
+//! See [Futex implementation](https://github.com/rust-lang/rust/blob/master/library/std/src/sys_common/thread_parker/futex.rs) and
+//! [generic implementation using pthread](https://github.com/rust-lang/rust/blob/master/library/std/src/sys_common/thread_parker/generic.rs).
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+use pthread::Parker;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use futex::Parker;
+
+#[cfg(all(threading, test, test_std))]
+#[docs(hide)]
+mod tests {
+    use time::Duration;
+
+    #[test]
+    fn test_park() {
+        let parker = Parker::new();
+        parker.unpark();
+        parker.park();
+    }
+
+    #[test]
+    fn test_park_timeout() {
+        let parker = Parker::new();
+        parker.unpark();
+        parker.park_timeout(Duration::from_secs(5));
+    }
+}
