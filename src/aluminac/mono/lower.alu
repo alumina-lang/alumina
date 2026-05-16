@@ -1619,6 +1619,30 @@ impl Mono {
             let fn_def = self.ctx.fn_defs.get(&expr.id()._value);
             if fn_def.is_some() {
                 let def = fn_def.unwrap();
+                // A `Type::method` path *taken as a function value* (e.g.
+                // `opt.and_then(u8::parse)`) where `method` is a mixin'd
+                // protocol method: bind its proto-generics / Self from the
+                // path type's mixin type-args, exactly like the direct
+                // static-path Call does in lower_call. Without this the
+                // mono below runs with Self=void → e.g.
+                // `parse_integer::<()>` (surfaced by std/net's
+                // `segments.next().and_then(u8::parse)`). The path resolver
+                // stashed the impl_scope_idx in the FnRef's id2 (set in
+                // process_mixins). mono_function snapshot/restores
+                // proto-generic bindings, so this doesn't leak.
+                if self.ctx.proto_method_proto_gp_ids.get(&def.id._value).is_some()
+                    && expr.id2()._value != 0usize {
+                    let impl_scope_idx = expr.id2()._value as u32;
+                    let mixin_ast_args = self.ctx.scopes.get_mixin_type_args(impl_scope_idx, def.id._value);
+                    if mixin_ast_args.is_some() {
+                        let ast_args = mixin_ast_args.unwrap();
+                        let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
+                        for i in 0usize..ast_args.len() {
+                            resolved[i] = self.resolve_type(ast_args[i]);
+                        }
+                        let _ = self.bind_proto_generics(def, resolved);
+                    }
+                }
                 let fn_idx = self.mono_function(def, &[]);
                 let ir_fn = &self.ctx.ir_functions[fn_idx];
 

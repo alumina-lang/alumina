@@ -40,5 +40,15 @@ fn main() -> i32 {
     if w2.v != 0 { return 2; }
     let q = Q::make("zzz");
     if q.a != 0 || q.b != 0 { return 3; }
+
+    // A mixin'd protocol method on a *builtin* taken as a FnRef value
+    // (callback) — `opt.and_then(u8::parse)` — must bind Self=u8, not ()
+    // (std/net's `segments.next().and_then(u8::parse)`; without the
+    // FnRef-materialization-site proto-generic binding this mono'd
+    // `parse_integer::<()>` → checked_mul on ()).
+    let s: std::option::Option<&[u8]> = std::option::Option::some("42");
+    let r = s.and_then(u8::parse);
+    if !(r.is_some() && r.unwrap() == 42u8) { return 4; }
+
     0
 }
