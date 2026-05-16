@@ -1,5 +1,5 @@
 // LLVM C API bindings for Alumina
-// Targeting LLVM 14
+// Targeting LLVM 22
 
 use libc::c_char;
 
@@ -316,9 +316,8 @@ extern "C" fn LLVMConstNeg(val: LLVMValueRef) -> LLVMValueRef;
 extern "C" fn LLVMConstNot(val: LLVMValueRef) -> LLVMValueRef;
 extern "C" fn LLVMConstAdd(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
 extern "C" fn LLVMConstSub(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
-extern "C" fn LLVMConstMul(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
-extern "C" fn LLVMConstAnd(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
-extern "C" fn LLVMConstOr(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
+// LLVM 22 dropped mul/and/or/zext/sext as constant expressions; the
+// codegen const-init path folds those host-side instead.
 extern "C" fn LLVMConstXor(lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef;
 extern "C" fn LLVMConstGEP2(ty: LLVMTypeRef, val: LLVMValueRef, indices: &LLVMValueRef, num_indices: u32) -> LLVMValueRef;
 extern "C" fn LLVMConstInBoundsGEP2(ty: LLVMTypeRef, val: LLVMValueRef, indices: &LLVMValueRef, num_indices: u32) -> LLVMValueRef;
@@ -326,8 +325,6 @@ extern "C" fn LLVMConstBitCast(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueR
 extern "C" fn LLVMConstIntToPtr(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
 extern "C" fn LLVMConstPtrToInt(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
 extern "C" fn LLVMConstTrunc(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
-extern "C" fn LLVMConstSExt(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
-extern "C" fn LLVMConstZExt(val: LLVMValueRef, ty: LLVMTypeRef) -> LLVMValueRef;
 
 // --- Globals ---
 extern "C" fn LLVMAddGlobal(m: LLVMModuleRef, ty: LLVMTypeRef, name: &c_char) -> LLVMValueRef;
@@ -575,8 +572,10 @@ extern "C" fn LLVMSetVolatile(mem_access_inst: LLVMValueRef, is_volatile: LLVMBo
 // --- Debug Info ---
 struct LLVMOpaqueDIBuilder {}
 struct LLVMOpaqueMetadata {}
+struct LLVMOpaqueDbgRecord {}
 type LLVMDIBuilderRef = &mut LLVMOpaqueDIBuilder;
 type LLVMMetadataRef = &mut LLVMOpaqueMetadata;
+type LLVMDbgRecordRef = &mut LLVMOpaqueDbgRecord;
 
 enum LLVMDWARFEmissionKind {
     None = 0i32,
@@ -699,14 +698,16 @@ extern "C" fn LLVMDIBuilderCreateParameterVariable(
     flags: u32,
 ) -> LLVMMetadataRef;
 
-extern "C" fn LLVMDIBuilderInsertDeclareAtEnd(
+// LLVM 22 removed the value-based LLVMDIBuilderInsertDeclareAtEnd in favor
+// of the DbgRecord ("new debug format", default in LLVM 22) variant.
+extern "C" fn LLVMDIBuilderInsertDeclareRecordAtEnd(
     builder: LLVMDIBuilderRef,
     storage: LLVMValueRef,
     var_info: LLVMMetadataRef,
     expr: LLVMMetadataRef,
     debug_loc: LLVMMetadataRef,
     block: LLVMBasicBlockRef,
-) -> LLVMValueRef;
+) -> LLVMDbgRecordRef;
 
 extern "C" fn LLVMDIBuilderCreateExpression(
     builder: LLVMDIBuilderRef,

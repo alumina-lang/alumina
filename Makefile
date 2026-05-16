@@ -207,14 +207,15 @@ ALUMINAC_INPUTS = $(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/)
 
-LLVM_LINK_FLAGS = $(shell llvm-config-14 --ldflags --libs --system-libs)
+LLVM_CONFIG ?= llvm-config-22
+LLVM_LINK_FLAGS = $(shell $(LLVM_CONFIG) --ldflags --libs --system-libs)
 
 $(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
 		$(ALUMINAC_INPUTS)
 
 $(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$(llvm-config-14 --ldflags --libs --system-libs)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$($(LLVM_CONFIG) --ldflags --libs --system-libs)
 
 BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN) $(SYSROOT_ALUMINAC_FILES)
 

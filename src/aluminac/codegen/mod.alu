@@ -997,7 +997,9 @@ impl CodegenCtx {
                 if src_bits > dst_bits {
                     LLVMConstTrunc(inner, target_ty)
                 } else if src_bits < dst_bits {
-                    LLVMConstZExt(inner, target_ty)
+                    // LLVM 22 dropped zext as a constant expression; `inner`
+                    // is a ConstantInt here, so zero-extend host-side.
+                    LLVMConstInt(target_ty, LLVMConstIntGetZExtValue(inner), 0i32)
                 } else {
                     inner
                 }
@@ -1017,11 +1019,22 @@ impl CodegenCtx {
             if (lhs as usize) == 0 || (rhs as usize) == 0 {
                 return std::mem::zeroed::<LLVMValueRef>();
             }
+            // LLVM 22 keeps add/sub/xor as constant expressions (needed for
+            // relocatable pointer arithmetic) but dropped mul/and/or. The
+            // mono const-eval pass already folds pure-integer arithmetic, so
+            // mul/and/or only reach here with ConstantInt operands — fold
+            // them host-side, preserving the operand integer type.
             if expr.bin_op() == BinOp::Add { LLVMConstAdd(lhs, rhs) }
             else if expr.bin_op() == BinOp::Sub { LLVMConstSub(lhs, rhs) }
-            else if expr.bin_op() == BinOp::Mul { LLVMConstMul(lhs, rhs) }
-            else if expr.bin_op() == BinOp::BitAnd { LLVMConstAnd(lhs, rhs) }
-            else if expr.bin_op() == BinOp::BitOr { LLVMConstOr(lhs, rhs) }
+            else if expr.bin_op() == BinOp::Mul {
+                LLVMConstInt(LLVMTypeOf(lhs), LLVMConstIntGetZExtValue(lhs) * LLVMConstIntGetZExtValue(rhs), 0i32)
+            }
+            else if expr.bin_op() == BinOp::BitAnd {
+                LLVMConstInt(LLVMTypeOf(lhs), LLVMConstIntGetZExtValue(lhs) & LLVMConstIntGetZExtValue(rhs), 0i32)
+            }
+            else if expr.bin_op() == BinOp::BitOr {
+                LLVMConstInt(LLVMTypeOf(lhs), LLVMConstIntGetZExtValue(lhs) | LLVMConstIntGetZExtValue(rhs), 0i32)
+            }
             else if expr.bin_op() == BinOp::BitXor { LLVMConstXor(lhs, rhs) }
             else { std::mem::zeroed::<LLVMValueRef>() }
         }

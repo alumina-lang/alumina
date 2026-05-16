@@ -104,6 +104,14 @@ jobs:
           override: true
           components: rustfmt, clippy
 
+      - name: Install LLVM 22
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/llvm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-22-dev
+
       - name: Install Tree-sitter (with runtime)
         run: |
           npm install -g tree-sitter-cli
@@ -140,8 +148,8 @@ jobs:
         run: |
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 19
-          sudo apt-get install -y llvm-19 llvm-19-dev clang-tools-19
+          sudo ./llvm.sh 22
+          sudo apt-get install -y llvm-22 llvm-22-dev clang-tools-22
 
       - name: Install Tree-sitter (with runtime)
         run: |
@@ -157,7 +165,7 @@ jobs:
 
       - name: Build dist-check with coverage
         timeout-minutes: 10
-        run: CC=clang-19 LLVM_SUFFIX=-19 make coverage -j8
+        run: CC=clang-22 LLVM_SUFFIX=-22 make coverage -j8
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3

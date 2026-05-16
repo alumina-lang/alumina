@@ -3,7 +3,14 @@ FROM ubuntu:24.04 AS environment
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
-RUN apt-get update && apt-get install -y software-properties-common curl build-essential git ca-certificates gnupg libclang-dev llvm-14-dev
+RUN apt-get update && apt-get install -y software-properties-common curl wget build-essential git ca-certificates gnupg libclang-dev
+
+# LLVM 22 is not in Ubuntu 24.04 (noble) main repos; pull it from apt.llvm.org.
+RUN mkdir -p /etc/apt/keyrings && \
+    (wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/keyrings/llvm.gpg) && \
+    (echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | tee /etc/apt/sources.list.d/llvm.list) && \
+    apt-get update && \
+    apt-get install -y llvm-22-dev
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
