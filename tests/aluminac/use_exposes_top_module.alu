@@ -1,0 +1,44 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: alumina-boot semantics — `use seg0::seg1::…::leaf` binds
+// the leaf AND makes `seg1` (first segment after the crate root) usable
+// as a module qualifier. `use std::collections::hashmap::HashMap`
+// exposes `collections` but NOT the deeper `hashmap` (verified against
+// alumina-boot). Implemented as a *resolution-time fallback* only
+// (never an eager scope insertion — that shadowed aluminac's own
+// identifiers and SIGSEGV'd the s3 self-bootstrap). Blocker #3 for
+// unifying sysroot/test.alu, whose bare `process::exit` /
+// `use string::{…}` rely on module-level `use std::process::{…}` /
+// `use std::string::{…}` exposing `process` / `string`.
+
+use std::process::{ExitStatus};
+use std::collections::Vector;
+use std::collections::hashmap::HashMap;
+
+fn use_relative_string() -> bool {
+    // Relative `use string::{…}` resolves only because the module-level
+    // `use std::string::{…}` below exposes `string` (exactly
+    // test.alu's filter_tests pattern).
+    use string::{starts_with, contains};
+    let s: &[u8] = "hello world";
+    s.starts_with("hello") && s.contains("wor") && !"abc".starts_with("z")
+}
+
+use std::string::{StringBuf};
+
+fn main() -> i32 {
+    // `process` exposed via `use std::process::{ExitStatus}`.
+    let _es: Option<process::ExitStatus> = Option::none();
+
+    let v: collections::Vector<i32> = collections::Vector::new();
+    defer v.free();
+    v.push(7);
+
+    // Deep `collections::hashmap::HashMap` resolves via exposed top
+    // module `collections` (a bare `hashmap` would not).
+    let m: collections::hashmap::HashMap<i32, i32> = collections::hashmap::HashMap::new();
+    defer m.free();
+    m.insert(1, 2);
+
+    if !use_relative_string() { return 2; }
+    if v[0] == 7 && m.len() == 1usize { 0 } else { 1 }
+}

@@ -351,7 +351,20 @@ impl ScopeArena {
         // local variables/parameters from shadowing module names.
         let first = self.resolve_scoped(scope_idx, segments[0]);
         if first.is_none() {
-            return Option::none();
+            // alumina-boot semantics: `use seg0::seg1::…::leaf` also makes
+            // `seg1` (and only seg1 — the first segment after the crate
+            // root) usable as a module qualifier. We expose this purely as
+            // a *resolution-time fallback* (consulted only when normal
+            // resolution already failed), NOT by inserting a NamedItem
+            // into the scope — eager insertion shadows identically-named
+            // locals/items and miscompiles aluminac's own self-bootstrap.
+            // Real items / locals / params / explicit imports therefore
+            // always outrank this.
+            let tm = self.resolve_top_module_fallback(scope_idx, segments[0]);
+            if tm.is_none() {
+                return Option::none();
+            }
+            first = tm;
         }
 
         // Walk through remaining segments
@@ -370,6 +383,38 @@ impl ScopeArena {
             Option::none()
         };
         result
+    }
+
+    // alumina-boot top-module exposure, as a pure resolution-time
+    // fallback. `use seg0::seg1::…::leaf` makes `seg1` usable as a
+    // module qualifier (only seg1 — `use std::collections::hashmap::X`
+    // exposes `collections`, never `hashmap`). We discover this by
+    // scanning, across the scope's ancestor chain, the leaf use-aliases
+    // that `process_use` already recorded (their `path_segments` are the
+    // absolute import paths, e.g. [std, string, split]); a match on
+    // `path_segments[1] == name` means `name` is an exposed top module
+    // `[path_segments[0], name]`. Returns the resolved Module item so
+    // callers can treat it like any module. Only ever consulted after
+    // normal resolution failed ⇒ never shadows real items.
+    fn resolve_top_module_fallback(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let cur = scope_idx;
+        loop {
+            let scope = self.get(cur);
+            for pair in scope.items {
+                let item = pair.1;
+                if item.kind.tag == NamedItemTag::UseAlias {
+                    let segs = item.kind.path_segments();
+                    if segs.len() >= 2usize && segs[1] == name {
+                        return self.resolve_path(item.kind.scope_idx, segs[0..2]);
+                    }
+                }
+            }
+            if scope.parent.is_none() {
+                break;
+            }
+            cur = scope.parent.unwrap();
+        }
+        Option::none()
     }
 
     // Resolve a name but only return items that can have :: children
