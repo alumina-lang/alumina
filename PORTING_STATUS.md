@@ -680,3 +680,37 @@ Known follow-up resolved 2026-05-13: f2s::tests::test_regression now passes in f
   Approach (same as net): standalone repro per blocker against `--sysroot sysroot`, fix, regression test, re-attempt swap, `make porting-gates`. Recommended order now: **#2 (UFCS-via-use, contained)** → **#3 (top-module via resolution precedence, careful)** → **#4 (as_fn reflection, deep)**. When `test.alu` unifies and test-std-aluminac is green against it, only the cross-compiler test-suite wiring + the final `sysroot-aluminac/` rmdir remain.
 
 - [DONE] **`sysroot-aluminac/` eliminated (2026-05-16).** The directory was deleted once it became byte-identical to `sysroot/`. `Makefile`'s `SYSROOT_ALUMINAC` now points at `sysroot/`; all 130 `tests/aluminac/*.alu` `// ALUMINAC_FLAGS` lines retargeted `--sysroot sysroot-aluminac` → `--sysroot sysroot` (10 files still *mention* the old name in prose comments — historical context, harmless). Full `make porting-gates` green against the single unified `sysroot/`: aluminac s1→s2→s3 bootstrap converges (s2==s3) compiling `sysroot/`; `make test-aluminac`, `test-std-aluminac`, `test-std`, `test-libraries`, `test-lang`, `test-diag` all pass. **The core parity goal is met: one sysroot, both compilers, convergent bootstrap.** Residual tracked debt (all honestly `#[cfg(boot)]`-gated, none silent): `std/typing.alu::test_dyn` (dyn-vtable-over-generic-iterator-adapter miscompile), `std/iter.alu::test_fuse` + `test_flatten_2` (per-call mono-context architectural debt). Out-of-scope cross-compiler test targets (`make test-lang-aluminac` etc.) remain as future polish, not parity blockers.
+
+## cfg(boot) cleanup queue (post-sysroot-unification headline, 2026-05-16)
+
+Sysroot unification is DONE. New headline: shrink the `#[cfg(boot)]`
+set to a small user-confirmed allowlist. The user reviewed all 54
+cfg(boot)/cfg(not(boot)) sites and **confirmed** this split.
+
+### APPROPRIATE — keep (genuine boot-only-by-design; both sides real)
+- `intrinsics.alu` L229/242/247 — codegen_func/codegen_const/codegen_type_func (boot) vs LLVM intrinsics (aluminac). The core divergence model.
+- `builtins.alu` L2050–2228 — count_ones/ctlz/cttz: C/libc (boot) vs `intrinsics::llvm` (aluminac).
+- `builtins.alu` L1775–1840 — checked_add/sub/mul: `__builtin_*_overflow` (boot) vs manual (aluminac).
+- `builtins.alu` L1699–1748 — wrapping_add/sub/mul: C-codegen (boot) vs LLVM wrap (aluminac). *Style nit only:* user prefers inline `if in_runtime_context(){…} else when cfg!("boot"){…} else {…}` over cfg-block pairs; not a gap.
+- `mem.alu` L839/860 — stack_alloc: codegen_func (boot) vs `intrinsics::stack_alloc` (aluminac). Function-level pair (safe pattern).
+
+### INAPPROPRIATE — work queue (fix the gap, remove the gate), in order
+
+1. **[TODO] i128/u128 literal + const-eval gap — START HERE (single root, most gates).**
+   Symptom (repro `/tmp/i128.alu`): a 128-bit literal keeps only its low 64 bits (`hi=0`); `i128::max_value()` (= `0x7fff…ffffu128 as i128`) becomes all-ones (low word 0xFFFF… read as i64 = -1, sign-extended). Gates cleared by the fix: `builtins.alu` L2407/2489/2498/2703/2705/2797; `fmt/mod.alu` L777; `string/mod.alu` L869/874; `random/mod.alu` L988.
+   **Root:** integer literals + const ints are `u64`-bounded in *three* layers, plus const-eval arithmetic is u64, plus codegen can't emit 128-bit constants. **7-step plan (do as one atomic change; bootstrap must converge before commit):**
+   1. `src/aluminac/parser/mod.alu` `parse_int_with_suffix` — accumulate in `u128`, return `(u128, Option<BuiltinType>)` (single caller: `parser/expr.alu:390`).
+   2. `src/aluminac/ast.alu` `_ExprLitData` (L375) — add `int_val_hi: u64` (keep `int_val:u64` = low word so the many small-value consumers of `Expr::int_val()` are untouched). Add `Expr::int_val_hi()` + `Expr::int_val_u128()`.
+   3. `src/aluminac/ast.alu` `_IrLitData` (L1183) — same `int_val_hi` + `IrExpr::int_val_hi()`/`int_val_u128()`. Thread hi through `mono/lower.alu` IntLit lowering (`mk_int_lit`, the `_data.lit.int_val` copies ~L128/1497/1529/1584; add a 128-bit-aware `mk_int_lit_u128`).
+   4. `src/aluminac/ast.alu` `_CVIntData` / `ConstValue` (L1467+, `int_val:u64`) — add `int_val_hi`; `ConstValue::make_int_u128`, `int_val_u128()`. 
+   5. `src/aluminac/const_eval.alu` — int arithmetic/compare/cast paths must do 128-bit when `builtin_type` is I128/U128 (otherwise `i128::max_value()`-style const exprs stay wrong even with correct literals). This is the largest sub-step; scope to the ops the gated asserts exercise (+, *, checked_*, wrapping_*, `as`, comparisons, parse_integer).
+   6. `src/aluminac/codegen/fn_codegen.alu` IrTag::IntLit (L388) — for I128/U128 types emit a 128-bit constant via the new binding instead of `LLVMConstInt(ty, lo, …)`.
+   7. `src/aluminac/llvm.alu` — bind `extern "C" fn LLVMConstIntOfArbitraryPrecision(ty: LLVMTypeRef, num_words: u32, words: &u64) -> LLVMValueRef;` and use it with `[lo, hi]`.
+   After: rebuild, `/tmp/i128.alu` must match alumina-boot, ungate the listed asserts, add `tests/aluminac/i128_u128_literals.alu`, full `make porting-gates` (s2==s3), update this entry → [DONE].
+2. **[TODO] per-call mono-context debt** — `iter.alu` L2420 `test_fuse`, L2505 `test_flatten_2`. type_map/per-call mono pollution (`Option<()>` debug-fmt picks up a prior test's tuple-formatter state). Ungate both when fixed.
+3. **[TODO] dyn-vtable over a generic iterator adapter** — `typing.alu` L1068 `test_dyn`. `b.next()` on `&mut dyn iter::Iterator` bound to `&iter::repeat(42)`/`&iter::once(10)` returns garbage; the 4 sibling dyn tests pass so general dyn is sound.
+4. **[TODO] reflection/tuple gaps** — `typing.alu` L1224/1225 (`element_types` tuple construction); `fmt/mod.alu` L853 `test_debug_formatter` (closure/enum/union debug-fmt), L836 const-`println!`.
+5. **[TODO] delete vestigial** — `macros.alu` L73 `#[cfg(not(boot))] #[builtin] macro test_cases()`. Dead since test.alu uses `attributed::<()>("test")`. Remove the macro + its builtin handling; confirm nothing else references `test_cases!`.
+6. **[TODO] structural refactor (not a gap)** — `sync/mod.alu` L22–50 `mod atomic_internal` is a whole-module `#[cfg(boot)]`/`#[cfg(not(boot))]` twin. Refactor each high-level `Atomic<T>` method to one body with inline dispatch: `if runtime::in_runtime_context() { … } else when cfg!("boot") { … } else { … }`.
+
+Side bug (own slice, not in the above): fully-qualified macro paths (`std::println!`) silently expand to nothing under aluminac; unqualified prelude forms work.
