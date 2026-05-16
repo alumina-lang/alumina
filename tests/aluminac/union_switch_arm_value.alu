@@ -1,0 +1,24 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+struct V4 { s: u32 }
+union Inner { v4: V4, pad: [u8;16] }
+struct Ip { kind: i32, inner: Inner }
+fn make(k: i32, x: u32) -> Ip {
+    // mirror SocketAddr::new: union literal as a switch-arm value, with a
+    // sibling divergent (return) arm, bound to a local, then into a struct
+    let inner = switch k {
+        1 => { return Ip { kind: 9, inner: Inner { v4: V4 { s: 0xDEADu32 } } }; }
+        0 => {
+            let z = std::mem::zeroed::<V4>();
+            z.s = x;
+            Inner { v4: z }
+        }
+        _ => std::intrinsics::unreachable()
+    };
+    Ip { kind: k, inner: inner }
+}
+fn main() -> i32 {
+    let ip = make(0, 0x0100007Fu32);
+    libc::printf("kind=%d inner.v4.s=%u (want 0 %u)\n".as_ptr() as &libc::c_char,
+        ip.kind, ip.inner.v4.s, 0x0100007Fu32);
+    if ip.kind == 0 && ip.inner.v4.s == 0x0100007Fu32 { 0 } else { 1 }
+}
