@@ -1,0 +1,42 @@
+name: Aluminac
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  porting-gates:
+    name: Aluminac porting gates (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Install LLVM 22
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/llvm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-22-dev
+
+      - name: Install Tree-sitter (with runtime)
+        run: |
+          npm install -g tree-sitter-cli
+          curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.5.tar.gz | tar -xz
+          cd tree-sitter-*
+          make
+          sudo make install
+          sudo ldconfig
+
+      - name: Run porting gates
+        timeout-minutes: 30
+        run: make porting-gates -j8
