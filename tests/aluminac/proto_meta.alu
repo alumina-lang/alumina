@@ -1,0 +1,26 @@
+// Verify the `proto_meta` lang protocol — matches types that are themselves
+// protocols. Aluminac wraps protocols as IrTyTag::Protocol after substitution,
+// so the `is`-check just needs to look at that tag.
+
+protocol MyProto<Self> {
+    fn foo(self: &Self);
+}
+
+#[lang(proto_meta)]
+protocol Meta<Self> {}
+
+extern "intrinsic" fn uninitialized<T>() -> T;
+
+struct NotAProto {}
+
+fn check_proto<T>() -> bool {
+    uninitialized::<T>() is Meta
+}
+
+fn main() -> i32 {
+    if !check_proto::<MyProto>() { return 1; }
+    if check_proto::<NotAProto>() { return 2; }
+    if check_proto::<i32>() { return 3; }
+    if check_proto::<&[u8]>() { return 4; }
+    0
+}

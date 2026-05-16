@@ -1,0 +1,71 @@
+// Test: #[lang(builtin_X)] support for methods on builtin types
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+#[lang(builtin_i32)]
+struct i32 {}
+
+impl i32 {
+    fn max_value() -> i32 { 2147483647 }
+    fn min_value() -> i32 { -2147483648 }
+    fn abs(self: i32) -> i32 {
+        if self < 0 { 0 - self } else { self }
+    }
+    fn is_positive(self: i32) -> bool {
+        self > 0
+    }
+    fn wrapping_add(self: i32, other: i32) -> i32 {
+        self + other
+    }
+}
+
+#[lang(builtin_u8)]
+struct u8 {}
+
+impl u8 {
+    fn is_ascii_uppercase(self: u8) -> bool {
+        self >= 65u8 && self <= 90u8
+    }
+}
+
+// Make sure regular struct methods still work
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    fn sum(self: &Point) -> i32 {
+        self.x + self.y
+    }
+}
+
+fn main() -> i32 {
+    // Test 1: Static method
+    if i32::max_value() != 2147483647 { return 1; }
+
+    // Test 2: Instance method by value
+    let x: i32 = -42;
+    if x.abs() != 42 { return 2; }
+
+    // Test 3: Another value method
+    let y: i32 = 5;
+    if !y.is_positive() { return 3; }
+    let z: i32 = -1;
+    if z.is_positive() { return 4; }
+
+    // Test 4: Method with extra arg
+    let a: i32 = 10;
+    if a.wrapping_add(20) != 30 { return 5; }
+
+    // Test 5: u8 method
+    let c: u8 = 65u8; // 'A'
+    if !c.is_ascii_uppercase() { return 6; }
+    let d: u8 = 97u8; // 'a'
+    if d.is_ascii_uppercase() { return 7; }
+
+    // Test 6: Regular struct methods still work
+    let p = Point { x: 10, y: 20 };
+    if p.sum() != 30 { return 8; }
+
+    0
+}

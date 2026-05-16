@@ -1,0 +1,58 @@
+// Protocol conformance: "expr is Protocol" compile-time checks.
+// We need to define the built-in protocols since the simple sysroot
+// doesn't include them.
+
+#[lang(proto_zero_sized)]
+protocol ZeroSized {}
+#[lang(proto_primitive)]
+protocol Primitive {}
+#[lang(proto_numeric)]
+protocol Numeric {}
+#[lang(proto_integer)]
+protocol Integer {}
+#[lang(proto_floating_point)]
+protocol FloatingPoint {}
+#[lang(proto_signed)]
+protocol Signed {}
+#[lang(proto_unsigned)]
+protocol Unsigned {}
+#[lang(proto_pointer)]
+protocol Pointer {}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let i: i32 = 0i32;
+    let u: u32 = 0u32;
+    let f: f64 = 0.0f64;
+    let b: bool = false;
+    let p: &i32 = &i;
+
+    // Signed / Unsigned
+    if !(i is Signed) { return 1i32; }
+    if u is Signed { return 2i32; }
+    if !(u is Unsigned) { return 3i32; }
+    if i is Unsigned { return 4i32; }
+
+    // FloatingPoint
+    if !(f is FloatingPoint) { return 5i32; }
+    if i is FloatingPoint { return 6i32; }
+
+    // Pointer
+    if !(p is Pointer) { return 7i32; }
+    if i is Pointer { return 8i32; }
+
+    // Primitive
+    if !(i is Primitive) { return 9i32; }
+    if !(b is Primitive) { return 10i32; }
+
+    // Numeric
+    if !(i is Numeric) { return 11i32; }
+    if !(f is Numeric) { return 12i32; }
+    if b is Numeric { return 13i32; }
+
+    // Integer
+    if !(i is Integer) { return 14i32; }
+    if !(u is Integer) { return 15i32; }
+    if f is Integer { return 16i32; }
+
+    0i32
+}

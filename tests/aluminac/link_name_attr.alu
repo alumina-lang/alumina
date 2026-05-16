@@ -1,0 +1,25 @@
+// Test: #[link_name("...")] overrides the LLVM symbol name a function
+// resolves to at link time. Without this attribute the declared Alumina
+// name was used directly for extern functions, so calling the renamed
+// helper below would link-fail (no `c_string_len` in libc).
+//
+// We declare a function under an Alumina-specific name and point it at
+// libc's `strlen`, then verify that calling the Alumina-named function
+// actually invokes strlen.
+
+#[link_name("strlen")]
+extern "C" fn c_string_len(s: &u8) -> usize;
+
+fn main() -> i32 {
+    let s = "hello\0";
+    let len = c_string_len(&s[0]);
+    if len != 5usize { return 1; }
+
+    let empty = "\0";
+    if c_string_len(&empty[0]) != 0usize { return 2; }
+
+    let longer = "abcdefghij\0";
+    if c_string_len(&longer[0]) != 10usize { return 3; }
+
+    0
+}

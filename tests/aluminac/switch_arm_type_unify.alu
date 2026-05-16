@@ -1,0 +1,59 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Switch arms producing tuples with Option must unify on a single
+// concrete type. Pre-fix, an arm like `(Option::none(), Option::none())`
+// had its T inferred as void (no context), giving Option<void> whose
+// layout (1 byte) doesn't match Option<i32>'s (8 bytes); aluminac
+// then bitcast-blasted the void-tuple over the i32-tuple slot at the
+// merge point and read garbage padding.
+//
+// Surfaced as the runtime panic in `Forked::spawn`'s ChildStdio::new
+// (see PORTING_STATUS std/process entry); that was a downstream
+// symptom of this codegen bug. Fix lives in `lower_switch_as_if_else`:
+// pre-pass to determine the unified arm type, then propagate it via
+// `expected_type` into each arm's lowering.
+
+enum Kind { Piped, Inherit }
+
+fn make_pair(k: Kind) -> (Option<i32>, Option<i32>) {
+    let pair = switch k {
+        Kind::Piped => (Option::some(7i32), Option::some(8i32)),
+        Kind::Inherit => (Option::none(), Option::none()),
+    };
+    pair
+}
+
+fn main() -> i32 {
+    let p1 = make_pair(Kind::Inherit);
+    if p1.0.is_some() { return 1; }
+    if p1.1.is_some() { return 2; }
+
+    let p2 = make_pair(Kind::Piped);
+    if !p2.0.is_some() || p2.0.unwrap() != 7i32 { return 3; }
+    if !p2.1.is_some() || p2.1.unwrap() != 8i32 { return 4; }
+
+    // Repeated calls — pre-fix the tuple slot stored garbage from the
+    // bitcast, so a second/third call produced different (corrupted)
+    // values for fds.1 each time.
+    let p3 = make_pair(Kind::Inherit);
+    if p3.0.is_some() { return 5; }
+    if p3.1.is_some() { return 6; }
+
+    let p4 = make_pair(Kind::Inherit);
+    if p4.0.is_some() { return 7; }
+    if p4.1.is_some() { return 8; }
+
+    // Same shape with three Option<&[u8]> elements — exercises a
+    // layout where the Option's payload is a pointer-pair (16 bytes)
+    // and the arm-mismatch bitcast would have been even more
+    // destructive.
+    let triple = switch 1i32 {
+        0i32 => (Option::some("a"), Option::some("b"), Option::some("c")),
+        _ => (Option::none(), Option::none(), Option::none()),
+    };
+    if triple.0.is_some() { return 9; }
+    if triple.1.is_some() { return 10; }
+    if triple.2.is_some() { return 11; }
+
+    0
+}

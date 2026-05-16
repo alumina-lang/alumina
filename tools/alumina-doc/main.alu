@@ -6,9 +6,9 @@ use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, re
 
 use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
 
-use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
-use aluminac::lib::arena::Arena;
-use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
+use aluminac_common::common::{NodeVisitorExt, child_by, children_by};
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeVisitor, FieldKind};
 
 use alumina_doc::error::{Error, Result, anywho, bail, from_io, from_fmt};
 use alumina_doc::common::{Item, ItemKind, Path, ParseContext, DoctestWriter, ItemBag, LinkContext};
@@ -138,7 +138,7 @@ impl PageWriter<T: std::io::Writable<T>> {
     }
 
     fn write_impl_header(self: &PageWriter<T>, item: &Item, node: Option<Node>, first: bool) -> Result<()> {
-        use aluminac::lib::node_kinds::{NODE_KINDS, NodeKind};
+        use aluminac_common::node_kinds::{NODE_KINDS, NodeKind};
 
         if !node.is_some() || NODE_KINDS[node.unwrap().symbol() as usize] != NodeKind::ImplBlock {
             return Result::ok(());
@@ -238,8 +238,8 @@ impl PageWriter<T: std::io::Writable<T>> {
     }
 
     fn expand_mixin(self: &PageWriter<T>, item: &Item, methods: &mut HashSet<&[u8]>) -> Result<()> {
-        use aluminac::lib::common::child_by;
-        use aluminac::lib::node_kinds::FieldKind;
+        use aluminac_common::common::child_by;
+        use aluminac_common::node_kinds::FieldKind;
 
         let proto_path = item.node
             .child_by!(FieldKind::Protocol)

@@ -1,0 +1,33 @@
+// Verify the `proto_same_base_as` lang protocol: matches types that are
+// monomorphizations of the same generic base. Compares the underlying
+// struct/enum def-id rather than the resolved IrTy pointer (since two
+// different mono'd instantiations have different IrTy pointers but the
+// same source def).
+
+#[lang(proto_same_base_as)]
+protocol SameBaseAs<Self, T> {}
+
+extern "intrinsic" fn uninitialized<T>() -> T;
+
+struct Box<T> { _data: T }
+struct OtherBox<T> { _data: T }
+
+fn check<A, B>() -> bool {
+    uninitialized::<A>() is SameBaseAs<B>
+}
+
+fn main() -> i32 {
+    // Same base, different type args — match.
+    if !check::<Box<i32>, Box<f64>>() { return 1; }
+    if !check::<Box<i32>, Box<i32>>() { return 2; }
+    if !check::<Box<&[u8]>, Box<bool>>() { return 3; }
+
+    // Different base — no match.
+    if check::<Box<i32>, OtherBox<i32>>() { return 4; }
+
+    // Non-struct types fall through to no-match.
+    if check::<Box<i32>, i32>() { return 5; }
+    if check::<i32, i64>() { return 6; }
+
+    0
+}

@@ -1,0 +1,45 @@
+// Closure features beyond the basics covered by closures.alu:
+//
+//   1. Closure-of-closure: a closure that returns another closure.
+//   2. Closure as Fn-protocol arg: pass a closure to a function bounded
+//      by `F: Fn(...) -> R` and call it.
+//   3. Closure of two layers, passed to a generic.
+
+extern "intrinsic" fn uninitialized<T>() -> T;
+
+fn apply_one<F>(f: F) -> i32 {
+    f(7i32)
+}
+
+fn apply_two<F>(f: F) -> i32 {
+    f(2i32, 3i32)
+}
+
+fn make_adder(by: i32) -> typeof(|=by, x: i32| -> i32 { x + by }) {
+    |=by, x: i32| -> i32 { x + by }
+}
+
+fn main() -> i32 {
+    // 1. Pass a closure to a generic Fn-protocol arg.
+    let result = apply_one(|x: i32| -> i32 { x * 2i32 });
+    if result != 14i32 { return 1i32; }
+
+    // 2. Two-arg closure.
+    let r2 = apply_two(|a: i32, b: i32| -> i32 { a + b });
+    if r2 != 5i32 { return 2i32; }
+
+    // 3. Capturing closure passed to a generic.
+    let mul = 4i32;
+    let r3 = apply_one(|=mul, x: i32| -> i32 { x * mul });
+    if r3 != 28i32 { return 3i32; }
+
+    // 4. Closure-returning closure (factory).
+    let add5 = make_adder(5i32);
+    if add5(10i32) != 15i32 { return 4i32; }
+    if add5(20i32) != 25i32 { return 5i32; }
+
+    let add100 = make_adder(100i32);
+    if add100(0i32) != 100i32 { return 6i32; }
+
+    0i32
+}

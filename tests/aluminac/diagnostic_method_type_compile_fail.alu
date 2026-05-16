@@ -1,0 +1,17 @@
+// compile_fail: locks in that aluminac reports the receiver type in
+// "could not resolve method" errors. Before the diagnostic fix landed
+// on 2026-05-14, the output was "could not resolve method 'free' on
+// type ''" — the type name was lost when the FieldAccess's lowering
+// returned void.
+//
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+use std::string::StringBuf;
+
+fn main() -> i32 {
+    let buf = StringBuf::new();
+    // No such method on StringBuf. Expected error message: contains
+    // 'StringBuf' (the receiver type), not 'type \'\''.
+    buf.frobnicate_xyz();
+    0i32
+}

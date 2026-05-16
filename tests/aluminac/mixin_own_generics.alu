@@ -1,0 +1,44 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A mixin with its own `<T>` generic params inside a non-generic impl block.
+// Aluminac used to drop the mixin's own generics (only carrying the impl's),
+// so dispatch on `Container<X>` substituted nothing for T inside the protocol
+// args `Equatable<Container<T>>` — the parameter type fell through to whatever
+// stale type_map entry was last set, producing a call to the wrong mono of
+// not_equals (different element type, wrong field offsets).
+use std::cmp::Equatable;
+
+struct Container<T> {
+    inner: T,
+}
+
+impl Container<T> {
+    fn new(v: T) -> Container<T> { Container::<T> { inner: v } }
+    fn equals<T: Equatable<T>>(lhs: &Container<T>, rhs: &Container<T>) -> bool {
+        lhs.inner.equals(&rhs.inner)
+    }
+}
+
+impl Container {
+    mixin<T: Equatable<T>> Equatable<Container<T>>;
+}
+
+fn pollute_with_i32() {
+    let a = Container::new(5i32);
+    let b = Container::new(5i32);
+    let _ = a != b;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    pollute_with_i32();
+
+    let a = Container::new(5usize);
+    let b = Container::new(5usize);
+    let c = Container::new(7usize);
+
+    if a != b { return 1i32; }
+    if !(a != c) { return 2i32; }
+    if !(a == b) { return 3i32; }
+    if a == c { return 4i32; }
+
+    0i32
+}

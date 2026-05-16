@@ -1,0 +1,131 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::iter::*;
+
+fn test_sum_i32() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let it = arr[0usize..5usize].iter();
+    let s = it.sum();
+    if s != 15i32 { return 1i32; }
+    0i32
+}
+
+fn test_sum_empty() -> i32 {
+    let arr: [i32; 0];
+    let it = arr[0usize..0usize].iter();
+    let s = it.sum();
+    if s != 0i32 { return 10i32; }
+    0i32
+}
+
+fn test_sum_usize() -> i32 {
+    let arr = [10usize, 20usize, 30usize];
+    let it = arr[0usize..3usize].iter();
+    let s = it.sum();
+    if s != 60usize { return 20i32; }
+    0i32
+}
+
+fn test_sum_with_map() -> i32 {
+    let arr = [1i32, 2i32, 3i32];
+    let it = arr[0usize..3usize].iter();
+    let s = it.map::<i32>(|v: i32| -> i32 { v * v }).sum();
+    if s != 14i32 { return 30i32; } // 1 + 4 + 9 = 14
+    0i32
+}
+
+fn test_sum_with_take() -> i32 {
+    let arr = [10i32, 20i32, 30i32, 40i32, 50i32];
+    let it = arr[0usize..5usize].iter();
+    let s = it.take(3usize).sum();
+    if s != 60i32 { return 40i32; } // 10 + 20 + 30
+    0i32
+}
+
+fn test_fill_slice() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let it = arr[0usize..5usize].iter();
+    let buf: [i32; 3];
+    let n = it.fill_slice(&buf);
+    if n != 3usize { return 50i32; }
+    if buf[0] != 1i32 { return 51i32; }
+    if buf[1] != 2i32 { return 52i32; }
+    if buf[2] != 3i32 { return 53i32; }
+    0i32
+}
+
+fn test_all_any() -> i32 {
+    let arr = [2i32, 4i32, 6i32, 8i32];
+    let it1 = arr[0usize..4usize].iter();
+    if !it1.all(|v: i32| -> bool { v % 2i32 == 0i32 }) { return 60i32; }
+
+    let it2 = arr[0usize..4usize].iter();
+    if it2.any(|v: i32| -> bool { v % 2i32 != 0i32 }) { return 61i32; }
+
+    let arr2 = [1i32, 2i32, 3i32];
+    let it3 = arr2[0usize..3usize].iter();
+    if it3.all(|v: i32| -> bool { v > 1i32 }) { return 62i32; }
+
+    let it4 = arr2[0usize..3usize].iter();
+    if !it4.any(|v: i32| -> bool { v == 2i32 }) { return 63i32; }
+
+    0i32
+}
+
+fn test_find_and_find_index() -> i32 {
+    let arr = [10i32, 20i32, 30i32, 40i32, 50i32];
+
+    let it1 = arr[0usize..5usize].iter();
+    let found = it1.find(|v: i32| -> bool { v > 25i32 });
+    if found.is_none() { return 70i32; }
+    if found.unwrap() != 30i32 { return 71i32; }
+
+    let it2 = arr[0usize..5usize].iter();
+    let idx = it2.find_index(|v: i32| -> bool { v == 30i32 });
+    if idx.is_none() { return 72i32; }
+    if idx.unwrap() != 2usize { return 73i32; }
+
+    let it3 = arr[0usize..5usize].iter();
+    let not_found = it3.find(|v: i32| -> bool { v > 100i32 });
+    if not_found.is_some() { return 74i32; }
+
+    0i32
+}
+
+fn test_reduce() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32];
+    let it = arr[0usize..4usize].iter();
+    let product = it.reduce::<i32>(1i32, |acc: i32, v: i32| -> i32 { acc * v });
+    if product != 24i32 { return 80i32; }
+    0i32
+}
+
+fn test_repeat_iter() -> i32 {
+    let it = repeat::<i32>(42i32);
+    let v1 = it.next();
+    if v1.unwrap() != 42i32 { return 90i32; }
+    let v2 = it.next();
+    if v2.unwrap() != 42i32 { return 91i32; }
+
+    // Take from repeat
+    let it2 = repeat::<i32>(7i32);
+    let vec = it2.take(3usize).to_vector();
+    defer vec.free();
+    if vec.len() != 3usize { return 92i32; }
+    if vec[0] != 7i32 { return 93i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_sum_i32(); if r != 0i32 { return r; }
+    let r = test_sum_empty(); if r != 0i32 { return r; }
+    let r = test_sum_usize(); if r != 0i32 { return r; }
+    let r = test_sum_with_map(); if r != 0i32 { return r; }
+    let r = test_sum_with_take(); if r != 0i32 { return r; }
+    let r = test_fill_slice(); if r != 0i32 { return r; }
+    let r = test_all_any(); if r != 0i32 { return r; }
+    let r = test_find_and_find_index(); if r != 0i32 { return r; }
+    let r = test_reduce(); if r != 0i32 { return r; }
+    let r = test_repeat_iter(); if r != 0i32 { return r; }
+    0i32
+}

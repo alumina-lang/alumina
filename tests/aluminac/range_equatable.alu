@@ -1,0 +1,65 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `==` / `!=` on every range variant, plus protocol conformance to
+// std::cmp::Equatable so ranges can be passed to generic functions
+// bounded `T: Equatable<T>`.
+
+use std::cmp::Equatable;
+
+fn equals_via_proto<T: Equatable<T>>(a: &T, b: &T) -> bool {
+    a.equals(b)
+}
+
+fn not_equals_via_proto<T: Equatable<T>>(a: &T, b: &T) -> bool {
+    a.not_equals(b)
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Range
+    if !((1..5) == (1..5)) { return 1i32; }
+    if (1..5) != (1..5) { return 2i32; }
+    if !((1..5) != (1..6)) { return 3i32; }
+
+    // RangeFrom
+    if !((1i32..) == (1i32..)) { return 4i32; }
+    if (1i32..) != (1i32..) { return 5i32; }
+    if !((1i32..) != (2i32..)) { return 6i32; }
+
+    // RangeTo
+    if !((..5i32) == (..5i32)) { return 7i32; }
+    if (..5i32) != (..5i32) { return 8i32; }
+    if !((..5i32) != (..6i32)) { return 9i32; }
+
+    // RangeToInclusive
+    if !((..=5i32) == (..=5i32)) { return 10i32; }
+    if !((..=5i32) != (..=6i32)) { return 11i32; }
+
+    // RangeInclusive
+    if !((1..=5) == (1..=5)) { return 12i32; }
+    if (1..=5) != (1..=5) { return 13i32; }
+    if !((1..=5) != (1..=6)) { return 14i32; }
+
+    // RangeFull — empty struct, all instances equal.
+    let f1: RangeFull<i32> = RangeFull { };
+    let f2: RangeFull<i32> = RangeFull { };
+    if !(f1 == f2) { return 15i32; }
+
+    // Protocol conformance: pass ranges to generic Equatable<T>-bounded fn.
+    let r1 = 1..5;
+    let r2 = 1..5;
+    let r3 = 1..6;
+    if !equals_via_proto(&r1, &r2) { return 16i32; }
+    if equals_via_proto(&r1, &r3) { return 17i32; }
+    if not_equals_via_proto(&r1, &r2) { return 18i32; }
+    if !not_equals_via_proto(&r1, &r3) { return 19i32; }
+
+    let rf1 = 7i32..;
+    let rf2 = 8i32..;
+    if equals_via_proto(&rf1, &rf2) { return 20i32; }
+    if !not_equals_via_proto(&rf1, &rf2) { return 21i32; }
+
+    let ri1 = 1..=5;
+    let ri2 = 1..=5;
+    if !equals_via_proto(&ri1, &ri2) { return 22i32; }
+
+    0i32
+}

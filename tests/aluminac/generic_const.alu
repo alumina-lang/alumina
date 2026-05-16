@@ -1,0 +1,46 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+//
+// Generic consts: `const NAME<T> = expr<T>;` — referenced via `NAME::<T>` at
+// use sites. Aluminac binds the const's generic_params to the resolved type
+// args, lowers the init expression with those bindings, and (for consts)
+// const-evals to inline the value.
+//
+// Used by sysroot/std/typing.alu's `internal::FIELDS<E>` / `ENUM_VARIANTS<E>`
+// / `VTABLE<Protos, T>` to bridge between Type-method API and the underlying
+// reflection intrinsics. Item #2 ("Item-as-type-arg generics") in
+// PORTING_STATUS.md.
+
+mod internal {
+    const SIZE_OF<T> = std::intrinsics::size_of::<T>();
+    const ALIGN_OF<T> = std::intrinsics::align_of::<T>();
+    const NAME<T> = std::typing::type_name::<T>();
+}
+
+// Use through a generic wrapper: the call site has its own T, so the
+// substitution flows two levels deep.
+fn pass_through<U>() -> usize {
+    internal::SIZE_OF::<U>
+}
+
+fn main() -> i32 {
+    if internal::SIZE_OF::<i32> != 4usize { return 1; }
+    if internal::SIZE_OF::<u8> != 1usize { return 2; }
+    if internal::ALIGN_OF::<u8> != 1usize { return 3; }
+    if internal::ALIGN_OF::<u64> != 8usize { return 4; }
+
+    // The slice-returning intrinsic carries through substitution.
+    let s = internal::NAME::<u8>;
+    if s.len() != 2usize { return 5; }
+    if s[0] != ('u' as u8) { return 6; }
+    if s[1] != ('8' as u8) { return 7; }
+
+    // Const referenced via `typeof(...)` resolves the const's substituted
+    // type (sysroot's typing.alu uses this for `fn fields(self) -> typeof(...)`).
+    let x: typeof(internal::SIZE_OF::<i32>) = 42usize;
+    if x != 42usize { return 8; }
+
+    if pass_through::<u16>() != 2usize { return 9; }
+    if pass_through::<u64>() != 8usize { return 10; }
+
+    0
+}

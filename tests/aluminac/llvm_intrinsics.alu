@@ -1,0 +1,72 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Test the generic std::intrinsics::llvm<Ret>(name, ...) intrinsic
+
+fn test_uadd_with_overflow() -> i32 {
+    // Normal add: 1 + 2 = 3, no overflow
+    let r: (usize, bool) = std::intrinsics::llvm::<(usize, bool)>("llvm.uadd.with.overflow", 1usize, 2usize);
+    if r.0 != 3usize { return 1i32; }
+    if r.1 { return 2i32; }
+
+    // Overflow: max + 1
+    let max: usize = 0usize - 1usize; // wraps to max usize
+    let r2: (usize, bool) = std::intrinsics::llvm::<(usize, bool)>("llvm.uadd.with.overflow", max, 1usize);
+    if !r2.1 { return 3i32; }
+
+    0i32
+}
+
+fn test_usub_with_overflow() -> i32 {
+    // Normal sub: 5 - 3 = 2, no overflow
+    let r: (usize, bool) = std::intrinsics::llvm::<(usize, bool)>("llvm.usub.with.overflow", 5usize, 3usize);
+    if r.0 != 2usize { return 10i32; }
+    if r.1 { return 11i32; }
+
+    // Underflow: 0 - 1
+    let r2: (usize, bool) = std::intrinsics::llvm::<(usize, bool)>("llvm.usub.with.overflow", 0usize, 1usize);
+    if !r2.1 { return 12i32; }
+
+    0i32
+}
+
+fn test_umul_with_overflow() -> i32 {
+    // Normal mul: 6 * 7 = 42, no overflow
+    let r: (usize, bool) = std::intrinsics::llvm::<(usize, bool)>("llvm.umul.with.overflow", 6usize, 7usize);
+    if r.0 != 42usize { return 20i32; }
+    if r.1 { return 21i32; }
+
+    // Overflow: max * 2
+    let max: usize = 0usize - 1usize;
+    let r2: (usize, bool) = std::intrinsics::llvm::<(usize, bool)>("llvm.umul.with.overflow", max, 2usize);
+    if !r2.1 { return 22i32; }
+
+    0i32
+}
+
+fn test_u32_overflow() -> i32 {
+    // Test with u32 to verify type parameterization
+    let r: (u32, bool) = std::intrinsics::llvm::<(u32, bool)>("llvm.uadd.with.overflow", 4294967295u32, 1u32);
+    if !r.1 { return 30i32; }
+
+    let r2: (u32, bool) = std::intrinsics::llvm::<(u32, bool)>("llvm.uadd.with.overflow", 100u32, 200u32);
+    if r2.0 != 300u32 { return 31i32; }
+    if r2.1 { return 32i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_uadd_with_overflow();
+    if r != 0 { return r; }
+
+    let r = test_usub_with_overflow();
+    if r != 0 { return r; }
+
+    let r = test_umul_with_overflow();
+    if r != 0 { return r; }
+
+    let r = test_u32_overflow();
+    if r != 0 { return r; }
+
+    0i32
+}

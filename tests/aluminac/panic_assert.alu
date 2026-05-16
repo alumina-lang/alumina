@@ -1,0 +1,47 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+fn test_assert_pass() -> i32 {
+    assert!(true);
+    assert!(1i32 == 1i32);
+    0i32
+}
+
+fn test_assert_eq_pass() -> i32 {
+    assert_eq!(42i32, 42i32);
+    assert_eq!(0usize, 0usize);
+    assert_eq!("hello", "hello");
+    0i32
+}
+
+fn test_assert_ne_pass() -> i32 {
+    assert_ne!(42i32, 43i32);
+    assert_ne!(0usize, 1usize);
+    assert_ne!("hello", "world");
+    0i32
+}
+
+fn test_panic_format() -> i32 {
+    // Test that panic with format args compiles (we don't actually call it)
+    // Just verify the macro expansion works
+    let should_panic = false;
+    if should_panic {
+        panic!("failed with value {}", 42i32);
+    }
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_assert_pass();
+    if r != 0i32 { return r; }
+
+    let r = test_assert_eq_pass();
+    if r != 0i32 { return r; }
+
+    let r = test_assert_ne_pass();
+    if r != 0i32 { return r; }
+
+    let r = test_panic_format();
+    if r != 0i32 { return r; }
+
+    0i32
+}

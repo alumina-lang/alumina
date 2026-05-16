@@ -1,0 +1,44 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Test array .iter() method and iterator combinators on arrays.
+// EXPECTED_EXIT: 42
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: array.iter() works directly (not just in for-loop)
+    let a: [i32; 4] = [10i32, 20i32, 30i32, 40i32];
+    let sum = 0i32;
+    let it = a.iter();
+    for item in it {
+        sum = sum + item;
+    }
+    if sum != 100i32 { return 1i32; }
+
+    // Test 2: array.iter().map()
+    let b: [i32; 3] = [1i32, 2i32, 3i32];
+    let sum2 = 0i32;
+    for item in b.iter().map(|x: i32| -> i32 { x * 10i32 }) {
+        sum2 = sum2 + item;
+    }
+    // 10 + 20 + 30 = 60
+    if sum2 != 60i32 { return 2i32; }
+
+    // Test 3: array.iter().filter()
+    let c: [i32; 5] = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let sum3 = 0i32;
+    for item in c.iter().filter(|x: i32| -> bool { x > 2i32 }) {
+        sum3 = sum3 + item;
+    }
+    // 3 + 4 + 5 = 12
+    if sum3 != 12i32 { return 3i32; }
+
+    // Test 4: array.len()
+    let d: [i32; 7] = [0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32];
+    if d.len() != 7usize { return 4i32; }
+
+    // Test 5: array.as_slice()
+    let e: [i32; 3] = [10i32, 20i32, 30i32];
+    let s: &[i32] = e.as_slice();
+    if s.len() != 3usize { return 5i32; }
+    if s[0] != 10i32 { return 6i32; }
+
+    42i32
+}

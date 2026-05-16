@@ -1,0 +1,1606 @@
+// LLVM code generation for the self-hosted Alumina compiler
+//
+// Takes monomorphized IR (CompilationUnit) and produces LLVM IR using the LLVM C API.
+// Each IR function becomes an LLVM function, each IR type maps to an LLVM type, etc.
+
+use llvm::*;
+use ast::*;
+use layout::compute_type_size;
+use aluminac_common::arena::Arena;
+use diagnostics::DiagnosticContext;
+use std::collections::HashMap;
+use std::option::Option;
+
+// Codegen context - holds all state needed during LLVM IR generation
+struct CodegenCtx {
+    arena: &mut Arena,
+    diag: &mut DiagnosticContext,
+    context: LLVMContextRef,
+    module: LLVMModuleRef,
+    builder: LLVMBuilderRef,
+    target_data: LLVMTargetDataRef,
+    target_machine: LLVMTargetMachineRef,
+
+    // Type cache: maps IrTy pointer -> LLVMTypeRef
+    type_cache: HashMap<usize, LLVMTypeRef>,
+    // Named struct type cache (for forward declarations)
+    struct_type_cache: HashMap<usize, LLVMTypeRef>,
+
+    // Function declarations: mangled_name hash -> LLVMValueRef
+    fn_decls: HashMap<u64, LLVMValueRef>,
+
+    // Set of extern C function hashes (for byval handling at call sites)
+    extern_c_fns: HashMap<u64, bool>,
+
+    // Extern C functions that use the sret return convention; maps the
+    // function name hash to its (original) struct return type so call sites
+    // can alloca a buffer of the right type and reload the value after the
+    // call. Populated when the function is declared (see `declare_function`).
+    extern_c_sret_fns: HashMap<u64, LLVMTypeRef>,
+
+    // Global declarations
+    global_decls: HashMap<u64, LLVMValueRef>,
+
+    // String literal cache
+    string_cache: HashMap<u64, LLVMValueRef>,
+    string_counter: usize,
+
+    // Counter for deterministic struct type naming
+    struct_name_counter: usize,
+
+    // Common types
+    void_type: LLVMTypeRef,
+    i1_type: LLVMTypeRef,
+    i8_type: LLVMTypeRef,
+    i16_type: LLVMTypeRef,
+    i32_type: LLVMTypeRef,
+    i64_type: LLVMTypeRef,
+    i128_type: LLVMTypeRef,
+    f32_type: LLVMTypeRef,
+    f64_type: LLVMTypeRef,
+    ptr_type: LLVMTypeRef,  // i8*
+    isize_type: LLVMTypeRef,  // i64 on 64-bit
+
+    // Pointer size in bytes
+    pointer_size: u32,
+
+    // Whether the target is x86_64 (for ABI-specific byval lowering).
+    // On other targets (e.g. aarch64), large structs are passed by-value at
+    // the LLVM IR level and the backend handles the indirect-arg ABI.
+    is_x86_64: bool,
+
+    // Optimization level
+    opt_level: main::OptLevel,
+
+    // Debug info
+    debug_enabled: bool,
+    di_builder: LLVMDIBuilderRef,
+    di_compile_unit: LLVMMetadataRef,
+    di_file_cache: HashMap<u32, LLVMMetadataRef>,
+    di_type_cache: HashMap<usize, LLVMMetadataRef>,
+}
+
+impl CodegenCtx {
+    fn new(arena: &mut Arena, diag: &mut DiagnosticContext, module_name: &[u8], debug_enabled: bool, opt_level: main::OptLevel) -> CodegenCtx {
+        // Initialize LLVM targets
+        llvm::initialize_native_target();
+
+        let context = LLVMContextCreate();
+
+        // Create a null-terminated module name
+        let name_buf = arena.alloc_slice::<u8>(module_name.len() + 1);
+        module_name.copy_to_nonoverlapping(&name_buf[0]);
+        name_buf[module_name.len()] = 0u8;
+        let module = LLVMModuleCreateWithNameInContext(
+            &name_buf[0] as &libc::c_char,
+            context
+        );
+
+        let builder = LLVMCreateBuilderInContext(context);
+
+        // Set up target
+        let triple = LLVMGetDefaultTargetTriple();
+        LLVMSetTarget(module, triple);
+
+        let target: LLVMTargetRef = std::mem::zeroed::<LLVMTargetRef>();
+        let error: &mut libc::c_char = null;
+        LLVMGetTargetFromTriple(triple, &target, &error);
+
+        let cpu = LLVMGetHostCPUName();
+        let features = LLVMGetHostCPUFeatures();
+
+        let codegen_opt = switch opt_level {
+            main::OptLevel::O0 => LLVMCodeGenOptLevel::None,
+            main::OptLevel::O1 => LLVMCodeGenOptLevel::Less,
+            main::OptLevel::O2 => LLVMCodeGenOptLevel::Default,
+            main::OptLevel::O3 => LLVMCodeGenOptLevel::Aggressive,
+            main::OptLevel::Os => LLVMCodeGenOptLevel::Default,
+            _ => LLVMCodeGenOptLevel::None,
+        };
+
+        let target_machine = LLVMCreateTargetMachine(
+            target,
+            triple,
+            cpu,
+            features,
+            codegen_opt,
+            LLVMRelocMode::PIC,
+            LLVMCodeModel::Default,
+        );
+
+        let target_data = LLVMCreateTargetDataLayout(target_machine);
+        LLVMSetModuleDataLayout(module, target_data);
+
+        let dl_str = LLVMCopyStringRepOfTargetData(target_data);
+        LLVMSetDataLayout(module, dl_str);
+        LLVMDisposeMessage(dl_str);
+
+        // Detect target arch from the triple ("x86_64-..." vs "aarch64-...")
+        let triple_str = std::ffi::CString::from_raw(triple).as_slice();
+        let prefix = "x86_64";
+        let is_x86_64 = triple_str.len() >= prefix.len();
+        if is_x86_64 {
+            for i in 0usize..prefix.len() {
+                if triple_str[i] != prefix[i] {
+                    is_x86_64 = false;
+                    break;
+                }
+            }
+        }
+
+        LLVMDisposeMessage(triple);
+        LLVMDisposeMessage(cpu);
+        LLVMDisposeMessage(features);
+
+        // Common types
+        let void_type = LLVMVoidTypeInContext(context);
+        let i1_type = LLVMInt1TypeInContext(context);
+        let i8_type = LLVMInt8TypeInContext(context);
+        let i16_type = LLVMInt16TypeInContext(context);
+        let i32_type = LLVMInt32TypeInContext(context);
+        let i64_type = LLVMInt64TypeInContext(context);
+        let i128_type = LLVMInt128TypeInContext(context);
+        let f32_type = LLVMFloatTypeInContext(context);
+        let f64_type = LLVMDoubleTypeInContext(context);
+        let ptr_type = LLVMPointerType(i8_type, 0);
+
+        let pointer_size = LLVMPointerSize(target_data);
+
+        // Debug info initialization
+        let di_builder: LLVMDIBuilderRef = std::mem::zeroed::<LLVMDIBuilderRef>();
+        let di_compile_unit: LLVMMetadataRef = std::mem::zeroed::<LLVMMetadataRef>();
+
+        if debug_enabled {
+            di_builder = LLVMCreateDIBuilder(module);
+
+            // Set module flags for DWARF
+            // Dwarf Version = 4, behavior = Error (1)
+            let dwarf_ver = LLVMConstInt(i32_type, 4u64, 0i32);
+            LLVMAddModuleFlag(module, 1u32, &"Dwarf Version\0"[0] as &libc::c_char, 13u32,
+                LLVMValueAsMetadata(dwarf_ver));
+            // Debug Info Version = 3
+            let di_ver = LLVMConstInt(i32_type, 3u64, 0i32);
+            LLVMAddModuleFlag(module, 1u32, &"Debug Info Version\0"[0] as &libc::c_char, 18u32,
+                LLVMValueAsMetadata(di_ver));
+
+            // Create compile unit with a default file
+            let default_file = LLVMDIBuilderCreateFile(
+                di_builder,
+                &"<unknown>\0"[0] as &libc::c_char, 9usize,
+                &".\0"[0] as &libc::c_char, 1usize,
+            );
+
+            let producer = "aluminac";
+            di_compile_unit = LLVMDIBuilderCreateCompileUnit(
+                di_builder,
+                1u32,  // LLVMDWARFSourceLanguageC
+                default_file,
+                &producer[0] as &libc::c_char, producer.len(),
+                0i32,       // is_optimized
+                &"\0"[0] as &libc::c_char, 0usize,  // flags
+                0u32,       // runtime_ver
+                &"\0"[0] as &libc::c_char, 0usize,  // split_name
+                LLVMDWARFEmissionKind::Full,
+                0u32,       // dwo_id
+                0i32,       // split_debug_inlining
+                0i32,       // debug_info_for_profiling
+                &"\0"[0] as &libc::c_char, 0usize,  // sys_root
+                &"\0"[0] as &libc::c_char, 0usize,  // sdk
+            );
+        }
+
+        CodegenCtx {
+            arena: arena,
+            diag: diag,
+            context: context,
+            module: module,
+            builder: builder,
+            target_data: target_data,
+            target_machine: target_machine,
+            type_cache: HashMap::new(),
+            struct_type_cache: HashMap::new(),
+            fn_decls: HashMap::new(),
+            extern_c_fns: HashMap::new(),
+            extern_c_sret_fns: HashMap::new(),
+            global_decls: HashMap::new(),
+            string_cache: HashMap::new(),
+            string_counter: 0,
+            struct_name_counter: 0,
+            void_type: void_type,
+            i1_type: i1_type,
+            i8_type: i8_type,
+            i16_type: i16_type,
+            i32_type: i32_type,
+            i64_type: i64_type,
+            i128_type: i128_type,
+            f32_type: f32_type,
+            f64_type: f64_type,
+            ptr_type: ptr_type,
+            isize_type: i64_type,  // TODO: use pointer size to pick correct width
+            pointer_size: pointer_size,
+            is_x86_64: is_x86_64,
+            opt_level: opt_level,
+            debug_enabled: debug_enabled,
+            di_builder: di_builder,
+            di_compile_unit: di_compile_unit,
+            di_file_cache: HashMap::new(),
+            di_type_cache: HashMap::new(),
+        }
+    }
+
+    // Convert an IR type to LLVM type
+    // A truly zero-sized LLVM type for void / ZST tuple/struct members.
+    // LLVM forbids `void` as an aggregate member; the old placeholder was
+    // `i8`, which adds 1 byte + alignment padding so the LLVM layout of an
+    // aggregate containing a ZST member disagreed with `compute_type_size`
+    // (which omits ZST members). That mismatch made slice `[T]` index
+    // stride (LLVM-type-derived) differ from `size_of::<T>()` /
+    // `slice::alloc` (compute_type_size-derived) — e.g.
+    // `HashItem<(K,())>` indexed at stride 24 while sized 16 — corrupting
+    // the heap (HashSet bootstrap Bug B). An empty struct `{}` is size 0,
+    // align 1 in LLVM, so the aggregate layout matches compute_type_size
+    // and field indices/offsets stay consistent.
+    fn zst_member_type(self: &mut CodegenCtx) -> LLVMTypeRef {
+        LLVMStructTypeInContext(self.context, null, 0, 0i32)
+    }
+
+    fn llvm_type(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
+        let key = ty as &void as usize;
+        // Safety: check for null/invalid type pointer
+        if key == 0 || key < 4096usize {
+            return self.void_type;
+        }
+        let cached = self.type_cache.get(&key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        let result = self.llvm_type_inner(ty);
+        self.type_cache.insert(key, result);
+        result
+    }
+
+    fn llvm_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
+        if ty.tag == IrTyTag::Builtin {
+            self.builtin_to_llvm(ty.builtin())
+        } else if ty.tag == IrTyTag::Pointer {
+            let inner_ptr = ty.inner() as &void as usize;
+            if inner_ptr == 0 || inner_ptr < 4096usize {
+                return self.ptr_type;
+            }
+            let inner_ty = self.llvm_type(ty.inner());
+            // LLVM doesn't support void*, use i8* instead
+            if LLVMGetTypeKind(inner_ty) == LLVMTypeKind::Void {
+                self.ptr_type
+            } else {
+                LLVMPointerType(inner_ty, 0)
+            }
+        } else if ty.tag == IrTyTag::Array {
+            // For zero-length arrays, use [0 x i8] to avoid issues with recursive element types
+            if ty.array_size() == 0 {
+                return LLVMArrayType(self.i8_type, 0);
+            }
+            let elem_ty = self.llvm_type(ty.inner());
+            // Can't have void element in arrays
+            let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.i8_type } else { elem_ty };
+            LLVMArrayType(safe_elem, ty.array_size() as u32)
+        } else if ty.tag == IrTyTag::Tuple {
+            if ty.elems().len() == 0 {
+                return self.void_type;
+            }
+            let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(ty.elems().len());
+            for i in 0usize..ty.elems().len() {
+                let elem_ty = self.llvm_type(ty.elems()[i]);
+                // LLVM doesn't allow void as a tuple member. Use a true
+                // zero-sized type so the tuple's LLVM layout matches
+                // compute_type_size (an i8 placeholder added size+padding,
+                // desyncing slice-index stride from size_of — Bug B).
+                if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
+                    llvm_elems[i] = self.zst_member_type();
+                } else {
+                    llvm_elems[i] = elem_ty;
+                }
+            }
+            LLVMStructTypeInContext(
+                self.context,
+                &llvm_elems[0],
+                ty.elems().len() as u32,
+                0i32 // not packed
+            )
+        } else if ty.tag == IrTyTag::Slice {
+            // Slice fat pointer: { data_ptr, usize }
+            let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
+            let inner_llvm = self.llvm_type(ty.inner());
+            let safe_inner = if LLVMGetTypeKind(inner_llvm) == LLVMTypeKind::Void { self.i8_type } else { inner_llvm };
+            llvm_elems[0] = LLVMPointerType(safe_inner, 0);
+            llvm_elems[1] = self.builtin_to_llvm(BuiltinType::USize);
+            LLVMStructTypeInContext(
+                self.context,
+                &llvm_elems[0],
+                2u32,
+                0i32
+            )
+        } else if ty.tag == IrTyTag::FnPointer {
+            // Function pointers are just i8* in LLVM
+            self.ptr_type
+        } else if ty.tag == IrTyTag::Fn {
+            // Fn types are ZSTs - no runtime representation
+            self.void_type
+        } else if ty.tag == IrTyTag::Protocol {
+            // Protocol types are compile-time markers; no runtime form.
+            self.void_type
+        } else if ty.tag == IrTyTag::Struct || ty.tag == IrTyTag::Closure {
+            let sr = ty.struct_ref();
+            self.llvm_struct_type(&sr)
+        } else if ty.tag == IrTyTag::Enum {
+            self.llvm_type(ty.enum_ref().underlying)
+        } else if ty.tag == IrTyTag::Void {
+            self.void_type
+        } else if ty.tag == IrTyTag::Never {
+            self.void_type
+        } else {
+            self.void_type
+        }
+    }
+
+    fn struct_cache_key(self: &CodegenCtx, s: &IrStructRef) -> usize {
+        let h: usize = s.id._value;
+        for i in 0usize..s.type_args.len() {
+            h = h * 31 + s.type_args[i] as &void as usize;
+        }
+        h
+    }
+
+    fn llvm_struct_type(self: &mut CodegenCtx, s: &IrStructRef) -> LLVMTypeRef {
+        let key = self.struct_cache_key(s);
+        let cached = self.struct_type_cache.get(&key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        if s.is_zero_sized {
+            // Zero-sized struct becomes {}
+            let result = LLVMStructTypeInContext(
+                self.context, null, 0, 0i32
+            );
+            self.struct_type_cache.insert(key, result);
+            return result;
+        }
+
+        // Create named struct for forward reference support
+        // Use mangled_name if available, fall back to struct name with unique suffix
+        let struct_name = if s.type_args.len() > 0 {
+            let counter = self.struct_name_counter;
+            self.struct_name_counter = self.struct_name_counter + 1usize;
+            self.mangle_struct_name(s.name, counter)
+        } else {
+            s.name
+        };
+        let name_buf = self.null_terminate(struct_name);
+        let struct_ty = LLVMStructCreateNamed(self.context, &name_buf[0] as &libc::c_char);
+        self.struct_type_cache.insert(key, struct_ty);
+
+        if s.is_union {
+            // Union: represent as [N x i64] to avoid LLVM optimizing away
+            // "padding" bytes that are meaningful for other variants.
+            // Using i64 array ensures 8-byte alignment and no internal padding holes.
+            // Note: we use compute_type_size from layout.alu instead of LLVMABISizeOfType
+            // because LLVM may return 0 for named struct types whose bodies haven't been
+            // set yet during recursive type construction.
+            let max_size: usize = 0;
+            for i in 0usize..s.fields.len() {
+                let size = compute_type_size(s.fields[i].ty, 8usize);
+                if size > max_size {
+                    max_size = size;
+                }
+            }
+            let n_i64s = (max_size as u64 + 7u64) / 8u64;
+            // Still need to trigger LLVM type creation for all variants
+            // so they exist when used in bitcasts later
+            for i in 0usize..s.fields.len() {
+                self.llvm_type(s.fields[i].ty);
+            }
+            let elems = self.arena.alloc_slice::<LLVMTypeRef>(1);
+            elems[0] = LLVMArrayType(self.i64_type, n_i64s as u32);
+            LLVMStructSetBody(struct_ty, &elems[0], 1, 0i32);
+        } else {
+            // Normal struct
+            let llvm_fields = self.arena.alloc_slice::<LLVMTypeRef>(s.fields.len());
+            for i in 0usize..s.fields.len() {
+                let field_ty = self.llvm_type(s.fields[i].ty);
+                // LLVM doesn't allow void as a struct member. Use a true
+                // zero-sized type (not an i8 placeholder) so the struct's
+                // LLVM layout matches compute_type_size and the offsets of
+                // fields *after* a ZST member don't shift — same Bug B
+                // family as the tuple case above.
+                if LLVMGetTypeKind(field_ty) == LLVMTypeKind::Void {
+                    llvm_fields[i] = self.zst_member_type();
+                } else {
+                    llvm_fields[i] = field_ty;
+                }
+            }
+            let packed_flag = if s.is_packed { 1i32 } else { 0i32 };
+            LLVMStructSetBody(struct_ty, &llvm_fields[0], s.fields.len() as u32, packed_flag);
+        }
+
+        struct_ty
+    }
+
+    fn builtin_to_llvm(self: &CodegenCtx, bt: BuiltinType) -> LLVMTypeRef {
+        switch bt {
+            BuiltinType::Void => self.void_type,
+            BuiltinType::Bool => self.i8_type, // bools are i8 in memory to avoid i1 load UB
+            BuiltinType::U8 => self.i8_type,
+            BuiltinType::I8 => self.i8_type,
+            BuiltinType::U16 => self.i16_type,
+            BuiltinType::I16 => self.i16_type,
+            BuiltinType::U32 => self.i32_type,
+            BuiltinType::I32 => self.i32_type,
+            BuiltinType::F32 => self.f32_type,
+            BuiltinType::U64 => self.i64_type,
+            BuiltinType::I64 => self.i64_type,
+            BuiltinType::F64 => self.f64_type,
+            BuiltinType::U128 => self.i128_type,
+            BuiltinType::I128 => self.i128_type,
+            BuiltinType::USize => {
+                if self.pointer_size == 8 { self.i64_type } else { self.i32_type }
+            },
+            BuiltinType::ISize => {
+                if self.pointer_size == 8 { self.i64_type } else { self.i32_type }
+            },
+            BuiltinType::Never => self.void_type,
+            _ => self.void_type,
+        }
+    }
+
+    /// Check if a param type needs indirect passing for extern C ABI.
+    /// Both x86_64 SysV and aarch64 PCS pass composite types > 16 bytes
+    /// indirectly: caller copies the struct to its stack frame and passes a
+    /// pointer to the callee. At the LLVM IR level we therefore lower the
+    /// parameter to a pointer and alloca+store the value at the call site.
+    /// The platform-specific `byval` attribute is only added on x86_64 (see
+    /// `uses_byval_attr`).
+    fn needs_byval(self: &mut CodegenCtx, llvm_ty: LLVMTypeRef) -> bool {
+        let kind = LLVMGetTypeKind(llvm_ty);
+        if kind == LLVMTypeKind::Struct {
+            let size = LLVMStoreSizeOfType(self.target_data, llvm_ty);
+            size > 16
+        } else {
+            false
+        }
+    }
+
+    /// Whether to emit the LLVM `byval` parameter attribute alongside the
+    /// indirect-arg lowering. This is the x86_64-specific lowering used by
+    /// clang; on aarch64 the same indirect ABI is achieved without the
+    /// attribute (clang emits a plain pointer parameter), and adding `byval`
+    /// there produces the wrong call sequence against C callees.
+    fn uses_byval_attr(self: &CodegenCtx) -> bool {
+        self.is_x86_64
+    }
+
+    /// Whether an extern C return type needs explicit sret lowering.
+    ///
+    /// LLVM's x86_64 backend implicitly converts a struct-typed return into
+    /// the SysV sret convention, but the AArch64 backend tries to return the
+    /// struct in registers (w0-w3, x4, x5 for a 32-byte struct), which does
+    /// not match the AArch64 PCS that requires the caller to pass a hidden
+    /// buffer pointer in x8 for composite returns > 16 bytes. So on aarch64
+    /// we materialize the sret convention explicitly: the LLVM function takes
+    /// `void` and a leading `ptr sret` parameter, and call sites alloca a
+    /// buffer and reload the value after the call.
+    fn needs_sret(self: &mut CodegenCtx, llvm_ret_ty: LLVMTypeRef) -> bool {
+        if self.is_x86_64 {
+            return false;
+        }
+        if LLVMGetTypeKind(llvm_ret_ty) != LLVMTypeKind::Struct {
+            return false;
+        }
+        LLVMStoreSizeOfType(self.target_data, llvm_ret_ty) > 16
+    }
+
+    fn llvm_fn_type(self: &mut CodegenCtx, ir_fn: &IrFunction) -> LLVMTypeRef {
+        self.llvm_fn_type_ext(ir_fn, false)
+    }
+
+    fn llvm_fn_type_ext(self: &mut CodegenCtx, ir_fn: &IrFunction, is_extern_c: bool) -> LLVMTypeRef {
+        let ret_type = self.llvm_type(ir_fn.return_type);
+        let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
+        let use_sret = is_extern_c && !is_void_ret && self.needs_sret(ret_type);
+
+        let extra = if use_sret { 1usize } else { 0usize };
+        let total_params = ir_fn.params.len() + extra;
+
+        let param_types = if total_params > 0 {
+            self.arena.alloc_slice::<LLVMTypeRef>(total_params)
+        } else {
+            std::mem::zeroed::<&mut [LLVMTypeRef]>()
+        };
+        if use_sret {
+            param_types[0] = LLVMPointerType(ret_type, 0u32);
+        }
+        for i in 0usize..ir_fn.params.len() {
+            let pty = self.llvm_type(ir_fn.params[i].ty);
+            // LLVM doesn't allow void as a param type
+            if LLVMGetTypeKind(pty) == LLVMTypeKind::Void {
+                param_types[i + extra] = self.i8_type;
+            } else if is_extern_c && self.needs_byval(pty) {
+                // For extern C, large structs are passed by pointer with byval attribute
+                param_types[i + extra] = LLVMPointerType(pty, 0u32);
+            } else {
+                param_types[i + extra] = pty;
+            }
+        }
+
+        // If return type is void-ish or sret-lowered, use LLVM void
+        let llvm_ret = if is_void_ret || use_sret {
+            self.void_type
+        } else {
+            ret_type
+        };
+
+        if total_params > 0 {
+            LLVMFunctionType(
+                llvm_ret,
+                &param_types[0],
+                total_params as u32,
+                if ir_fn.is_variadic { 1i32 } else { 0i32 }
+            )
+        } else {
+            LLVMFunctionType(
+                llvm_ret,
+                null,
+                0u32,
+                if ir_fn.is_variadic { 1i32 } else { 0i32 }
+            )
+        }
+    }
+
+    fn mangle_struct_name(self: &mut CodegenCtx, name: &[u8], key: usize) -> &[u8] {
+        // Create unique name for generic struct instantiation: "Name.123"
+        let suffix_buf: [u8; 20];
+        let suffix_len: usize = 0;
+        let val = key;
+        if val == 0usize {
+            suffix_buf[0] = '0';
+            suffix_len = 1usize;
+        } else {
+            while val > 0usize {
+                suffix_buf[suffix_len] = (val % 10usize) as u8 + '0';
+                val = val / 10usize;
+                suffix_len = suffix_len + 1usize;
+            }
+        }
+        let total = name.len() + 1usize + suffix_len;
+        let buf = self.arena.alloc_slice::<u8>(total);
+        for i in 0usize..name.len() { buf[i] = name[i]; }
+        buf[name.len()] = '.';
+        for i in 0usize..suffix_len {
+            buf[name.len() + 1usize + i] = suffix_buf[suffix_len - 1usize - i];
+        }
+        buf
+    }
+
+    fn null_terminate(self: &mut CodegenCtx, s: &[u8]) -> &[u8] {
+        let buf = self.arena.alloc_slice::<u8>(s.len() + 1);
+        s.copy_to_nonoverlapping(&buf[0]);
+        buf[s.len()] = 0u8;
+        buf
+    }
+
+    fn get_or_create_di_file(self: &mut CodegenCtx, file_id: u32) -> LLVMMetadataRef {
+        let cached = self.di_file_cache.get(&file_id);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        // Get the file path from diagnostics
+        let path = self.diag.files[file_id as usize].path;
+
+        // Split path into directory and filename
+        let last_slash: usize = 0;
+        let found_slash = false;
+        for i in 0usize..path.len() {
+            if path[i] == '/' {
+                last_slash = i;
+                found_slash = true;
+            }
+        }
+
+        let dir: &[u8];
+        let filename: &[u8];
+        if found_slash {
+            dir = path[0..last_slash];
+            filename = path[last_slash + 1..path.len()];
+        } else {
+            dir = ".";
+            filename = path;
+        }
+
+        let di_file = LLVMDIBuilderCreateFile(
+            self.di_builder,
+            &filename[0] as &libc::c_char, filename.len(),
+            &dir[0] as &libc::c_char, dir.len(),
+        );
+        self.di_file_cache.insert(file_id, di_file);
+        di_file
+    }
+
+    fn get_or_create_di_type(self: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+        let key = ty as &void as usize;
+        if key == 0 || key < 4096usize {
+            return std::mem::zeroed::<LLVMMetadataRef>();
+        }
+        let cached = self.di_type_cache.get(&key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        let result = self.create_di_type_inner(ty);
+        self.di_type_cache.insert(key, result);
+        result
+    }
+
+    fn create_di_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+        if ty.tag == IrTyTag::Void || ty.tag == IrTyTag::Never {
+            return std::mem::zeroed::<LLVMMetadataRef>();
+        }
+
+        if ty.tag == IrTyTag::Builtin {
+            let bt = ty.builtin();
+            let name: &[u8];
+            let encoding: u32;
+            let size_bits: u64;
+
+            switch bt {
+                BuiltinType::Bool => {
+                    name = "bool";
+                    encoding = 0x02u32; // DW_ATE_boolean
+                    size_bits = 8; // stored as i8
+                }
+                BuiltinType::I8 => { name = "i8"; encoding = 0x05u32; size_bits = 8; }
+                BuiltinType::I16 => { name = "i16"; encoding = 0x05u32; size_bits = 16; }
+                BuiltinType::I32 => { name = "i32"; encoding = 0x05u32; size_bits = 32; }
+                BuiltinType::I64 => { name = "i64"; encoding = 0x05u32; size_bits = 64; }
+                BuiltinType::I128 => { name = "i128"; encoding = 0x05u32; size_bits = 128; }
+                BuiltinType::ISize => { name = "isize"; encoding = 0x05u32; size_bits = 64; }
+                BuiltinType::U8 => { name = "u8"; encoding = 0x07u32; size_bits = 8; }
+                BuiltinType::U16 => { name = "u16"; encoding = 0x07u32; size_bits = 16; }
+                BuiltinType::U32 => { name = "u32"; encoding = 0x07u32; size_bits = 32; }
+                BuiltinType::U64 => { name = "u64"; encoding = 0x07u32; size_bits = 64; }
+                BuiltinType::U128 => { name = "u128"; encoding = 0x07u32; size_bits = 128; }
+                BuiltinType::USize => { name = "usize"; encoding = 0x07u32; size_bits = 64; }
+                BuiltinType::F32 => { name = "f32"; encoding = 0x04u32; size_bits = 32; }
+                BuiltinType::F64 => { name = "f64"; encoding = 0x04u32; size_bits = 64; }
+                _ => {
+                    return std::mem::zeroed::<LLVMMetadataRef>();
+                }
+            };
+
+            return LLVMDIBuilderCreateBasicType(
+                self.di_builder,
+                &name[0] as &libc::c_char, name.len(),
+                size_bits,
+                encoding,
+                0u32, // flags
+            );
+        }
+
+        if ty.tag == IrTyTag::Pointer {
+            let pointee_di = self.get_or_create_di_type(ty.inner());
+            return LLVMDIBuilderCreatePointerType(
+                self.di_builder,
+                pointee_di,
+                64u64, // size_in_bits (64-bit pointers)
+                0u32,  // align
+                0u32,  // addr_space
+                &"\0"[0] as &libc::c_char, 0usize,
+            );
+        }
+
+        // For complex types (slice, struct, tuple, array, enum, closure, fn pointer),
+        // represent as opaque byte blob using ABI size
+        let llvm_ty = self.llvm_type(ty);
+        let type_kind = LLVMGetTypeKind(llvm_ty);
+        if type_kind == LLVMTypeKind::Void {
+            return std::mem::zeroed::<LLVMMetadataRef>();
+        }
+
+        let abi_size = LLVMABISizeOfType(self.target_data, llvm_ty);
+        let size_bits = abi_size * 8;
+
+        let type_name: &[u8];
+        if ty.tag == IrTyTag::Slice { type_name = "slice"; }
+        else if ty.tag == IrTyTag::Struct { type_name = "struct"; }
+        else if ty.tag == IrTyTag::Tuple { type_name = "tuple"; }
+        else if ty.tag == IrTyTag::Array { type_name = "array"; }
+        else if ty.tag == IrTyTag::Enum { type_name = "enum"; }
+        else if ty.tag == IrTyTag::Closure { type_name = "closure"; }
+        else if ty.tag == IrTyTag::FnPointer { type_name = "fn"; }
+        else if ty.tag == IrTyTag::Fn { type_name = "fn"; }
+        else { type_name = "opaque"; }
+
+        LLVMDIBuilderCreateBasicType(
+            self.di_builder,
+            &type_name[0] as &libc::c_char, type_name.len(),
+            size_bits,
+            0x07u32, // DW_ATE_unsigned - treat as raw bytes
+            0u32,
+        )
+    }
+
+    fn name_hash(self: &CodegenCtx, name: &[u8]) -> u64 {
+        let h: u64 = 5381;
+        for i in 0usize..name.len() {
+            h = h * 33 + name[i] as u64;
+        }
+        h
+    }
+
+    // Auto-declare common libc functions that may be referenced by built-in slice methods
+    fn auto_declare_libc(self: &mut CodegenCtx, name: &[u8], hash: u64) -> LLVMValueRef {
+        // realloc(void*, size_t) -> void*
+        if name == "realloc" {
+            let param_types = self.arena.alloc_slice::<LLVMTypeRef>(2);
+            param_types[0] = self.ptr_type;  // void*
+            param_types[1] = self.i64_type;  // size_t
+            let fn_type = LLVMFunctionType(self.ptr_type, &param_types[0], 2u32, 0i32);
+            let fn_val = LLVMAddFunction(self.module, &"realloc\0"[0] as &libc::c_char, fn_type);
+            self.fn_decls.insert(hash, fn_val);
+            return fn_val;
+        }
+        // free(void*)
+        if name == "free" {
+            let param_types = self.arena.alloc_slice::<LLVMTypeRef>(1);
+            param_types[0] = self.ptr_type;  // void*
+            let fn_type = LLVMFunctionType(self.void_type, &param_types[0], 1u32, 0i32);
+            let fn_val = LLVMAddFunction(self.module, &"free\0"[0] as &libc::c_char, fn_type);
+            self.fn_decls.insert(hash, fn_val);
+            return fn_val;
+        }
+        // calloc(size_t, size_t) -> void*
+        if name == "calloc" {
+            let param_types = self.arena.alloc_slice::<LLVMTypeRef>(2);
+            param_types[0] = self.i64_type;
+            param_types[1] = self.i64_type;
+            let fn_type = LLVMFunctionType(self.ptr_type, &param_types[0], 2u32, 0i32);
+            let fn_val = LLVMAddFunction(self.module, &"calloc\0"[0] as &libc::c_char, fn_type);
+            self.fn_decls.insert(hash, fn_val);
+            return fn_val;
+        }
+        std::mem::zeroed::<LLVMValueRef>()
+    }
+
+    fn declare_function(self: &mut CodegenCtx, ir_fn: &IrFunction) -> LLVMValueRef {
+        let hash = self.name_hash(ir_fn.mangled_name);
+        let existing = self.fn_decls.get(&hash);
+        if existing.is_some() {
+            return existing.unwrap();
+        }
+
+        // Use extern C ABI handling for large struct params (byval)
+        let is_extern_c = ir_fn.abi.is_some() && ir_fn.body.is_none();
+        let fn_type = self.llvm_fn_type_ext(ir_fn, is_extern_c);
+        let name = self.null_terminate(ir_fn.mangled_name);
+        let llvm_fn = LLVMAddFunction(self.module, &name[0] as &libc::c_char, fn_type);
+
+        // Mark for call-site handling, and on x86_64 attach the `byval`
+        // parameter attribute that the SysV ABI lowering needs. On aarch64 the
+        // pointer parameter alone gives the right indirect-arg ABI.
+        if is_extern_c {
+            self.extern_c_fns.insert(hash, true);
+
+            let ret_ty = self.llvm_type(ir_fn.return_type);
+            let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
+            let use_sret = !is_void_ret && self.needs_sret(ret_ty);
+            let extra = if use_sret { 1u32 } else { 0u32 };
+
+            if use_sret {
+                self.extern_c_sret_fns.insert(hash, ret_ty);
+                let sret_kind = LLVMGetEnumAttributeKindForName(&"sret\0"[0] as &libc::c_char, 4usize);
+                let sret_attr = LLVMCreateTypeAttribute(self.context, sret_kind, ret_ty);
+                LLVMAddAttributeAtIndex(llvm_fn, 1u32, sret_attr);
+            }
+
+            if self.uses_byval_attr() {
+                let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
+                for i in 0usize..ir_fn.params.len() {
+                    let orig_ty = self.llvm_type(ir_fn.params[i].ty);
+                    if self.needs_byval(orig_ty) {
+                        let byval_attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
+                        LLVMAddAttributeAtIndex(llvm_fn, (i as u32) + 1u32 + extra, byval_attr);
+                    }
+                }
+            }
+        }
+
+        // Set linkage
+        if ir_fn.body.is_none() {
+            LLVMSetLinkage(llvm_fn, LLVMLinkage::External);
+        } else {
+            let is_export = false;
+            let is_main = false;
+            for i in 0usize..ir_fn.attributes.len() {
+                let linkage_attr = &ir_fn.attributes[i];
+                if linkage_attr.tag == AttrTag::Export {
+                    is_export = true;
+                } else if linkage_attr.tag == AttrTag::Main {
+                    is_main = true;
+                }
+            }
+            if is_export || is_main || ir_fn.abi.is_some() {
+                LLVMSetLinkage(llvm_fn, LLVMLinkage::External);
+            } else {
+                LLVMSetLinkage(llvm_fn, LLVMLinkage::Internal);
+            }
+        }
+
+        // Set calling convention
+        if ir_fn.abi.is_some() {
+            LLVMSetFunctionCallConv(llvm_fn, LLVMCallConv::C as u32);
+        }
+
+        // Set attributes
+        for i in 0usize..ir_fn.attributes.len() {
+            let attr = &ir_fn.attributes[i];
+            if attr.tag == AttrTag::NoReturn {
+                self.add_fn_attribute(llvm_fn, "noreturn");
+            } else if attr.tag == AttrTag::Inline {
+                self.add_fn_attribute(llvm_fn, "inlinehint");
+            } else if attr.tag == AttrTag::AlwaysInline {
+                self.add_fn_attribute(llvm_fn, "alwaysinline");
+            } else if attr.tag == AttrTag::NeverInline {
+                self.add_fn_attribute(llvm_fn, "noinline");
+            } else if attr.tag == AttrTag::Cold {
+                self.add_fn_attribute(llvm_fn, "cold");
+            } else if attr.tag == AttrTag::ReturnsTwice {
+                self.add_fn_attribute(llvm_fn, "returns_twice");
+            } else if attr.tag == AttrTag::Align {
+                LLVMSetAlignment(llvm_fn, attr.int_val() as u32);
+            }
+        }
+
+        // Name parameters
+        for i in 0usize..ir_fn.params.len() {
+            let param = LLVMGetParam(llvm_fn, i as u32);
+            let pname = self.null_terminate(ir_fn.params[i].name);
+            LLVMSetValueName2(param, &pname[0] as &libc::c_char, ir_fn.params[i].name.len());
+        }
+
+        self.fn_decls.insert(hash, llvm_fn);
+        llvm_fn
+    }
+
+    fn add_fn_attribute(self: &mut CodegenCtx, func: LLVMValueRef, attr_name: &[u8]) {
+        let name = self.null_terminate(attr_name);
+        let kind = LLVMGetEnumAttributeKindForName(&name[0] as &libc::c_char, attr_name.len());
+        if kind != 0 {
+            let attr = LLVMCreateEnumAttribute(self.context, kind, 0u64);
+            LLVMAddAttributeAtIndex(func, 0xFFFFFFFFu32, attr); // function index
+        }
+    }
+
+    fn declare_global(self: &mut CodegenCtx, ir_global: &IrGlobal) -> LLVMValueRef {
+        let hash = self.name_hash(ir_global.mangled_name);
+        let existing = self.global_decls.get(&hash);
+        if existing.is_some() {
+            return existing.unwrap();
+        }
+
+        let ty = self.llvm_type(ir_global.ty);
+        let name = self.null_terminate(ir_global.mangled_name);
+        let global = LLVMAddGlobal(self.module, ty, &name[0] as &libc::c_char);
+
+        if ir_global.is_extern {
+            LLVMSetLinkage(global, LLVMLinkage::External);
+        } else {
+            LLVMSetLinkage(global, LLVMLinkage::Internal);
+            // Set zero initializer for non-extern globals
+            LLVMSetInitializer(global, LLVMConstNull(ty));
+        }
+
+        if ir_global.is_const {
+            LLVMSetGlobalConstant(global, 1i32);
+        }
+
+        // Thread local and export attributes
+        for i in 0usize..ir_global.attributes.len() {
+            let attr = &ir_global.attributes[i];
+            if attr.tag == AttrTag::ThreadLocal {
+                LLVMSetThreadLocal(global, 1i32);
+            } else if attr.tag == AttrTag::Export {
+                LLVMSetLinkage(global, LLVMLinkage::External);
+            } else if attr.tag == AttrTag::Align {
+                LLVMSetAlignment(global, attr.int_val() as u32);
+            }
+        }
+
+        self.global_decls.insert(hash, global);
+        global
+    }
+
+    fn gen_const_init(self: &mut CodegenCtx, expr: &IrExpr) -> LLVMValueRef {
+        switch expr.tag {
+        IrTag::IntLit => {
+            let ty = self.llvm_type(expr.ty);
+            if LLVMGetTypeKind(ty) == LLVMTypeKind::Integer
+                && LLVMGetIntTypeWidth(ty) > 64u32 {
+                let words: [u64; 2];
+                words[0] = expr.int_val();
+                words[1] = expr.int_val_hi();
+                LLVMConstIntOfArbitraryPrecision(ty, 2u32, &words[0])
+            } else {
+                LLVMConstInt(ty, expr.int_val(), 1i32)
+            }
+        }
+        IrTag::FloatLit => {
+            let ty = self.llvm_type(expr.ty);
+            LLVMConstReal(ty, expr.float_val())
+        }
+        IrTag::BoolLit => {
+            LLVMConstInt(self.i8_type, if expr.bool_val() { 1u64 } else { 0u64 }, 0i32)
+        }
+        IrTag::NullLit => {
+            let ty = self.llvm_type(expr.ty);
+            LLVMConstNull(ty)
+        }
+        IrTag::Zeroed => {
+            let ty = self.llvm_type(expr.ty);
+            if LLVMGetTypeKind(ty) == LLVMTypeKind::Void {
+                LLVMGetUndef(ty)
+            } else {
+                LLVMConstNull(ty)
+            }
+        }
+        IrTag::Undef => {
+            let ty = self.llvm_type(expr.ty);
+            LLVMGetUndef(ty)
+        }
+
+        IrTag::StringLit => {
+            let ptr = self.get_or_create_string(expr.str_val());
+            // StringLit type is a slice — build { ptr, len } fat pointer constant
+            let fields = self.arena.alloc_slice::<LLVMValueRef>(2);
+            fields[0] = ptr;
+            fields[1] = LLVMConstInt(self.i64_type, expr.str_val().len() as u64, 0i32);
+            LLVMConstStructInContext(self.context, &fields[0], 2u32, 0i32)
+        }
+        IrTag::Cast => {
+            let inner = self.gen_const_init(expr.lhs());
+            if (inner as usize) == 0 { return std::mem::zeroed::<LLVMValueRef>(); }
+            let target_ty = self.llvm_type(expr.ty);
+            let src_kind = LLVMGetTypeKind(LLVMTypeOf(inner));
+            let dst_kind = LLVMGetTypeKind(target_ty);
+            if src_kind == LLVMTypeKind::Integer && dst_kind == LLVMTypeKind::Integer {
+                let src_bits = LLVMGetIntTypeWidth(LLVMTypeOf(inner));
+                let dst_bits = LLVMGetIntTypeWidth(target_ty);
+                if src_bits > dst_bits {
+                    LLVMConstTrunc(inner, target_ty)
+                } else if src_bits < dst_bits {
+                    // LLVM 22 dropped zext as a constant expression; `inner`
+                    // is a ConstantInt here, so zero-extend host-side.
+                    LLVMConstInt(target_ty, LLVMConstIntGetZExtValue(inner), 0i32)
+                } else {
+                    inner
+                }
+            } else if src_kind == LLVMTypeKind::Pointer && dst_kind == LLVMTypeKind::Pointer {
+                LLVMConstBitCast(inner, target_ty)
+            } else if src_kind == LLVMTypeKind::Integer && dst_kind == LLVMTypeKind::Pointer {
+                LLVMConstIntToPtr(inner, target_ty)
+            } else if src_kind == LLVMTypeKind::Pointer && dst_kind == LLVMTypeKind::Integer {
+                LLVMConstPtrToInt(inner, target_ty)
+            } else {
+                LLVMConstBitCast(inner, target_ty)
+            }
+        }
+        IrTag::Binary => {
+            let lhs = self.gen_const_init(expr.lhs());
+            let rhs = self.gen_const_init(expr.rhs());
+            if (lhs as usize) == 0 || (rhs as usize) == 0 {
+                return std::mem::zeroed::<LLVMValueRef>();
+            }
+            // LLVM 22 keeps add/sub/xor as constant expressions (needed for
+            // relocatable pointer arithmetic) but dropped mul/and/or. The
+            // mono const-eval pass already folds pure-integer arithmetic, so
+            // mul/and/or only reach here with ConstantInt operands — fold
+            // them host-side, preserving the operand integer type.
+            if expr.bin_op() == BinOp::Add { LLVMConstAdd(lhs, rhs) }
+            else if expr.bin_op() == BinOp::Sub { LLVMConstSub(lhs, rhs) }
+            else if expr.bin_op() == BinOp::Mul {
+                LLVMConstInt(LLVMTypeOf(lhs), LLVMConstIntGetZExtValue(lhs) * LLVMConstIntGetZExtValue(rhs), 0i32)
+            }
+            else if expr.bin_op() == BinOp::BitAnd {
+                LLVMConstInt(LLVMTypeOf(lhs), LLVMConstIntGetZExtValue(lhs) & LLVMConstIntGetZExtValue(rhs), 0i32)
+            }
+            else if expr.bin_op() == BinOp::BitOr {
+                LLVMConstInt(LLVMTypeOf(lhs), LLVMConstIntGetZExtValue(lhs) | LLVMConstIntGetZExtValue(rhs), 0i32)
+            }
+            else if expr.bin_op() == BinOp::BitXor { LLVMConstXor(lhs, rhs) }
+            else { std::mem::zeroed::<LLVMValueRef>() }
+        }
+        IrTag::StructLit => {
+            // A field-less struct literal (e.g. a ZST reflection
+            // descriptor like `Type<F>`) has no LLVM aggregate elements;
+            // `&fields[0]` would index an empty slice. Mirror the
+            // ArrayLit / TupleLit empty guards below.
+            if expr.items().len() == 0usize {
+                return LLVMConstNull(self.llvm_type(expr.ty));
+            }
+            let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
+            for i in 0usize..expr.items().len() {
+                fields[i] = self.gen_const_init(expr.items()[i]);
+                if (fields[i] as usize) == 0 {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+            }
+            LLVMConstStructInContext(self.context, &fields[0], expr.items().len() as u32, 0i32)
+        }
+        IrTag::ArrayLit => {
+            let elem_ty = self.llvm_type(expr.ty.inner());
+            let elems = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
+            for i in 0usize..expr.items().len() {
+                elems[i] = self.gen_const_init(expr.items()[i]);
+                if (elems[i] as usize) == 0 {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+            }
+            if elems.len() > 0usize {
+                LLVMConstArray(elem_ty, &elems[0], elems.len() as u32)
+            } else {
+                let ty = self.llvm_type(expr.ty);
+                LLVMConstNull(ty)
+            }
+        }
+        IrTag::TupleLit => {
+            // Skip ZST (void-typed) elements — they have no LLVM representation
+            let all_fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
+            let count = 0usize;
+            for i in 0usize..expr.items().len() {
+                let elem_ty = self.llvm_type(expr.items()[i].ty);
+                if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
+                    continue;
+                }
+                all_fields[count] = self.gen_const_init(expr.items()[i]);
+                if (all_fields[count] as usize) == 0 {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+                count = count + 1;
+            }
+            if count > 0usize {
+                LLVMConstStructInContext(self.context, &all_fields[0], count as u32, 0i32)
+            } else {
+                let ty = self.llvm_type(expr.ty);
+                if LLVMGetTypeKind(ty) == LLVMTypeKind::Void {
+                    LLVMGetUndef(ty)
+                } else {
+                    LLVMConstNull(ty)
+                }
+            }
+        }
+        IrTag::FnRef => {
+            let hash = self.name_hash(expr.fn_ref().mangled_name);
+            let existing = self.fn_decls.get(&hash);
+            if existing.is_some() {
+                let func = existing.unwrap();
+                // Function pointer as constant
+                LLVMConstBitCast(func, self.ptr_type)
+            } else {
+                std::mem::zeroed::<LLVMValueRef>()
+            }
+        }
+        _ => {
+            // Cannot evaluate as constant - return null pointer as sentinel
+            std::mem::zeroed::<LLVMValueRef>()
+        }
+        }
+
+    }
+
+    fn get_or_create_string(self: &mut CodegenCtx, text: &[u8]) -> LLVMValueRef {
+        let hash = self.name_hash(text);
+        let cached = self.string_cache.get(&hash);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        // Create a global string constant
+        let empty_byte: u8 = 0u8;
+        let str_ptr: &libc::c_char = if text.len() > 0usize {
+            &text[0] as &libc::c_char
+        } else {
+            &empty_byte as &libc::c_char
+        };
+        let str_val = LLVMConstStringInContext(
+            self.context,
+            str_ptr,
+            text.len() as u32,
+            0i32 // null terminate
+        );
+
+        // Create a global variable for the string
+        self.string_counter = self.string_counter + 1;
+        let name_prefix = ".str.";
+        let counter = mono::format_usize(self.string_counter, self.arena);
+        let gname = self.arena.alloc_slice::<u8>(name_prefix.len() + counter.len() + 1);
+        name_prefix.copy_to_nonoverlapping(&gname[0]);
+        counter.copy_to_nonoverlapping(&gname[name_prefix.len()]);
+        gname[name_prefix.len() + counter.len()] = 0u8;
+
+        let str_type = LLVMArrayType(self.i8_type, (text.len() + 1) as u32);
+        let global = LLVMAddGlobal(self.module, str_type, &gname[0] as &libc::c_char);
+        LLVMSetInitializer(global, str_val);
+        LLVMSetGlobalConstant(global, 1i32);
+        LLVMSetLinkage(global, LLVMLinkage::Private);
+        LLVMSetUnnamedAddr(global, 1i32);
+
+        // Get pointer to first element
+        let indices = self.arena.alloc_slice::<LLVMValueRef>(2);
+        indices[0] = LLVMConstInt(self.i64_type, 0u64, 0i32);
+        indices[1] = LLVMConstInt(self.i64_type, 0u64, 0i32);
+        let ptr = LLVMConstInBoundsGEP2(str_type, global, &indices[0], 2);
+
+        self.string_cache.insert(hash, ptr);
+        ptr
+    }
+
+    fn emit_to_object(self: &mut CodegenCtx, filename: &[u8]) -> bool {
+        let fname = self.null_terminate(filename);
+        let error: &mut libc::c_char = null;
+        let result = LLVMTargetMachineEmitToFile(
+            self.target_machine,
+            self.module,
+            &fname[0] as &mut libc::c_char,
+            LLVMCodeGenFileType::Object,
+            &error,
+        );
+        if result != 0i32 {
+            if (error as usize) != 0 {
+                // Print the error message before disposing
+                let err_slice = std::ffi::CString::from_raw(error as &libc::c_char);
+                eprintln!("LLVM emit error: {}", err_slice);
+                LLVMDisposeMessage(error);
+            }
+            return false;
+        }
+        true
+    }
+
+    fn emit_to_assembly(self: &mut CodegenCtx, filename: &[u8]) -> bool {
+        let fname = self.null_terminate(filename);
+        let error: &mut libc::c_char = null;
+        let result = LLVMTargetMachineEmitToFile(
+            self.target_machine,
+            self.module,
+            &fname[0] as &mut libc::c_char,
+            LLVMCodeGenFileType::Assembly,
+            &error,
+        );
+        if result != 0i32 {
+            if (error as usize) != 0 {
+                LLVMDisposeMessage(error);
+            }
+            return false;
+        }
+        true
+    }
+
+    fn write_bitcode(self: &mut CodegenCtx, filename: &[u8]) -> bool {
+        let fname = self.null_terminate(filename);
+        LLVMWriteBitcodeToFile(self.module, &fname[0] as &libc::c_char) == 0i32
+    }
+
+    fn print_ir(self: &mut CodegenCtx, filename: &[u8]) -> bool {
+        let fname = self.null_terminate(filename);
+        let error: &mut libc::c_char = null;
+        let result = LLVMPrintModuleToFile(
+            self.module,
+            &fname[0] as &libc::c_char,
+            &error,
+        );
+        if result != 0i32 {
+            if (error as usize) != 0 {
+                LLVMDisposeMessage(error);
+            }
+            return false;
+        }
+        true
+    }
+
+    fn optimize(self: &mut CodegenCtx) -> bool {
+        let options = LLVMCreatePassBuilderOptions();
+        defer LLVMDisposePassBuilderOptions(options);
+
+        let passes = switch self.opt_level {
+            main::OptLevel::O1 => &"default<O1>\0"[0] as &libc::c_char,
+            main::OptLevel::O2 => &"default<O2>\0"[0] as &libc::c_char,
+            main::OptLevel::O3 => &"default<O3>\0"[0] as &libc::c_char,
+            main::OptLevel::Os => &"default<Os>\0"[0] as &libc::c_char,
+            _ => &"default<O2>\0"[0] as &libc::c_char,
+        };
+
+        let error = LLVMRunPasses(self.module, passes, self.target_machine, options);
+        if error as &void as usize != 0usize {
+            let msg = LLVMGetErrorMessage(error);
+            eprintln!("LLVM pass error");
+            LLVMDisposeErrorMessage(msg);
+            return false;
+        }
+        true
+    }
+
+    fn verify(self: &mut CodegenCtx) -> bool {
+        let error: &mut libc::c_char = null;
+        // Use PrintMessage to print errors to stderr
+        let result = LLVMVerifyModule(
+            self.module,
+            LLVMVerifierFailureAction::PrintMessage,
+            &error,
+        );
+        if (error as usize) != 0 {
+            LLVMDisposeMessage(error);
+        }
+        result == 0i32
+    }
+
+    fn dump(self: &CodegenCtx) {
+        LLVMDumpModule(self.module);
+    }
+
+    /// Generate a C-compatible `main(argc, argv)` wrapper that calls the user's main function.
+    fn emit_main_wrapper(self: &mut CodegenCtx, ir_fn: &IrFunction) {
+        // Clear stale debug location from previous function codegen
+        if self.debug_enabled {
+            LLVMSetCurrentDebugLocation2(self.builder, std::mem::zeroed::<LLVMMetadataRef>());
+        }
+
+        // Get the user's main function
+        let hash = self.name_hash(ir_fn.mangled_name);
+        let user_main = self.fn_decls.get(&hash);
+        if user_main.is_none() {
+            return;
+        }
+        let user_main_fn = user_main.unwrap();
+
+        // Rename user's main to _ALmain so the C wrapper can use "main"
+        LLVMSetValueName2(user_main_fn, &"_ALmain\0"[0] as &libc::c_char, 7);
+
+        // Create C main: int main(int argc, char** argv)
+        let i32_ty = LLVMInt32TypeInContext(self.context);
+        let i8_ty = LLVMInt8TypeInContext(self.context);
+        let i8_ptr_ty = LLVMPointerType(i8_ty, 0u32);
+        let i8_ptr_ptr_ty = LLVMPointerType(i8_ptr_ty, 0u32);
+
+        let param_types = self.arena.alloc_slice::<LLVMTypeRef>(2usize);
+        param_types[0] = i32_ty;
+        param_types[1] = i8_ptr_ptr_ty;
+        let main_type = LLVMFunctionType(i32_ty, &param_types[0], 2u32, 0i32);
+        let main_fn = LLVMAddFunction(self.module, &"main\0"[0] as &libc::c_char, main_type);
+        LLVMSetLinkage(main_fn, LLVMLinkage::External);
+
+        // Build body
+        let entry = LLVMAppendBasicBlockInContext(self.context, main_fn, &"entry\0"[0] as &libc::c_char);
+        LLVMPositionBuilderAtEnd(self.builder, entry);
+
+        // Build the user main's function type from IR params
+        let user_param_types = self.arena.alloc_slice::<LLVMTypeRef>(ir_fn.params.len());
+        for i in 0usize..ir_fn.params.len() {
+            user_param_types[i] = self.llvm_type(ir_fn.params[i].ty);
+        }
+        let user_ret_ty = self.llvm_type(ir_fn.return_type);
+        let user_fn_ty = if ir_fn.params.len() > 0 {
+            LLVMFunctionType(user_ret_ty, &user_param_types[0], ir_fn.params.len() as u32, 0i32)
+        } else {
+            LLVMFunctionType(user_ret_ty, null, 0u32, 0i32)
+        };
+
+        // Convert C argc/argv to Alumina &[&[u8]] format
+        let c_argc = LLVMGetParam(main_fn, 0u32);
+        let c_argv = LLVMGetParam(main_fn, 1u32);
+
+        let call_args = self.arena.alloc_slice::<LLVMValueRef>(ir_fn.params.len());
+        if ir_fn.params.len() > 0 {
+            // The first param is &[&[u8]] = { {i8*, i64}*, i64 }
+            // Inner element type is {i8*, i64}
+            let inner_fields = self.arena.alloc_slice::<LLVMTypeRef>(2);
+            inner_fields[0] = LLVMPointerType(i8_ty, 0u32);
+            inner_fields[1] = self.i64_type;
+            let inner_slice_ty = LLVMStructTypeInContext(
+                self.context, &inner_fields[0], 2u32, 0i32
+            );
+
+            // Allocate array of inner slices: alloca [{i8*, i64} x argc]
+            let argc_i64 = LLVMBuildZExt(self.builder, c_argc, self.i64_type,
+                &"argc64\0"[0] as &libc::c_char);
+            let inner_arr = LLVMBuildArrayAlloca(self.builder, inner_slice_ty, argc_i64,
+                &"args_arr\0"[0] as &libc::c_char);
+
+            // Loop: for i in 0..argc, compute strlen(argv[i]) and store {ptr, len}
+            let loop_bb = LLVMAppendBasicBlockInContext(self.context, main_fn,
+                &"args_loop\0"[0] as &libc::c_char);
+            let done_bb = LLVMAppendBasicBlockInContext(self.context, main_fn,
+                &"args_done\0"[0] as &libc::c_char);
+
+            // Declare strlen
+            let strlen_param = self.arena.alloc_slice::<LLVMTypeRef>(1);
+            strlen_param[0] = i8_ptr_ty;
+            let strlen_ty = LLVMFunctionType(self.i64_type, &strlen_param[0], 1u32, 0i32);
+            let strlen_fn_lookup = LLVMGetNamedFunction(self.module, &"strlen\0"[0] as &libc::c_char);
+            let strlen_fn = if (strlen_fn_lookup as usize) == 0 {
+                LLVMAddFunction(self.module, &"strlen\0"[0] as &libc::c_char, strlen_ty)
+            } else {
+                strlen_fn_lookup
+            };
+
+            LLVMBuildBr(self.builder, loop_bb);
+            LLVMPositionBuilderAtEnd(self.builder, loop_bb);
+            let idx = LLVMBuildPhi(self.builder, self.i64_type, &"i\0"[0] as &libc::c_char);
+            let cmp = LLVMBuildICmp(self.builder, LLVMIntPredicate::ULT, idx, argc_i64,
+                &"cmp\0"[0] as &libc::c_char);
+
+            let body_bb = LLVMAppendBasicBlockInContext(self.context, main_fn,
+                &"args_body\0"[0] as &libc::c_char);
+            LLVMBuildCondBr(self.builder, cmp, body_bb, done_bb);
+
+            LLVMPositionBuilderAtEnd(self.builder, body_bb);
+            // Load argv[i]
+            let argv_i_ptr = LLVMBuildGEP2(self.builder, i8_ptr_ty, c_argv, &idx, 1u32,
+                &"argp\0"[0] as &libc::c_char);
+            let argv_i = LLVMBuildLoad2(self.builder, i8_ptr_ty, argv_i_ptr,
+                &"arg\0"[0] as &libc::c_char);
+            // strlen(argv[i])
+            let len = LLVMBuildCall2(self.builder, strlen_ty, strlen_fn, &argv_i, 1u32,
+                &"len\0"[0] as &libc::c_char);
+            // Store {ptr, len} into inner_arr[i]
+            let slot = LLVMBuildGEP2(self.builder, inner_slice_ty, inner_arr, &idx, 1u32,
+                &"slot\0"[0] as &libc::c_char);
+            let ptr_field = LLVMBuildStructGEP2(self.builder, inner_slice_ty, slot, SLICE_DATA_FIELD,
+                &"sf0\0"[0] as &libc::c_char);
+            LLVMBuildStore(self.builder, argv_i, ptr_field);
+            let len_field = LLVMBuildStructGEP2(self.builder, inner_slice_ty, slot, SLICE_LEN_FIELD,
+                &"sf1\0"[0] as &libc::c_char);
+            LLVMBuildStore(self.builder, len, len_field);
+
+            // idx++
+            let next_idx = LLVMBuildAdd(self.builder, idx, LLVMConstInt(self.i64_type, 1u64, 0i32),
+                &"next\0"[0] as &libc::c_char);
+            LLVMBuildBr(self.builder, loop_bb);
+
+            // Wire up phi
+            let phi_vals = self.arena.alloc_slice::<LLVMValueRef>(2);
+            let phi_bbs = self.arena.alloc_slice::<LLVMBasicBlockRef>(2);
+            phi_vals[0] = LLVMConstInt(self.i64_type, 0u64, 0i32);
+            phi_bbs[0] = entry;
+            phi_vals[1] = next_idx;
+            phi_bbs[1] = body_bb;
+            LLVMAddIncoming(idx, &phi_vals[0], &phi_bbs[0], 2u32);
+
+            LLVMPositionBuilderAtEnd(self.builder, done_bb);
+
+            // Build the outer slice: { {i8*, i64}*, i64 }
+            let outer_alloca = LLVMBuildAlloca(self.builder, user_param_types[0],
+                &"args\0"[0] as &libc::c_char);
+            let outer_ptr = LLVMBuildStructGEP2(self.builder, user_param_types[0], outer_alloca, 0u32,
+                &"op\0"[0] as &libc::c_char);
+            LLVMBuildStore(self.builder, inner_arr, outer_ptr);
+            let outer_len = LLVMBuildStructGEP2(self.builder, user_param_types[0], outer_alloca, 1u32,
+                &"ol\0"[0] as &libc::c_char);
+            LLVMBuildStore(self.builder, argc_i64, outer_len);
+            call_args[0] = LLVMBuildLoad2(self.builder, user_param_types[0], outer_alloca,
+                &"args_val\0"[0] as &libc::c_char);
+        } else {
+            // no params
+        }
+        // Fill remaining params with zeroed values
+        for i in 1usize..ir_fn.params.len() {
+            call_args[i] = LLVMConstNull(user_param_types[i]);
+        }
+
+        let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
+        let call_name: &libc::c_char = if is_void_ret { &"\0"[0] as &libc::c_char } else { &"ret\0"[0] as &libc::c_char };
+        let result = if ir_fn.params.len() > 0 {
+            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, &call_args[0], ir_fn.params.len() as u32, call_name)
+        } else {
+            LLVMBuildCall2(self.builder, user_fn_ty, user_main_fn, null, 0u32, call_name)
+        };
+
+        // Return the user main's return value (or 0 if void)
+        if ir_fn.return_type.tag == IrTyTag::Builtin && ir_fn.return_type.builtin() == BuiltinType::I32 {
+            LLVMBuildRet(self.builder, result);
+        } else {
+            LLVMBuildRet(self.builder, LLVMConstInt(i32_ty, 0u64, 0i32));
+        }
+    }
+
+    fn free(self: &mut CodegenCtx) {
+        self.type_cache.free();
+        self.struct_type_cache.free();
+        self.fn_decls.free();
+        self.global_decls.free();
+        self.string_cache.free();
+        self.di_file_cache.free();
+        self.di_type_cache.free();
+        if self.debug_enabled {
+            LLVMDisposeDIBuilder(self.di_builder);
+        }
+        LLVMDisposeBuilder(self.builder);
+        LLVMDisposeTargetData(self.target_data);
+        LLVMDisposeTargetMachine(self.target_machine);
+        LLVMDisposeModule(self.module);
+        LLVMContextDispose(self.context);
+    }
+}
+
+// ============================================================
+// Function code generation
+// ============================================================
+
+
+use codegen::fn_codegen::FnCodegen;
+
+// ============================================================
+// Top-level codegen entry point
+// ============================================================
+
+fn generate(
+    arena: &mut Arena,
+    diag: &mut DiagnosticContext,
+    unit: &CompilationUnit,
+    module_name: &[u8],
+    test_mode: bool,
+    debug_enabled: bool,
+    opt_level: main::OptLevel,
+) -> CodegenCtx {
+    let ctx = CodegenCtx::new(arena, diag, module_name, debug_enabled, opt_level);
+
+
+    // Phase 1: Declare all struct types (forward declarations)
+    for i in 0usize..unit.structs.len() {
+        ctx.llvm_struct_type(&unit.structs[i]);
+    }
+
+    // Phase 1 done
+
+    // Phase 2: Declare all functions (skip intrinsics)
+    for i in 0usize..unit.functions.len() {
+        if unit.functions[i].abi.is_some() {
+            let abi_val = unit.functions[i].abi.unwrap();
+            if abi_val == "intrinsic" {
+                // Skip intrinsic functions - they are handled inline
+                continue;
+            }
+        }
+        ctx.declare_function(&unit.functions[i]);
+    }
+
+
+    // Phase 3: Declare all globals
+    for i in 0usize..unit.globals.len() {
+        ctx.declare_global(&unit.globals[i]);
+    }
+
+    // Phase 4: Generate function bodies
+    for i in 0usize..unit.functions.len() {
+        if unit.functions[i].body.is_some() {
+            let llvm_fn = {
+                let hash = ctx.name_hash(unit.functions[i].mangled_name);
+                let decl = ctx.fn_decls.get(&hash);
+                if decl.is_some() { decl.unwrap() }
+                else { continue; }
+            };
+            let fn_cg = FnCodegen::new(&ctx, llvm_fn, &unit.functions[i]);
+            fn_cg.emit();
+            fn_cg.free();
+        }
+    }
+
+    // Finalize debug info after all function bodies emitted
+    if debug_enabled {
+        LLVMDIBuilderFinalize(ctx.di_builder);
+    }
+
+    // Phase 5: Initialize globals with constant values
+    for i in 0usize..unit.globals.len() {
+        if unit.globals[i].init.is_some() && !unit.globals[i].is_extern {
+            let init_expr = unit.globals[i].init.unwrap();
+            let const_val = ctx.gen_const_init(init_expr);
+            if (const_val as usize) != 0 {
+                let hash = ctx.name_hash(unit.globals[i].mangled_name);
+                let global = ctx.global_decls.get(&hash);
+                if global.is_some() {
+                    LLVMSetInitializer(global.unwrap(), const_val);
+                }
+            }
+        }
+    }
+
+    // Phase 6: Register static constructors in @llvm.global_ctors
+    {
+        let ctor_fns: std::collections::Vector<LLVMValueRef> = std::collections::Vector::new();
+        defer ctor_fns.free();
+
+        for i in 0usize..unit.functions.len() {
+            for j in 0usize..unit.functions[i].attributes.len() {
+                if unit.functions[i].attributes[j].tag == AttrTag::StaticCtor {
+                    let hash = ctx.name_hash(unit.functions[i].mangled_name);
+                    let decl = ctx.fn_decls.get(&hash);
+                    if decl.is_some() {
+                        ctor_fns.push(decl.unwrap());
+                    }
+                }
+            }
+        }
+        if ctor_fns.len() > 0 {
+            // Build @llvm.global_ctors = appending global [N x { i32, void ()*, i8* }]
+            let i32_ty = LLVMInt32TypeInContext(ctx.context);
+            let void_ty = LLVMVoidTypeInContext(ctx.context);
+            let void_fn_ty = LLVMFunctionType(void_ty, null, 0, 0i32);
+            let void_fn_ptr_ty = LLVMPointerType(void_fn_ty, 0);
+            let i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(ctx.context), 0);
+
+            let ctor_elem_types = ctx.arena.alloc_slice::<LLVMTypeRef>(3);
+            ctor_elem_types[0] = i32_ty;
+            ctor_elem_types[1] = void_fn_ptr_ty;
+            ctor_elem_types[2] = i8_ptr_ty;
+            let ctor_struct_ty = LLVMStructTypeInContext(ctx.context, &ctor_elem_types[0], 3, 0i32);
+
+            let ctor_entries = ctx.arena.alloc_slice::<LLVMValueRef>(ctor_fns.len());
+            for i in 0usize..ctor_fns.len() {
+                let entry_vals = ctx.arena.alloc_slice::<LLVMValueRef>(3);
+                entry_vals[0] = LLVMConstInt(i32_ty, 65535u64, 0i32); // priority
+                entry_vals[1] = LLVMConstBitCast(ctor_fns[i], void_fn_ptr_ty);
+                entry_vals[2] = LLVMConstNull(i8_ptr_ty);
+                ctor_entries[i] = LLVMConstStructInContext(ctx.context, &entry_vals[0], 3, 0i32);
+            }
+
+            let ctor_array_ty = LLVMArrayType(ctor_struct_ty, ctor_fns.len() as u32);
+            let ctor_array = LLVMConstArray(ctor_struct_ty, &ctor_entries[0], ctor_fns.len() as u32);
+            let ctor_global = LLVMAddGlobal(ctx.module, ctor_array_ty, &"llvm.global_ctors\0"[0] as &libc::c_char);
+            LLVMSetLinkage(ctor_global, LLVMLinkage::Appending);
+            LLVMSetInitializer(ctor_global, ctor_array);
+        }
+    }
+
+    // Phase 7: Generate main wrapper
+    if test_mode {
+        // In test mode, use the #[test_main] function from test.alu as main
+        for i in 0usize..unit.functions.len() {
+            let is_test_main = false;
+            for attr in unit.functions[i].attributes {
+                if attr.tag == AttrTag::TestMain {
+                    is_test_main = true;
+                }
+            }
+            if is_test_main && unit.functions[i].body.is_some() {
+                ctx.emit_main_wrapper(&unit.functions[i]);
+            }
+        }
+    } else {
+        // Normal mode: generate C-compatible main wrapper
+        for i in 0usize..unit.functions.len() {
+            if unit.functions[i].name == "main" && unit.functions[i].body.is_some() {
+                ctx.emit_main_wrapper(&unit.functions[i]);
+            }
+        }
+    }
+    ctx
+}

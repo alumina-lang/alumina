@@ -14,6 +14,65 @@ enum Ordering {
     SeqCst = 5
 }
 
+// Atomic primitives, split per compiler. alumina-boot lowers to the C
+// `__atomic_*` builtins via codegen_func (out-of-scope for aluminac);
+// aluminac emits LLVM atomic instructions via its atomic_* intrinsics.
+// Function-level #[cfg] (not statement-level `when cfg!`) — the
+// non-selected branch must not even name-resolve, and codegen_func only
+// exists under cfg(boot) (see PORTING.md stack_alloc note).
+#[docs(hide)]
+mod atomic_internal {
+    #[cfg(boot)]
+    {
+        #[inline(always)] fn raw_load<T>(p: &T, o: libc::c_int) -> T {
+            intrinsics::codegen_func::<T>("__atomic_load_n", p, o)
+        }
+        #[inline(always)] fn raw_store<T>(p: &mut T, v: T, o: libc::c_int) {
+            intrinsics::codegen_func::<void>("__atomic_store_n", p, v, o)
+        }
+        #[inline(always)] fn raw_xchg<T>(p: &mut T, v: T, o: libc::c_int) -> T {
+            intrinsics::codegen_func::<T>("__atomic_exchange_n", p, v, o)
+        }
+        #[inline(always)] fn raw_cmpxchg<T>(p: &mut T, exp: &mut T, des: T, weak: bool, so: libc::c_int, fo: libc::c_int) -> bool {
+            intrinsics::codegen_func::<bool>("__atomic_compare_exchange_n", p, exp, des, weak, so, fo)
+        }
+        #[inline(always)] fn raw_fetch_add<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::codegen_func::<T>("__atomic_fetch_add", p, v, o) }
+        #[inline(always)] fn raw_fetch_sub<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::codegen_func::<T>("__atomic_fetch_sub", p, v, o) }
+        #[inline(always)] fn raw_fetch_and<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::codegen_func::<T>("__atomic_fetch_and", p, v, o) }
+        #[inline(always)] fn raw_fetch_nand<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::codegen_func::<T>("__atomic_fetch_nand", p, v, o) }
+        #[inline(always)] fn raw_fetch_or<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::codegen_func::<T>("__atomic_fetch_or", p, v, o) }
+        #[inline(always)] fn raw_fetch_xor<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::codegen_func::<T>("__atomic_fetch_xor", p, v, o) }
+        #[inline(always)] fn raw_fence(o: libc::c_int) {
+            intrinsics::codegen_func::<void>("__atomic_thread_fence", o)
+        }
+    }
+
+    #[cfg(not(boot))]
+    {
+        #[inline(always)] fn raw_load<T>(p: &T, o: libc::c_int) -> T {
+            intrinsics::atomic_load::<T>(p, o as i32)
+        }
+        #[inline(always)] fn raw_store<T>(p: &mut T, v: T, o: libc::c_int) {
+            intrinsics::atomic_store::<T>(p, v, o as i32)
+        }
+        #[inline(always)] fn raw_xchg<T>(p: &mut T, v: T, o: libc::c_int) -> T {
+            intrinsics::atomic_xchg::<T>(p, v, o as i32)
+        }
+        #[inline(always)] fn raw_cmpxchg<T>(p: &mut T, exp: &mut T, des: T, weak: bool, so: libc::c_int, fo: libc::c_int) -> bool {
+            intrinsics::atomic_cmpxchg::<T>(p, exp, des, weak, so as i32, fo as i32)
+        }
+        #[inline(always)] fn raw_fetch_add<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::atomic_fetch_add::<T>(p, v, o as i32) }
+        #[inline(always)] fn raw_fetch_sub<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::atomic_fetch_sub::<T>(p, v, o as i32) }
+        #[inline(always)] fn raw_fetch_and<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::atomic_fetch_and::<T>(p, v, o as i32) }
+        #[inline(always)] fn raw_fetch_nand<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::atomic_fetch_nand::<T>(p, v, o as i32) }
+        #[inline(always)] fn raw_fetch_or<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::atomic_fetch_or::<T>(p, v, o as i32) }
+        #[inline(always)] fn raw_fetch_xor<T>(p: &mut T, v: T, o: libc::c_int) -> T { intrinsics::atomic_fetch_xor::<T>(p, v, o as i32) }
+        #[inline(always)] fn raw_fence(o: libc::c_int) {
+            intrinsics::atomic_fence(o as i32)
+        }
+    }
+}
+
 /// Values that can be operated on atomically.
 ///
 /// `Atomic` supports all primitive types (integer types, pointers, [bool]), with the exception of
@@ -87,7 +146,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
         if runtime::in_const_context() {
             self._inner
         } else {
-            intrinsics::codegen_func::<T>("__atomic_load_n", &self._inner, ordering as libc::c_int)
+            atomic_internal::raw_load(&self._inner, ordering as libc::c_int)
         }
     }
 
@@ -97,7 +156,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
         if runtime::in_const_context() {
             self._inner = value;
         } else {
-            intrinsics::codegen_func::<void>("__atomic_store_n", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_store(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -107,7 +166,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
         if runtime::in_const_context() {
             mem::replace(&self._inner, value)
         } else {
-            intrinsics::codegen_func::<T>("__atomic_exchange_n", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_xchg(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -159,8 +218,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
                 Result::err(self._inner)
             }
         } else {
-            if intrinsics::codegen_func::<bool>(
-                "__atomic_compare_exchange_n",
+            if atomic_internal::raw_cmpxchg(
                 &self._inner,
                 &expected,
                 desired,
@@ -193,8 +251,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
         if runtime::in_const_context() {
             self.compare_exchange(expected, desired, success_ordering, failure_ordering)
         } else {
-            if intrinsics::codegen_func::<bool>(
-                "__atomic_compare_exchange_n",
+            if atomic_internal::raw_cmpxchg(
                 &self._inner,
                 &expected,
                 desired,
@@ -278,7 +335,7 @@ impl Atomic<T: Integer> {
         if runtime::in_const_context() {
             internal::const_atomic_update(self, value, |x: T, y: T| -> T { x + y })
         } else {
-            intrinsics::codegen_func::<T>("__atomic_fetch_add", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_fetch_add(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -288,7 +345,7 @@ impl Atomic<T: Integer> {
         if runtime::in_const_context() {
             internal::const_atomic_update(self, value, |x: T, y: T| -> T { x - y })
         } else {
-            intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_fetch_sub(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -298,7 +355,7 @@ impl Atomic<T: Integer> {
         if runtime::in_const_context() {
             internal::const_atomic_update(self, value, |x: T, y: T| -> T { x & y })
         } else {
-            intrinsics::codegen_func::<T>("__atomic_fetch_and", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_fetch_and(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -308,7 +365,7 @@ impl Atomic<T: Integer> {
         if runtime::in_const_context() {
             internal::const_atomic_update(self, value, |x: T, y: T| -> T { x | y })
         } else {
-            intrinsics::codegen_func::<T>("__atomic_fetch_or", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_fetch_or(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -318,7 +375,7 @@ impl Atomic<T: Integer> {
         if runtime::in_const_context() {
             internal::const_atomic_update(self, value, |x: T, y: T| -> T { x ^ y })
         } else {
-            intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_fetch_xor(&self._inner, value, ordering as libc::c_int)
         }
     }
 
@@ -328,7 +385,7 @@ impl Atomic<T: Integer> {
         if runtime::in_const_context() {
             internal::const_atomic_update(self, value, |x: T, y: T| -> T { ~(x & y) })
         } else {
-            intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self._inner, value, ordering as libc::c_int)
+            atomic_internal::raw_fetch_nand(&self._inner, value, ordering as libc::c_int)
         }
     }
 }
@@ -337,7 +394,7 @@ impl Atomic<T: Integer> {
 #[inline(ir)]
 fn fence(ordering: Ordering) {
     if !runtime::in_const_context() {
-        intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+        atomic_internal::raw_fence(ordering as libc::c_int)
     }
 }
 
@@ -348,7 +405,7 @@ fn fence(ordering: Ordering) {
 #[inline(ir)]
 fn compiler_fence(ordering: Ordering) {
     if !runtime::in_const_context() {
-        intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+        atomic_internal::raw_fence(ordering as libc::c_int)
     }
 }
 
@@ -928,6 +985,11 @@ mod internal {
 mod tests {
     use time::Duration;
 
+    // Boot-only: verifies the hardcoded Ordering values against the C
+    // compiler's __ATOMIC_* via codegen_const (out-of-scope for
+    // aluminac). aluminac maps Ordering→LLVMAtomicOrdering in codegen,
+    // covered by tests/aluminac/atomic_intrinsics.alu instead.
+    #[cfg(boot)]
     #[test]
     fn test_ordering_values_match() {
         // This test asserts that the ordering constant values we hardcode above match the

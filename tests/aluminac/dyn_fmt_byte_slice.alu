@@ -1,0 +1,35 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: dyn vtable build must handle IrTyTag::Slice impl_ty so
+// that the panic chain's `format_args!` array (whose elements are
+// `&dyn Formattable<Self, PanicFormatter>` constructed from byte slices)
+// dispatches `.fmt(f)` through a properly-populated vtable instead of a
+// NULL one. Before the fix, build_dyn_vtable_ref returned a null IrExpr
+// for non-Struct/Enum/Builtin impl types; the dyn fat ptr stored
+// vtable=NULL and method dispatch segfaulted on first call.
+//
+// The dyn-cast magic lives in `try_coerce` (implicit coercion), not in
+// the explicit `as` cast lowering path, so we trigger it through a fn
+// return whose declared type is `&dyn ...` and pass it a `&&[u8]`. That
+// matches how sysroot's `dyn_format_arg` constructs the dyn-pointers
+// the panic chain iterates.
+
+use std::panicking::internal::PanicFormatter;
+use std::fmt::Formattable;
+
+fn make_dyn<T: Formattable<T, PanicFormatter>>(
+    val: &T
+) -> &dyn Formattable<std::typing::Self, PanicFormatter> {
+    val
+}
+
+fn main() -> i32 {
+    let f = PanicFormatter::new();
+    let s: &[u8] = "hello";
+    let dyn_ref = make_dyn::<&[u8]>(&s);
+    let r = dyn_ref.fmt(&f);
+    if !r.is_ok() { return 1i32; }
+    // The write hits fd 2 so the test output includes "hello" on stderr;
+    // the runner only checks the exit code. Without the slice branch in
+    // build_dyn_vtable_ref this segfaulted on dispatch.
+    0i32
+}

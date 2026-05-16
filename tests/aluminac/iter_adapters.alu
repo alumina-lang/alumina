@@ -1,0 +1,242 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::iter::{Iterator, IteratorExt};
+
+struct Counter {
+    current: i32,
+    max: i32,
+}
+
+impl Counter {
+    fn new(max: i32) -> Counter {
+        Counter { current: 0i32, max: max }
+    }
+    fn next(self: &mut Counter) -> Option<i32> {
+        if self.current >= self.max {
+            Option::none()
+        } else {
+            let val = self.current;
+            self.current = self.current + 1i32;
+            Option::some(val)
+        }
+    }
+    fn size_hint(self: &Counter) -> Option<usize> {
+        Option::some(0usize)
+    }
+    mixin Iterator<Counter, i32>;
+    mixin IteratorExt<Counter, i32>;
+}
+
+fn test_basic() -> i32 {
+    let c = Counter::new(5i32);
+    if c.next() != Option::some(0i32) { return 1i32; }
+    if c.next() != Option::some(1i32) { return 2i32; }
+    if c.next() != Option::some(2i32) { return 3i32; }
+    if c.next() != Option::some(3i32) { return 4i32; }
+    if c.next() != Option::some(4i32) { return 5i32; }
+    if !c.next().is_none() { return 6i32; }
+
+    // count
+    let c2 = Counter::new(5i32);
+    if c2.count() != 5usize { return 10i32; }
+
+    0i32
+}
+
+fn test_take_skip() -> i32 {
+    // take
+    let c3 = Counter::new(100i32);
+    let taken = c3.take(3usize);
+    if taken.next() != Option::some(0i32) { return 40i32; }
+    if taken.next() != Option::some(1i32) { return 41i32; }
+    if taken.next() != Option::some(2i32) { return 42i32; }
+    if !taken.next().is_none() { return 43i32; }
+
+    // skip
+    let c4 = Counter::new(5i32);
+    let skipped = c4.skip(3usize);
+    if skipped.next() != Option::some(3i32) { return 50i32; }
+
+    // last / nth
+    let c5 = Counter::new(5i32);
+    if c5.last() != Option::some(4i32) { return 80i32; }
+    let c5b = Counter::new(5i32);
+    if c5b.nth(2usize) != Option::some(2i32) { return 81i32; }
+
+    // step_by
+    let c6 = Counter::new(10i32);
+    let stepped = c6.step_by(3usize);
+    if stepped.next() != Option::some(0i32) { return 120i32; }
+    if stepped.next() != Option::some(3i32) { return 121i32; }
+
+    0i32
+}
+
+fn test_chain_zip() -> i32 {
+    // chain
+    let ca = Counter::new(3i32);
+    let cb = Counter::new(2i32);
+    let chained = ca.chain(&cb);
+    if chained.next() != Option::some(0i32) { return 100i32; }
+    if chained.next() != Option::some(1i32) { return 101i32; }
+    if chained.next() != Option::some(2i32) { return 102i32; }
+    if chained.next() != Option::some(0i32) { return 103i32; }
+    if chained.next() != Option::some(1i32) { return 104i32; }
+    if !chained.next().is_none() { return 105i32; }
+
+    0i32
+}
+
+fn test_for_in() -> i32 {
+    let c8 = Counter::new(4i32);
+    let sum = 0i32;
+    for x in c8 {
+        sum = sum + x;
+    }
+    if sum != 6i32 { return 130i32; }
+
+    0i32
+}
+
+fn test_reduce_all_any() -> i32 {
+    let c = Counter::new(5i32);
+    let sum = c.reduce(0i32, |acc: i32, v: i32| -> i32 { acc + v });
+    if sum != 10i32 { return 140i32; }
+
+    let c2 = Counter::new(5i32);
+    if !c2.all(|v: i32| -> bool { v >= 0i32 }) { return 141i32; }
+    let c3 = Counter::new(5i32);
+    if c3.all(|v: i32| -> bool { v > 2i32 }) { return 142i32; }
+    let c4 = Counter::new(5i32);
+    if !c4.any(|v: i32| -> bool { v == 3i32 }) { return 143i32; }
+    let c5 = Counter::new(5i32);
+    if c5.any(|v: i32| -> bool { v == 10i32 }) { return 144i32; }
+
+    0i32
+}
+
+fn test_peekable() -> i32 {
+    let c = Counter::new(3i32);
+    let pk = c.peekable();
+
+    // Peek should return first element without consuming
+    let p1 = pk.peek();
+    if p1.is_none() { return 150i32; }
+    if p1.unwrap() != 0i32 { return 151i32; }
+
+    // Peek again returns same element
+    let p2 = pk.peek();
+    if p2.unwrap() != 0i32 { return 152i32; }
+
+    // Next consumes the peeked element
+    let n1 = pk.next();
+    if n1.unwrap() != 0i32 { return 153i32; }
+
+    // Next element without peeking
+    let n2 = pk.next();
+    if n2.unwrap() != 1i32 { return 154i32; }
+
+    // Peek at last element
+    let p3 = pk.peek();
+    if p3.unwrap() != 2i32 { return 155i32; }
+    let n3 = pk.next();
+    if n3.unwrap() != 2i32 { return 156i32; }
+
+    // Exhausted
+    if !pk.peek().is_none() { return 157i32; }
+    if !pk.next().is_none() { return 158i32; }
+
+    0i32
+}
+
+fn test_min_max() -> i32 {
+    // min
+    let c = Counter::new(5i32);
+    let min_val = c.min();
+    if min_val.is_none() { return 160i32; }
+    if min_val.unwrap() != 0i32 { return 161i32; }
+
+    // max
+    let c2 = Counter::new(5i32);
+    let max_val = c2.max();
+    if max_val.is_none() { return 162i32; }
+    if max_val.unwrap() != 4i32 { return 163i32; }
+
+    // Empty iterator
+    let c3 = Counter::new(0i32);
+    if !c3.min().is_none() { return 164i32; }
+    let c4 = Counter::new(0i32);
+    if !c4.max().is_none() { return 165i32; }
+
+    0i32
+}
+
+fn test_countdown() -> i32 {
+    // countdown(n) was an aluminac-specific helper; the equivalent in the
+    // unified sysroot is `(0..n).rev()`. Keep the coverage here so we don't
+    // lose the regression for the DoubleEndedIteratorExt::rev path.
+    let it = (0usize..3usize).rev();
+    let v0 = it.next();
+    if v0.is_none() || v0.unwrap() != 2usize { return 170i32; }
+    let v1 = it.next();
+    if v1.is_none() || v1.unwrap() != 1usize { return 171i32; }
+    let v2 = it.next();
+    if v2.is_none() || v2.unwrap() != 0usize { return 172i32; }
+    if !it.next().is_none() { return 173i32; }
+
+    // (0..0).rev() is empty
+    let it2 = (0usize..0usize).rev();
+    if !it2.next().is_none() { return 174i32; }
+
+    0i32
+}
+
+fn test_filter_map() -> i32 {
+    // filter_map
+    let c = Counter::new(6i32);
+    let it = c.filter_map(|v: i32| -> Option<i32> {
+        if v > 3i32 { Option::some(v * 10i32) } else { Option::none() }
+    });
+    let first = it.next();
+    if first.is_none() || first.unwrap() != 40i32 { return 180i32; }
+    let second = it.next();
+    if second.is_none() || second.unwrap() != 50i32 { return 181i32; }
+    if !it.next().is_none() { return 182i32; }
+
+    0i32
+}
+
+fn test_factory_iterators() -> i32 {
+    // once
+    let it = std::iter::once(42i32);
+    if it.next() != Option::some(42i32) { return 190i32; }
+    if !it.next().is_none() { return 191i32; }
+
+    // empty
+    let it2: std::iter::EmptyIterator<i32> = std::iter::empty();
+    if !it2.next().is_none() { return 192i32; }
+
+    // repeat + take
+    let it3 = std::iter::repeat(7i32);
+    let taken = it3.take(3usize);
+    if taken.next() != Option::some(7i32) { return 193i32; }
+    if taken.next() != Option::some(7i32) { return 194i32; }
+    if taken.next() != Option::some(7i32) { return 195i32; }
+    if !taken.next().is_none() { return 196i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = 0i32;
+    r = test_basic(); if r != 0i32 { return r; }
+    r = test_take_skip(); if r != 0i32 { return r; }
+    r = test_chain_zip(); if r != 0i32 { return r; }
+    r = test_for_in(); if r != 0i32 { return r; }
+    r = test_reduce_all_any(); if r != 0i32 { return r; }
+    r = test_peekable(); if r != 0i32 { return r; }
+    r = test_min_max(); if r != 0i32 { return r; }
+    r = test_countdown(); if r != 0i32 { return r; }
+    r = test_filter_map(); if r != 0i32 { return r; }
+    r = test_factory_iterators(); if r != 0i32 { return r; }
+    0i32
+}

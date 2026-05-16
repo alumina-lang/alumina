@@ -1,0 +1,19 @@
+// Test calling generic params bounded by Fn protocols
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+fn apply<T, F: Fn(&T) -> i32>(val: &T, f: F) -> i32 {
+    f(val)
+}
+
+fn get_value(x: &i32) -> i32 {
+    *x
+}
+
+fn main() -> i32 {
+    let x = 42i32;
+    let result = apply::<i32>(&x, get_value);
+    if result != 42i32 {
+        return 1i32;
+    }
+    0i32
+}

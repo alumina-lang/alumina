@@ -1,0 +1,130 @@
+// Type layout computation: size and alignment for IR types.
+
+use ast::*;
+
+fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
+    switch ty.tag {
+    IrTyTag::Builtin => {
+        switch ty.builtin() {
+            BuiltinType::Void => 0usize,
+            BuiltinType::Never => 0usize,
+            BuiltinType::Bool => 1usize,
+            BuiltinType::U8 => 1usize,
+            BuiltinType::I8 => 1usize,
+            BuiltinType::U16 => 2usize,
+            BuiltinType::I16 => 2usize,
+            BuiltinType::U32 => 4usize,
+            BuiltinType::I32 => 4usize,
+            BuiltinType::U64 => 8usize,
+            BuiltinType::I64 => 8usize,
+            BuiltinType::U128 => 16usize,
+            BuiltinType::I128 => 16usize,
+            BuiltinType::USize => pointer_size,
+            BuiltinType::ISize => pointer_size,
+            BuiltinType::F32 => 4usize,
+            BuiltinType::F64 => 8usize,
+            _ => 0usize,
+        }
+    }
+    IrTyTag::Pointer, IrTyTag::FnPointer => pointer_size,
+    IrTyTag::Array => {
+        let elem_size = compute_type_size(ty.inner(), pointer_size);
+        elem_size * ty.array_size()
+    }
+    IrTyTag::Tuple, IrTyTag::Slice => {
+        let size: usize = 0;
+        let max_align: usize = 1;
+        for i in 0usize..ty.elems().len() {
+            let elem_size = compute_type_size(ty.elems()[i], pointer_size);
+            let elem_align = compute_type_align(ty.elems()[i], pointer_size);
+            if elem_align > max_align { max_align = elem_align; }
+            let padding = (elem_align - (size % elem_align)) % elem_align;
+            size = size + padding + elem_size;
+        }
+        let padding = (max_align - (size % max_align)) % max_align;
+        size + padding
+    }
+    IrTyTag::Struct, IrTyTag::Closure => {
+        if ty.struct_ref().is_union {
+            // Union: size is max of all fields, aligned to max alignment
+            let max_size: usize = 0;
+            let max_align: usize = 1;
+            for i in 0usize..ty.struct_ref().fields.len() {
+                let fs = compute_type_size(ty.struct_ref().fields[i].ty, pointer_size);
+                let fa = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
+                if fs > max_size { max_size = fs; }
+                if fa > max_align { max_align = fa; }
+            }
+            let padding = (max_align - (max_size % max_align)) % max_align;
+            max_size + padding
+        } else {
+            let size: usize = 0;
+            let max_align: usize = 1;
+            let is_packed = ty.struct_ref().is_packed;
+            for i in 0usize..ty.struct_ref().fields.len() {
+                let elem_size = compute_type_size(ty.struct_ref().fields[i].ty, pointer_size);
+                let elem_align = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
+                if elem_align > max_align { max_align = elem_align; }
+                let padding = if is_packed {
+                    0usize
+                } else {
+                    (elem_align - (size % elem_align)) % elem_align
+                };
+                size = size + padding + elem_size;
+            }
+            let trailing_padding = if is_packed {
+                0usize
+            } else {
+                (max_align - (size % max_align)) % max_align
+            };
+            size + trailing_padding
+        }
+    }
+    IrTyTag::Enum => {
+        if ty.enum_ref().underlying.tag != IrTyTag::Builtin {
+            compute_type_size(ty.enum_ref().underlying, pointer_size)
+        } else {
+            4usize // default i32
+        }
+    }
+    _ => 0usize,
+    }
+}
+
+fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
+    switch ty.tag {
+    IrTyTag::Builtin => {
+        let sz = compute_type_size(ty, pointer_size);
+        if sz > 0usize { sz } else { 1usize }
+    }
+    IrTyTag::Pointer, IrTyTag::FnPointer => pointer_size,
+    IrTyTag::Array => compute_type_align(ty.inner(), pointer_size),
+    IrTyTag::Tuple, IrTyTag::Slice => {
+        let max_align: usize = 1;
+        for i in 0usize..ty.elems().len() {
+            let a = compute_type_align(ty.elems()[i], pointer_size);
+            if a > max_align { max_align = a; }
+        }
+        max_align
+    }
+    IrTyTag::Struct, IrTyTag::Closure => {
+        if ty.struct_ref().is_packed {
+            return 1usize;
+        }
+        let max_align: usize = 1;
+        for i in 0usize..ty.struct_ref().fields.len() {
+            let a = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
+            if a > max_align { max_align = a; }
+        }
+        max_align
+    }
+    IrTyTag::Enum => {
+        if ty.enum_ref().underlying.tag != IrTyTag::Builtin {
+            compute_type_align(ty.enum_ref().underlying, pointer_size)
+        } else {
+            4usize // default i32
+        }
+    }
+    _ => 1usize,
+    }
+}

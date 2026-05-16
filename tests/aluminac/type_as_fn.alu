@@ -1,0 +1,28 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+//
+// Verifies `Type<F>::as_fn()` recovers a function pointer for a named
+// function, plus its companion typeop machinery (arguments_of /
+// return_type_of / function_pointer_of). This is the bridge between
+// reflection (Type<F>) and runtime callability — the same shape sysroot's
+// test.alu uses to read fn pointers out of an `attributed`-produced tuple.
+
+static FLAG: i32 = 0;
+
+fn marker() { FLAG = 42i32; }
+
+fn adder(a: i32, b: i32) -> i32 { a + b }
+
+fn main() -> i32 {
+    use std::typing::Type;
+
+    let m_desc = Type::new::<marker>();
+    let m_fn: fn() = m_desc.as_fn();
+    m_fn();
+    if FLAG != 42i32 { return 1i32; }
+
+    let a_desc = Type::new::<adder>();
+    let a_fn: fn(i32, i32) -> i32 = a_desc.as_fn();
+    if a_fn(3i32, 4i32) != 7i32 { return 2i32; }
+
+    0
+}

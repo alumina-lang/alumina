@@ -1,0 +1,51 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Range / RangeFrom / RangeInclusive mix in std::iter::IteratorExt, so
+// users can chain combinators (.map, .filter, .take, .enumerate) and
+// for-loops over the chain work without manually pulling out an iterator.
+
+fn main(args: &[&[u8]]) -> i32 {
+    // for-loop over Range.map(...)
+    let total: i32 = 0;
+    for x in (1..5).map(|x: i32| -> i32 { x * 2 }) {
+        total = total + x;
+    }
+    if total != (2 + 4 + 6 + 8) { return 1i32; }
+
+    // Range.filter(...)
+    let total2: i32 = 0;
+    for x in (1..10).filter(|x: i32| -> bool { x % 2 == 0 }) {
+        total2 = total2 + x;
+    }
+    if total2 != (2 + 4 + 6 + 8) { return 2i32; }
+
+    // RangeFrom.take(...) — bounded slice of an infinite range.
+    let total3: i32 = 0;
+    for x in (1i32..).take(3usize) {
+        total3 = total3 + x;
+    }
+    if total3 != (1 + 2 + 3) { return 3i32; }
+
+    // Range.enumerate(...)
+    let total4: i32 = 0;
+    for (i, v) in (10i32..14i32).enumerate() {
+        total4 = total4 + v + (i as i32);
+    }
+    // (i=0,v=10) + (i=1,v=11) + (i=2,v=12) + (i=3,v=13) = 46 + 6 = 52
+    if total4 != 52 { return 4i32; }
+
+    // RangeInclusive.map(...)
+    let total5: i32 = 0;
+    for x in (1..=4).map(|x: i32| -> i32 { x + 10 }) {
+        total5 = total5 + x;
+    }
+    if total5 != (11 + 12 + 13 + 14) { return 5i32; }
+
+    // Chained: Range.filter(...).map(...)
+    let total6: i32 = 0;
+    for x in (1..10).filter(|x: i32| -> bool { x % 2 == 1 }).map(|x: i32| -> i32 { x * x }) {
+        total6 = total6 + x;
+    }
+    if total6 != (1 + 9 + 25 + 49 + 81) { return 6i32; }
+
+    0i32
+}

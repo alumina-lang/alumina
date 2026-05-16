@@ -1,0 +1,348 @@
+// Test: aluminac compiles a non-trivial program against the unified
+// `sysroot/` (the alumina-boot sysroot, not `sysroot-aluminac/`).
+// Exercises comparison method dispatch, generics, Ordering — everything
+// here works as long as no path through sysroot's panicking machinery
+// (which uses `dyn Formattable`) gets monomorphized. Specifically,
+// avoid Option::unwrap (and friends) — they transitively force
+// const_panic_impl which uses dyn.
+//
+// This is the milestone test for: "aluminac can swallow some of the
+// unified sysroot." Failure modes that trigger here are real parity
+// regressions — investigate before degrading the test.
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+use std::cmp::Ordering;
+
+struct Point { x: i32, y: i32 }
+
+enum Color {
+    Red = 0i32,
+    Green = 1i32,
+    Blue = 2i32,
+}
+
+impl Point {
+    fn equals(lhs: &Point, rhs: &Point) -> bool {
+        lhs.x == rhs.x && lhs.y == rhs.y
+    }
+    fn compare(lhs: &Point, rhs: &Point) -> Ordering {
+        if lhs.x < rhs.x { return Ordering::Less; }
+        if lhs.x > rhs.x { return Ordering::Greater; }
+        if lhs.y < rhs.y { return Ordering::Less; }
+        if lhs.y > rhs.y { return Ordering::Greater; }
+        Ordering::Equal
+    }
+}
+
+fn passthrough<T>(x: T) -> T { x }
+
+fn main() -> i32 {
+    // Generic identity through the unified sysroot.
+    if passthrough::<i32>(5) != 5 { return 1; }
+
+    // Comparison ops on builtin types resolve through sysroot.
+    if !(1i32 < 2i32) { return 2; }
+    if 5u64 < 4u64 { return 3; }
+
+    // Operator overload dispatching on user struct.
+    let p = Point { x: 1, y: 2 };
+    let q = Point { x: 1, y: 2 };
+    let r = Point { x: 5, y: 0 };
+    if p != q { return 4; }
+    if p == r { return 5; }
+    if p >= r { return 6; }
+
+    // Ordering enum from sysroot: build, compare, match.
+    let ord = Point::compare(&p, &r);
+    if ord != Ordering::Less { return 7; }
+
+    // Bigger struct chain.
+    let s = Point { x: -1, y: -2 };
+    if s == p { return 8; }
+    if s >= p { return 9; }
+
+    // cmp::min / cmp::max from sysroot.
+    if std::cmp::min(3i32, 7i32) != 3i32 { return 10; }
+    if std::cmp::max(3i32, 7i32) != 7i32 { return 11; }
+
+    // math::abs from sysroot.
+    if std::math::abs(-12i32) != 12i32 { return 12; }
+    if std::math::abs(12i32) != 12i32 { return 13; }
+
+    // util::cast (aliased numeric conversion) — exercises #[inline(ir)].
+    let big: u64 = 10u64;
+    let small: u32 = std::util::cast(big);
+    if small != 10u32 { return 14; }
+
+    // Range iteration through unified sysroot.
+    let total: i32 = 0;
+    for i in 0i32..10i32 {
+        total = total + i;
+    }
+    if total != 45i32 { return 15; }
+
+    let total_inc: i32 = 0;
+    for i in 1i32..=5i32 {
+        total_inc = total_inc + i;
+    }
+    if total_inc != 15i32 { return 16; }
+
+    // xxhash from sysroot — exercises a non-trivial hash protocol impl chain.
+    use std::hash::xxhash::Xxh64;
+    let h: Xxh64 = Xxh64::new();
+    h.write("the quick brown fox\0");
+    if h.finish() == 0u64 { return 17; }
+
+    // mem::size_of / align_of (compile-time intrinsics through unified
+    // std::mem facade).
+    if std::mem::size_of::<i32>() != 4usize { return 18; }
+    if std::mem::align_of::<u64>() != 8usize { return 19; }
+
+    // slice::alloc + free + index-write — runtime allocation through sysroot.
+    let buf: &mut [u32] = std::mem::slice::alloc::<u32>(8);
+    defer std::mem::slice::free(buf);
+    if buf.len() != 8usize { return 20; }
+    for i in 0usize..8usize {
+        buf[i] = (i * 11) as u32;
+    }
+    if buf[0] != 0u32 { return 21; }
+    if buf[7] != 77u32 { return 22; }
+
+    // ffi::CString round-trip.
+    let cs = std::ffi::CString::from_slice("ok");
+    defer cs.free();
+    if cs.ptr == null { return 23; }
+
+    // std::collections::Vector — exercises the slice<Ptr> ↔ &[T] type
+    // inference (Vector::new initializes _data with slice::empty(),
+    // which returns slice<Ptr>; aluminac's expected-type inference now
+    // figures out Ptr from the &mut [T] field type).
+    use std::collections::Vector;
+    let vec: Vector<i32> = Vector::new();
+    defer vec.free();
+    vec.push(10i32);
+    vec.push(20i32);
+    vec.push(30i32);
+    if vec.len() != 3usize { return 24; }
+    if vec[0] != 10i32 { return 25; }
+    if vec[1] != 20i32 { return 26; }
+    if vec[2] != 30i32 { return 27; }
+
+    // Vector index-based iteration accumulating a sum.
+    let sum_v: i32 = 0;
+    for j in 0usize..vec.len() {
+        sum_v = sum_v + vec[j];
+    }
+    if sum_v != 60i32 { return 28; }
+
+    // mem::replace and mem::swap.
+    let mr: i32 = 7;
+    let old = std::mem::replace(&mr, 11);
+    if old != 7 { return 29; }
+    if mr != 11 { return 30; }
+
+    let m1: i32 = 100;
+    let m2: i32 = 200;
+    std::mem::swap(&m1, &m2);
+    if m1 != 200 { return 31; }
+    if m2 != 100 { return 32; }
+
+    // Option::some / none / is_some / is_none — without unwrap, since
+    // Option::unwrap pulls in panic_impl which uses dyn Formattable.
+    use std::option::Option;
+    let some_int = Option::some(42i32);
+    let no_int: Option<i32> = Option::none();
+    if !some_int.is_some() { return 33; }
+    if some_int.is_none() { return 34; }
+    if no_int.is_some() { return 35; }
+    if !no_int.is_none() { return 36; }
+
+    // Result::ok / err / is_ok / is_err — same dyn-free constraints.
+    use std::result::Result;
+    let ok_int: Result<i32, i32> = Result::ok(7i32);
+    let err_int: Result<i32, i32> = Result::err(13i32);
+    if !ok_int.is_ok() { return 37; }
+    if ok_int.is_err() { return 38; }
+    if err_int.is_ok() { return 39; }
+    if !err_int.is_err() { return 40; }
+
+    // typing::matches with a protocol type-arg goes through aluminac's
+    // IrTyTag::Protocol marker so the placeholder substitution preserves
+    // protocol identity at the `is`-check site.
+    if !std::typing::matches::<i32, std::builtins::Integer>() { return 41; }
+    if std::typing::matches::<f32, std::builtins::Integer>() { return 42; }
+    if !std::typing::matches::<f64, std::builtins::FloatingPoint>() { return 43; }
+    if std::typing::matches::<u32, std::builtins::Signed>() { return 44; }
+    if !std::typing::matches::<i64, std::builtins::Signed>() { return 45; }
+
+    // for-loop iteration over a slice — exercises SliceIterator's `Option<*Ptr>`
+    // return type, which depends on the *T deref-of-type form parsing correctly.
+    let nums: [i32; 4] = [11i32, 22i32, 33i32, 44i32];
+    let nums_slice: &[i32] = nums.as_slice();
+    let iter_total: i32 = 0;
+    for n in nums_slice {
+        iter_total = iter_total + n;
+    }
+    if iter_total != 110i32 { return 46; }
+
+    // for-loop directly on an array (array.iter() returns SliceIterator).
+    let arr_total: i32 = 0;
+    for n in nums {
+        arr_total = arr_total + n;
+    }
+    if arr_total != 110i32 { return 47; }
+
+    // Vector iteration via .iter().
+    let v2: Vector<i32> = Vector::new();
+    defer v2.free();
+    v2.push(100i32);
+    v2.push(200i32);
+    v2.push(300i32);
+    let v_total: i32 = 0;
+    for n in v2.iter() {
+        v_total = v_total + n;
+    }
+    if v_total != 600i32 { return 48; }
+
+    // Generic function with multiple protocol bounds.
+    if pick_max::<i32>(3i32, 7i32) != 7i32 { return 49; }
+    if pick_max::<u64>(50u64, 5u64) != 50u64 { return 50; }
+    if pick_max::<f32>(1.5f32, 2.5f32) != 2.5f32 { return 51; }
+
+    // BinaryHeap (push only — pop pulls Option::unwrap → dyn).
+    use std::collections::BinaryHeap;
+    let h: BinaryHeap<i32> = BinaryHeap::new();
+    defer h.free();
+    h.push(3i32);
+    h.push(1i32);
+    h.push(4i32);
+    h.push(1i32);
+    h.push(5i32);
+    if h.len() != 5usize { return 52; }
+
+    // String operations: starts_with / ends_with / contains. These
+    // dispatch via slice equality, which calls slice::equals — a method
+    // with two generic params (T, Ptr) that needed proper dispatch.
+    if !std::string::starts_with("hello world", "hello") { return 53; }
+    if std::string::starts_with("hello world", "world") { return 54; }
+    if !std::string::ends_with("hello world", "world") { return 55; }
+    if std::string::ends_with("hello world", "hello") { return 56; }
+
+    // iter().count() — an IteratorExt combinator that doesn't pull
+    // unwrap → panic → dyn.
+    use std::iter::IteratorExt;
+    let count_arr: [i32; 5] = [1i32, 2i32, 3i32, 4i32, 5i32];
+    if count_arr.iter().count() != 5usize { return 57; }
+
+    // const-eval through unified sysroot:
+    const SIZE: usize = std::mem::size_of::<u64>();
+    if SIZE != 8usize { return 60; }
+    const ALIGN: usize = std::mem::align_of::<i64>();
+    if ALIGN != 8usize { return 61; }
+
+    // Built-in source-location macros — file!/line!/column! produce the
+    // expected types and non-empty values.
+    let fname: &[u8] = file!();
+    if fname.len() == 0usize { return 62; }
+    if line!() == 0u32 { return 63; }
+    if column!() == 0u32 { return 64; }
+
+    // intrinsics::expect (the branch-prediction hint) is identity in
+    // aluminac — the value passes through unchanged.
+    let v: i32 = 5;
+    if !std::intrinsics::expect(v > 0, true) { return 65; }
+    if std::intrinsics::expect(v < 0, false) { return 66; }
+
+    // Direct intrinsic calls: transmute, type_name, type_id.
+    let bits: u32 = 1078523331u32;  // 0x40490fdb (close to π)
+    let pi: f32 = std::intrinsics::transmute::<u32, f32>(bits);
+    if pi < 3.14f32 || pi > 3.15f32 { return 67; }
+
+    let i32_name: &[u8] = std::intrinsics::type_name::<i32>();
+    if i32_name.len() == 0usize { return 68; }
+
+    if std::intrinsics::type_id::<i32>() == std::intrinsics::type_id::<u32>() { return 69; }
+    if std::intrinsics::type_id::<i32>() != std::intrinsics::type_id::<i32>() { return 70; }
+
+    // mem::zeroed for a user struct.
+    let zero_pt: Point = std::mem::zeroed::<Point>();
+    if zero_pt.x != 0 { return 71; }
+    if zero_pt.y != 0 { return 72; }
+
+    // 128-bit arithmetic through sysroot's facade — exercises the u128/i128
+    // builtin lang items.
+    let big_sum: u128 = 100u128 + 200u128;
+    if big_sum != 300u128 { return 73; }
+    let neg: i128 = -50i128;
+    if neg + 75i128 != 25i128 { return 74; }
+
+    // Array equality — uses element-wise compare folded with AND/OR.
+    let arr_a: [i32; 3] = [10i32, 20i32, 30i32];
+    let arr_b: [i32; 3] = [10i32, 20i32, 30i32];
+    let arr_c: [i32; 3] = [10i32, 20i32, 99i32];
+    if arr_a != arr_b { return 75; }
+    if arr_a == arr_c { return 76; }
+
+    // Tuple equality — same element-wise compare path.
+    let tup_a: (i32, u64, bool) = (1i32, 100u64, true);
+    let tup_b: (i32, u64, bool) = (1i32, 100u64, true);
+    let tup_c: (i32, u64, bool) = (1i32, 100u64, false);
+    if tup_a != tup_b { return 88; }
+    if tup_a == tup_c { return 89; }
+
+    // switch on a bool — synthetic default block keeps the LLVM phi well-formed.
+    let bv: bool = true;
+    let bv_result = switch bv {
+        true => 100i32,
+        false => 200i32,
+    };
+    if bv_result != 100i32 { return 77; }
+    let bv2: bool = false;
+    let bv2_result = switch bv2 {
+        true => 1i32,
+        false => 2i32,
+    };
+    if bv2_result != 2i32 { return 78; }
+
+    // switch on enum (the synthetic default fix applies here too).
+    let c = Color::Green;
+    let cv = switch c {
+        Color::Red => 1i32,
+        Color::Green => 2i32,
+        Color::Blue => 3i32,
+    };
+    if cv != 2i32 { return 79; }
+
+    // Bit operations on u32 / u64.
+    let bits: u32 = 0b11001010u32;
+    if bits & 0b00001111u32 != 0b00001010u32 { return 80; }
+    if bits | 0b00010000u32 != 0b11011010u32 { return 81; }
+    if bits ^ 0b11111111u32 != 0b00110101u32 { return 82; }
+    if ~bits & 0b00001111u32 != 0b00000101u32 { return 83; }
+    if 1u32 << 5 != 32u32 { return 84; }
+    if 1024u64 >> 4 != 64u64 { return 85; }
+
+    // Closures with explicit capture (aluminac syntax: |=x| for by-value).
+    let cap_a: i32 = 7;
+    let cap_b: i32 = 11;
+    let mul = |=cap_a, =cap_b, x: i32| -> i32 { x * cap_a + cap_b };
+    if mul(3) != 32i32 { return 86; }   // 3*7 + 11 = 32
+
+    // Capture by reference — mutation flows back through the binding.
+    let counter: i32 = 0;
+    let bump = |&counter, delta: i32| { counter = counter + delta; };
+    bump(5);
+    bump(15);
+    if counter != 20 { return 87; }
+
+    // Option::unwrap pulls in panic_impl which uses `dyn Formattable`. The
+    // dyn dispatch shim in mono/lower.alu lets the typecheck through but
+    // is currently non-deterministic enough to be unsafe in tests; revert
+    // to an explicit predicate-only test until real dyn dispatch lands.
+
+    0
+}
+
+fn pick_max<T: std::cmp::Comparable<T> + std::builtins::Numeric>(a: T, b: T) -> T {
+    if a < b { b } else { a }
+}

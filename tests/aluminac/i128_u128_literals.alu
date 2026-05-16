@@ -1,0 +1,37 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: 128-bit integer literals were truncated to their low 64
+// bits (aluminac stored literals as u64 across parser/AST/IR), so
+// `0x…u128` lost its high half and `i128::max_value()`
+// (= `0x7fff…ffffu128 as i128`) became all-ones (low word 0xFFFF…
+// read as i64 = -1, sign-extended). Fixed by threading the full
+// u128 through parse_int_with_suffix -> _ExprLitData.int_val_hi ->
+// _IrLitData.int_val_hi -> codegen via LLVMConstIntOfArbitraryPrecision
+// ([lo, hi] words) for >64-bit integer types. (const-eval 128-bit is
+// a separately-tracked follow-up; these are runtime checks.)
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = 0x000102030405060708090a0b0c0d0e0fu128;
+    if (a >> 64) as u64 != 283686952306183u64 { return 1; }
+    if a as u64 != 579005069656919567u64 { return 2; }
+
+    // i128::max_value() = 0x7fff...ffff (high word 0x7fff...).
+    let m = i128::max_value();
+    if (m >> 64) as u64 != 9223372036854775807u64 { return 3; }
+    if m as u64 != 18446744073709551615u64 { return 4; }
+
+    // Overflow now actually detected (was masked when max was -1).
+    if !m.checked_add(1).is_none() { return 5; }
+    if !m.checked_mul(2).is_none() { return 6; }
+
+    // u128 max all-ones + wrapping.
+    if u128::max_value() != 0xffffffffffffffffffffffffffffffffu128 { return 7; }
+    if u128::max_value().wrapping_add(1) != 0u128 { return 8; }
+
+    // Decimal 128-bit literal round-trips.
+    let big = 170141183460469231731687303715884105727i128;
+    if big != i128::max_value() { return 9; }
+
+    // 128-bit bit-ops over the full width.
+    if 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau128.count_ones() != 64u32 { return 10; }
+    0
+}

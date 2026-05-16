@@ -1,0 +1,215 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::collections::{Vector, HashSet, Deque, BinaryHeap};
+
+fn test_vector_to_vector() -> i32 {
+    // Test to_vector from IteratorExt (map then collect)
+    let arr: [i32; 4] = [10i32, 20i32, 30i32, 40i32];
+    let v = Vector::from_slice(arr[..]);
+    defer v.free();
+
+    // Use slice_iter to get a proper iterator, then map and collect
+    let doubled = v.as_slice().iter()
+        .map(|x: i32| -> i32 { x * 2i32 })
+        .to_vector();
+    defer doubled.free();
+    if doubled.len() != 4usize { return 1i32; }
+    if doubled.as_slice()[0] != 20i32 { return 2i32; }
+    if doubled.as_slice()[3] != 80i32 { return 3i32; }
+
+    // Test reduce
+    let sum = v.as_slice().iter()
+        .reduce(0i32, |acc: i32, x: i32| -> i32 { acc + x });
+    if sum != 100i32 { return 4i32; }
+
+    0i32
+}
+
+fn test_hashset_extended() -> i32 {
+    let s: HashSet<i32> = HashSet::new();
+    defer s.free();
+
+    s.insert(1i32);
+    s.insert(2i32);
+    s.insert(3i32);
+    s.insert(2i32);  // duplicate
+    if s.len() != 3usize { return 10i32; }
+
+    // Test iterator
+    let count = 0usize;
+    for _key in s.iter() {
+        count = count + 1usize;
+    }
+    if count != 3usize { return 14i32; }
+
+    // sysroot HashSet has from_iter (no from_slice)
+    let arr: [i32; 5] = [10i32, 20i32, 30i32, 20i32, 10i32];
+    let s2: HashSet<i32> = HashSet::from_iter(&arr[..].iter());
+    defer s2.free();
+    if s2.len() != 3usize { return 15i32; }
+
+    // sysroot HashSet has extend (no extend_from_slice)
+    let s3: HashSet<i32> = HashSet::new();
+    defer s3.free();
+    let ext: [i32; 3] = [100i32, 200i32, 300i32];
+    s3.extend(&ext[..].iter());
+    if s3.len() != 3usize { return 16i32; }
+
+    0i32
+}
+
+fn test_deque_extended() -> i32 {
+    // sysroot's Deque doesn't expose `get(idx)` / `front()` / `back()`
+    // accessors (those were aluminac-local). Test the same coverage via
+    // pop_front / pop / iter to keep exercising the unified Deque end-to-end.
+    let arr: [i32; 4] = [1i32, 2i32, 3i32, 4i32];
+    let d: Deque<i32> = Deque::from_slice(arr[..]);
+    defer d.free();
+    if d.len() != 4usize { return 20i32; }
+
+    // front via pop_front (consumes)
+    let f = d.pop_front();
+    if !f.is_some() { return 21i32; }
+    if f.unwrap() != 1i32 { return 22i32; }
+    // back via pop (consumes)
+    let b = d.pop();
+    if !b.is_some() { return 23i32; }
+    if b.unwrap() != 4i32 { return 24i32; }
+    if d.len() != 2usize { return 25i32; }
+    // remaining: [2, 3]
+    let m1 = d.pop_front();
+    if m1.unwrap() != 2i32 { return 26i32; }
+    let m2 = d.pop_front();
+    if m2.unwrap() != 3i32 { return 27i32; }
+    if !d.pop_front().is_none() { return 28i32; }
+
+    0i32
+}
+
+fn test_heap_extended() -> i32 {
+    // Test from_slice
+    let arr: [i32; 5] = [3i32, 1i32, 4i32, 1i32, 5i32];
+    let h: BinaryHeap<i32> = BinaryHeap::from_slice(arr[..]);
+    defer h.free();
+    if h.len() != 5usize { return 30i32; }
+
+    // Pop should give largest first
+    let v1 = h.pop();
+    if v1.unwrap() != 5i32 { return 31i32; }
+    let v2 = h.pop();
+    if v2.unwrap() != 4i32 { return 32i32; }
+    let v3 = h.pop();
+    if v3.unwrap() != 3i32 { return 33i32; }
+
+    // sysroot's BinaryHeap doesn't expose `push_pop` / `drain`; emulate via
+    // push + pop.
+    let h2: BinaryHeap<i32> = BinaryHeap::new();
+    defer h2.free();
+    h2.push(10i32);
+    h2.push(20i32);
+    h2.push(5i32);
+    h2.push(15i32);
+    let r = h2.pop();
+    if r.unwrap() != 20i32 { return 34i32; }
+    h2.push(100i32);
+    let r2 = h2.pop();
+    if r2.unwrap() != 100i32 { return 35i32; }
+
+    // Drain via repeated pop.
+    let h3: BinaryHeap<i32> = BinaryHeap::from_slice(arr[..]);
+    defer h3.free();
+    let sum = 0i32;
+    loop {
+        let v = h3.pop();
+        if v.is_none() { break; }
+        sum = sum + v.unwrap();
+    }
+    if sum != 14i32 { return 36i32; }  // 3+1+4+1+5 = 14
+    if h3.len() != 0usize { return 37i32; }
+
+    0i32
+}
+
+fn test_iter_partition() -> i32 {
+    // `.partition()` was an aluminac-specific iterator extension; sysroot's
+    // iter.alu doesn't expose it. Express the same semantics with two
+    // filter().to_vector() walks so we keep the coverage of iter + Vector
+    // collect across both predicate branches.
+    let arr: [i32; 6] = [1i32, 2i32, 3i32, 4i32, 5i32, 6i32];
+    let evens = arr[..].iter()
+        .filter(|x: i32| -> bool { x % 2i32 == 0i32 })
+        .to_vector();
+    defer evens.free();
+    let odds = arr[..].iter()
+        .filter(|x: i32| -> bool { x % 2i32 != 0i32 })
+        .to_vector();
+    defer odds.free();
+    if evens.len() != 3usize { return 40i32; }
+    if odds.len() != 3usize { return 41i32; }
+    0i32
+}
+
+fn test_iter_min_max_by() -> i32 {
+    // sysroot's iter.alu exposes Comparable-based `.min()` / `.max()` rather
+    // than the closure-taking `min_by` / `max_by` aluminac used to carry.
+    // The closure-based forms still exercise the iterator dispatch shape, but
+    // for unified-sysroot parity prefer the natural-ordering form.
+    let arr: [i32; 4] = [3i32, 1i32, 4i32, 2i32];
+
+    let m = arr[..].iter().min();
+    if m.unwrap() != 1i32 { return 50i32; }
+
+    let m2 = arr[..].iter().max();
+    if m2.unwrap() != 4i32 { return 51i32; }
+
+    0i32
+}
+
+fn test_slice_iter() -> i32 {
+    // Test basic slice_iter
+    let arr: [i32; 5] = [10i32, 20i32, 30i32, 40i32, 50i32];
+    let sum = arr[..].iter()
+        .reduce(0i32, |acc: i32, x: i32| -> i32 { acc + x });
+    if sum != 150i32 { return 60i32; }
+
+    // Test slice_iter with filter
+    let evens = arr[..].iter()
+        .filter(|x: i32| -> bool { x % 20i32 == 0i32 })
+        .to_vector();
+    defer evens.free();
+    if evens.len() != 2usize { return 61i32; }
+    if evens.as_slice()[0] != 20i32 { return 62i32; }
+    if evens.as_slice()[1] != 40i32 { return 63i32; }
+
+    // Test size_hint
+    let it = arr[..].iter();
+    let hint = it.size_hint();
+    if !hint.is_some() { return 64i32; }
+    if hint.unwrap() != 5usize { return 65i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_vector_to_vector();
+    if r != 0i32 { return r; }
+
+    let r = test_hashset_extended();
+    if r != 0i32 { return r; }
+
+    let r = test_deque_extended();
+    if r != 0i32 { return r; }
+
+    let r = test_heap_extended();
+    if r != 0i32 { return r; }
+
+    let r = test_iter_partition();
+    if r != 0i32 { return r; }
+
+    let r = test_iter_min_max_by();
+    if r != 0i32 { return r; }
+
+    let r = test_slice_iter();
+    if r != 0i32 { return r; }
+
+    0i32
+}

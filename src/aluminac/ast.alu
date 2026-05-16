@@ -1,0 +1,1601 @@
+// AST and IR data structures for the self-hosted Alumina compiler
+//
+// Since Alumina enums don't support data payloads (like Rust enums),
+// we use a tag + data pointer pattern for discriminated unions.
+// The tag is an integer constant, data is a &void pointer cast as needed.
+
+use aluminac_common::arena::Arena;
+use std::collections::{HashMap, HashSet};
+
+// Unique identifier for AST/IR items
+struct Id {
+    _value: usize,
+}
+
+impl Id {
+    fn equals(self: &Id, other: &Id) -> bool {
+        self._value == other._value
+    }
+    fn hash(self: &Id) -> u64 {
+        self._value as u64
+    }
+}
+
+struct IdGen {
+    next: usize,
+}
+
+impl IdGen {
+    fn new() -> IdGen {
+        IdGen { next: 0 }
+    }
+    fn next_id(self: &mut IdGen) -> Id {
+        let id = Id { _value: self.next };
+        self.next = self.next + 1;
+        id
+    }
+}
+
+// === Builtin types ===
+enum BuiltinType {
+    Void = 0i32,
+    Bool = 1i32,
+    U8 = 2i32,
+    U16 = 3i32,
+    U32 = 4i32,
+    U64 = 5i32,
+    U128 = 6i32,
+    USize = 7i32,
+    I8 = 8i32,
+    I16 = 9i32,
+    I32 = 10i32,
+    I64 = 11i32,
+    I128 = 12i32,
+    ISize = 13i32,
+    F32 = 14i32,
+    F64 = 15i32,
+    Never = 16i32,
+}
+
+impl BuiltinType {
+    fn is_integer(self: &BuiltinType) -> bool {
+        let v = *self as i32;
+        (v >= 2i32 && v <= 13i32) // U8..ISize
+    }
+
+    fn is_signed(self: &BuiltinType) -> bool {
+        let v = *self as i32;
+        (v >= 8i32 && v <= 13i32) // I8..ISize
+    }
+
+    fn is_float(self: &BuiltinType) -> bool {
+        let v = *self as i32;
+        v == 14i32 || v == 15i32 // F32, F64
+    }
+
+    fn is_numeric(self: &BuiltinType) -> bool {
+        self.is_integer() || self.is_float()
+    }
+
+    fn bit_width(self: &BuiltinType) -> u32 {
+        switch *self {
+            BuiltinType::Bool => 1,
+            BuiltinType::U8 => 8,
+            BuiltinType::I8 => 8,
+            BuiltinType::U16 => 16,
+            BuiltinType::I16 => 16,
+            BuiltinType::U32 => 32,
+            BuiltinType::I32 => 32,
+            BuiltinType::F32 => 32,
+            BuiltinType::U64 => 64,
+            BuiltinType::I64 => 64,
+            BuiltinType::F64 => 64,
+            BuiltinType::U128 => 128,
+            BuiltinType::I128 => 128,
+            BuiltinType::USize => 64,
+            BuiltinType::ISize => 64,
+            _ => 0,
+        }
+    }
+}
+
+fn parse_builtin_type(name: &[u8]) -> Option<BuiltinType> {
+    use std::option::Option;
+    if name == "void" { Option::some(BuiltinType::Void) }
+    else if name == "bool" { Option::some(BuiltinType::Bool) }
+    else if name == "u8" { Option::some(BuiltinType::U8) }
+    else if name == "u16" { Option::some(BuiltinType::U16) }
+    else if name == "u32" { Option::some(BuiltinType::U32) }
+    else if name == "u64" { Option::some(BuiltinType::U64) }
+    else if name == "u128" { Option::some(BuiltinType::U128) }
+    else if name == "usize" { Option::some(BuiltinType::USize) }
+    else if name == "i8" { Option::some(BuiltinType::I8) }
+    else if name == "i16" { Option::some(BuiltinType::I16) }
+    else if name == "i32" { Option::some(BuiltinType::I32) }
+    else if name == "i64" { Option::some(BuiltinType::I64) }
+    else if name == "i128" { Option::some(BuiltinType::I128) }
+    else if name == "isize" { Option::some(BuiltinType::ISize) }
+    else if name == "f32" { Option::some(BuiltinType::F32) }
+    else if name == "f64" { Option::some(BuiltinType::F64) }
+    else if name == "never" { Option::some(BuiltinType::Never) }
+    else { Option::none() }
+}
+
+// === AST-level types ===
+// Discriminated union using tag + struct
+
+// Ty tags
+enum TyTag {
+    Placeholder = 0i32,
+    Named = 1i32,
+    Builtin = 2i32,
+    Pointer = 3i32,
+    Slice = 4i32,
+    Array = 5i32,
+    Tuple = 6i32,
+    FnPointer = 7i32,
+    Generic = 8i32,
+    Typeof = 9i32,
+    Never = 10i32,
+    Unresolved = 11i32,
+    When = 12i32,
+    DerefOf = 13i32,    // *T in type position — pointee of T
+    Dyn = 14i32,        // &dyn Proto — fat pointer with vtable; resolves to lang(dyn) struct
+    TupleIndexOf = 15i32, // T.N in type position — Nth element of tuple type T
+}
+
+struct _TyPointerData { inner: &Ty, is_const: bool }
+struct _TyArrayData { inner: &Ty, array_size: usize }
+struct _TyFnPtrData { elems: &[&Ty], ret_ty: &Ty }
+struct _TyGenericData { inner: &Ty, elems: &[&Ty] }
+struct _TyWhenData { inner: &Ty, ret_ty: &Ty, typeof_expr: &Expr }
+
+union _TyData {
+    builtin: BuiltinType,        // Builtin, Never
+    id: Id,                       // Placeholder, Named
+    pointer: _TyPointerData,     // Pointer, Slice
+    array: _TyArrayData,         // Array
+    elems: &[&Ty],              // Tuple
+    fn_ptr: _TyFnPtrData,       // FnPointer
+    generic: _TyGenericData,     // Generic
+    typeof_expr: &Expr,          // Typeof
+    when: _TyWhenData,           // When
+}
+
+struct Ty {
+    tag: TyTag,
+    _data: _TyData,
+}
+
+impl Ty {
+    // Accessors
+    fn builtin(self: &Ty) -> BuiltinType { self._data.builtin }
+    fn id(self: &Ty) -> Id { self._data.id }
+    fn inner(self: &Ty) -> &Ty {
+        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf || self.tag == TyTag::Dyn { self._data.pointer.inner }
+        else if self.tag == TyTag::Array || self.tag == TyTag::TupleIndexOf { self._data.array.inner }
+        else if self.tag == TyTag::Generic { self._data.generic.inner }
+        else { self._data.when.inner } // When
+    }
+    fn is_const(self: &Ty) -> bool { self._data.pointer.is_const }
+    fn array_size(self: &Ty) -> usize { self._data.array.array_size }
+    fn elems(self: &Ty) -> &[&Ty] {
+        if self.tag == TyTag::Tuple { self._data.elems }
+        else if self.tag == TyTag::FnPointer { self._data.fn_ptr.elems }
+        else { self._data.generic.elems } // Generic
+    }
+    fn ret_ty(self: &Ty) -> &Ty {
+        if self.tag == TyTag::FnPointer { self._data.fn_ptr.ret_ty }
+        else { self._data.when.ret_ty } // When
+    }
+    fn typeof_expr(self: &Ty) -> &Expr {
+        if self.tag == TyTag::Typeof { self._data.typeof_expr }
+        else { self._data.when.typeof_expr } // When, Array (size expr via array_ty_with_expr)
+    }
+
+    // Constructors
+    fn placeholder(id: Id) -> Ty {
+        Ty { tag: TyTag::Placeholder, _data: _TyData { id: id } }
+    }
+    fn named(id: Id) -> Ty {
+        Ty { tag: TyTag::Named, _data: _TyData { id: id } }
+    }
+    fn builtin_ty(bt: BuiltinType) -> Ty {
+        Ty { tag: TyTag::Builtin, _data: _TyData { builtin: bt } }
+    }
+    fn pointer_ty(pointee: &Ty, is_const: bool) -> Ty {
+        Ty { tag: TyTag::Pointer, _data: _TyData { pointer: _TyPointerData { inner: pointee, is_const: is_const } } }
+    }
+    fn slice_ty(elem: &Ty, is_const: bool) -> Ty {
+        Ty { tag: TyTag::Slice, _data: _TyData { pointer: _TyPointerData { inner: elem, is_const: is_const } } }
+    }
+    fn array_ty(elem: &Ty, size: usize) -> Ty {
+        Ty { tag: TyTag::Array, _data: _TyData { array: _TyArrayData { inner: elem, array_size: size } } }
+    }
+    fn array_ty_with_expr(elem: &Ty, size_expr: &Expr) -> Ty {
+        Ty { tag: TyTag::Array, _data: _TyData { when: _TyWhenData { inner: elem, ret_ty: null, typeof_expr: size_expr } } }
+    }
+    fn tuple_ty(elems: &[&Ty]) -> Ty {
+        Ty { tag: TyTag::Tuple, _data: _TyData { elems: elems } }
+    }
+    // `T.N` in type position: the Nth element of the tuple type `inner`
+    // (reuses the array data slot — inner + a usize). Resolved in
+    // mono/lower.alu's resolve_type.
+    fn tuple_index_of_ty(inner: &Ty, index: usize) -> Ty {
+        Ty { tag: TyTag::TupleIndexOf, _data: _TyData { array: _TyArrayData { inner: inner, array_size: index } } }
+    }
+    fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
+        Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret } } }
+    }
+    fn generic_ty(base: &Ty, args: &[&Ty]) -> Ty {
+        Ty { tag: TyTag::Generic, _data: _TyData { generic: _TyGenericData { inner: base, elems: args } } }
+    }
+    fn never_ty() -> Ty {
+        Ty { tag: TyTag::Never, _data: _TyData { builtin: BuiltinType::Never } }
+    }
+    fn when_ty(condition: &Expr, consequence: &Ty, alternative: &Ty) -> Ty {
+        Ty { tag: TyTag::When, _data: _TyData { when: _TyWhenData { inner: consequence, ret_ty: alternative, typeof_expr: condition } } }
+    }
+    fn typeof_ty(expr: &Expr) -> Ty {
+        Ty { tag: TyTag::Typeof, _data: _TyData { typeof_expr: expr } }
+    }
+    fn deref_of_ty(inner: &Ty) -> Ty {
+        // `*T` in type position — pointee of T. When T is a pointer with
+        // pointee P, resolves to P. When T is a placeholder, resolves
+        // after substitution.
+        Ty { tag: TyTag::DerefOf, _data: _TyData { pointer: _TyPointerData { inner: inner, is_const: false } } }
+    }
+    fn dyn_ty(inner: &Ty, is_const: bool) -> Ty {
+        // `&dyn Foo` — fat pointer with vtable. Resolves to the lang(dyn)
+        // struct; inner is the protocol type.
+        Ty { tag: TyTag::Dyn, _data: _TyData { pointer: _TyPointerData { inner: inner, is_const: is_const } } }
+    }
+    fn unresolved() -> Ty {
+        Ty { tag: TyTag::Unresolved, _data: _TyData { builtin: BuiltinType::Void } }
+    }
+    fn void_ty() -> Ty {
+        Ty::builtin_ty(BuiltinType::Void)
+    }
+}
+
+// Reference to an item (function, struct, enum, etc.)
+struct ItemRef {
+    id: Id,
+}
+
+// === AST Expressions ===
+
+enum BinOp {
+    Add = 0i32,
+    Sub = 1i32,
+    Mul = 2i32,
+    Div = 3i32,
+    Rem = 4i32,
+    BitAnd = 5i32,
+    BitOr = 6i32,
+    BitXor = 7i32,
+    Shl = 8i32,
+    Shr = 9i32,
+    Eq = 10i32,
+    Ne = 11i32,
+    Lt = 12i32,
+    Le = 13i32,
+    Gt = 14i32,
+    Ge = 15i32,
+    And = 16i32,
+    Or = 17i32,
+}
+
+enum UnOp {
+    Neg = 0i32,
+    Not = 1i32,
+    BitNot = 2i32,
+}
+
+enum AssignOp {
+    Assign = 0i32,
+    AddAssign = 1i32,
+    SubAssign = 2i32,
+    MulAssign = 3i32,
+    DivAssign = 4i32,
+    RemAssign = 5i32,
+    BitAndAssign = 6i32,
+    BitOrAssign = 7i32,
+    BitXorAssign = 8i32,
+    ShlAssign = 9i32,
+    ShrAssign = 10i32,
+}
+
+struct FieldInit {
+    name: &[u8],
+    value: &Expr,
+}
+
+struct SwitchArm {
+    pattern: &[&Expr],
+    body: &Expr,
+}
+
+// Expression tags
+enum ExprTag {
+    IntLit = 0i32,
+    FloatLit = 1i32,
+    BoolLit = 2i32,
+    StringLit = 3i32,
+    CharLit = 4i32,
+    NullLit = 5i32,
+    Local = 6i32,
+    Param = 7i32,
+    StaticRef = 8i32,
+    FnRef = 9i32,
+    EnumRef = 10i32,
+    Block = 11i32,
+    Binary = 12i32,
+    Unary = 13i32,
+    Assign = 14i32,
+    Call = 15i32,
+    MethodCall = 16i32,
+    FieldAccess = 17i32,
+    TupleIndex = 18i32,
+    Index = 19i32,
+    Ref = 20i32,
+    Deref = 21i32,
+    Cast = 22i32,
+    TypeCheck = 23i32,
+    If = 24i32,
+    When = 25i32,
+    Switch = 26i32,
+    While = 27i32,
+    For = 28i32,
+    Loop = 29i32,
+    Break = 30i32,
+    Continue = 31i32,
+    Return = 32i32,
+    Let = 33i32,
+    StructLit = 34i32,
+    TupleLit = 35i32,
+    ArrayLit = 36i32,
+    Lambda = 37i32,
+    Defer = 38i32,
+    Try = 39i32,
+    Range = 40i32,
+    Void = 41i32,
+    Zeroed = 42i32,
+    StaticFor = 43i32,
+    EtCetera = 44i32,
+    MacroInvocation = 45i32,
+    BoundValue = 46i32,     // Access a captured variable in a closure body
+    MacroParam = 47i32,     // $param reference in pre-parsed macro body (int_val=index, flag=is_variadic)
+    TurbofishValue = 48i32, // func::<T> used as a value (fn pointer), not a call
+    Defered = 49i32,        // T::method() where T is a generic type param - deferred until mono
+                            // id = generic param id, str_val = method name
+}
+
+// Expression sub-structs for union variants
+struct _ExprLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8], type_suffix: Option<BuiltinType> }
+struct _ExprIdData { id: Id, id2: Id, str_val: &[u8], flag: bool, int_val: u64 }
+struct _ExprUnaryData { un_op: UnOp, lhs: &Expr }
+struct _ExprBinaryData { bin_op: BinOp, lhs: &Expr, rhs: &Expr }
+struct _ExprAssignData { assign_op: AssignOp, lhs: &Expr, rhs: &Expr }
+struct _ExprCallData { lhs: &Expr, args: &[&Expr], type_args: &[&Ty] }
+struct _ExprFieldData { lhs: &Expr, str_val: &[u8], id2: Id }
+struct _ExprIndexData { lhs: &Expr, rhs: &Expr, index_val: usize, opt_expr: Option<&Expr> }
+struct _ExprTypedData { lhs: &Expr, ty: &Ty, flag: bool }
+struct _ExprCondData { cond: &Expr, lhs: &Expr, opt_expr: Option<&Expr> }
+struct _ExprSwitchData { lhs: &Expr, switch_arms: &[SwitchArm] }
+struct _ExprLoopData { cond: &Expr, lhs: &Expr }
+struct _ExprForData { id: Id, lhs: &Expr, rhs: &Expr, args: &[&Expr] }
+struct _ExprJumpData { opt_expr: Option<&Expr> }
+struct _ExprLetData { id: Id, str_val: &[u8], opt_ty: Option<&Ty>, opt_expr: Option<&Expr> }
+struct _ExprStructLitData { ty: &Ty, field_inits: &[FieldInit] }
+struct _ExprListData { args: &[&Expr] }
+struct _ExprLambdaData { id: Id, lambda_params: &[LambdaParam], closure_bindings: &[ClosureBinding], opt_ty: Option<&Ty>, lhs: &Expr }
+struct _ExprMacroData { str_val: &[u8], args: &[&Expr], flag: bool, is_param_subst: bool, param_idx: i32 }
+struct _ExprRangeData { lhs: &Expr, rhs: &Expr, flag: bool }
+struct _ExprDeferData { lhs: &Expr }
+
+union _ExprData {
+    lit: _ExprLitData,
+    id_ref: _ExprIdData,
+    unary: _ExprUnaryData,
+    binary: _ExprBinaryData,
+    assign: _ExprAssignData,
+    call: _ExprCallData,
+    field: _ExprFieldData,
+    index: _ExprIndexData,
+    typed: _ExprTypedData,
+    cond: _ExprCondData,
+    switch_expr: _ExprSwitchData,
+    loop_expr: _ExprLoopData,
+    for_expr: _ExprForData,
+    jump: _ExprJumpData,
+    let_expr: _ExprLetData,
+    struct_lit: _ExprStructLitData,
+    list: _ExprListData,
+    lambda: _ExprLambdaData,
+    macro_expr: _ExprMacroData,
+    range: _ExprRangeData,
+    defer: _ExprDeferData,
+}
+
+struct Expr {
+    tag: ExprTag,
+    span: Span,
+    _data: _ExprData,
+}
+
+impl Expr {
+    fn void_expr() -> Expr {
+        let e = std::mem::zeroed::<Expr>();
+        e.tag = ExprTag::Void;
+        e.span = Span::empty();
+        e
+    }
+
+    // --- Getter accessors ---
+
+    fn int_val(self: &Expr) -> u64 {
+        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::CharLit || self.tag == ExprTag::NullLit {
+            self._data.lit.int_val
+        } else {
+            self._data.id_ref.int_val  // MacroParam, etc.
+        }
+    }
+
+    // High 64 bits of a 128-bit integer literal (0 for ≤64-bit). The
+    // common `int_val()` stays the low word so the many small-value
+    // consumers (array sizes, tuple indices, …) are untouched.
+    fn int_val_hi(self: &Expr) -> u64 {
+        if self.tag == ExprTag::IntLit { self._data.lit.int_val_hi } else { 0u64 }
+    }
+    fn int_val_u128(self: &Expr) -> u128 {
+        ((self.int_val_hi() as u128) << 64) | (self.int_val() as u128)
+    }
+
+    fn float_val(self: &Expr) -> f64 { self._data.lit.float_val }
+    fn bool_val(self: &Expr) -> bool { self._data.lit.bool_val }
+
+    fn str_val(self: &Expr) -> &[u8] {
+        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::CharLit || self.tag == ExprTag::NullLit {
+            self._data.lit.str_val
+        } else if self.tag == ExprTag::FieldAccess {
+            self._data.field.str_val
+        } else if self.tag == ExprTag::Let {
+            self._data.let_expr.str_val
+        } else if self.tag == ExprTag::MacroInvocation || self.tag == ExprTag::EtCetera {
+            self._data.macro_expr.str_val
+        } else {
+            self._data.id_ref.str_val  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam
+        }
+    }
+
+    fn id(self: &Expr) -> Id {
+        if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor {
+            self._data.for_expr.id
+        } else if self.tag == ExprTag::Let {
+            self._data.let_expr.id
+        } else if self.tag == ExprTag::Lambda {
+            self._data.lambda.id
+        } else {
+            self._data.id_ref.id  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam
+        }
+    }
+
+    fn id2(self: &Expr) -> Id {
+        if self.tag == ExprTag::FieldAccess {
+            self._data.field.id2
+        } else {
+            self._data.id_ref.id2
+        }
+    }
+
+    fn bin_op(self: &Expr) -> BinOp { self._data.binary.bin_op }
+    fn un_op(self: &Expr) -> UnOp { self._data.unary.un_op }
+    fn assign_op(self: &Expr) -> AssignOp { self._data.assign.assign_op }
+
+    fn ty(self: &Expr) -> &Ty {
+        if self.tag == ExprTag::StructLit {
+            self._data.struct_lit.ty
+        } else {
+            self._data.typed.ty  // Ref, Deref, Cast, TypeCheck, Zeroed
+        }
+    }
+
+    fn type_suffix(self: &Expr) -> Option<BuiltinType> { self._data.lit.type_suffix }
+
+    fn lhs(self: &Expr) -> &Expr {
+        if self.tag == ExprTag::Binary { self._data.binary.lhs }
+        else if self.tag == ExprTag::Unary { self._data.unary.lhs }
+        else if self.tag == ExprTag::Assign { self._data.assign.lhs }
+        else if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.lhs }
+        else if self.tag == ExprTag::FieldAccess { self._data.field.lhs }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.lhs }
+        else if self.tag == ExprTag::Ref || self.tag == ExprTag::Deref || self.tag == ExprTag::Cast || self.tag == ExprTag::TypeCheck { self._data.typed.lhs }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.lhs }
+        else if self.tag == ExprTag::Switch { self._data.switch_expr.lhs }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.lhs }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.lhs }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.lhs }
+        else if self.tag == ExprTag::Range { self._data.range.lhs }
+        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs }
+        else { null }
+    }
+
+    fn rhs(self: &Expr) -> &Expr {
+        if self.tag == ExprTag::Binary { self._data.binary.rhs }
+        else if self.tag == ExprTag::Assign { self._data.assign.rhs }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.rhs }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.rhs }
+        else if self.tag == ExprTag::Range { self._data.range.rhs }
+        else { null }
+    }
+
+    fn cond(self: &Expr) -> &Expr {
+        if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.cond }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.cond }
+        else { null }
+    }
+
+    fn args(self: &Expr) -> &[&Expr] {
+        if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.args }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.args }
+        else if self.tag == ExprTag::TupleLit || self.tag == ExprTag::ArrayLit || self.tag == ExprTag::Block { self._data.list.args }
+        else if self.tag == ExprTag::MacroInvocation { self._data.macro_expr.args }
+        else { &[] }
+    }
+
+    fn field_inits(self: &Expr) -> &[FieldInit] {
+        if self.tag == ExprTag::StructLit { self._data.struct_lit.field_inits }
+        else { &[] }
+    }
+
+    fn switch_arms(self: &Expr) -> &[SwitchArm] {
+        if self.tag == ExprTag::Switch { self._data.switch_expr.switch_arms }
+        else { &[] }
+    }
+
+    fn type_args(self: &Expr) -> &[&Ty] {
+        if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.type_args }
+        else { &[] }
+    }
+
+    fn flag(self: &Expr) -> bool {
+        if self.tag == ExprTag::Ref || self.tag == ExprTag::Deref || self.tag == ExprTag::Cast || self.tag == ExprTag::TypeCheck { self._data.typed.flag }
+        else if self.tag == ExprTag::Range { self._data.range.flag }
+        else if self.tag == ExprTag::MacroInvocation || self.tag == ExprTag::EtCetera { self._data.macro_expr.flag }
+        else if self.tag == ExprTag::Local || self.tag == ExprTag::Param || self.tag == ExprTag::StaticRef || self.tag == ExprTag::FnRef || self.tag == ExprTag::EnumRef || self.tag == ExprTag::BoundValue || self.tag == ExprTag::Defered || self.tag == ExprTag::MacroParam {
+            self._data.id_ref.flag
+        }
+        else { false }
+    }
+
+    fn opt_expr(self: &Expr) -> Option<&Expr> {
+        if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.opt_expr }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.opt_expr }
+        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue { self._data.jump.opt_expr }
+        else if self.tag == ExprTag::Let { self._data.let_expr.opt_expr }
+        else { Option::none() }
+    }
+
+    fn opt_ty(self: &Expr) -> Option<&Ty> {
+        if self.tag == ExprTag::Let { self._data.let_expr.opt_ty }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.opt_ty }
+        else { Option::none() }
+    }
+
+    fn index_val(self: &Expr) -> usize { self._data.index.index_val }
+    fn lambda_params(self: &Expr) -> &[LambdaParam] { self._data.lambda.lambda_params }
+    fn closure_bindings(self: &Expr) -> &[ClosureBinding] { self._data.lambda.closure_bindings }
+
+    // --- Setter methods for expand_macro_expr ---
+
+    fn set_lhs(self: &mut Expr, val: &Expr) {
+        if self.tag == ExprTag::Binary { self._data.binary.lhs = val; }
+        else if self.tag == ExprTag::Unary { self._data.unary.lhs = val; }
+        else if self.tag == ExprTag::Assign { self._data.assign.lhs = val; }
+        else if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.lhs = val; }
+        else if self.tag == ExprTag::FieldAccess { self._data.field.lhs = val; }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.lhs = val; }
+        else if self.tag == ExprTag::Ref || self.tag == ExprTag::Deref || self.tag == ExprTag::Cast || self.tag == ExprTag::TypeCheck { self._data.typed.lhs = val; }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.lhs = val; }
+        else if self.tag == ExprTag::Switch { self._data.switch_expr.lhs = val; }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.lhs = val; }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.lhs = val; }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.lhs = val; }
+        else if self.tag == ExprTag::Range { self._data.range.lhs = val; }
+        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs = val; }
+    }
+
+    fn set_rhs(self: &mut Expr, val: &Expr) {
+        if self.tag == ExprTag::Binary { self._data.binary.rhs = val; }
+        else if self.tag == ExprTag::Assign { self._data.assign.rhs = val; }
+        else if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.rhs = val; }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.rhs = val; }
+        else if self.tag == ExprTag::Range { self._data.range.rhs = val; }
+    }
+
+    fn set_cond(self: &mut Expr, val: &Expr) {
+        if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.cond = val; }
+        else if self.tag == ExprTag::While || self.tag == ExprTag::Loop { self._data.loop_expr.cond = val; }
+    }
+
+    fn set_args(self: &mut Expr, val: &[&Expr]) {
+        if self.tag == ExprTag::Call || self.tag == ExprTag::TurbofishValue { self._data.call.args = val; }
+        else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.args = val; }
+        else if self.tag == ExprTag::TupleLit || self.tag == ExprTag::ArrayLit || self.tag == ExprTag::Block { self._data.list.args = val; }
+        else if self.tag == ExprTag::MacroInvocation { self._data.macro_expr.args = val; }
+    }
+
+    fn set_opt_expr(self: &mut Expr, val: Option<&Expr>) {
+        if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.opt_expr = val; }
+        else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.opt_expr = val; }
+        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue { self._data.jump.opt_expr = val; }
+        else if self.tag == ExprTag::Let { self._data.let_expr.opt_expr = val; }
+    }
+
+    fn set_switch_arms(self: &mut Expr, val: &[SwitchArm]) {
+        if self.tag == ExprTag::Switch { self._data.switch_expr.switch_arms = val; }
+    }
+
+    fn set_field_inits(self: &mut Expr, val: &[FieldInit]) {
+        if self.tag == ExprTag::StructLit { self._data.struct_lit.field_inits = val; }
+    }
+
+    fn set_id(self: &mut Expr, val: Id) {
+        if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.id = val; }
+        else if self.tag == ExprTag::Let { self._data.let_expr.id = val; }
+        else if self.tag == ExprTag::Lambda { self._data.lambda.id = val; }
+        else { self._data.id_ref.id = val; }
+    }
+}
+
+// Bound type for closure captures
+enum BoundType {
+    ByValue = 0i32,
+    ByReference = 1i32,
+}
+
+struct ClosureBinding {
+    id: Id,          // New id for the binding inside the closure
+    name: &[u8],     // Variable name
+    value: &Expr,    // Original expression being captured (usually ExprTag::Local or ExprTag::Param)
+    bound_type: BoundType,
+}
+
+struct LambdaParam {
+    id: Id,
+    name: &[u8],
+    ty: Option<&Ty>,
+}
+
+struct Span {
+    file_id: u32,
+    start: u32,
+    end: u32,
+}
+
+impl Span {
+    fn empty() -> Span {
+        Span { file_id: 0, start: 0, end: 0 }
+    }
+}
+
+// === AST Items ===
+
+struct FnParam {
+    id: Id,
+    name: &[u8],
+    ty: &Ty,
+}
+
+struct GenericParam {
+    id: Id,
+    name: &[u8],
+    bounds: &[&Ty],
+    default_ty: Option<&Ty>,
+}
+
+// Attribute tags
+enum AttrTag {
+    Export = 0i32,
+    Inline = 1i32,
+    AlwaysInline = 2i32,
+    Cold = 3i32,
+    Align = 4i32,
+    Extern = 5i32,
+    Cfg = 6i32,
+    NoReturn = 7i32,
+    ThreadLocal = 8i32,
+    Test = 9i32,
+    Main = 10i32,
+    StaticCtor = 11i32,
+    Lang = 12i32,
+    InlineIr = 13i32,
+    Builtin = 14i32,
+    ReturnsTwice = 15i32,
+    TestMain = 16i32,
+    LinkName = 17i32,
+    NeverInline = 18i32,
+    Transparent = 19i32,
+    Packed = 20i32,
+    MustUse = 21i32,
+    NoMangle = 22i32,
+    ConstOnly = 23i32,
+    NoConst = 24i32,
+    TupleCall = 25i32,
+    Custom = 26i32,        // unrecognized #[name(...)]; str_val = name
+}
+
+union _AttributeData {
+    str_val: &[u8],     // for AttrTag::Extern, AttrTag::Cfg, AttrTag::Lang
+    int_val: usize,     // for AttrTag::Align
+}
+
+struct Attribute {
+    tag: AttrTag,
+    _data: _AttributeData,
+}
+
+impl Attribute {
+    fn str_val(self: &Attribute) -> &[u8] { self._data.str_val }
+    fn int_val(self: &Attribute) -> usize { self._data.int_val }
+
+    fn _no_data() -> _AttributeData { _AttributeData { str_val: "" } }
+
+    fn export() -> Attribute { Attribute { tag: AttrTag::Export, _data: Attribute::_no_data() } }
+    fn inline_attr() -> Attribute { Attribute { tag: AttrTag::Inline, _data: Attribute::_no_data() } }
+    fn always_inline() -> Attribute { Attribute { tag: AttrTag::AlwaysInline, _data: Attribute::_no_data() } }
+    fn cold() -> Attribute { Attribute { tag: AttrTag::Cold, _data: Attribute::_no_data() } }
+    fn align(n: usize) -> Attribute { Attribute { tag: AttrTag::Align, _data: _AttributeData { int_val: n } } }
+    fn extern_attr(abi: &[u8]) -> Attribute { Attribute { tag: AttrTag::Extern, _data: _AttributeData { str_val: abi } } }
+    fn cfg(val: &[u8]) -> Attribute { Attribute { tag: AttrTag::Cfg, _data: _AttributeData { str_val: val } } }
+    fn no_return() -> Attribute { Attribute { tag: AttrTag::NoReturn, _data: Attribute::_no_data() } }
+    fn thread_local() -> Attribute { Attribute { tag: AttrTag::ThreadLocal, _data: Attribute::_no_data() } }
+    fn test() -> Attribute { Attribute { tag: AttrTag::Test, _data: Attribute::_no_data() } }
+    fn main_attr() -> Attribute { Attribute { tag: AttrTag::Main, _data: Attribute::_no_data() } }
+    fn static_ctor() -> Attribute { Attribute { tag: AttrTag::StaticCtor, _data: Attribute::_no_data() } }
+    fn lang(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Lang, _data: _AttributeData { str_val: name } } }
+    fn inline_ir() -> Attribute { Attribute { tag: AttrTag::InlineIr, _data: Attribute::_no_data() } }
+    fn builtin() -> Attribute { Attribute { tag: AttrTag::Builtin, _data: Attribute::_no_data() } }
+    fn returns_twice() -> Attribute { Attribute { tag: AttrTag::ReturnsTwice, _data: Attribute::_no_data() } }
+    fn test_main() -> Attribute { Attribute { tag: AttrTag::TestMain, _data: Attribute::_no_data() } }
+    fn link_name(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::LinkName, _data: _AttributeData { str_val: name } } }
+    fn never_inline() -> Attribute { Attribute { tag: AttrTag::NeverInline, _data: Attribute::_no_data() } }
+    fn transparent() -> Attribute { Attribute { tag: AttrTag::Transparent, _data: Attribute::_no_data() } }
+    fn packed(n: usize) -> Attribute { Attribute { tag: AttrTag::Packed, _data: _AttributeData { int_val: n } } }
+    fn must_use() -> Attribute { Attribute { tag: AttrTag::MustUse, _data: Attribute::_no_data() } }
+    fn no_mangle() -> Attribute { Attribute { tag: AttrTag::NoMangle, _data: Attribute::_no_data() } }
+    fn const_only() -> Attribute { Attribute { tag: AttrTag::ConstOnly, _data: Attribute::_no_data() } }
+    fn no_const() -> Attribute { Attribute { tag: AttrTag::NoConst, _data: Attribute::_no_data() } }
+    fn tuple_call() -> Attribute { Attribute { tag: AttrTag::TupleCall, _data: Attribute::_no_data() } }
+    fn custom(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Custom, _data: _AttributeData { str_val: name } } }
+}
+
+struct FnDef {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    params: &[FnParam],
+    return_type: &Ty,
+    body: Option<&Expr>,
+    attributes: &[Attribute],
+    is_variadic: bool,
+    abi: Option<&[u8]>,
+    span: Span,
+}
+
+struct StructField {
+    id: Id,
+    name: &[u8],
+    ty: &Ty,
+}
+
+struct StructDef {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    fields: &[StructField],
+    attributes: &[Attribute],
+    is_union: bool,
+    scope_idx: u32,
+}
+
+struct EnumVariant {
+    id: Id,
+    name: &[u8],
+    value: Option<&Expr>,
+}
+
+struct EnumDef {
+    id: Id,
+    name: &[u8],
+    underlying_type: Option<&Ty>,
+    variants: &[EnumVariant],
+    attributes: &[Attribute],
+    scope_idx: u32,
+}
+
+struct TypeAlias {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    target: &Ty,
+    attributes: &[Attribute],
+}
+
+struct ProtocolDef {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    methods: &[FnDef],
+    mixins: &[&Ty],
+    scope_idx: u32,
+    attributes: &[Attribute],
+}
+
+struct StaticDef {
+    id: Id,
+    name: &[u8],
+    ty: Option<&Ty>,
+    init: Option<&Expr>,
+    attributes: &[Attribute],
+    is_const: bool,
+    generic_params: &[GenericParam],
+}
+
+
+// Item tags
+enum ItemTag {
+    Function = 0i32,
+    Struct = 1i32,
+    Enum = 2i32,
+    TypeAlias = 3i32,
+    Protocol = 4i32,
+    Static = 6i32,
+}
+
+union _ItemData {
+    fn_def: FnDef,             // Function
+    struct_def: StructDef,     // Struct
+    enum_def: EnumDef,         // Enum
+    type_alias: TypeAlias,     // TypeAlias
+    protocol_def: ProtocolDef, // Protocol
+    static_def: StaticDef,     // Static
+}
+
+struct Item {
+    tag: ItemTag,
+    span: Span,
+    _data: _ItemData,
+}
+
+impl Item {
+    fn fn_def(self: &Item) -> &FnDef { &self._data.fn_def }
+    fn struct_def(self: &Item) -> &StructDef { &self._data.struct_def }
+    fn enum_def(self: &Item) -> &EnumDef { &self._data.enum_def }
+    fn type_alias(self: &Item) -> &TypeAlias { &self._data.type_alias }
+    fn protocol_def(self: &Item) -> &ProtocolDef { &self._data.protocol_def }
+    fn static_def(self: &Item) -> &StaticDef { &self._data.static_def }
+}
+
+// === IR (Monomorphized) types ===
+
+// IrTy tags
+enum IrTyTag {
+    Builtin = 0i32,
+    Pointer = 1i32,
+    Array = 2i32,
+    Tuple = 3i32,
+    FnPointer = 4i32,
+    Struct = 5i32,
+    Enum = 6i32,
+    Void = 7i32,
+    Never = 8i32,
+    Slice = 9i32,       // fat pointer: (data_ptr, len) - tracks element type
+    Closure = 10i32,    // closure: struct of captures + associated function
+    Fn = 11i32,         // function item: ZST representing a specific function
+    Protocol = 12i32,   // protocol marker: carries the protocol's def-id for `is`-checks
+    ItemRef = 13i32,    // const/static item used as a generic type-arg —
+                        // carries the StaticDef's id and a flag distinguishing
+                        // const-vs-static. Resolved by typeop_underlying_type_of
+                        // and value_of intrinsics.
+}
+
+// Slice struct field indices (fat pointer layout: {data_ptr, len})
+const SLICE_DATA_FIELD: u32 = 0u32;
+const SLICE_LEN_FIELD: u32 = 1u32;
+
+struct _IrTyPointerData {
+    inner: &IrTy,
+    is_const: bool,
+}
+
+struct _IrTyArrayData {
+    inner: &IrTy,
+    array_size: usize,
+}
+
+struct _IrTyFnPtrData {
+    elems: &[&IrTy],
+    ret_ty: &IrTy,
+}
+
+struct _IrTySliceData {
+    inner: &IrTy,
+    is_const: bool,
+    elems: &[&IrTy],               // fat pointer tuple {ptr, len}
+}
+
+struct _IrTyClosureData {
+    struct_ref: IrStructRef,
+    closure_fn: IrFnRef,
+}
+
+struct _IrTyFnData {
+    fn_ref: IrFnRef,
+}
+
+struct _IrTyProtocolData {
+    proto_id: usize,
+    type_args: &[&IrTy],
+}
+
+struct _IrTyItemRefData {
+    id: usize,
+    is_const: bool,
+}
+
+union _IrTyData {
+    builtin: BuiltinType,           // Builtin, Never
+    pointer: _IrTyPointerData,      // Pointer
+    array: _IrTyArrayData,          // Array
+    elems: &[&IrTy],               // Tuple
+    fn_ptr: _IrTyFnPtrData,        // FnPointer
+    struct_ref: IrStructRef,        // Struct
+    enum_ref: IrEnumRef,            // Enum
+    closure: _IrTyClosureData,      // Closure
+    slice: _IrTySliceData,          // Slice
+    fn_item: _IrTyFnData,          // Fn
+    proto: _IrTyProtocolData,       // Protocol
+    item_ref: _IrTyItemRefData,     // ItemRef
+}
+
+struct IrTy {
+    tag: IrTyTag,
+    _data: _IrTyData,
+}
+
+impl IrTy {
+    // Accessors
+    fn builtin(self: &IrTy) -> BuiltinType { self._data.builtin }
+    fn inner(self: &IrTy) -> &IrTy {
+        if self.tag == IrTyTag::Slice { self._data.slice.inner }
+        else if self.tag == IrTyTag::Array { self._data.array.inner }
+        else { self._data.pointer.inner }
+    }
+    fn is_const(self: &IrTy) -> bool {
+        if self.tag == IrTyTag::Slice { self._data.slice.is_const }
+        else if self.tag == IrTyTag::Pointer { self._data.pointer.is_const }
+        else { false }
+    }
+    fn array_size(self: &IrTy) -> usize { self._data.array.array_size }
+    fn elems(self: &IrTy) -> &[&IrTy] {
+        if self.tag == IrTyTag::Slice { self._data.slice.elems }
+        else if self.tag == IrTyTag::FnPointer { self._data.fn_ptr.elems }
+        else { self._data.elems }
+    }
+    fn ret_ty(self: &IrTy) -> &IrTy { self._data.fn_ptr.ret_ty }
+    fn fn_item_ref(self: &IrTy) -> IrFnRef { self._data.fn_item.fn_ref }
+    fn struct_ref(self: &IrTy) -> IrStructRef { self._data.struct_ref }
+    fn enum_ref(self: &IrTy) -> IrEnumRef { self._data.enum_ref }
+    fn closure_fn(self: &IrTy) -> IrFnRef { self._data.closure.closure_fn }
+    // closure also needs struct_ref, accessed via _data.closure.struct_ref
+
+    fn mk_builtin(bt: BuiltinType) -> IrTy {
+        IrTy { tag: IrTyTag::Builtin, _data: _IrTyData { builtin: bt } }
+    }
+    fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::Pointer, _data: _IrTyData { pointer: _IrTyPointerData { inner: pointee, is_const: is_const } } }
+    }
+    fn mk_array(elem: &IrTy, size: usize) -> IrTy {
+        IrTy { tag: IrTyTag::Array, _data: _IrTyData { array: _IrTyArrayData { inner: elem, array_size: size } } }
+    }
+    fn mk_tuple(elems: &[&IrTy]) -> IrTy {
+        IrTy { tag: IrTyTag::Tuple, _data: _IrTyData { elems: elems } }
+    }
+    fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
+        IrTy { tag: IrTyTag::FnPointer, _data: _IrTyData { fn_ptr: _IrTyFnPtrData { elems: params, ret_ty: ret } } }
+    }
+    fn mk_fn(fn_ref: IrFnRef) -> IrTy {
+        IrTy { tag: IrTyTag::Fn, _data: _IrTyData { fn_item: _IrTyFnData { fn_ref: fn_ref } } }
+    }
+    fn mk_struct(s: IrStructRef) -> IrTy {
+        IrTy { tag: IrTyTag::Struct, _data: _IrTyData { struct_ref: s } }
+    }
+    fn mk_closure(s: IrStructRef, fn_ref: IrFnRef) -> IrTy {
+        IrTy { tag: IrTyTag::Closure, _data: _IrTyData { closure: _IrTyClosureData { struct_ref: s, closure_fn: fn_ref } } }
+    }
+    fn mk_enum(e: IrEnumRef) -> IrTy {
+        IrTy { tag: IrTyTag::Enum, _data: _IrTyData { enum_ref: e } }
+    }
+    fn mk_void() -> IrTy {
+        IrTy { tag: IrTyTag::Void, _data: _IrTyData { builtin: BuiltinType::Void } }
+    }
+    fn mk_never() -> IrTy {
+        IrTy { tag: IrTyTag::Never, _data: _IrTyData { builtin: BuiltinType::Never } }
+    }
+    fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::Slice, _data: _IrTyData { slice: _IrTySliceData { inner: elem, is_const: is_const, elems: &[] } } }
+    }
+
+    fn mk_protocol(proto_id: usize) -> IrTy {
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto: _IrTyProtocolData { proto_id: proto_id, type_args: &[] } } }
+    }
+
+    fn mk_protocol_with_args(proto_id: usize, type_args: &[&IrTy]) -> IrTy {
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto: _IrTyProtocolData { proto_id: proto_id, type_args: type_args } } }
+    }
+
+    fn proto_id(self: &IrTy) -> usize { self._data.proto.proto_id }
+    fn proto_type_args(self: &IrTy) -> &[&IrTy] { self._data.proto.type_args }
+
+    fn mk_item_ref(id: usize, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::ItemRef, _data: _IrTyData { item_ref: _IrTyItemRefData { id: id, is_const: is_const } } }
+    }
+    fn item_ref_id(self: &IrTy) -> usize { self._data.item_ref.id }
+    fn item_ref_is_const(self: &IrTy) -> bool { self._data.item_ref.is_const }
+
+    fn is_void(self: &IrTy) -> bool {
+        self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void)
+    }
+    fn is_never(self: &IrTy) -> bool {
+        self.tag == IrTyTag::Never || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Never)
+    }
+    fn is_zero_sized(self: &IrTy) -> bool {
+        if self.tag == IrTyTag::Void { return true; }
+        if self.tag == IrTyTag::Fn { return true; }
+        if self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void { return true; }
+        if self.tag == IrTyTag::Tuple {
+            for i in 0usize..self.elems().len() {
+                if !self.elems()[i].is_zero_sized() { return false; }
+            }
+            return true;
+        }
+        if self.tag == IrTyTag::Array {
+            return self.array_size() == 0 || self.inner().is_zero_sized();
+        }
+        if self.tag == IrTyTag::Struct {
+            return self.struct_ref().is_zero_sized;
+        }
+        if self.tag == IrTyTag::Closure {
+            return self._data.closure.struct_ref.is_zero_sized;
+        }
+        false
+    }
+}
+
+struct IrStructRef {
+    id: Id,
+    name: &[u8],
+    fields: &[IrField],
+    is_union: bool,
+    is_zero_sized: bool,
+    scope_idx: u32,  // scope index for method resolution (0 = no methods)
+    type_args: &[&IrTy],  // type args used to instantiate this struct (for method dispatch)
+    is_packed: bool,
+    attributes: &[Attribute],
+}
+
+impl IrStructRef {
+    fn empty() -> IrStructRef {
+        IrStructRef { id: Id { _value: 0 }, name: "", fields: &[],
+                       is_union: false, is_zero_sized: true, scope_idx: 0, type_args: &[],
+                       is_packed: false, attributes: &[] }
+    }
+}
+
+struct IrField {
+    name: &[u8],
+    ty: &IrTy,
+}
+
+struct IrEnumRef {
+    id: Id,
+    name: &[u8],
+    underlying: &IrTy,
+    variants: &[IrEnumVariant],
+    scope_idx: u32,
+    attributes: &[Attribute],
+}
+
+impl IrEnumRef {
+    fn empty() -> IrEnumRef {
+        IrEnumRef { id: Id { _value: 0 }, name: "",
+                     underlying: null, variants: &[], scope_idx: 0, attributes: &[] }
+    }
+}
+
+struct IrEnumVariant {
+    name: &[u8],
+    value: u64,
+}
+
+// === IR Expressions ===
+
+// IrExpr tags
+enum IrTag {
+    IntLit = 0i32,
+    FloatLit = 1i32,
+    BoolLit = 2i32,
+    StringLit = 3i32,
+    NullLit = 4i32,
+    Local = 5i32,
+    Param = 6i32,
+    FnRef = 7i32,
+    GlobalRef = 8i32,
+    Block = 9i32,
+    Binary = 10i32,
+    Unary = 11i32,
+    Assign = 12i32,
+    Call = 13i32,
+    FieldAccess = 14i32,
+    Index = 15i32,
+    Ref = 16i32,
+    Deref = 17i32,
+    Cast = 18i32,
+    If = 19i32,
+    Switch = 20i32,
+    While = 21i32,
+    Loop = 22i32,
+    Break = 23i32,
+    Continue = 24i32,
+    Return = 25i32,
+    Let = 26i32,
+    StructLit = 27i32,
+    TupleLit = 28i32,
+    ArrayLit = 29i32,
+    Defer = 30i32,
+    Void = 31i32,
+    Zeroed = 32i32,
+    Unreachable = 34i32,
+    Undef = 35i32,
+    Transmute = 39i32,    // transmute intrinsic; lhs holds the value, ty holds target type
+    Trap = 40i32,
+    StackAlloc = 41i32,   // stack allocation; lhs holds size expr, ty holds return pointer type
+    InlineAsm = 45i32,    // inline assembly; str_val holds asm string
+    LlvmIntrinsic = 46i32, // generic LLVM intrinsic call; str_val=intrinsic name, items=args, ty=return type
+    ConstPanic = 47i32,   // const_panic intrinsic — str_val holds the panic message; const_eval surfaces it as a compile error, codegen treats as unreachable
+    ConstWarning = 48i32, // const_warning intrinsic — str_val holds the message; const_eval surfaces a warning, codegen no-ops
+    ConstNote = 49i32,    // const_note intrinsic — str_val holds the message; const_eval surfaces a note, codegen no-ops
+    InConstContext = 50i32, // in_const_context intrinsic — const_eval returns true, codegen emits false
+    AtomicOp = 51i32,     // atomic intrinsic; str_val = op ("load"/"store"/"rmw"/"cmpxchg"/"fence"), items = args, ty = return type
+}
+
+// Call target tags
+enum CallKind {
+    Direct = 0i32,
+    Indirect = 1i32,
+}
+
+struct IrCallTarget {
+    tag: CallKind,
+    fn_ref: IrFnRef,       // for CallKind::Direct
+    callee: &IrExpr,        // for CallKind::Indirect
+}
+
+struct IrSwitchArm {
+    values: &[u64],
+    body: &IrExpr,
+    is_default: bool,
+}
+
+// IrExpr sub-structs for union variants
+struct _IrLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8] }
+struct _IrVarData { id: Id, param_idx: u32 }
+struct _IrBinData { bin_op: BinOp, lhs: &IrExpr, rhs: &IrExpr }
+struct _IrUnData { un_op: UnOp, lhs: &IrExpr }
+struct _IrAssignData { lhs: &IrExpr, rhs: &IrExpr }
+struct _IrCallData { call_target: IrCallTarget, items: &[&IrExpr] }
+struct _IrFieldAccessData { lhs: &IrExpr, field_idx: u32 }
+struct _IrSingleData { lhs: &IrExpr }
+struct _IrCastData { lhs: &IrExpr, ir_ty: &IrTy }
+struct _IrIfData { cond: &IrExpr, lhs: &IrExpr, opt_expr: Option<&IrExpr> }
+struct _IrSwitchData { lhs: &IrExpr, switch_arms: &[IrSwitchArm] }
+struct _IrRetData { opt_expr: Option<&IrExpr> }
+struct _IrBlockData { items: &[&IrExpr] }
+struct _IrLetData { id: Id, ir_ty: &IrTy, opt_expr: Option<&IrExpr> }
+struct _IrStructLitData { items: &[&IrExpr], ir_ty: &IrTy }
+struct _IrTypeOpData { ir_ty: &IrTy }
+struct _IrCodegenData { str_val: &[u8], items: &[&IrExpr] }
+struct _IrIdxData { lhs: &IrExpr, rhs: &IrExpr }
+
+union _IrExprData {
+    lit: _IrLitData,
+    var: _IrVarData,
+    bin: _IrBinData,
+    un: _IrUnData,
+    assign: _IrAssignData,
+    call: _IrCallData,
+    field: _IrFieldAccessData,
+    single: _IrSingleData,
+    cast: _IrCastData,
+    if_data: _IrIfData,
+    switch_data: _IrSwitchData,
+    ret: _IrRetData,
+    block: _IrBlockData,
+    let_data: _IrLetData,
+    struct_lit: _IrStructLitData,
+    type_op: _IrTypeOpData,
+    codegen: _IrCodegenData,
+    idx: _IrIdxData,
+    fn_ref: IrFnRef,
+    global_ref: IrGlobalRef,
+}
+
+struct IrExpr {
+    tag: IrTag,
+    ty: &IrTy,
+    span: Span,
+    _data: _IrExprData,
+}
+
+impl IrExpr {
+    fn void_expr(void_ty: &IrTy) -> IrExpr {
+        let r = std::mem::zeroed::<IrExpr>();
+        r.tag = IrTag::Void;
+        r.ty = void_ty;
+        r.span = Span::empty();
+        r
+    }
+
+    // Simple single-variant accessors
+    fn int_val(self: &IrExpr) -> u64 { self._data.lit.int_val }
+    fn int_val_hi(self: &IrExpr) -> u64 { self._data.lit.int_val_hi }
+    fn int_val_u128(self: &IrExpr) -> u128 {
+        ((self._data.lit.int_val_hi as u128) << 64) | (self._data.lit.int_val as u128)
+    }
+    fn float_val(self: &IrExpr) -> f64 { self._data.lit.float_val }
+    fn bool_val(self: &IrExpr) -> bool { self._data.lit.bool_val }
+    fn bin_op(self: &IrExpr) -> BinOp { self._data.bin.bin_op }
+    fn un_op(self: &IrExpr) -> UnOp { self._data.un.un_op }
+    fn call_target(self: &IrExpr) -> &IrCallTarget { &self._data.call.call_target }
+    fn field_idx(self: &IrExpr) -> u32 { self._data.field.field_idx }
+    fn switch_arms(self: &IrExpr) -> &[IrSwitchArm] { self._data.switch_data.switch_arms }
+    fn param_idx(self: &IrExpr) -> u32 { self._data.var.param_idx }
+    fn fn_ref(self: &IrExpr) -> &IrFnRef { &self._data.fn_ref }
+    fn global_ref(self: &IrExpr) -> &IrGlobalRef { &self._data.global_ref }
+
+    // Dispatch-based accessors for shared fields
+    fn lhs(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::Binary { self._data.bin.lhs }
+        else if self.tag == IrTag::Unary { self._data.un.lhs }
+        else if self.tag == IrTag::Assign { self._data.assign.lhs }
+        else if self.tag == IrTag::FieldAccess { self._data.field.lhs }
+        else if self.tag == IrTag::Index { self._data.idx.lhs }
+        else if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.lhs }
+        else if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.lhs }
+        else if self.tag == IrTag::Switch { self._data.switch_data.lhs }
+        else { self._data.single.lhs }  // Ref, Deref, Defer, Loop
+    }
+
+    fn rhs(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::Binary { self._data.bin.rhs }
+        else if self.tag == IrTag::Assign { self._data.assign.rhs }
+        else if self.tag == IrTag::Index { self._data.idx.rhs }
+        else { self._data.idx.rhs }  // fallback
+    }
+
+    fn cond(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.cond }
+        else { self._data.if_data.cond }  // fallback
+    }
+
+    fn items(self: &IrExpr) -> &[&IrExpr] {
+        if self.tag == IrTag::Call { self._data.call.items }
+        else if self.tag == IrTag::StructLit { self._data.struct_lit.items }
+        else if self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::AtomicOp { self._data.codegen.items }
+        else { self._data.block.items }  // Block, TupleLit, ArrayLit
+    }
+
+    fn ir_ty(self: &IrExpr) -> &IrTy {
+        if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.ir_ty }
+        else if self.tag == IrTag::Let { self._data.let_data.ir_ty }
+        else if self.tag == IrTag::StructLit { self._data.struct_lit.ir_ty }
+        else { self._data.type_op.ir_ty }  // Zeroed
+    }
+
+    fn opt_expr(self: &IrExpr) -> Option<&IrExpr> {
+        if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.opt_expr }
+        else if self.tag == IrTag::Let { self._data.let_data.opt_expr }
+        else { self._data.ret.opt_expr }  // Return, Break
+    }
+
+    fn str_val(self: &IrExpr) -> &[u8] {
+        if self.tag == IrTag::InlineAsm || self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::AtomicOp || self.tag == IrTag::ConstPanic || self.tag == IrTag::ConstWarning || self.tag == IrTag::ConstNote { self._data.codegen.str_val }
+        else { self._data.lit.str_val }  // StringLit
+    }
+
+    fn id(self: &IrExpr) -> Id {
+        if self.tag == IrTag::Let { self._data.let_data.id }
+        else { self._data.var.id }  // Local, Param
+    }
+}
+
+struct IrFnRef {
+    id: Id,
+    mangled_name: &[u8],
+}
+
+impl IrFnRef {
+    fn empty() -> IrFnRef {
+        IrFnRef { id: Id { _value: 0 }, mangled_name: "" }
+    }
+}
+
+struct IrGlobalRef {
+    id: Id,
+    mangled_name: &[u8],
+}
+
+impl IrGlobalRef {
+    fn empty() -> IrGlobalRef {
+        IrGlobalRef { id: Id { _value: 0 }, mangled_name: "" }
+    }
+}
+
+struct IrLocalDef {
+    id: Id,
+    ty: &IrTy,
+    name: &[u8],
+    span: Span,
+}
+
+struct IrFunction {
+    id: Id,
+    name: &[u8],
+    mangled_name: &[u8],
+    params: &[IrParam],
+    return_type: &IrTy,
+    body: Option<&IrExpr>,
+    local_defs: &[IrLocalDef],
+    attributes: &[Attribute],
+    is_variadic: bool,
+    abi: Option<&[u8]>,
+    span: Span,
+    // Type args this function was mono'd with — used by `ir_type_name` to render
+    // function-as-type-arg paths (`type_name<u32>`) source-readably.
+    type_args: &[&IrTy],
+}
+
+struct IrParam {
+    id: Id,
+    ty: &IrTy,
+    name: &[u8],
+}
+
+struct IrGlobal {
+    id: Id,
+    name: &[u8],
+    mangled_name: &[u8],
+    ty: &IrTy,
+    init: Option<&IrExpr>,
+    is_const: bool,
+    is_extern: bool,
+    attributes: &[Attribute],
+}
+
+// === Const evaluation value types ===
+
+// ConstValue tags
+enum CValTag {
+    Void = 0i32,
+    Bool = 1i32,
+    Int = 2i32,         // integer value (u64 storage, BuiltinType for width)
+    Float = 3i32,       // float value (f64 storage, BuiltinType for width)
+    Bytes = 4i32,       // string/byte slice data
+    Tuple = 5i32,
+    Array = 6i32,
+    Struct = 7i32,
+    FnPtr = 8i32,
+    Pointer = 9i32,
+    Lvalue = 10i32,
+    Uninitialized = 11i32,
+}
+
+// ConstLValue tags
+enum CLVTag {
+    Variable = 0i32,
+    Alloc = 1i32,
+    Field = 2i32,
+    Index = 3i32,
+    TupleIndex = 4i32,
+    ConstItem = 5i32,
+}
+
+struct _CLVFieldData {
+    inner: &ConstLValue,
+    field_idx: u32,
+}
+
+struct _CLVIndexData {
+    inner: &ConstLValue,
+    index: usize,
+}
+
+union _ConstLValueData {
+    id: Id,                  // Variable, Alloc, ConstItem
+    field: _CLVFieldData,    // Field
+    idx: _CLVIndexData,      // Index, TupleIndex
+}
+
+struct ConstLValue {
+    tag: CLVTag,
+    _data: _ConstLValueData,
+}
+
+impl ConstLValue {
+    fn id(self: &ConstLValue) -> Id { self._data.id }
+    fn inner(self: &ConstLValue) -> &ConstLValue { self._data.field.inner }
+    fn field_idx(self: &ConstLValue) -> u32 { self._data.field.field_idx }
+    fn index(self: &ConstLValue) -> usize { self._data.idx.index }
+
+    fn variable(id: Id) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Variable, _data: _ConstLValueData { id: id } }
+    }
+    fn mk_field(inner: &ConstLValue, field_idx: u32) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Field, _data: _ConstLValueData { field: _CLVFieldData { inner: inner, field_idx: field_idx } } }
+    }
+    fn mk_index(inner: &ConstLValue, index: usize) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Index, _data: _ConstLValueData { idx: _CLVIndexData { inner: inner, index: index } } }
+    }
+    fn mk_tuple_index(inner: &ConstLValue, index: usize) -> ConstLValue {
+        ConstLValue { tag: CLVTag::TupleIndex, _data: _ConstLValueData { idx: _CLVIndexData { inner: inner, index: index } } }
+    }
+}
+
+struct ConstField {
+    field_idx: u32,
+    value: ConstValue,
+}
+
+struct _CVIntData {
+    builtin_type: BuiltinType,
+    int_val: u64,
+}
+
+struct _CVFloatData {
+    builtin_type: BuiltinType,
+    float_val: f64,
+}
+
+struct _CVBytesData {
+    bytes: &[u8],
+    bytes_offset: usize,
+}
+
+struct _CVPointerData {
+    lvalue: &ConstLValue,
+    pointee_ty: &IrTy,
+}
+
+union _ConstValueData {
+    int_data: _CVIntData,           // Bool, Int
+    float_data: _CVFloatData,       // Float
+    bytes_data: _CVBytesData,       // Bytes
+    elems: &[ConstValue],           // Tuple, Array
+    fields: &[ConstField],          // Struct
+    fn_ref: IrFnRef,                // FnPtr
+    ptr_data: _CVPointerData,       // Pointer
+    lvalue: &ConstLValue,           // Lvalue
+}
+
+struct ConstValue {
+    tag: CValTag,
+    _data: _ConstValueData,
+}
+
+impl ConstValue {
+    // Accessors - builtin_type is at offset 0 in both int_data and float_data
+    fn builtin_type(self: &ConstValue) -> BuiltinType { self._data.int_data.builtin_type }
+    fn int_val(self: &ConstValue) -> u64 { self._data.int_data.int_val }
+    fn float_val(self: &ConstValue) -> f64 { self._data.float_data.float_val }
+    fn bytes(self: &ConstValue) -> &[u8] { self._data.bytes_data.bytes }
+    fn bytes_offset(self: &ConstValue) -> usize { self._data.bytes_data.bytes_offset }
+    fn elems(self: &ConstValue) -> &[ConstValue] { self._data.elems }
+    fn fields(self: &ConstValue) -> &[ConstField] { self._data.fields }
+    fn fn_ref(self: &ConstValue) -> IrFnRef { self._data.fn_ref }
+    fn lvalue(self: &ConstValue) -> &ConstLValue { self._data.lvalue }
+    fn pointee_ty(self: &ConstValue) -> &IrTy { self._data.ptr_data.pointee_ty }
+
+    fn make_void() -> ConstValue {
+        ConstValue { tag: CValTag::Void, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
+    }
+
+    fn make_bool(v: bool) -> ConstValue {
+        ConstValue { tag: CValTag::Bool, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Bool, int_val: if v { 1u64 } else { 0u64 } } } }
+    }
+
+    fn make_int(v: u64, bt: BuiltinType) -> ConstValue {
+        ConstValue { tag: CValTag::Int, _data: _ConstValueData { int_data: _CVIntData { builtin_type: bt, int_val: v } } }
+    }
+
+    fn make_float(v: f64, bt: BuiltinType) -> ConstValue {
+        ConstValue { tag: CValTag::Float, _data: _ConstValueData { float_data: _CVFloatData { builtin_type: bt, float_val: v } } }
+    }
+
+    fn make_bytes(data: &[u8], offset: usize) -> ConstValue {
+        ConstValue { tag: CValTag::Bytes, _data: _ConstValueData { bytes_data: _CVBytesData { bytes: data, bytes_offset: offset } } }
+    }
+
+    fn make_tuple(elems: &[ConstValue]) -> ConstValue {
+        ConstValue { tag: CValTag::Tuple, _data: _ConstValueData { elems: elems } }
+    }
+
+    fn make_array(elems: &[ConstValue]) -> ConstValue {
+        ConstValue { tag: CValTag::Array, _data: _ConstValueData { elems: elems } }
+    }
+
+    fn make_struct(fields: &[ConstField]) -> ConstValue {
+        ConstValue { tag: CValTag::Struct, _data: _ConstValueData { fields: fields } }
+    }
+
+    fn make_fn_ptr(fr: IrFnRef) -> ConstValue {
+        ConstValue { tag: CValTag::FnPtr, _data: _ConstValueData { fn_ref: fr } }
+    }
+
+    fn make_pointer(lv: &ConstLValue, ty: &IrTy) -> ConstValue {
+        ConstValue { tag: CValTag::Pointer, _data: _ConstValueData { ptr_data: _CVPointerData { lvalue: lv, pointee_ty: ty } } }
+    }
+
+    fn make_lvalue(lv: &ConstLValue) -> ConstValue {
+        ConstValue { tag: CValTag::Lvalue, _data: _ConstValueData { lvalue: lv } }
+    }
+
+    fn make_uninitialized() -> ConstValue {
+        ConstValue { tag: CValTag::Uninitialized, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
+    }
+
+    fn is_truthy(self: &ConstValue) -> bool {
+        if self.tag == CValTag::Bool { return self.int_val() != 0u64; }
+        if self.tag == CValTag::Int { return self.int_val() != 0u64; }
+        false
+    }
+
+    /// Extract a u64 value (for enum variants, array sizes, etc.)
+    fn as_u64(self: &ConstValue) -> Option<u64> {
+        if self.tag == CValTag::Int || self.tag == CValTag::Bool {
+            Option::some(self.int_val())
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Extract a bool value
+    fn as_bool(self: &ConstValue) -> Option<bool> {
+        if self.tag == CValTag::Bool {
+            Option::some(self.int_val() != 0u64)
+        } else if self.tag == CValTag::Int {
+            Option::some(self.int_val() != 0u64)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Extract a usize value
+    fn as_usize(self: &ConstValue) -> Option<usize> {
+        if self.tag == CValTag::Int || self.tag == CValTag::Bool {
+            Option::some(self.int_val() as usize)
+        } else {
+            Option::none()
+        }
+    }
+}
+
+// === Compilation unit ===
+
+struct CompilationUnit {
+    functions: &mut [IrFunction],
+    globals: &mut [IrGlobal],
+    structs: &mut [IrStructRef],
+    enums: &mut [IrEnumRef],
+}

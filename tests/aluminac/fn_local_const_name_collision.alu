@@ -1,0 +1,39 @@
+// Regression: two function-local `const` declarations sharing the same
+// source name (but different types / values) used to collide on the LLVM
+// global symbol. The IrGlobal mangled_name was the bare source name, so
+// codegen emitted one `@MASK` whose declared type came from the first def
+// and whose initializer was overwritten by the second def's SetInitializer
+// call — failing LLVM verification ("Global variable initializer type does
+// not match global variable type"). Surfaced by std/builtins.alu's
+// f32::next_down / f64::next_down both declaring `const CLEAR_SIGN_MASK`
+// (one u32, one u64). Fixed by per-def global name mangling.
+
+fn mask_u32(x: u32) -> u32 {
+    const MASK: u32 = 0x7fffffff;
+    x & MASK
+}
+
+fn mask_u64(x: u64) -> u64 {
+    const MASK: u64 = 0x7fffffffffffffff;
+    x & MASK
+}
+
+// Same shape with an array-typed const (mirrors random/mod.alu's two
+// `const cases` of different element counts).
+fn pick_a(i: usize) -> i32 {
+    const TABLE: [i32; 3] = [10, 20, 30];
+    TABLE[i]
+}
+
+fn pick_b(i: usize) -> i32 {
+    const TABLE: [i32; 2] = [100, 200];
+    TABLE[i]
+}
+
+fn main() -> i32 {
+    if mask_u32(0xffffffffu32) != 0x7fffffffu32 { return 1; }
+    if mask_u64(0xffffffffffffffffu64) != 0x7fffffffffffffffu64 { return 2; }
+    if pick_a(2) != 30 { return 3; }
+    if pick_b(1) != 200 { return 4; }
+    0
+}

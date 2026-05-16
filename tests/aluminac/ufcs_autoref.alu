@@ -1,0 +1,41 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// UFCS auto-take-ref: when a free function takes &T as first param and the
+// user dispatches via UFCS on a value (not a reference), aluminac now
+// correctly binds T to the value's type and takes an implicit reference.
+//
+// Regression: prior to the fix in unify_type_for_inference, a value-form
+// UFCS call would silently bind T to void (the uninitialized inferred
+// type), producing wrong dispatch — for hash_of-style fns this meant
+// returning the empty-hash sentinel instead of the actual hash.
+
+use std::hash::hash_of;
+use std::range::Range;
+
+fn explicit_ref<T>(val: &T) -> u64 {
+    val as &void as usize as u64
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Value-form UFCS: receiver is Range<i32> (value), callee param is &T.
+    // Should auto-take-ref and bind T = Range<i32>.
+    let h1 = (1i32..5i32).hash_of();
+    let h2 = (1i32..6i32).hash_of();
+    if h1 == h2 { return 1i32; }
+
+    // Same call with explicit reference — should produce the same hash.
+    let r = 1i32..5i32;
+    let h3 = (&r).hash_of();
+    if h1 != h3 { return 2i32; }
+
+    // hash_of on a tuple (also a struct-like with lang_item).
+    let t1 = (1i32, 2i32);
+    let t2 = (1i32, 3i32);
+    if t1.hash_of() == t2.hash_of() { return 3i32; }
+
+    // hash_of on an Option (structurally similar).
+    let opt1 = Option::some(7i32);
+    let opt2 = Option::some(8i32);
+    if opt1.hash_of() == opt2.hash_of() { return 4i32; }
+
+    0i32
+}

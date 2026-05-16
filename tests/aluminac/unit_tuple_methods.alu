@@ -1,0 +1,26 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Methods on `()`. Aluminac's `make_tuple_ty([])` collapses to void_ty rather
+// than producing an empty tuple IrTy, so the method-dispatch path routes
+// IrTyTag::Void through the builtin_tuple lang item to find tuple impls.
+// Without this, `u.len()` on a `()` value would fail with
+// "could not resolve method 'len' on type ''".
+
+fn main(args: &[&[u8]]) -> i32 {
+    let u: () = ();
+    let n = u.len();
+    if n != 0usize { return 1i32; }
+
+    // Calling tuple-static fn directly on a unit literal
+    let m = ().len();
+    if m != 0usize { return 2i32; }
+
+    // Protocol conformance: `()` is both a Tuple and ZeroSized.
+    when u is std::builtins::Tuple {} else { return 3i32; }
+    when u is std::builtins::ZeroSized {} else { return 4i32; }
+
+    // Sysroot's tuple impl doesn't expose fmt; the unit-fmt section was
+    // removed when sysroot/std/builtins.alu was unified.
+
+    0i32
+}

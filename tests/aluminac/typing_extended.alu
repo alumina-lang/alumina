@@ -1,0 +1,134 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::typing::*;
+
+struct Foo { x: i32 }
+enum Color { Red = 0i32, Green = 1i32, Blue = 2i32 }
+
+fn test_is_same() -> i32 {
+    if !is_same::<i32, i32>() { return 1i32; }
+    if is_same::<i32, i64>() { return 2i32; }
+    if !is_same::<u8, u8>() { return 3i32; }
+    if is_same::<u8, i8>() { return 4i32; }
+    0i32
+}
+
+fn test_matches() -> i32 {
+    // matches works for exact types (protocol through generic param is a known limitation)
+    if !matches::<i32, i32>() { return 10i32; }
+    if matches::<i32, i64>() { return 11i32; }
+
+    // Protocol checks go through Type<T>::is_*.
+    if !Type::<i32>::new().is_integer() { return 12i32; }
+    if !Type::<f64>::new().is_floating_point() { return 13i32; }
+    if Type::<f64>::new().is_integer() { return 14i32; }
+
+    0i32
+}
+
+fn test_is_void() -> i32 {
+    if Type::<i32>::new().is_void() { return 20i32; }
+    if Type::<bool>::new().is_void() { return 21i32; }
+    0i32
+}
+
+fn test_is_primitive() -> i32 {
+    if !Type::<i32>::new().is_primitive() { return 30i32; }
+    if !Type::<u8>::new().is_primitive() { return 31i32; }
+    if !Type::<bool>::new().is_primitive() { return 32i32; }
+    if !Type::<f64>::new().is_primitive() { return 33i32; }
+    if Type::<Foo>::new().is_primitive() { return 34i32; }
+    0i32
+}
+
+fn test_is_numeric() -> i32 {
+    if !Type::<i32>::new().is_numeric() { return 40i32; }
+    if !Type::<u64>::new().is_numeric() { return 41i32; }
+    if !Type::<f32>::new().is_numeric() { return 42i32; }
+    if !Type::<f64>::new().is_numeric() { return 43i32; }
+    if Type::<bool>::new().is_numeric() { return 44i32; }
+    0i32
+}
+
+fn test_is_integer() -> i32 {
+    if !Type::<i32>::new().is_integer() { return 50i32; }
+    if !Type::<u8>::new().is_integer() { return 51i32; }
+    if !Type::<usize>::new().is_integer() { return 52i32; }
+    if Type::<f64>::new().is_integer() { return 53i32; }
+    if Type::<bool>::new().is_integer() { return 54i32; }
+    0i32
+}
+
+fn test_is_floating_point() -> i32 {
+    if !Type::<f32>::new().is_floating_point() { return 60i32; }
+    if !Type::<f64>::new().is_floating_point() { return 61i32; }
+    if Type::<i32>::new().is_floating_point() { return 62i32; }
+    0i32
+}
+
+fn test_is_signed_unsigned() -> i32 {
+    if !Type::<i32>::new().is_signed() { return 70i32; }
+    if !Type::<i64>::new().is_signed() { return 71i32; }
+    if Type::<u32>::new().is_signed() { return 72i32; }
+
+    if !Type::<u32>::new().is_unsigned() { return 73i32; }
+    if !Type::<usize>::new().is_unsigned() { return 74i32; }
+    if Type::<i32>::new().is_unsigned() { return 75i32; }
+
+    0i32
+}
+
+fn test_is_pointer() -> i32 {
+    if !Type::<&i32>::new().is_pointer() { return 80i32; }
+    if !Type::<&mut u8>::new().is_pointer() { return 81i32; }
+    if Type::<i32>::new().is_pointer() { return 82i32; }
+    0i32
+}
+
+fn test_is_struct_enum() -> i32 {
+    if !Type::<Foo>::new().is_struct() { return 90i32; }
+    if Type::<i32>::new().is_struct() { return 91i32; }
+
+    if !Type::<Color>::new().is_enum() { return 92i32; }
+    if Type::<i32>::new().is_enum() { return 93i32; }
+    if Type::<Foo>::new().is_enum() { return 94i32; }
+
+    0i32
+}
+
+fn test_size_align() -> i32 {
+    if std::mem::size_of::<u8>() != 1usize { return 100i32; }
+    if std::mem::size_of::<u32>() != 4usize { return 101i32; }
+    if std::mem::size_of::<u64>() != 8usize { return 102i32; }
+
+    if std::mem::align_of::<u8>() != 1usize { return 103i32; }
+    if std::mem::align_of::<u32>() != 4usize { return 104i32; }
+    if std::mem::align_of::<u64>() != 8usize { return 105i32; }
+
+    0i32
+}
+
+fn test_type_name() -> i32 {
+    let name = type_name::<i32>();
+    if name != "i32" { return 110i32; }
+
+    let name2 = type_name::<bool>();
+    if name2 != "bool" { return 111i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_is_same(); if r != 0i32 { return r; }
+    let r = test_matches(); if r != 0i32 { return r; }
+    let r = test_is_void(); if r != 0i32 { return r; }
+    let r = test_is_primitive(); if r != 0i32 { return r; }
+    let r = test_is_numeric(); if r != 0i32 { return r; }
+    let r = test_is_integer(); if r != 0i32 { return r; }
+    let r = test_is_floating_point(); if r != 0i32 { return r; }
+    let r = test_is_signed_unsigned(); if r != 0i32 { return r; }
+    let r = test_is_pointer(); if r != 0i32 { return r; }
+    let r = test_is_struct_enum(); if r != 0i32 { return r; }
+    let r = test_size_align(); if r != 0i32 { return r; }
+    let r = test_type_name(); if r != 0i32 { return r; }
+    0i32
+}

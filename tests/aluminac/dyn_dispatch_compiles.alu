@@ -1,0 +1,31 @@
+// Verify dyn-method calls compile (as Unreachable / never-typed expressions).
+// Aluminac doesn't yet build vtables; the goal here is that sysroot signatures
+// reaching dyn method dispatch type-check and reach codegen, with the runtime
+// path trapping if ever actually executed.
+//
+// We avoid actually exercising the dyn call here — we just need the function
+// to compile.
+
+protocol Greeter<Self> {
+    fn greet(self: &Self) -> i32;
+}
+
+struct Hello {}
+impl Hello {
+    fn greet(self: &Hello) -> i32 { 1 }
+}
+
+// This function references &dyn Greeter<Self>. The body calls the dyn method —
+// which lowers to Unreachable. The function compiles.
+fn shout(g: &dyn Greeter<Self>) -> i32 {
+    g.greet()
+}
+
+fn main() -> i32 {
+    // Don't actually call shout — just construct a dyn ref to verify coercion.
+    let h = Hello {};
+    let _: &dyn Greeter<Self> = &h;
+    // Direct (non-dyn) call works fine.
+    if h.greet() != 1 { return 1; }
+    0
+}

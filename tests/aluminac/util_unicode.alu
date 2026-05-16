@@ -1,0 +1,280 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::util::{identity, discard, cast, coerce, deref, apply};
+use std::string::unicode;
+
+fn test_identity() -> i32 {
+    if identity::<i32>(42i32) != 42i32 { return 1i32; }
+    if identity::<bool>(true) != true { return 2i32; }
+    0i32
+}
+
+fn test_discard() -> i32 {
+    // discard should compile and not crash
+    discard::<i32>(42i32);
+    discard::<bool>(true);
+    0i32
+}
+
+fn test_cast() -> i32 {
+    let x: i64 = cast::<i32, i64>(42i32);
+    if x != 42i64 { return 10i32; }
+    let y: u8 = cast::<i32, u8>(255i32);
+    if y != 255u8 { return 11i32; }
+    0i32
+}
+
+fn test_coerce() -> i32 {
+    // Coerce mutable ref to immutable ref
+    let x = 42i32;
+    let p: &mut i32 = &x;
+    let q: &i32 = coerce::<&mut i32, &i32>(p);
+    if *q != 42i32 { return 20i32; }
+    0i32
+}
+
+fn test_deref() -> i32 {
+    let x = 42i32;
+    if deref::<i32>(&x) != 42i32 { return 30i32; }
+    0i32
+}
+
+fn test_apply() -> i32 {
+    let result = apply::<i32, i32, fn(i32) -> i32>(3i32, |v: i32| -> i32 { v + 1i32 });
+    if result != 4i32 { return 40i32; }
+    0i32
+}
+
+fn test_typing() -> i32 {
+    if !std::typing::is_same::<i32, i32>() { return 50i32; }
+    if std::typing::is_same::<i32, i64>() { return 51i32; }
+
+    if std::mem::size_of::<u8>() != 1usize { return 52i32; }
+    if std::mem::size_of::<i32>() != 4usize { return 53i32; }
+    if std::mem::size_of::<i64>() != 8usize { return 54i32; }
+    0i32
+}
+
+fn test_encode_utf8() -> i32 {
+    let buf: [u8; 4];
+
+    // ASCII
+    let len = unicode::encode_utf8(0x78u32, &buf).unwrap();
+    if len != 1usize { return 60i32; }
+    if buf[0] != 0x78u8 { return 61i32; }
+
+    // 2-byte: é (U+00E9)
+    let len = unicode::encode_utf8(0xE9u32, &buf).unwrap();
+    if len != 2usize { return 62i32; }
+    if buf[0] != 0xC3u8 { return 63i32; }
+    if buf[1] != 0xA9u8 { return 64i32; }
+
+    // 3-byte: ꙮ (U+A66E)
+    let len = unicode::encode_utf8(0xA66Eu32, &buf).unwrap();
+    if len != 3usize { return 65i32; }
+    if buf[0] != 0xEAu8 { return 66i32; }
+    if buf[1] != 0x99u8 { return 67i32; }
+    if buf[2] != 0xAEu8 { return 68i32; }
+
+    // 4-byte: 💩 (U+1F4A9)
+    let len = unicode::encode_utf8(0x1F4A9u32, &buf).unwrap();
+    if len != 4usize { return 69i32; }
+    if buf[0] != 0xF0u8 { return 70i32; }
+    if buf[1] != 0x9Fu8 { return 71i32; }
+    if buf[2] != 0x92u8 { return 72i32; }
+    if buf[3] != 0xA9u8 { return 73i32; }
+
+    0i32
+}
+
+fn test_decode_utf8() -> i32 {
+    // ASCII
+    let src1 = &[0x78u8];
+    let r = unicode::decode_utf8(src1).unwrap();
+    if r.0 != 0x78u32 { return 80i32; }
+    if r.1 != 1usize { return 81i32; }
+
+    // 2-byte
+    let src2 = &[0xC3u8, 0xA9u8];
+    let r = unicode::decode_utf8(src2).unwrap();
+    if r.0 != 0xE9u32 { return 82i32; }
+    if r.1 != 2usize { return 83i32; }
+
+    // 3-byte
+    let src3 = &[0xEAu8, 0x99u8, 0xAEu8];
+    let r = unicode::decode_utf8(src3).unwrap();
+    if r.0 != 0xA66Eu32 { return 84i32; }
+    if r.1 != 3usize { return 85i32; }
+
+    // 4-byte
+    let src4 = &[0xF0u8, 0x9Fu8, 0x92u8, 0xA9u8];
+    let r = unicode::decode_utf8(src4).unwrap();
+    if r.0 != 0x1F4A9u32 { return 86i32; }
+    if r.1 != 4usize { return 87i32; }
+
+    0i32
+}
+
+fn test_decode_utf8_errors() -> i32 {
+    // Overlong encoding should be rejected
+    let overlong = &[0xC0u8, 0xB0u8];
+    if unicode::decode_utf8(overlong).is_ok() { return 90i32; }
+
+    // Surrogate halves should be rejected
+    let surrogate = &[0xEDu8, 0xA0u8, 0x80u8];
+    if unicode::decode_utf8(surrogate).is_ok() { return 91i32; }
+
+    // Truncated sequence
+    let truncated = &[0xC3u8];
+    if unicode::decode_utf8(truncated).is_ok() { return 92i32; }
+
+    // Invalid first byte
+    let invalid = &[0xFFu8];
+    if unicode::decode_utf8(invalid).is_ok() { return 93i32; }
+
+    0i32
+}
+
+fn test_decode_utf8_unchecked() -> i32 {
+    // ASCII
+    let src = &[0x78u8];
+    let r = unicode::decode_utf8_unchecked(src);
+    if r.0 != 0x78u32 { return 100i32; }
+    if r.1 != 1usize { return 101i32; }
+
+    // 4-byte
+    let src4 = &[0xF0u8, 0x9Fu8, 0x92u8, 0xA9u8];
+    let r = unicode::decode_utf8_unchecked(src4);
+    if r.0 != 0x1F4A9u32 { return 102i32; }
+    if r.1 != 4usize { return 103i32; }
+
+    0i32
+}
+
+fn test_encode_utf16() -> i32 {
+    let buf: [u16; 2];
+
+    // BMP code point
+    let len = unicode::encode_utf16(0x78u32, &buf).unwrap();
+    if len != 1usize { return 110i32; }
+    if buf[0] != 0x78u16 { return 111i32; }
+
+    // Surrogate pair: 💩 (U+1F4A9)
+    let len = unicode::encode_utf16(0x1F4A9u32, &buf).unwrap();
+    if len != 2usize { return 112i32; }
+    if buf[0] != 0xD83Du16 { return 113i32; }
+    if buf[1] != 0xDCA9u16 { return 114i32; }
+
+    0i32
+}
+
+fn test_decode_utf16() -> i32 {
+    // BMP
+    let src1 = &[0x78u16];
+    let r = unicode::decode_utf16(src1).unwrap();
+    if r.0 != 0x78u32 { return 120i32; }
+    if r.1 != 1usize { return 121i32; }
+
+    // Surrogate pair
+    let src2 = &[0xD83Du16, 0xDCA9u16];
+    let r = unicode::decode_utf16(src2).unwrap();
+    if r.0 != 0x1F4A9u32 { return 122i32; }
+    if r.1 != 2usize { return 123i32; }
+
+    0i32
+}
+
+fn test_roundtrip() -> i32 {
+    // Encode then decode should give back the same codepoint
+    let codepoints: [u32; 5] = [0x41u32, 0xE9u32, 0xA66Eu32, 0x1F4A9u32, 0x10FFFFu32];
+    let i = 0usize;
+    while i < 5usize {
+        let cp = codepoints[i];
+
+        // UTF-8 roundtrip
+        let buf8: [u8; 4];
+        let len = unicode::encode_utf8(cp, &buf8).unwrap();
+        let decoded = unicode::decode_utf8(buf8[0usize..len]).unwrap();
+        if decoded.0 != cp { return 130i32; }
+        if decoded.1 != len { return 131i32; }
+
+        // UTF-16 roundtrip
+        let buf16: [u16; 2];
+        let len16 = unicode::encode_utf16(cp, &buf16).unwrap();
+        let decoded16 = unicode::decode_utf16(buf16[0usize..len16]).unwrap();
+        if decoded16.0 != cp { return 132i32; }
+        if decoded16.1 != len16 { return 133i32; }
+
+        i = i + 1usize;
+    }
+    0i32
+}
+
+fn test_unicode_helpers() -> i32 {
+    // is_scalar_value
+    if !unicode::is_scalar_value(0x41u32) { return 140i32; }
+    if !unicode::is_scalar_value(0x10FFFFu32) { return 141i32; }
+    if unicode::is_scalar_value(0xD800u32) { return 142i32; }  // surrogate
+    if unicode::is_scalar_value(0xDFFFu32) { return 143i32; }  // surrogate
+    if unicode::is_scalar_value(0x110000u32) { return 144i32; } // out of range
+
+    // len_utf8
+    if unicode::len_utf8(0x41u32) != 1usize { return 145i32; }
+    if unicode::len_utf8(0xE9u32) != 2usize { return 146i32; }
+    if unicode::len_utf8(0xA66Eu32) != 3usize { return 147i32; }
+    if unicode::len_utf8(0x1F4A9u32) != 4usize { return 148i32; }
+
+    // len_utf16
+    if unicode::len_utf16(0x41u32) != 1usize { return 149i32; }
+    if unicode::len_utf16(0x1F4A9u32) != 2usize { return 150i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_identity();
+    if r != 0i32 { return r; }
+
+    let r = test_discard();
+    if r != 0i32 { return r; }
+
+    let r = test_cast();
+    if r != 0i32 { return r; }
+
+    let r = test_coerce();
+    if r != 0i32 { return r; }
+
+    let r = test_deref();
+    if r != 0i32 { return r; }
+
+    let r = test_apply();
+    if r != 0i32 { return r; }
+
+    let r = test_typing();
+    if r != 0i32 { return r; }
+
+    let r = test_encode_utf8();
+    if r != 0i32 { return r; }
+
+    let r = test_decode_utf8();
+    if r != 0i32 { return r; }
+
+    let r = test_decode_utf8_errors();
+    if r != 0i32 { return r; }
+
+    let r = test_decode_utf8_unchecked();
+    if r != 0i32 { return r; }
+
+    let r = test_encode_utf16();
+    if r != 0i32 { return r; }
+
+    let r = test_decode_utf16();
+    if r != 0i32 { return r; }
+
+    let r = test_roundtrip();
+    if r != 0i32 { return r; }
+
+    let r = test_unicode_helpers();
+    if r != 0i32 { return r; }
+
+    0i32
+}

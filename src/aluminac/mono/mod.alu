@@ -1,0 +1,699 @@
+// Monomorphization engine for the self-hosted Alumina compiler
+//
+// Takes polymorphic AST items and produces concrete IR with all generics resolved.
+// This is the core of the compiler - where type inference, generic substitution,
+// and lowering all happen.
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use std::collections::{HashMap, HashSet, Vector};
+use std::option::Option;
+use mono::lower::Mono;
+
+// Frame in the monomorphization call stack for diagnostics
+struct MonoFrame {
+    fn_name: &[u8],
+    span: Span,
+}
+
+// Key for memoizing monomorphized items
+struct MonoKey {
+    item_id: Id,
+    type_args: &[&IrTy],
+}
+
+// Context shared across all monomorphization
+struct MonoCtx {
+    arena: &mut Arena,
+    scopes: &ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+
+    // Source items from parsing
+    items: &[Item],
+
+    // Lookup tables built from parsed items
+    fn_defs: HashMap<usize, &FnDef>,       // id -> FnDef
+    struct_defs: HashMap<usize, &StructDef>,
+    enum_defs: HashMap<usize, &EnumDef>,
+    type_aliases: HashMap<usize, &TypeAlias>,
+    protocol_defs: HashMap<usize, &ProtocolDef>,
+    static_defs: HashMap<usize, &StaticDef>,
+
+    // Monomorphized output
+    ir_functions: Vector<IrFunction>,
+    ir_globals: Vector<IrGlobal>,
+    ir_structs: Vector<IrStructRef>,
+    ir_enums: Vector<IrEnumRef>,
+
+    // Track emitted globals to avoid duplicates
+    emitted_globals: HashSet<usize>,
+
+    // Cached const-evaluated values for const globals
+    const_values: HashMap<usize, ConstValue>,
+
+    // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
+    fn_cache: HashMap<u64, usize>,
+    struct_cache: HashMap<u64, usize>,
+    struct_ty_cache: HashMap<u64, &IrTy>,
+    enum_cache: HashMap<u64, usize>,
+
+    // Type caching for pointer stability
+    ptr_ty_cache: HashMap<usize, &IrTy>,
+    array_ty_cache: HashMap<usize, &IrTy>,
+    tuple_ty_cache: HashMap<usize, &IrTy>,
+
+    // Name mangling counter
+    mangle_counter: usize,
+
+    // Canonical type instances (stable pointers)
+    void_ty: &IrTy,
+    never_ty: &IrTy,
+    bool_ty: &IrTy,
+    i8_ty: &IrTy,
+    i16_ty: &IrTy,
+    i32_ty: &IrTy,
+    i64_ty: &IrTy,
+    i128_ty: &IrTy,
+    u8_ty: &IrTy,
+    u16_ty: &IrTy,
+    u32_ty: &IrTy,
+    u64_ty: &IrTy,
+    u128_ty: &IrTy,
+    usize_ty: &IrTy,
+    isize_ty: &IrTy,
+    f32_ty: &IrTy,
+    f64_ty: &IrTy,
+
+    // Pointer size
+    pointer_size: usize,
+
+    // Lang item IDs for compiler intrinsics
+    slice_new_fn_id: usize,      // #[lang(slice_new)] - constructs slice from ptr+len
+    lang_items: HashMap<usize, usize>,   // hash(lang_name) -> item_id
+
+    // Protocol method Self substitution: maps method_fn_id -> protocol's Self generic param id
+    proto_method_self_id: HashMap<usize, usize>,
+
+    // Protocol method's full generic-param ids (Self at index 0, then the
+    // protocol's other generics in declaration order). Set for every method
+    // declared inside a `protocol Foo<...>` block; empty for plain impl
+    // methods. Dispatch sites use this to bind the protocol's generics in
+    // `type_map` from the corresponding mixin / dyn / call-site arguments,
+    // so the method's own generic_params (now uniform with impl methods —
+    // method's own only) line up with the type_args mono_function receives.
+    proto_method_proto_gp_ids: HashMap<usize, &[usize]>,
+
+    // Monomorphization call stack for diagnostic notes
+    mono_stack: Vector<MonoFrame>,
+
+    // Cached dyn vtable references: hash(impl_ty_ptr, proto_id) -> IrExpr representing
+    // `&VTABLE[0]` (the vtable pointer) for that (impl, proto) pair. Reused across
+    // multiple `&T as &dyn Proto` coercions for the same T/Proto.
+    dyn_vtable_cache: HashMap<u64, &IrExpr>,
+
+    // Function ids that were declared inside another function's body. Their
+    // mono cache is keyed against the outer mono's cache_key so that each
+    // outer instantiation produces its own copy — see `mono_function`.
+    local_fn_ids: HashMap<usize, bool>,
+}
+
+impl MonoCtx {
+    fn new(
+        arena: &mut Arena,
+        scopes: &ScopeArena,
+        id_gen: &mut IdGen,
+        diag: &mut DiagnosticContext,
+        items: &[Item],
+    ) -> MonoCtx {
+        let void_ty = arena.alloc(IrTy::mk_void());
+        let never_ty = arena.alloc(IrTy::mk_never());
+        let bool_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::Bool));
+        let i8_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I8));
+        let i16_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I16));
+        let i32_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I32));
+        let i64_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I64));
+        let i128_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::I128));
+        let u8_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U8));
+        let u16_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U16));
+        let u32_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U32));
+        let u64_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U64));
+        let u128_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::U128));
+        let usize_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::USize));
+        let isize_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::ISize));
+        let f32_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::F32));
+        let f64_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::F64));
+
+        let ctx = MonoCtx {
+            arena: arena,
+            scopes: scopes,
+            id_gen: id_gen,
+            diag: diag,
+            items: items,
+            fn_defs: HashMap::new(),
+            struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
+            type_aliases: HashMap::new(),
+            protocol_defs: HashMap::new(),
+            static_defs: HashMap::new(),
+            ir_functions: Vector::new(),
+            ir_globals: Vector::new(),
+            ir_structs: Vector::new(),
+            ir_enums: Vector::new(),
+            emitted_globals: HashSet::new(),
+            const_values: HashMap::new(),
+            fn_cache: HashMap::new(),
+            struct_cache: HashMap::new(),
+            struct_ty_cache: HashMap::new(),
+            enum_cache: HashMap::new(),
+            ptr_ty_cache: HashMap::new(),
+            array_ty_cache: HashMap::new(),
+            tuple_ty_cache: HashMap::new(),
+            mangle_counter: 0,
+            void_ty: void_ty,
+            never_ty: never_ty,
+            bool_ty: bool_ty,
+            i8_ty: i8_ty,
+            i16_ty: i16_ty,
+            i32_ty: i32_ty,
+            i64_ty: i64_ty,
+            i128_ty: i128_ty,
+            u8_ty: u8_ty,
+            u16_ty: u16_ty,
+            u32_ty: u32_ty,
+            u64_ty: u64_ty,
+            u128_ty: u128_ty,
+            usize_ty: usize_ty,
+            isize_ty: isize_ty,
+            f32_ty: f32_ty,
+            f64_ty: f64_ty,
+            pointer_size: 8, // assume 64-bit
+            slice_new_fn_id: 0,
+            lang_items: HashMap::new(),
+            proto_method_self_id: HashMap::new(),
+            proto_method_proto_gp_ids: HashMap::new(),
+            mono_stack: Vector::new(),
+            dyn_vtable_cache: HashMap::new(),
+            local_fn_ids: HashMap::new(),
+        };
+
+        // Build lookup tables
+        ctx.build_lookup_tables();
+        ctx
+    }
+
+    fn build_lookup_tables(self: &mut MonoCtx) {
+        // Two-pass approach: register protocols first so their method FnDefs
+        // (which have protocol generic_params prepended) are not overwritten
+        // by the duplicate function Items that build_function creates.
+
+        // Pass 1: protocols, structs, enums, type aliases, statics
+        for i in 0usize..self.items.len() {
+            if self.items[i].tag == ItemTag::Struct {
+                self.struct_defs.insert(self.items[i].struct_def().id._value, self.items[i].struct_def());
+                for attr in self.items[i].struct_def().attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val());
+                        self.lang_items.insert(hash, self.items[i].struct_def().id._value);
+                    }
+                }
+            } else if self.items[i].tag == ItemTag::Enum {
+                self.enum_defs.insert(self.items[i].enum_def().id._value, self.items[i].enum_def());
+                for attr in self.items[i].enum_def().attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val());
+                        self.lang_items.insert(hash, self.items[i].enum_def().id._value);
+                    }
+                }
+            } else if self.items[i].tag == ItemTag::TypeAlias {
+                self.type_aliases.insert(self.items[i].type_alias().id._value, self.items[i].type_alias());
+                for attr in self.items[i].type_alias().attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val());
+                        self.lang_items.insert(hash, self.items[i].type_alias().id._value);
+                    }
+                }
+            } else if self.items[i].tag == ItemTag::Protocol {
+                self.protocol_defs.insert(self.items[i].protocol_def().id._value, self.items[i].protocol_def());
+                for attr in self.items[i].protocol_def().attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val());
+                        self.lang_items.insert(hash, self.items[i].protocol_def().id._value);
+                    }
+                }
+                // Register protocol methods in fn_defs. As of the Self-uniformity
+                // refactor, method.generic_params is the method's own only — the
+                // protocol's generics (Self + others) are recorded separately in
+                // `proto_method_proto_gp_ids` and bound by dispatch sites via
+                // type_map.
+                let proto_def = self.items[i].protocol_def();
+                let self_gp_id: usize = 0usize;
+                if proto_def.generic_params.len() > 0 {
+                    self_gp_id = proto_def.generic_params[0].id._value;
+                }
+                let proto_gp_ids: &[usize] = if proto_def.generic_params.len() > 0 {
+                    let buf = self.arena.alloc_slice::<usize>(proto_def.generic_params.len());
+                    for k in 0usize..proto_def.generic_params.len() {
+                        buf[k] = proto_def.generic_params[k].id._value;
+                    }
+                    buf as &[usize]
+                } else {
+                    &[]
+                };
+                for j in 0usize..proto_def.methods.len() {
+                    let method = &proto_def.methods[j];
+                    self.fn_defs.insert(method.id._value, method);
+                    if self_gp_id != 0usize || proto_def.generic_params.len() > 0 {
+                        self.proto_method_self_id.insert(method.id._value, self_gp_id);
+                    }
+                    if proto_gp_ids.len() > 0 {
+                        self.proto_method_proto_gp_ids.insert(method.id._value, proto_gp_ids);
+                    }
+                }
+            } else if self.items[i].tag == ItemTag::Static {
+                self.static_defs.insert(self.items[i].static_def().id._value, self.items[i].static_def());
+            }
+        }
+
+        // Pass 2: functions (skip if already registered as protocol method)
+        for i in 0usize..self.items.len() {
+            if self.items[i].tag == ItemTag::Function {
+                let fn_id = self.items[i].fn_def().id._value;
+                if !self.proto_method_self_id.get(&fn_id).is_some() {
+                    self.fn_defs.insert(fn_id, self.items[i].fn_def());
+                }
+                for attr in self.items[i].fn_def().attributes {
+                    if attr.tag == AttrTag::Lang {
+                        let hash = self.hash_lang_name(attr.str_val());
+                        self.lang_items.insert(hash, fn_id);
+                        if attr.str_val() == "slice_new" {
+                            self.slice_new_fn_id = fn_id;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 3: identify nested fns (`fn` declared inside another fn's
+        // body). Pass1 places these in a Block-kind scope; record the
+        // function ids so `mono_function` can key its cache against the
+        // outer mono. This is what keeps `unwrap_panic_err` (the nested
+        // helper in `Result::unwrap`) from getting reused across distinct
+        // instantiations of the outer fn.
+        let n_scopes = self.scopes.scopes.len();
+        for sidx in 0usize..n_scopes {
+            if self.scopes.scopes[sidx].kind != ScopeKind::Block {
+                continue;
+            }
+            for pair in self.scopes.scopes[sidx].items {
+                let kind = pair.1.kind;
+                if kind.tag == NamedItemTag::Function {
+                    self.local_fn_ids.insert(kind.id()._value, true);
+                } else if kind.tag == NamedItemTag::Method {
+                    self.local_fn_ids.insert(kind.id2()._value, true);
+                }
+            }
+        }
+    }
+
+    fn hash_lang_name(self: &MonoCtx, name: &[u8]) -> usize {
+        let h: usize = 5381usize;
+        for i in 0usize..name.len() {
+            h = h * 33usize + name[i] as usize;
+        }
+        h
+    }
+
+    // Look up a lang item by name. Returns the item ID or 0 if not found.
+    // Note: 0 can be a valid ID, so use has_lang_item() to check existence.
+    fn get_lang_item(self: &MonoCtx, name: &[u8]) -> Option<usize> {
+        let hash = self.hash_lang_name(name);
+        let result = self.lang_items.get(&hash);
+        if result.is_some() {
+            Option::some(result.unwrap())
+        } else {
+            Option::none()
+        }
+    }
+
+    // Check if a given item ID matches a specific lang item name
+    fn is_lang_item(self: &MonoCtx, id: usize, name: &[u8]) -> bool {
+        let lang_id = self.get_lang_item(name);
+        lang_id.is_some() && lang_id.unwrap() == id
+    }
+
+    fn mangle_name(self: &mut MonoCtx, base: &[u8]) -> &[u8] {
+        self.mangle_counter = self.mangle_counter + 1;
+        // Create mangled name: _AL<base><counter>
+        let counter_str = format_usize(self.mangle_counter, self.arena);
+        let total_len = 3usize + base.len() + counter_str.len();
+        let buf = self.arena.alloc_slice::<u8>(total_len);
+        buf[0] = '_';
+        buf[1] = 'A';
+        buf[2] = 'L';
+        base.copy_to_nonoverlapping(&buf[3]);
+        counter_str.copy_to_nonoverlapping(&buf[3 + base.len()]);
+        buf
+    }
+
+    // Deterministic per-def global mangling. Two fn-local `const X` in
+    // different functions would collide on the bare source name; appending
+    // def.id._value (unique across defs) guarantees a unique LLVM symbol.
+    // Used for non-extern, non-export, non-link_name globals only.
+    fn mangle_global_name(self: &mut MonoCtx, base: &[u8], id: usize) -> &[u8] {
+        let id_str = format_usize(id, self.arena);
+        let total_len = 3usize + base.len() + 1usize + id_str.len();
+        let buf = self.arena.alloc_slice::<u8>(total_len);
+        buf[0] = '_';
+        buf[1] = 'A';
+        buf[2] = 'L';
+        base.copy_to_nonoverlapping(&buf[3]);
+        buf[3 + base.len()] = '_';
+        id_str.copy_to_nonoverlapping(&buf[3 + base.len() + 1]);
+        buf
+    }
+
+    fn intern_builtin_ty(self: &mut MonoCtx, bt: BuiltinType) -> &IrTy {
+        switch bt {
+            BuiltinType::Void => self.void_ty,
+            BuiltinType::Never => self.never_ty,
+            BuiltinType::Bool => self.bool_ty,
+            BuiltinType::I8 => self.i8_ty,
+            BuiltinType::I16 => self.i16_ty,
+            BuiltinType::I32 => self.i32_ty,
+            BuiltinType::I64 => self.i64_ty,
+            BuiltinType::I128 => self.i128_ty,
+            BuiltinType::U8 => self.u8_ty,
+            BuiltinType::U16 => self.u16_ty,
+            BuiltinType::U32 => self.u32_ty,
+            BuiltinType::U64 => self.u64_ty,
+            BuiltinType::U128 => self.u128_ty,
+            BuiltinType::USize => self.usize_ty,
+            BuiltinType::ISize => self.isize_ty,
+            BuiltinType::F32 => self.f32_ty,
+            BuiltinType::F64 => self.f64_ty,
+            _ => self.arena.alloc(IrTy::mk_builtin(bt)),
+        }
+    }
+
+    fn make_ptr_ty(self: &mut MonoCtx, pointee: &IrTy, is_const: bool) -> &IrTy {
+        // Cache pointer types for stability
+        let key = (pointee as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
+        let cached = self.ptr_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_pointer(pointee, is_const));
+        self.ptr_ty_cache.insert(key, result);
+        result
+    }
+
+    fn make_array_ty(self: &mut MonoCtx, elem: &IrTy, size: usize) -> &IrTy {
+        let key = (elem as &void as usize) * 65537 + size;
+        let cached = self.array_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_array(elem, size));
+        self.array_ty_cache.insert(key, result);
+        result
+    }
+
+    fn make_tuple_ty(self: &mut MonoCtx, elems: &[&IrTy]) -> &IrTy {
+        if elems.len() == 0 {
+            return self.void_ty;
+        }
+        // Cache tuple types for pointer stability
+        // Hash based on element count and element type pointers
+        let key: usize = elems.len() * 31;
+        for i in 0usize..elems.len() {
+            key = key * 31 + (elems[i] as &void as usize);
+        }
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_tuple(elems));
+        self.tuple_ty_cache.insert(key, result);
+        result
+    }
+
+    fn make_fn_ptr_ty(self: &mut MonoCtx, params: &[&IrTy], ret: &IrTy) -> &IrTy {
+        // Cache function pointer types for pointer stability
+        let key: usize = (ret as &void as usize) * 31 + params.len();
+        for i in 0usize..params.len() {
+            key = key * 31 + (params[i] as &void as usize);
+        }
+        // Different hash space from tuples
+        key = key + 0x20000000usize;
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_fn_pointer(params, ret));
+        self.tuple_ty_cache.insert(key, result);
+        result
+    }
+
+    fn make_fn_ty(self: &mut MonoCtx, fn_ref: IrFnRef) -> &IrTy {
+        // Key by (id, mangled_name). Caching by id alone collapses distinct
+        // monomorphizations of the same source function onto the FIRST mono's
+        // fn_ref, so a turbofish value like `Result::unwrap::<u32, Error>` that
+        // creates a SECOND mono of `unwrap` would silently get the FIRST mono's
+        // IrTy back — and any downstream lookup that uses the embedded
+        // mangled_name (or even just iterates `ir_functions` for id matches)
+        // would resolve to the wrong return type. Mix the mangled_name bytes
+        // into the cache key so each mono gets its own IrTy.
+        let key: usize = fn_ref.id._value + 0x40000000usize;
+        for i in 0usize..fn_ref.mangled_name.len() {
+            key = key * 31usize + (fn_ref.mangled_name[i] as usize);
+        }
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        let result = self.arena.alloc(IrTy::mk_fn(fn_ref));
+        self.tuple_ty_cache.insert(key, result);
+        result
+    }
+
+    fn make_slice_ty(self: &mut MonoCtx, elem: &IrTy, is_const: bool) -> &IrTy {
+        // Slice types are structurally just tuples (ptr, len), but we cache the
+        // IrTy::mk_slice wrapper too for pointer stability
+        let key = (elem as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
+        // Use a different hash space from ptr_ty_cache by adding a large offset
+        key = key + 0x10000000usize;
+        let cached = self.tuple_ty_cache.get(&key);
+        if cached.is_some() { return cached.unwrap(); }
+        // Build elems = {ptr_ty, usize_ty} so code that assumes tuple representation works
+        let ptr_ty = self.make_ptr_ty(elem, is_const);
+        let usize_ty = self.intern_builtin_ty(BuiltinType::USize);
+        let elems = self.arena.alloc_slice::<&IrTy>(2);
+        elems[0] = ptr_ty;
+        elems[1] = usize_ty;
+        let result = self.arena.alloc(IrTy::mk_slice(elem, is_const));
+        result._data.slice.elems = elems;
+        self.tuple_ty_cache.insert(key, result);
+        result
+    }
+
+    fn push_mono_frame(self: &mut MonoCtx, fn_name: &[u8], span: Span) {
+        self.mono_stack.push(MonoFrame { fn_name: fn_name, span: span });
+    }
+
+    fn pop_mono_frame(self: &mut MonoCtx) {
+        if self.mono_stack.len() > 0 {
+            self.mono_stack.pop();
+        }
+    }
+
+    // Returns true (and emits error) if depth > 500
+    fn check_mono_depth(self: &mut MonoCtx, span: Span) -> bool {
+        if self.mono_stack.len() > 500 {
+            self.diag.emit(diagnostics::CodeDiagnostic::depth_overflow(span));
+            self.emit_mono_stack_notes();
+            true
+        } else {
+            false
+        }
+    }
+
+    // Emit "note: in instantiation of 'X'" for each frame in the mono stack
+    fn emit_mono_stack_notes(self: &mut MonoCtx) {
+        // Walk in reverse, limit to 10 frames to avoid flooding
+        let count = self.mono_stack.len();
+        let limit: usize = if count > 10 { 10usize } else { count };
+        let i: usize = 0;
+        while i < limit {
+            let frame = self.mono_stack[count - 1 - i];
+            self.diag.emit(diagnostics::CodeDiagnostic::instantiation_note(frame.span, frame.fn_name));
+            i = i + 1;
+        }
+        if count > limit {
+            self.diag.emit(diagnostics::CodeDiagnostic::generic_note(ast::Span::empty(), "... and more frames omitted"));
+        }
+    }
+
+    fn free(self: &mut MonoCtx) {
+        self.fn_defs.free();
+        self.struct_defs.free();
+        self.enum_defs.free();
+        self.type_aliases.free();
+        self.protocol_defs.free();
+        self.static_defs.free();
+        self.ir_functions.free();
+        self.ir_globals.free();
+        self.ir_structs.free();
+        self.ir_enums.free();
+        self.emitted_globals.free();
+        self.const_values.free();
+        self.fn_cache.free();
+        self.struct_cache.free();
+        self.struct_ty_cache.free();
+        self.enum_cache.free();
+        self.ptr_ty_cache.free();
+        self.array_ty_cache.free();
+        self.tuple_ty_cache.free();
+        self.mono_stack.free();
+        self.dyn_vtable_cache.free();
+    }
+}
+
+
+// ============================================================
+// Top-level monomorphization entry point
+// ============================================================
+
+fn monomorphize(
+    arena: &mut Arena,
+    scopes: &ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    items: &[Item],
+    test_mode: bool,
+) -> CompilationUnit {
+    let ctx = MonoCtx::new(arena, scopes, id_gen, diag, items);
+
+    // Find all root items (exported functions, main, statics)
+    // In test mode, also include #[test] functions
+    for ii in 0usize..items.len() {
+        let item = &items[ii];
+        if item.tag == ItemTag::Function {
+            let fn_def = item.fn_def();
+            let is_root = false;
+            for attr in fn_def.attributes {
+                if attr.tag == AttrTag::Export {
+                    is_root = true;
+                } else if attr.tag == AttrTag::Main && !test_mode {
+                    is_root = true;
+                } else if attr.tag == AttrTag::Test && test_mode {
+                    is_root = true;
+                } else if attr.tag == AttrTag::TestMain && test_mode {
+                    is_root = true;
+                }
+            }
+            // Skip generic functions: mono needs concrete type args to make
+            // sense of the body. For example, sysroot's `entrypoint<UserMain>`
+            // is `#[export]` but only meaningful once UserMain is the user's
+            // main function (handled via the entrypoint_glue lang item, not
+            // the generic export root).
+            if is_root && fn_def.generic_params.len() == 0 {
+                let mono = Mono::new(&ctx);
+                mono.mono_function(fn_def, &[]);
+                mono.free();
+            }
+        } else if item.tag == ItemTag::Static {
+            // Process statics - only process extern statics eagerly
+            // Other statics will be processed on demand when referenced
+            let sd = item.static_def();
+            let is_extern = false;
+            for attr in sd.attributes {
+                if attr.tag == AttrTag::Extern {
+                    is_extern = true;
+                }
+            }
+            if !is_extern {
+                continue;
+            }
+            ctx.emitted_globals.insert(sd.id._value);
+            let mono = Mono::new(&ctx);
+            let ty = if sd.ty.is_some() {
+                mono.resolve_type(sd.ty.unwrap())
+            } else {
+                ctx.void_ty
+            };
+
+            let init: Option<&IrExpr> = if sd.init.is_some() {
+                Option::some(mono.lower_expr(sd.init.unwrap()))
+            } else {
+                Option::none()
+            };
+
+            let is_extern = false;
+            for attr in sd.attributes {
+                if attr.tag == AttrTag::Extern {
+                    is_extern = true;
+                }
+            }
+
+            ctx.ir_globals.push(IrGlobal {
+                id: sd.id,
+                name: sd.name,
+                mangled_name: sd.name,
+                ty: ty,
+                init: init,
+                is_const: sd.is_const,
+                is_extern: is_extern,
+                attributes: sd.attributes,
+            });
+            mono.free();
+        }
+    }
+
+    // Build compilation unit
+    let cu = CompilationUnit {
+        functions: arena.alloc_slice_copy::<IrFunction>(ctx.ir_functions.as_slice()),
+        globals: arena.alloc_slice_copy::<IrGlobal>(ctx.ir_globals.as_slice()),
+        structs: arena.alloc_slice_copy::<IrStructRef>(ctx.ir_structs.as_slice()),
+        enums: arena.alloc_slice_copy::<IrEnumRef>(ctx.ir_enums.as_slice()),
+    };
+
+    ctx.free();
+
+    cu
+}
+
+// ============================================================
+// Helper functions
+// ============================================================
+
+fn hash_mono_key(id: Id, type_args: &[&IrTy]) -> u64 {
+    // FNV-1a hash for robust collision resistance.
+    // The old h*31+ptr hash had collisions when pointer differences
+    // happened to equal 31*(id_difference), causing wrong mono cache hits.
+    let h: u64 = 14695981039346656037u64; // FNV offset basis
+    h = h ^ (id._value as u64);
+    h = h * 1099511628211u64; // FNV prime
+    h = h ^ (type_args.len() as u64);
+    h = h * 1099511628211u64;
+    for arg in type_args {
+        h = h ^ ((arg as &void as usize) as u64);
+        h = h * 1099511628211u64;
+    }
+    h
+}
+
+fn format_usize(n: usize, arena: &mut Arena) -> &[u8] {
+    if n == 0usize {
+        let buf = arena.alloc_slice::<u8>(1usize);
+        buf[0] = '0';
+        return buf;
+    }
+    let temp = n;
+    let digits: usize = 0;
+    while temp > 0usize {
+        digits = digits + 1usize;
+        temp = temp / 10usize;
+    }
+    let buf = arena.alloc_slice::<u8>(digits);
+    temp = n;
+    let i = digits;
+    while temp > 0usize {
+        i = i - 1usize;
+        buf[i] = ('0') + (temp % 10usize) as u8;
+        temp = temp / 10usize;
+    }
+    buf
+}

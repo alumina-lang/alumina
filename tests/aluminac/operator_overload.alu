@@ -1,0 +1,71 @@
+// Test operator overloading for == != < <= > >= on user-defined types.
+// The compiler looks up methods named equals/not_equals/less_than/etc.
+// directly on the struct type's scope.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    fn equals(lhs: &Point, rhs: &Point) -> bool {
+        lhs.x == rhs.x && lhs.y == rhs.y
+    }
+
+    fn not_equals(lhs: &Point, rhs: &Point) -> bool {
+        !Point::equals(lhs, rhs)
+    }
+
+    fn less_than(lhs: &Point, rhs: &Point) -> bool {
+        if lhs.x != rhs.x { lhs.x < rhs.x }
+        else { lhs.y < rhs.y }
+    }
+
+    fn less_than_or_equal(lhs: &Point, rhs: &Point) -> bool {
+        Point::equals(lhs, rhs) || Point::less_than(lhs, rhs)
+    }
+
+    fn greater_than(lhs: &Point, rhs: &Point) -> bool {
+        !Point::less_than_or_equal(lhs, rhs)
+    }
+
+    fn greater_than_or_equal(lhs: &Point, rhs: &Point) -> bool {
+        !Point::less_than(lhs, rhs)
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = Point { x: 1i32, y: 2i32 };
+    let b = Point { x: 1i32, y: 2i32 };
+    let c = Point { x: 3i32, y: 4i32 };
+    let d = Point { x: 1i32, y: 3i32 };
+
+    // == operator -> calls Point::equals
+    if !(a == b) { return 1i32; }
+    if a == c { return 2i32; }
+
+    // != operator -> calls Point::not_equals
+    if a != b { return 3i32; }
+    if !(a != c) { return 4i32; }
+
+    // < operator -> calls Point::less_than
+    if !(a < c) { return 5i32; }
+    if c < a { return 6i32; }
+    if !(a < d) { return 7i32; }  // same x, y < y
+
+    // <= operator -> calls Point::less_than_or_equal
+    if !(a <= b) { return 8i32; }  // equal
+    if !(a <= c) { return 9i32; }  // less
+    if c <= a { return 10i32; }    // greater
+
+    // > operator -> calls Point::greater_than
+    if !(c > a) { return 11i32; }
+    if a > c { return 12i32; }
+
+    // >= operator -> calls Point::greater_than_or_equal
+    if !(a >= b) { return 13i32; }  // equal
+    if !(c >= a) { return 14i32; }  // greater
+    if a >= c { return 15i32; }     // less
+
+    0i32
+}

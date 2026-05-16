@@ -1,0 +1,45 @@
+// Test: CharLit honors expected_type when the context constrains it.
+//
+// Regression: `Option::some('\n')` matched against `Option<u8>` used to
+// infer T=u32 (the CharLit default) from arg inference, then the
+// Option<u32> vs Option<u8> comparison silently returned false at
+// runtime. This was the root cause of io::LineIterator::next failing
+// to strip trailing newlines (cmp at `iter().next_back() == Option::some('\n')`
+// always evaluated false because the LHS was Option<u8> and the RHS was
+// Option<u32>) — the chain that blew up test_lines once io/mod.alu was
+// swapped to the unified sysroot version.
+//
+// Two fixes shipped together:
+//   - `lower_expr_coerced` propagates expected integer-builtin types
+//     into CharLit lowering (so `'\n'` with expected u8 lowers as u8(10)).
+//   - The Defered- and FnRef-call branches prefer the expected return
+//     type's type-args over arg-inferred ones when the return shape is a
+//     direct Placeholder-of-each-generic AND any arg is a CharLit.
+//
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+fn cmp_u8(x: Option<u8>) -> bool {
+    x == Option::some('\n')
+}
+
+fn cmp_u16(x: Option<u16>) -> bool {
+    x == Option::some('!')
+}
+
+fn main() -> i32 {
+    let a: Option<u8> = Option::some(10u8);     // '\n'
+    let b: Option<u8> = Option::some(11u8);
+    if !cmp_u8(a) { return 1; }
+    if cmp_u8(b) { return 2; }
+
+    let c: Option<u16> = Option::some(33u16);   // '!'
+    let d: Option<u16> = Option::some(34u16);
+    if !cmp_u16(c) { return 3; }
+    if cmp_u16(d) { return 4; }
+
+    // Explicit form: assigning a CharLit through Option::some to a typed slot
+    let e: Option<u8> = Option::some('a');
+    if e.unwrap() != 97u8 { return 5; }
+
+    0
+}

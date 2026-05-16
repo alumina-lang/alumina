@@ -1,0 +1,29 @@
+// Test: `never` is recognized as a named builtin type, equivalent to `!`.
+//
+// The compiler now registers `never` in the root scope (alongside u8, i32, …)
+// and #[lang(builtin_never)] in sysroot-aluminac/std/builtins.alu links a
+// stub struct so future method impls on `never` would resolve. A function
+// declared `-> never` and one declared `-> !` should be interchangeable
+// at the call site (both produce the bottom type that coerces to anything).
+
+extern "intrinsic" fn unreachable() -> !;
+
+fn diverge_bang() -> ! {
+    unreachable()
+}
+
+fn diverge_named() -> never {
+    unreachable()
+}
+
+fn coerce_to_int() -> i32 {
+    // never coerces into any other type; the call's "result" is dead code.
+    if false { diverge_named(); }
+    if false { diverge_bang(); }
+    42
+}
+
+fn main() -> i32 {
+    if coerce_to_int() != 42 { return 1; }
+    0
+}

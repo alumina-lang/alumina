@@ -1,0 +1,53 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `Option` and `Result`'s common API against the unified sysroot. The
+// whole probe transitively mono's the panic chain (through `unwrap`'s
+// panic branch), which in turn pulls in `panic_impl` →
+// `const_panic_impl` → `dyn Formattable`-based formatting on builtins.
+// That chain compiles only after the protocol-method Self uniformity
+// refactor (def.generic_params is now method's-own-only and the
+// protocol's generics are bound at dispatch sites via type_map),
+// alongside the earlier dyn-dispatch fixes (multi-type-arg protocols,
+// impl-struct generics in the vtable build, single-proto direct-
+// Placeholder unification of `&dyn Proto<...>` in expected-return-type
+// inference, expected-element-type propagation through array literals
+// from `format_args!`, and ZST-aware phi skipping in `gen_if`).
+
+fn main(args: &[&[u8]]) -> i32 {
+    let x: Option<i32> = Option::some(42i32);
+    let y: Option<i32> = Option::none();
+
+    if !x.is_some() { return 1i32; }
+    if x.is_none() { return 2i32; }
+    if x.unwrap() != 42i32 { return 3i32; }
+
+    if y.is_some() { return 4i32; }
+    if !y.is_none() { return 5i32; }
+
+    if x.unwrap_or(0i32) != 42i32 { return 6i32; }
+    if y.unwrap_or(99i32) != 99i32 { return 7i32; }
+
+    // == and != go through `Equatable` (mixin) which itself depends on
+    // protocol-method dispatch picking up the right T.
+    let x2: Option<i32> = Option::some(42i32);
+    if x != x2 { return 8i32; }
+    if x == y { return 9i32; }
+
+    // `Result::unwrap` mono'ing the failure path is the regression
+    // that the protocol-Self uniformity refactor closed (was previously
+    // failing in `format_integer` with "could not resolve method
+    // 'write_byte' on type ''"). The compile-time chain is what
+    // matters; we don't actually want to invoke unwrap on an err here.
+    let ok: std::result::Result<i32, i32> = std::result::Result::ok(7i32);
+    let err: std::result::Result<i32, i32> = std::result::Result::err(13i32);
+
+    if !ok.is_ok() { return 10i32; }
+    if ok.is_err() { return 11i32; }
+    if ok.unwrap() != 7i32 { return 12i32; }
+
+    if err.is_ok() { return 13i32; }
+    if !err.is_err() { return 14i32; }
+    if err.unwrap_err() != 13i32 { return 15i32; }
+    if err.unwrap_or(99i32) != 99i32 { return 16i32; }
+
+    0i32
+}

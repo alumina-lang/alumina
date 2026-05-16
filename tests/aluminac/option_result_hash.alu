@@ -1,0 +1,31 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Option<T> and Result<T, E> mix in Hashable, so hash-based collections
+// (HashMap, HashSet) work with them as keys.
+
+use std::hash::hash_of;
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Option: equal values hash equally; different values hash differently.
+    let a = Option::some(1i32);
+    let b = Option::some(1i32);
+    let c = Option::some(2i32);
+    let n: Option<i32> = Option::none();
+
+    if hash_of::<Option<i32>>(&a) != hash_of::<Option<i32>>(&b) { return 1i32; }
+    if hash_of::<Option<i32>>(&a) == hash_of::<Option<i32>>(&c) { return 2i32; }
+    // None and Some(0) shouldn't collide on the same hash for typical inputs.
+    if hash_of::<Option<i32>>(&a) == hash_of::<Option<i32>>(&n) { return 3i32; }
+    // None hashes consistently.
+    let n2: Option<i32> = Option::none();
+    if hash_of::<Option<i32>>(&n) != hash_of::<Option<i32>>(&n2) { return 4i32; }
+
+    // Result: ok and err of the same payload should differ.
+    let ok1: Result<i32, i32> = Result::ok(7);
+    let ok2: Result<i32, i32> = Result::ok(7);
+    let err1: Result<i32, i32> = Result::err(7);
+
+    if hash_of::<Result<i32, i32>>(&ok1) != hash_of::<Result<i32, i32>>(&ok2) { return 5i32; }
+    if hash_of::<Result<i32, i32>>(&ok1) == hash_of::<Result<i32, i32>>(&err1) { return 6i32; }
+
+    0i32
+}

@@ -1,0 +1,44 @@
+// Operator-overload dispatch into a mixin'd protocol-default method whose body
+// references Self::other_method must bind Self to the underlying type, not to
+// the struct's first generic arg. Regression: previously `a != b` on a generic
+// struct with `mixin Equatable<G<T>>` resolved Self to T (e.g. i32) instead of
+// G<T>, so `Self::equals(...)` inside the not_equals default body failed with
+// "expression is not callable".
+
+use std::cmp::Equatable;
+
+struct G<T> {
+    value: T,
+}
+
+impl G<T> {
+    fn equals(lhs: &G<T>, rhs: &G<T>) -> bool {
+        lhs.value == rhs.value
+    }
+
+    mixin Equatable<G<T>>;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = G::<i32> { value: 1i32 };
+    let b = G::<i32> { value: 2i32 };
+    let c = G::<i32> { value: 1i32 };
+
+    // != must dispatch through mixin'd not_equals; its body calls Self::equals
+    // where Self resolves to G<i32>.
+    if !(a != b) { return 1i32; }
+    if a != c { return 2i32; }
+    if !(b != c) { return 3i32; }
+
+    // Sanity: == still works.
+    if a != a { return 4i32; }
+    if !(a == c) { return 5i32; }
+
+    // Different element type.
+    let p = G::<u8> { value: 7u8 };
+    let q = G::<u8> { value: 8u8 };
+    if !(p != q) { return 6i32; }
+    if p != p { return 7i32; }
+
+    0i32
+}

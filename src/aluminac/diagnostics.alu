@@ -1,0 +1,500 @@
+// Diagnostics and error reporting for the self-hosted compiler
+
+use ast::Span;
+use std::collections::Vector;
+use std::fmt::write;
+
+struct _StderrFmt {}
+
+impl _StderrFmt {
+    fn new() -> _StderrFmt { _StderrFmt {} }
+
+    fn write_str(self: &mut _StderrFmt, buf: &[u8]) -> std::fmt::Result {
+        if buf.len() > 0usize {
+            libc::write(2i32, &buf[0] as &libc::c_void, buf.len());
+        }
+        std::result::Result::ok(())
+    }
+
+    fn write_byte(self: &mut _StderrFmt, byte: u8) -> std::fmt::Result {
+        libc::write(2i32, &byte as &libc::c_void, 1usize);
+        std::result::Result::ok(())
+    }
+}
+
+enum DiagLevel {
+    Error,
+    Warning,
+    Note,
+}
+
+struct SourceFile {
+    path: &[u8],
+    contents: &[u8],
+    // Line start offsets for line number lookup
+    line_starts: &[u32],
+}
+
+impl SourceFile {
+    fn line_col(self: &SourceFile, offset: u32) -> (u32, u32) {
+        // Binary search for line number
+        let lo: usize = 0;
+        let hi: usize = self.line_starts.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.line_starts[mid] <= offset {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let line = lo as u32; // 1-based
+        let col = offset - self.line_starts[lo - 1] + 1; // 1-based
+        (line, col)
+    }
+}
+
+fn compute_line_starts(contents: &[u8], arena: &mut aluminac_common::arena::Arena) -> &[u32] {
+    // Count lines first
+    let count: usize = 1;
+    for i in 0usize..contents.len() {
+        if contents[i] == '\n' {
+            count = count + 1;
+        }
+    }
+    let starts = arena.alloc_slice::<u32>(count);
+    starts[0] = 0;
+    let idx: usize = 1;
+    for i in 0usize..contents.len() {
+        if contents[i] == '\n' {
+            if idx < count {
+                starts[idx] = (i + 1) as u32;
+                idx = idx + 1;
+            }
+        }
+    }
+    starts[0..idx]
+}
+
+// Strongly-typed diagnostic kinds used across all compiler phases
+// (parsing, monomorphization, codegen)
+enum CodeDiagKind {
+    // Type resolution
+    UnresolvedType = 0i32,
+    InvalidDeref = 1i32,
+    TupleIndexOutOfBounds = 2i32,
+
+    // Name resolution
+    UnresolvedField = 10i32,
+    UnresolvedMethod = 11i32,
+    UnresolvedFunction = 12i32,
+    NotCallable = 13i32,
+
+    // Intrinsics / codegen builtins
+    UnknownIntrinsic = 20i32,
+    LlvmIntrinsicTypeMismatch = 21i32,
+
+    // Recursion / limits
+    DepthOverflow = 30i32,
+
+    // Codegen
+    CodegenMissingLocal = 40i32,
+    CodegenMissingFunction = 41i32,
+    CodegenMissingGlobal = 42i32,
+    CodegenFieldOOB = 43i32,
+    CodegenUnhandledNode = 44i32,
+
+    // Type checking
+    TypeMismatch = 45i32,
+
+    // Syntax errors
+    SyntaxError = 50i32,
+    SyntaxMissing = 51i32,
+
+    // Mono stack note
+    InstantiationNote = 90i32,
+
+    // Generic / free-form (escape hatch)
+    GenericError = 99i32,
+}
+
+struct _CodeDiagNameData {
+    name: &[u8],
+}
+
+struct _CodeDiagPairData {
+    name: &[u8],
+    type_name: &[u8],
+}
+
+union _CodeDiagData {
+    name: _CodeDiagNameData,
+    pair: _CodeDiagPairData,
+}
+
+struct CodeDiagnostic {
+    level: DiagLevel,
+    span: Span,
+    kind: CodeDiagKind,
+    _data: _CodeDiagData,
+}
+
+impl CodeDiagnostic {
+    fn _new(level: DiagLevel, span: Span, kind: CodeDiagKind) -> CodeDiagnostic {
+        CodeDiagnostic { level: level, span: span, kind: kind, _data: std::mem::zeroed::<_CodeDiagData>() }
+    }
+
+    fn _new_named(level: DiagLevel, span: Span, kind: CodeDiagKind, name: &[u8]) -> CodeDiagnostic {
+        let d = CodeDiagnostic::_new(level, span, kind);
+        d._data.name.name = name;
+        d
+    }
+
+    fn _new_pair(level: DiagLevel, span: Span, kind: CodeDiagKind, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        let d = CodeDiagnostic::_new(level, span, kind);
+        d._data.pair.name = name;
+        d._data.pair.type_name = type_name;
+        d
+    }
+
+    // --- Error constructors ---
+
+    fn unresolved_type(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::UnresolvedType)
+    }
+
+    fn invalid_deref(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::InvalidDeref)
+    }
+
+    fn tuple_index_oob(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::TupleIndexOutOfBounds)
+    }
+
+    fn unresolved_field(span: Span, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::UnresolvedField, name, type_name)
+    }
+
+    fn unresolved_method(span: Span, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::UnresolvedMethod, name, type_name)
+    }
+
+    fn unresolved_function(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnresolvedFunction, name)
+    }
+
+    fn not_callable(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::NotCallable)
+    }
+
+    fn unknown_intrinsic(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnknownIntrinsic, name)
+    }
+
+    fn llvm_intrinsic_type_mismatch(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::LlvmIntrinsicTypeMismatch, name)
+    }
+
+    fn depth_overflow(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::DepthOverflow)
+    }
+
+    fn syntax_error(span: Span, text: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::SyntaxError, text)
+    }
+
+    fn syntax_missing(span: Span, kind: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::SyntaxMissing, kind)
+    }
+
+    fn type_mismatch(span: Span, expected: &[u8], got: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::TypeMismatch, expected, got)
+    }
+
+    fn generic_error(span: Span, msg: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::GenericError, msg)
+    }
+
+    // --- Warning constructors ---
+
+    fn codegen_missing_local(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Warning, span, CodeDiagKind::CodegenMissingLocal)
+    }
+
+    fn codegen_missing_function(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::CodegenMissingFunction, name)
+    }
+
+    fn codegen_missing_global(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::CodegenMissingGlobal, name)
+    }
+
+    fn codegen_field_oob(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Warning, span, CodeDiagKind::CodegenFieldOOB)
+    }
+
+    fn codegen_unhandled_node(span: Span, tag_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::CodegenUnhandledNode, tag_name)
+    }
+
+    fn generic_warning(span: Span, msg: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::GenericError, msg)
+    }
+
+    // --- Note constructors ---
+
+    fn instantiation_note(span: Span, fn_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Note, span, CodeDiagKind::InstantiationNote, fn_name)
+    }
+
+    fn generic_note(span: Span, msg: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Note, span, CodeDiagKind::GenericError, msg)
+    }
+
+    // --- Formattable implementation (deferred formatting) ---
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &CodeDiagnostic, f: &mut F) -> std::fmt::Result {
+        switch self.kind {
+            CodeDiagKind::UnresolvedType => f.write_str("could not resolve type"),
+            CodeDiagKind::InvalidDeref => f.write_str("cannot dereference non-pointer type"),
+            CodeDiagKind::TupleIndexOutOfBounds => f.write_str("tuple index out of bounds"),
+            CodeDiagKind::UnresolvedField => {
+                if self._data.pair.type_name.len() > 0usize {
+                    write!(f, "could not resolve field '{}' on type '{}'", self._data.pair.name, self._data.pair.type_name)
+                } else {
+                    write!(f, "could not resolve field '{}'", self._data.pair.name)
+                }
+            },
+            CodeDiagKind::UnresolvedMethod =>
+                write!(f, "could not resolve method '{}' on type '{}'", self._data.pair.name, self._data.pair.type_name),
+            CodeDiagKind::UnresolvedFunction =>
+                write!(f, "could not resolve function '{}'", self._data.name.name),
+            CodeDiagKind::NotCallable => f.write_str("expression is not callable"),
+            CodeDiagKind::UnknownIntrinsic =>
+                write!(f, "unknown intrinsic '{}'", self._data.name.name),
+            CodeDiagKind::LlvmIntrinsicTypeMismatch =>
+                write!(f, "LLVM intrinsic '{}' return type does not match Alumina type", self._data.name.name),
+            CodeDiagKind::DepthOverflow =>
+                f.write_str("monomorphization depth limit exceeded (possible infinite recursion)"),
+            CodeDiagKind::CodegenMissingLocal => f.write_str("codegen: local variable not found"),
+            CodeDiagKind::CodegenMissingFunction =>
+                write!(f, "codegen: function '{}' not found", self._data.name.name),
+            CodeDiagKind::CodegenMissingGlobal =>
+                write!(f, "codegen: global '{}' not found", self._data.name.name),
+            CodeDiagKind::TypeMismatch =>
+                write!(f, "type mismatch: expected '{}', got '{}'", self._data.pair.name, self._data.pair.type_name),
+            CodeDiagKind::CodegenFieldOOB => f.write_str("codegen: field index out of bounds"),
+            CodeDiagKind::CodegenUnhandledNode =>
+                write!(f, "codegen: unhandled IR node '{}'", self._data.name.name),
+            CodeDiagKind::SyntaxError =>
+                write!(f, "syntax error: unexpected `{}`", self._data.name.name),
+            CodeDiagKind::SyntaxMissing =>
+                write!(f, "syntax error: missing `{}`", self._data.name.name),
+            CodeDiagKind::InstantiationNote =>
+                write!(f, "in instantiation of '{}'", self._data.name.name),
+            CodeDiagKind::GenericError => f.write_str(self._data.name.name),
+            _ => f.write_str("unknown compiler error"),
+        }
+    }
+}
+
+struct DiagnosticContext {
+    files: std::collections::Vector<SourceFile>,
+    errors: std::collections::Vector<CodeDiagnostic>,
+    has_errors: bool,
+    has_warnings: bool,
+}
+
+impl DiagnosticContext {
+    fn new() -> DiagnosticContext {
+        DiagnosticContext {
+            files: std::collections::Vector::new(),
+            errors: std::collections::Vector::new(),
+            has_errors: false,
+            has_warnings: false,
+        }
+    }
+
+    fn add_file(self: &mut DiagnosticContext, path: &[u8], contents: &[u8], arena: &mut aluminac_common::arena::Arena) -> u32 {
+        let id = self.files.len() as u32;
+        let line_starts = compute_line_starts(contents, arena);
+        self.files.push(SourceFile {
+            path: path,
+            contents: contents,
+            line_starts: line_starts,
+        });
+        id
+    }
+
+    fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
+        switch diag.level {
+            DiagLevel::Error => { self.has_errors = true; },
+            DiagLevel::Warning => { self.has_warnings = true; },
+            _ => {},
+        };
+        self.errors.push(diag);
+    }
+
+    fn emit_all(self: &DiagnosticContext) {
+        let f = _StderrFmt::new();
+        // Dedup adjacent identical diagnostics by (kind, span). The mono
+        // pass can re-emit the same error if a generic instantiates twice
+        // with the same shape — only show it once.
+        let prev_kind: i32 = -1i32;
+        let prev_file: u32 = 0u32;
+        let prev_start: u32 = 0u32;
+        let prev_end: u32 = 0u32;
+        for i in 0usize..self.errors.len() {
+            let diag = &self.errors[i];
+            // Compare against the previous unsuppressed diagnostic.
+            let cur_kind = diag.kind as i32;
+            if i > 0usize
+                && cur_kind == prev_kind
+                && diag.span.file_id == prev_file
+                && diag.span.start == prev_start
+                && diag.span.end == prev_end {
+                continue;
+            }
+            prev_kind = cur_kind;
+            prev_file = diag.span.file_id;
+            prev_start = diag.span.start;
+            prev_end = diag.span.end;
+            let level_str: &[u8] = switch diag.level {
+                DiagLevel::Error => "error",
+                DiagLevel::Warning => "warning",
+                _ => "note",
+            };
+
+            let _ = write!(&f, "{}: {}", level_str, diag);
+
+            // Show location if span has meaningful data (skip empty/sentinel spans)
+            let has_location = diag.span.file_id < self.files.len() as u32
+                && (diag.span.start != 0u32 || diag.span.end != 0u32);
+            if has_location {
+                let file = &self.files[diag.span.file_id as usize];
+                let (line, col) = file.line_col(diag.span.start);
+                let _ = write!(&f, "\n  --> {}:{}:{}", file.path, line, col);
+                // Render the source snippet for errors and warnings, but
+                // suppress for Notes (mono instantiation chains can be 5-10
+                // frames deep and rendering each as a full snippet floods).
+                let render_snippet = switch diag.level {
+                    DiagLevel::Error => true,
+                    DiagLevel::Warning => true,
+                    _ => false,
+                };
+                if render_snippet {
+                    self.render_source_snippet(&f, file, diag.span, line, col);
+                }
+            }
+            let _ = f.write_str("\n");
+        }
+    }
+
+    /// Render a source snippet for the span, with a caret underline beneath
+    /// the offending column. Format (matches rust/alumina-boot conventions):
+    ///
+    ///    |
+    /// 76 |         buf.free();
+    ///    |         ^^^^^^^^^^
+    ///
+    /// Multi-line spans render only the first line and elide the rest with
+    /// `...`. Lines longer than MAX_SNIPPET_COLS are truncated.
+    fn render_source_snippet(
+        self: &DiagnosticContext,
+        f: &mut _StderrFmt,
+        file: &SourceFile,
+        span: ast::Span,
+        line: u32,
+        col: u32,
+    ) {
+        let MAX_SNIPPET_COLS: u32 = 200u32;
+        // Find the line bytes via line_starts. `line` is 1-based; the line's
+        // start offset is line_starts[line-1], and its end is line_starts[line]
+        // (or contents.len() for the last line). Excludes the trailing newline.
+        let line_idx = (line - 1u32) as usize;
+        if line_idx >= file.line_starts.len() {
+            return;
+        }
+        let start_off = file.line_starts[line_idx] as usize;
+        let end_off = if line_idx + 1 < file.line_starts.len() {
+            file.line_starts[line_idx + 1] as usize
+        } else {
+            file.contents.len()
+        };
+        // Trim trailing \n / \r so we don't double-newline the output.
+        while end_off > start_off
+            && (file.contents[end_off - 1] == '\n' || file.contents[end_off - 1] == '\r') {
+            end_off = end_off - 1;
+        }
+
+        let line_bytes = file.contents[start_off..end_off];
+        let truncated = false;
+        if line_bytes.len() > MAX_SNIPPET_COLS as usize {
+            line_bytes = line_bytes[0usize..MAX_SNIPPET_COLS as usize];
+            truncated = true;
+        }
+
+        // Compute the line-number gutter width (digits in line number).
+        let gutter_width = count_digits(line);
+
+        // Top spacer line:  "    |"
+        let _ = f.write_str("\n");
+        write_spaces(f, gutter_width + 1u32);
+        let _ = f.write_str("|");
+
+        // Source line:     " 76 | <source>"
+        let _ = f.write_str("\n ");
+        let _ = write!(f, "{}", line);
+        let _ = f.write_str(" | ");
+        let _ = f.write_str(line_bytes);
+        if truncated {
+            let _ = f.write_str(" ...");
+        }
+
+        // Caret line:      "    |     ^^^^^"
+        // Caret starts at (col - 1) bytes into the source. Caret length =
+        // min(span_length, remaining_line_bytes). At least 1 character.
+        let _ = f.write_str("\n");
+        write_spaces(f, gutter_width + 1u32);
+        let _ = f.write_str("| ");
+        // Column padding: col is 1-based; we want (col - 1) leading spaces.
+        write_spaces(f, col - 1u32);
+        let span_len = if span.end > span.start { (span.end - span.start) as usize } else { 1usize };
+        let line_remaining = if line_bytes.len() > (col - 1u32) as usize {
+            line_bytes.len() - (col - 1u32) as usize
+        } else {
+            1usize
+        };
+        let caret_len = if span_len < line_remaining { span_len } else { line_remaining };
+        if caret_len == 0usize { caret_len = 1usize; }
+        let j: usize = 0;
+        while j < caret_len {
+            let _ = f.write_byte('^');
+            j = j + 1;
+        }
+    }
+
+    fn free(self: &mut DiagnosticContext) {
+        self.files.free();
+        self.errors.free();
+    }
+}
+
+fn count_digits(n: u32) -> u32 {
+    if n == 0u32 { return 1u32; }
+    let count: u32 = 0;
+    let v = n;
+    while v > 0u32 {
+        v = v / 10u32;
+        count = count + 1u32;
+    }
+    count
+}
+
+fn write_spaces(f: &mut _StderrFmt, n: u32) {
+    let i: u32 = 0;
+    while i < n {
+        let _ = f.write_byte(' ');
+        i = i + 1u32;
+    }
+}

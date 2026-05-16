@@ -1,0 +1,48 @@
+// Regression: cfg attributes on individual struct fields.
+//
+// Before the fix, `build_struct` in pass2 walked all StructField
+// children and included them unconditionally — `#[cfg(...)]` on
+// individual fields was silently ignored. That broke sysroot's
+// `Instant` shape (declares `spec: timespec` under one cfg and
+// `inner: u64` under another); both ended up in the layout,
+// doubling the struct's size.
+//
+// After the fix, fields whose `#[cfg(...)]` evaluates false are
+// skipped during layout.
+
+extern "intrinsic" fn size_of<T>() -> usize;
+
+struct WithGated {
+    a: i32,
+    #[cfg(some_feature_that_is_not_set)]
+    skipped_field: i32,
+    b: i32,
+}
+
+struct OnlyOneActive {
+    #[cfg(target_pointer_width = "64")]
+    inner_64: u64,
+    #[cfg(target_pointer_width = "32")]
+    inner_32: u32,
+}
+
+fn main() -> i32 {
+    // WithGated should have 2 fields (a, b), each 4 bytes, total 8.
+    if size_of::<WithGated>() != 8usize {
+        return 1;
+    }
+    let w = WithGated { a: 7i32, b: 9i32 };
+    if w.a != 7i32 || w.b != 9i32 {
+        return 2;
+    }
+
+    // OnlyOneActive should have exactly one field at any time. On 64-bit
+    // pointer-width, inner_64 is u64 (8 bytes); on 32-bit, inner_32 is u32
+    // (4 bytes). Pre-fix, both fields ended up in the layout (12 bytes).
+    let sz = size_of::<OnlyOneActive>();
+    let ptr_w = size_of::<usize>();
+    if ptr_w == 8usize && sz != 8usize { return 3; }
+    if ptr_w == 4usize && sz != 4usize { return 4; }
+
+    0
+}

@@ -1,0 +1,81 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Real dyn dispatch — the call must reach each type's typed implementation
+// through a vtable, not the historical Unreachable fallback.
+//
+// Aluminac builds a per-(impl, proto) const global vtable when coercing
+// `&T` to `&dyn Proto`. Method calls on the dyn value load the fn pointer
+// at the method's protocol-declared index, cast to the typed fn signature
+// (with Self → &void), and call with (dyn._ptr, args...).
+
+protocol Greeter<Self> {
+    fn greet(self: &Self) -> i32;
+}
+
+struct A {}
+impl A {
+    fn greet(self: &A) -> i32 { 1i32 }
+}
+
+struct B {}
+impl B {
+    fn greet(self: &B) -> i32 { 2i32 }
+}
+
+fn shout(g: &dyn Greeter<Self>) -> i32 {
+    g.greet()
+}
+
+// Multi-method protocol — confirms vtable indexing across multiple slots.
+protocol Calc<Self> {
+    fn add(self: &Self, n: i32) -> i32;
+    fn mul(self: &Self, n: i32) -> i32;
+}
+
+struct C {
+    base: i32,
+}
+impl C {
+    fn add(self: &C, n: i32) -> i32 { self.base + n }
+    fn mul(self: &C, n: i32) -> i32 { self.base * n }
+}
+
+fn calc_add(c: &dyn Calc<Self>, n: i32) -> i32 {
+    c.add(n)
+}
+
+fn calc_mul(c: &dyn Calc<Self>, n: i32) -> i32 {
+    c.mul(n)
+}
+
+// Multi-protocol bound — `&dyn (A + B)`. Vtable concatenates A's
+// methods then B's; dispatch indices are summed across protos.
+struct Combo {
+    g: i32,
+    a_offset: i32,
+}
+impl Combo {
+    fn greet(self: &Combo) -> i32 { self.g }
+    fn add(self: &Combo, n: i32) -> i32 { self.a_offset + n }
+    fn mul(self: &Combo, n: i32) -> i32 { self.a_offset * n }
+}
+
+fn combo_greet_then_add(x: &dyn (Greeter<Self> + Calc<Self>)) -> i32 {
+    x.greet() + x.add(5i32)
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = A {};
+    let b = B {};
+
+    if shout(&a) != 1i32 { return 1i32; }
+    if shout(&b) != 2i32 { return 2i32; }
+
+    let c = C { base: 10i32 };
+    if calc_add(&c, 5i32) != 15i32 { return 3i32; }
+    if calc_mul(&c, 5i32) != 50i32 { return 4i32; }
+
+    let combo = Combo { g: 100i32, a_offset: 7i32 };
+    if combo_greet_then_add(&combo) != 112i32 { return 5i32; }
+
+    0i32
+}

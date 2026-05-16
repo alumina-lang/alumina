@@ -1,0 +1,56 @@
+// Mixin Self-type substitution: default methods that call other protocol
+// methods must redirect to the concrete type's implementation.
+
+protocol Equatable<Self> {
+    fn equals(lhs: &Self, rhs: &Self) -> bool;
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        !Equatable::equals(lhs, rhs)
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    fn equals(lhs: &Point, rhs: &Point) -> bool {
+        lhs.x == rhs.x && lhs.y == rhs.y
+    }
+    mixin Equatable<Point>;
+}
+
+protocol Greetable<Self> {
+    fn greet(self: &Self) -> i32;
+    fn double_greet(self: &Self) -> i32 {
+        Greetable::greet(self) + Greetable::greet(self)
+    }
+}
+
+struct Dog {
+    sound: i32,
+}
+
+impl Dog {
+    fn greet(self: &Dog) -> i32 {
+        self.sound
+    }
+    mixin Greetable<Dog>;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Equatable: not_equals calls equals internally
+    let a = Point { x: 1i32, y: 2i32 };
+    let b = Point { x: 1i32, y: 2i32 };
+    let c = Point { x: 3i32, y: 4i32 };
+    if !Point::equals(&a, &b) { return 1i32; }
+    if !Point::not_equals(&a, &c) { return 2i32; }
+    if Point::not_equals(&a, &b) { return 3i32; }
+
+    // Greetable: double_greet calls greet internally
+    let d = Dog { sound: 10i32 };
+    if d.greet() != 10i32 { return 4i32; }
+    if Dog::double_greet(&d) != 20i32 { return 5i32; }
+
+    0i32
+}

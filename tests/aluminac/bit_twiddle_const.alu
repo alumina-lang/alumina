@@ -1,0 +1,50 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// const-time bit-twiddling: ctpop / ctlz / cttz / bswap fold through the
+// const evaluator's LlvmIntrinsic handler so the integer methods compose
+// with const items and array sizes.
+
+const POPCOUNT_FF: u32 = (0xFFu8).count_ones();
+const POPCOUNT_AA32: u32 = (0xAAAAAAAAu32).count_ones();
+const POPCOUNT_ALL_U64: u32 = (18446744073709551615u64).count_ones();
+
+const LZ_1_U32: u32 = (1u32).leading_zeros();
+const LZ_0_U32: u32 = (0u32).leading_zeros();
+const LZ_TOP_U32: u32 = (0x80000000u32).leading_zeros();
+
+const TZ_10_U32: u32 = (0x10u32).trailing_zeros();
+const TZ_0_U64: u32 = (0u64).trailing_zeros();
+
+const BSWAP_U16: u16 = (0x0123u16).swap_bytes();
+const BSWAP_U32: u32 = (0x01234567u32).swap_bytes();
+const BSWAP_U64: u64 = (0x0123456789ABCDEFu64).swap_bytes();
+
+// Use array sizing as the const-required wedge: if any of the above don't
+// const-fold, the corresponding array type can't resolve.
+const ARR_POPCOUNT_LEN: usize = POPCOUNT_FF as usize;     // = 8
+const ARR_LZ_LEN: usize = LZ_1_U32 as usize;              // = 31
+const ARR_BSWAP_LEN: usize = BSWAP_U16 as usize;          // = 0x2301 (modest size: 8961)
+
+fn main(args: &[&[u8]]) -> i32 {
+    if POPCOUNT_FF != 8u32 { return 1i32; }
+    if POPCOUNT_AA32 != 16u32 { return 2i32; }
+    if POPCOUNT_ALL_U64 != 64u32 { return 3i32; }
+
+    if LZ_1_U32 != 31u32 { return 10i32; }
+    if LZ_0_U32 != 32u32 { return 11i32; }
+    if LZ_TOP_U32 != 0u32 { return 12i32; }
+
+    if TZ_10_U32 != 4u32 { return 20i32; }
+    if TZ_0_U64 != 64u32 { return 21i32; }
+
+    if BSWAP_U16 != 0x2301u16 { return 30i32; }
+    if BSWAP_U32 != 0x67452301u32 { return 31i32; }
+    if BSWAP_U64 != 0xEFCDAB8967452301u64 { return 32i32; }
+
+    let arr_pop: [u8; ARR_POPCOUNT_LEN];
+    if arr_pop.len() != 8usize { return 40i32; }
+    let arr_lz: [u8; ARR_LZ_LEN];
+    if arr_lz.len() != 31usize { return 41i32; }
+
+    0i32
+}

@@ -1,0 +1,192 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+fn test_alloc_free() -> i32 {
+    let p = std::mem::alloc::<i32>();
+    *p = 42i32;
+    if *p != 42i32 { return 1i32; }
+    std::mem::free_obj(p);
+
+    let p2 = std::mem::alloc_zeroed::<i32>();
+    if *p2 != 0i32 { return 2i32; }
+    std::mem::free_obj(p2);
+
+    0i32
+}
+
+fn test_copy_nonoverlapping() -> i32 {
+    let src = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let dst = [0i32, 0i32, 0i32, 0i32, 0i32];
+
+    std::mem::copy_nonoverlapping::<i32>(&src[0], &dst[0] as &mut i32, 5usize);
+
+    if dst[0] != 1i32 { return 10i32; }
+    if dst[1] != 2i32 { return 11i32; }
+    if dst[4] != 5i32 { return 12i32; }
+
+    0i32
+}
+
+fn test_copy_overlapping() -> i32 {
+    let buf = [1i32, 2i32, 3i32, 4i32, 5i32];
+
+    // Copy [1,2,3] to position [1..4] (overlapping)
+    std::mem::copy::<i32>(&buf[0], &buf[1] as &mut i32, 3usize);
+
+    if buf[0] != 1i32 { return 20i32; }
+    if buf[1] != 1i32 { return 21i32; }
+    if buf[2] != 2i32 { return 22i32; }
+    if buf[3] != 3i32 { return 23i32; }
+    if buf[4] != 5i32 { return 24i32; }
+
+    0i32
+}
+
+fn test_read_write_unaligned() -> i32 {
+    let buf = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+
+    // Write a u32 at an unaligned offset
+    let p = &buf[1] as &mut u32;
+    std::mem::write_unaligned::<u32>(p, 0x01020304u32);
+
+    // Read it back
+    let val = std::mem::read_unaligned::<u32>(p);
+    if val != 0x01020304u32 { return 30i32; }
+
+    0i32
+}
+
+fn test_slice_get() -> i32 {
+    let arr = [10i32, 20i32, 30i32];
+    let s: &[i32] = arr[0usize..3usize];
+
+    let v = s.get(0usize);
+    if v.is_none() { return 40i32; }
+    if v.unwrap() != 10i32 { return 41i32; }
+
+    let v = s.get(2usize);
+    if v.is_none() { return 42i32; }
+    if v.unwrap() != 30i32 { return 43i32; }
+
+    let v = s.get(3usize);
+    if v.is_some() { return 44i32; }
+
+    let v = s.get(100usize);
+    if v.is_some() { return 45i32; }
+
+    0i32
+}
+
+fn test_slice_fill() -> i32 {
+    let arr = [0i32, 0i32, 0i32, 0i32, 0i32];
+    let s: &mut [i32] = arr[0usize..5usize];
+    s.fill(42i32);
+
+    if arr[0] != 42i32 { return 50i32; }
+    if arr[4] != 42i32 { return 51i32; }
+
+    0i32
+}
+
+fn test_slice_copy_to() -> i32 {
+    let src = [1i32, 2i32, 3i32];
+    let dst = [0i32, 0i32, 0i32];
+
+    let s: &[i32] = src[0usize..3usize];
+    s.copy_to_nonoverlapping(&dst[0] as &mut i32);
+
+    if dst[0] != 1i32 { return 60i32; }
+    if dst[1] != 2i32 { return 61i32; }
+    if dst[2] != 3i32 { return 62i32; }
+
+    0i32
+}
+
+fn test_slice_equals() -> i32 {
+    let a = "hello";
+    let b = "hello";
+    let c = "world";
+    let d = "hell";
+
+    if !(a == b) { return 70i32; }
+    if a == c { return 71i32; }
+    if a == d { return 72i32; }
+
+    0i32
+}
+
+fn test_slice_compare() -> i32 {
+    use std::mem::slice;
+    use std::cmp::Ordering;
+
+    let a: &[u8] = "hello";
+    let b: &[u8] = "hella";
+    let c: &[u8] = "hello";
+    let d: &[u8] = "hell";
+
+    // Use compare method directly since operator overloads on slices need more compiler work
+    if slice::compare::<&u8>(&a, &b) != Ordering::Greater { return 80i32; }
+    if slice::compare::<&u8>(&a, &c) != Ordering::Equal { return 81i32; }
+    if slice::compare::<&u8>(&a, &d) != Ordering::Greater { return 82i32; }
+    if slice::compare::<&u8>(&d, &a) != Ordering::Less { return 83i32; }
+
+    0i32
+}
+
+fn test_swap() -> i32 {
+    let a = 1i32;
+    let b = 2i32;
+    std::mem::swap::<i32>(&a, &b);
+    if a != 2i32 { return 90i32; }
+    if b != 1i32 { return 91i32; }
+    0i32
+}
+
+fn test_replace() -> i32 {
+    let a = 42i32;
+    let old = std::mem::replace::<i32>(&a, 99i32);
+    if old != 42i32 { return 100i32; }
+    if a != 99i32 { return 101i32; }
+    0i32
+}
+
+fn test_slice_alloc_methods() -> i32 {
+    use std::mem::slice;
+
+    let s = slice::alloc::<i32>(5usize);
+    for i in 0usize..5usize {
+        s[i] = i as i32;
+    }
+    if s[0] != 0i32 { return 110i32; }
+    if s[4] != 4i32 { return 111i32; }
+
+    let s = slice::realloc::<i32>(s, 10usize);
+    if s[0] != 0i32 { return 112i32; }
+    if s[4] != 4i32 { return 113i32; }
+    s[9] = 99i32;
+    if s[9] != 99i32 { return 114i32; }
+
+    slice::free::<i32>(s);
+
+    let s2 = slice::alloc_zeroed::<i32>(3usize);
+    if s2[0] != 0i32 { return 115i32; }
+    if s2[2] != 0i32 { return 116i32; }
+    slice::free::<i32>(s2);
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_alloc_free(); if r != 0i32 { return r; }
+    let r = test_copy_nonoverlapping(); if r != 0i32 { return r; }
+    let r = test_copy_overlapping(); if r != 0i32 { return r; }
+    let r = test_read_write_unaligned(); if r != 0i32 { return r; }
+    let r = test_slice_get(); if r != 0i32 { return r; }
+    let r = test_slice_fill(); if r != 0i32 { return r; }
+    let r = test_slice_copy_to(); if r != 0i32 { return r; }
+    let r = test_slice_equals(); if r != 0i32 { return r; }
+    let r = test_slice_compare(); if r != 0i32 { return r; }
+    let r = test_swap(); if r != 0i32 { return r; }
+    let r = test_replace(); if r != 0i32 { return r; }
+    let r = test_slice_alloc_methods(); if r != 0i32 { return r; }
+    0i32
+}

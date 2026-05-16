@@ -1,0 +1,27 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Per-element tuple equality driven by static_for + tuple-index
+// auto-deref. tuple::equals walks fields and short-circuits on the
+// first mismatch via `return false` from inside the static_for body.
+//
+// Sysroot's tuple impl does NOT expose `fmt`; the `{}`-format path
+// for tuples isn't part of the standard set. Tests for that behavior
+// were dropped when sysroot/std/builtins.alu was unified.
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = (1i32, 2i32, 3i32);
+    let b = (1i32, 2i32, 3i32);
+    let c = (1i32, 9i32, 3i32);
+
+    // equals via the lang impl (called as a method).
+    if !a.equals(&b) { return 1i32; }
+    if a.equals(&c) { return 2i32; }
+    if !a.not_equals(&c) { return 3i32; }
+    if a.not_equals(&b) { return 4i32; }
+
+    // The unit type is also covered (length 0 → trivially equal).
+    let u: () = ();
+    if !u.equals(&()) { return 5i32; }
+
+    0i32
+}

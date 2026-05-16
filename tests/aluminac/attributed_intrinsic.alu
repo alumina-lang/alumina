@@ -1,0 +1,33 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+//
+// Verifies intrinsics::attributed filters fn items by their Custom
+// attribute and returns a tuple of Type<I> descriptors. Mirrors
+// sysroot's test.alu pattern: `attributed::<()>("test")` finds all
+// functions tagged with the named attribute.
+
+#[my_marker]
+fn func_a() -> i32 { 11 }
+
+#[my_marker]
+fn func_b() -> i32 { 22 }
+
+#[other_marker]
+fn func_c() -> i32 { 33 }
+
+fn func_d() -> i32 { 44 }
+
+fn main() -> i32 {
+    use std::intrinsics::attributed;
+
+    // The empty-tuple Args means each match is mono'd with no type args.
+    const MATCHES = attributed::<()>("my_marker");
+    if MATCHES.len() != 2usize { return 1; }
+
+    const OTHER_MATCHES = attributed::<()>("other_marker");
+    if OTHER_MATCHES.len() != 1usize { return 2; }
+
+    // No matches → empty (returned as a void slice fallback whose len is 0).
+    const NO_MATCHES = attributed::<()>("nonexistent_marker");
+    if NO_MATCHES.len() != 0usize { return 3; }
+    0
+}

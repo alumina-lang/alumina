@@ -1,0 +1,73 @@
+// Tests for deferred calls: T::method() on generic type params and type aliases
+
+protocol Maker<Self> {
+    fn make() -> Self;
+    fn value(self: &Self) -> i32;
+}
+
+struct Foo {
+    x: i32,
+}
+
+impl Foo {
+    fn make() -> Foo { Foo { x: 42i32 } }
+    fn value(self: &Foo) -> i32 { self.x }
+}
+
+struct Bar {
+    y: i32,
+}
+
+impl Bar {
+    fn make() -> Bar { Bar { y: 99i32 } }
+    fn value(self: &Bar) -> i32 { self.y }
+}
+
+type DefaultMaker = Foo;
+
+// Test 1: Basic T::method() on generic param
+fn create_value<T: Maker<T>>() -> i32 {
+    let t = T::make();
+    t.value()
+}
+
+// Test 2: T::method() with additional function params
+fn create_with_offset<T: Maker<T>>(offset: i32) -> i32 {
+    let t = T::make();
+    t.value() + offset
+}
+
+// Test 3: Multiple T::method() calls
+fn double_create<T: Maker<T>>() -> i32 {
+    let a = T::make();
+    let b = T::make();
+    a.value() + b.value()
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let test = 0i32;
+
+    // Test 1: T::make() with Foo
+    test = test + 1i32;
+    assert!(create_value::<Foo>() == 42i32);
+
+    // Test 2: T::make() with Bar
+    test = test + 1i32;
+    assert!(create_value::<Bar>() == 99i32);
+
+    // Test 3: T::make() with additional function params
+    test = test + 1i32;
+    assert!(create_with_offset::<Foo>(8i32) == 50i32);
+
+    // Test 4: Multiple T::make() calls
+    test = test + 1i32;
+    assert!(double_create::<Foo>() == 84i32);
+    assert!(double_create::<Bar>() == 198i32);
+
+    // Test 5: Type alias static call
+    test = test + 1i32;
+    let f = DefaultMaker::make();
+    assert!(f.value() == 42i32);
+
+    0i32
+}

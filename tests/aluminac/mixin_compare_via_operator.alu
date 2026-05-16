@@ -1,0 +1,50 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Operator-overload dispatch into a mixin'd Comparable protocol-default
+// method (less_than / greater_than / etc.) must bind Self to the
+// underlying type and reach the type's `compare` method via Self::compare.
+// Companion to mixin_self_via_operator (covers Equatable); this one
+// covers Comparable's default ordering operators.
+
+use std::cmp::{Equatable, Comparable, Ordering};
+
+struct B<T> {
+    value: T,
+}
+
+impl B<T> {
+    fn equals(lhs: &B<T>, rhs: &B<T>) -> bool {
+        lhs.value == rhs.value
+    }
+    fn compare(lhs: &B<T>, rhs: &B<T>) -> Ordering {
+        if lhs.value < rhs.value { return Ordering::Less; }
+        if lhs.value > rhs.value { return Ordering::Greater; }
+        Ordering::Equal
+    }
+    mixin Equatable<B<T>>;
+    mixin Comparable<B<T>>;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let a = B::<i32> { value: 1i32 };
+    let b = B::<i32> { value: 2i32 };
+    let c = B::<i32> { value: 1i32 };
+
+    if !(a < b) { return 1i32; }
+    if a > b { return 2i32; }
+    if a < c { return 3i32; }
+    if a > c { return 4i32; }
+    if !(a <= c) { return 5i32; }
+    if !(a >= c) { return 6i32; }
+    if !(a <= b) { return 7i32; }
+    if a >= b { return 8i32; }
+    if !(b > c) { return 9i32; }
+    if !(b >= c) { return 10i32; }
+
+    // Different element type ensures generic substitution path is exercised.
+    let p = B::<u8> { value: 3u8 };
+    let q = B::<u8> { value: 5u8 };
+    if !(p < q) { return 11i32; }
+    if p > q { return 12i32; }
+
+    0i32
+}

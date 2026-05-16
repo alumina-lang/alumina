@@ -1,0 +1,136 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::collections::Vector;
+
+fn test_from_slice() -> i32 {
+    let vec = Vector::from_slice::<i32>(&[1i32, 2i32, 3i32]);
+    defer vec.free();
+
+    if vec.len() != 3usize { return 1i32; }
+    if vec.get(0i32 as usize).unwrap() != 1i32 { return 2i32; }
+    if vec.get(1i32 as usize).unwrap() != 2i32 { return 3i32; }
+    if vec.get(2i32 as usize).unwrap() != 3i32 { return 4i32; }
+    if vec.get(3i32 as usize).is_some() { return 5i32; }
+    0i32
+}
+
+fn test_with_capacity() -> i32 {
+    let vec = Vector::with_capacity::<i32>(10usize);
+    defer vec.free();
+
+    if vec.len() != 0usize { return 10i32; }
+    if vec.capacity() < 10usize { return 11i32; }
+
+    vec.push(42i32);
+    if vec.len() != 1usize { return 12i32; }
+    if vec.get(0usize).unwrap() != 42i32 { return 13i32; }
+    0i32
+}
+
+fn test_extend_from_slice() -> i32 {
+    let vec = Vector::new::<i32>();
+    defer vec.free();
+
+    vec.extend_from_slice(&[1i32, 2i32, 3i32]);
+    if vec.len() != 3usize { return 20i32; }
+
+    vec.extend_from_slice(&[4i32, 5i32]);
+    if vec.len() != 5usize { return 21i32; }
+    if vec.get(3usize).unwrap() != 4i32 { return 22i32; }
+    if vec.get(4usize).unwrap() != 5i32 { return 23i32; }
+    0i32
+}
+
+fn test_insert_remove() -> i32 {
+    let vec = Vector::new::<i32>();
+    defer vec.free();
+
+    vec.push(1i32);
+    vec.push(3i32);
+    vec.insert(1usize, 2i32);  // [1, 2, 3]
+    if vec.len() != 3usize { return 30i32; }
+    if vec.get(1usize).unwrap() != 2i32 { return 31i32; }
+
+    let removed = vec.remove(0usize);  // [2, 3]
+    if removed != 1i32 { return 32i32; }
+    if vec.len() != 2usize { return 33i32; }
+    if vec.get(0usize).unwrap() != 2i32 { return 34i32; }
+    0i32
+}
+
+fn test_retain() -> i32 {
+    let vec = Vector::from_slice::<i32>(&[1i32, 2i32, 3i32, 4i32, 5i32, 6i32]);
+    defer vec.free();
+
+    // Keep only even numbers
+    vec.retain(|x: &i32| -> bool { *x % 2i32 == 0i32 });
+    if vec.len() != 3usize { return 40i32; }
+    if vec.get(0usize).unwrap() != 2i32 { return 41i32; }
+    if vec.get(1usize).unwrap() != 4i32 { return 42i32; }
+    if vec.get(2usize).unwrap() != 6i32 { return 43i32; }
+    0i32
+}
+
+fn test_truncate() -> i32 {
+    let vec = Vector::from_slice::<i32>(&[1i32, 2i32, 3i32, 4i32, 5i32]);
+    defer vec.free();
+
+    vec.truncate(3usize);
+    if vec.len() != 3usize { return 50i32; }
+    if vec.get(2usize).unwrap() != 3i32 { return 51i32; }
+    0i32
+}
+
+fn test_move() -> i32 {
+    let vec = Vector::from_slice::<i32>(&[1i32, 2i32, 3i32]);
+    let vec2 = vec.move();
+    defer vec2.free();
+
+    if vec.len() != 0usize { return 60i32; }
+    if vec2.len() != 3usize { return 61i32; }
+    if vec2.get(0usize).unwrap() != 1i32 { return 62i32; }
+    0i32
+}
+
+fn test_clone() -> i32 {
+    let vec = Vector::from_slice::<i32>(&[1i32, 2i32, 3i32]);
+    defer vec.free();
+
+    let vec2 = vec.clone();
+    defer vec2.free();
+
+    if vec2.len() != 3usize { return 70i32; }
+    if vec2.get(0usize).unwrap() != 1i32 { return 71i32; }
+
+    // Modifying original shouldn't affect clone
+    vec.push(4i32);
+    if vec2.len() != 3usize { return 72i32; }
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_from_slice();
+    if r != 0i32 { return r; }
+
+    let r = test_with_capacity();
+    if r != 0i32 { return r; }
+
+    let r = test_extend_from_slice();
+    if r != 0i32 { return r; }
+
+    let r = test_insert_remove();
+    if r != 0i32 { return r; }
+
+    let r = test_retain();
+    if r != 0i32 { return r; }
+
+    let r = test_truncate();
+    if r != 0i32 { return r; }
+
+    let r = test_move();
+    if r != 0i32 { return r; }
+
+    let r = test_clone();
+    if r != 0i32 { return r; }
+
+    0i32
+}

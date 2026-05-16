@@ -1,0 +1,31 @@
+// Test bind! and reduce! builtin macros
+
+#[builtin] macro bind($mac, $args) {}
+#[builtin] macro reduce($mac, $base, $args) {}
+
+// A simple macro that adds two integers
+macro add($a, $b) {
+    $a + $b
+}
+
+// A macro that takes a prefix and two args
+macro prefixed_add($prefix, $a, $b) {
+    $prefix + $a + $b
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test reduce! with add macro
+    let sum: i32 = reduce!(add, 0i32, 1i32, 2i32, 3i32);
+    // reduce!(add, 0, 1, 2, 3) = add(add(add(0, 1), 2), 3) = 6
+    if sum != 6i32 { return 1i32; }
+
+    // Test bind! - create a partial application
+    let sum2: i32 = reduce!(bind!(prefixed_add, 10i32), 0i32, 1i32, 2i32);
+    // bind!(prefixed_add, 10) creates a macro that calls prefixed_add(10, $a, $b)
+    // reduce!(bound, 0, 1, 2) = bound(bound(0, 1), 2)
+    //   = prefixed_add(10, 0, 1) = 11
+    //   = prefixed_add(10, 11, 2) = 23
+    if sum2 != 23i32 { return 2i32; }
+
+    0i32
+}

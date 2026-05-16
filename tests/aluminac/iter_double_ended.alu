@@ -1,0 +1,120 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::iter::*;
+
+fn test_rev_slice() -> i32 {
+    let arr = [1i32, 2i32, 3i32, 4i32, 5i32];
+    let it = arr[0usize..5usize].iter();
+    let rev_it = it.rev();
+
+    let v = rev_it.next();
+    if v.is_none() { return 1i32; }
+    if v.unwrap() != 5i32 { return 2i32; }
+
+    let v = rev_it.next();
+    if v.unwrap() != 4i32 { return 3i32; }
+
+    let v = rev_it.next();
+    if v.unwrap() != 3i32 { return 4i32; }
+
+    let v = rev_it.next();
+    if v.unwrap() != 2i32 { return 5i32; }
+
+    let v = rev_it.next();
+    if v.unwrap() != 1i32 { return 6i32; }
+
+    let v = rev_it.next();
+    if v.is_some() { return 7i32; }
+
+    0i32
+}
+
+fn test_slice_next_back() -> i32 {
+    let arr = [10i32, 20i32, 30i32];
+    let it = arr[0usize..3usize].iter();
+
+    // Mix front and back iteration
+    let front = it.next();
+    if front.unwrap() != 10i32 { return 40i32; }
+
+    let back = it.next_back();
+    if back.unwrap() != 30i32 { return 41i32; }
+
+    let middle = it.next();
+    if middle.unwrap() != 20i32 { return 42i32; }
+
+    // Should be exhausted
+    if it.next().is_some() { return 43i32; }
+
+    0i32
+}
+
+fn test_rev_to_vector() -> i32 {
+    let arr = [1i32, 2i32, 3i32];
+    let it = arr[0usize..3usize].iter();
+    let v = it.rev().to_vector();
+    defer v.free();
+
+    if v.len() != 3usize { return 50i32; }
+    if v[0] != 3i32 { return 51i32; }
+    if v[1] != 2i32 { return 52i32; }
+    if v[2] != 1i32 { return 53i32; }
+
+    0i32
+}
+
+fn test_rev_count() -> i32 {
+    let arr = [5i32, 4i32, 3i32, 2i32, 1i32];
+    let it = arr[0usize..5usize].iter();
+    let rev = it.rev();
+    let count = rev.count();
+    if count != 5usize { return 60i32; }
+
+    0i32
+}
+
+fn test_rev_empty() -> i32 {
+    let arr: [i32; 0] = [];
+    let it = arr[..].iter();
+    let rev = it.rev();
+    if rev.next().is_some() { return 70i32; }
+
+    0i32
+}
+
+fn test_rev_single() -> i32 {
+    let arr = [42i32];
+    let it = arr[0usize..1usize].iter();
+    let rev = it.rev();
+
+    let v = rev.next();
+    if v.unwrap() != 42i32 { return 80i32; }
+    if rev.next().is_some() { return 81i32; }
+
+    0i32
+}
+
+fn test_rev_rev() -> i32 {
+    // rev of rev should give original order
+    let arr = [1i32, 2i32, 3i32];
+    let it = arr[0usize..3usize].iter();
+    let rev1 = it.rev();
+    let rev2 = rev1.rev();
+
+    if rev2.next().unwrap() != 1i32 { return 90i32; }
+    if rev2.next().unwrap() != 2i32 { return 91i32; }
+    if rev2.next().unwrap() != 3i32 { return 92i32; }
+    if rev2.next().is_some() { return 93i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_rev_slice(); if r != 0i32 { return r; }
+    let r = test_slice_next_back(); if r != 0i32 { return r; }
+    let r = test_rev_to_vector(); if r != 0i32 { return r; }
+    let r = test_rev_count(); if r != 0i32 { return r; }
+    let r = test_rev_empty(); if r != 0i32 { return r; }
+    let r = test_rev_single(); if r != 0i32 { return r; }
+    let r = test_rev_rev(); if r != 0i32 { return r; }
+    0i32
+}

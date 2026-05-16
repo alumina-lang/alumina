@@ -1,0 +1,2730 @@
+// Expression parser
+//
+// Parses expressions from tree-sitter nodes into AST Expr nodes.
+// Also handles macro invocation and expansion.
+
+use parser::*;
+use parser::pass1::Pass1;
+use parser::pass2::Pass2;
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
+use tree_sitter::{Node, TSFieldId, TSTreeCursor};
+
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+
+struct ExprParser {
+    ctx: &mut ParseContext,
+    scope_idx: u32,
+}
+
+struct _AnchorWalk {
+    item: scope::NamedItem,
+    is_terminal: bool,
+}
+
+impl ExprParser {
+    fn new(ctx: &mut ParseContext, scope_idx: u32) -> ExprParser {
+        ExprParser { ctx: ctx, scope_idx: scope_idx }
+    }
+
+    fn make_expr(self: &ExprParser, tag: ExprTag, span: Span) -> Expr {
+        let e = Expr::void_expr();
+        e.tag = tag;
+        e.span = span;
+        e
+    }
+
+    fn alloc_void(self: &ExprParser, span: Span) -> &Expr {
+        let e = Expr::void_expr();
+        e.span = span;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_expr(self: &ExprParser, node: Node) -> &Expr {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        let span = self.ctx.make_span(node);
+
+        switch kind {
+            NodeKind::Block => self.parse_block(node, span),
+            NodeKind::IntegerLiteral => self.parse_int_literal(node, span),
+            NodeKind::FloatLiteral => self.parse_float_literal(node, span),
+            NodeKind::BooleanLiteral => self.parse_bool_literal(node, span),
+            NodeKind::StringLiteral => self.parse_string_literal(node, span),
+            NodeKind::CharLiteral => self.parse_char_literal(node, span),
+            NodeKind::PtrLiteral => {
+                let e = self.make_expr(ExprTag::NullLit, span);
+                self.ctx.alloc_expr(e)
+            },
+            NodeKind::Identifier => self.parse_identifier(node, span),
+            NodeKind::ScopedIdentifier => self.parse_scoped_identifier(node, span),
+            NodeKind::BinaryExpression => self.parse_binary(node, span),
+            NodeKind::UnaryExpression => self.parse_unary(node, span),
+            NodeKind::AssignmentExpression => self.parse_assignment(node, span),
+            NodeKind::CompoundAssignmentExpr => self.parse_compound_assignment(node, span),
+            NodeKind::CallExpression => self.parse_call(node, span),
+            NodeKind::FieldExpression => self.parse_field(node, span),
+            NodeKind::TupleIndexExpression => self.parse_tuple_index(node, span),
+            NodeKind::IndexExpression => self.parse_index(node, span),
+            NodeKind::ReferenceExpression => self.parse_ref(node, span),
+            NodeKind::DereferenceExpression => self.parse_deref(node, span),
+            NodeKind::TypeCastExpression => self.parse_cast(node, span),
+            NodeKind::TypeCheckExpression => self.parse_type_check(node, span),
+            NodeKind::IfExpression => self.parse_if(node, span),
+            NodeKind::SwitchExpression => self.parse_switch(node, span),
+            NodeKind::WhileExpression => self.parse_while(node, span),
+            NodeKind::ForExpression => self.parse_for(node, span),
+            NodeKind::LoopExpression => self.parse_loop(node, span),
+            NodeKind::BreakExpression => self.parse_break(node, span),
+            NodeKind::ContinueExpression => {
+                let e = self.make_expr(ExprTag::Continue, span);
+                self.ctx.alloc_expr(e)
+            },
+            NodeKind::ReturnExpression => self.parse_return(node, span),
+            NodeKind::LetDeclaration => self.parse_let(node, span),
+            NodeKind::StructExpression => self.parse_struct_lit(node, span),
+            NodeKind::TupleExpression => self.parse_tuple_lit(node, span),
+            NodeKind::ArrayExpression => self.parse_array_lit(node, span),
+            NodeKind::LambdaExpression => self.parse_lambda(node, span),
+            NodeKind::DeferExpression => self.parse_defer(node, span),
+            NodeKind::TryExpression => self.parse_try(node, span),
+            NodeKind::RangeExpression => self.parse_range(node, span),
+            NodeKind::ParenthesizedExpression => {
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    return self.parse_expr(inner.unwrap());
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::ExpressionStatement => {
+                // The grammar gives expression_statement an optional
+                // `attributes` field before the `inner` expression.
+                // Walking children unconditionally would return the
+                // attributes node first (it's named), and aluminac has
+                // no expression-level attribute handling — so the actual
+                // expression would be silently dropped. Use FieldKind::Inner
+                // to skip past the attributes node directly.
+                //
+                // Also honour `#[cfg(...)]` on expression statements: if
+                // the condition is false, drop the statement (return void)
+                // so the inner expression isn't lowered. Other expression-
+                // level attributes (`#[allow(...)]`, `#[docs(...)]`, etc.)
+                // are diagnostics-only and don't affect lowering.
+                let attrs_node = child_by!(node, FieldKind::Attributes);
+                if !attrs_node.is_none() {
+                    if self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                        return self.alloc_void(span);
+                    }
+                }
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    return self.parse_expr(inner.unwrap());
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::Statement => {
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    return self.parse_expr(inner.unwrap());
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::MacroInvocation => self.parse_macro_invocation(node, span),
+            NodeKind::UniversalMacroInvocation => self.parse_universal_macro(node, span),
+            NodeKind::MacroIdentifier => {
+                // $param reference
+                let text = self.ctx.node_text(node);
+                let name = if text.len() > 0 && text[0] == '$' {
+                    self.ctx.intern_str(text[1..])
+                } else {
+                    self.ctx.intern_str(text)
+                };
+
+                // When pre-parsing a macro body, produce ExprTag::MacroParam
+                if self.ctx.in_macro_body {
+                    // Find param index
+                    let param_idx: i32 = -1i32;
+                    for pi in 0usize..self.ctx.macro_param_names.len() {
+                        if self.ctx.macro_param_names[pi] == name {
+                            param_idx = pi as i32;
+                            break;
+                        }
+                    }
+                    if param_idx >= 0i32 {
+                        let e = self.make_expr(ExprTag::MacroParam, span);
+                        e._data.id_ref.str_val = name;
+                        e._data.id_ref.int_val = param_idx as u64;
+                        e._data.id_ref.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        return self.ctx.alloc_expr(e);
+                    }
+                    return self.alloc_void(span);
+                }
+
+                // Normal expansion: look up in macro_args
+                let arg = self.ctx.macro_args.get(&name);
+                if arg.is_some() {
+                    return arg.unwrap();
+                }
+                // Check if this is the variadic param being expanded
+                if self.ctx.macro_variadic_name.len() > 0usize && name == self.ctx.macro_variadic_name {
+                    if self.ctx.macro_et_cetera_idx != NO_VARIADIC {
+                        let idx = self.ctx.macro_et_cetera_idx as usize;
+                        if idx < self.ctx.macro_variadic_args.len() {
+                            return self.ctx.macro_variadic_args[idx];
+                        }
+                    }
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::Turbofish, NodeKind::GenericTypeWithTurbofish => {
+                // Turbofish as standalone expression: func::<T> used as a value (e.g. fn pointer)
+                self.parse_turbofish_value(node, span)
+            },
+            NodeKind::StaticForExpression => self.parse_static_for(node, span),
+            NodeKind::EtCeteraExpression => self.parse_et_cetera(node, span),
+            NodeKind::EmptyStatement => self.alloc_void(span),
+            NodeKind::LineComment => self.alloc_void(span),
+            NodeKind::BlockComment => self.alloc_void(span),
+            NodeKind::DocComment => self.alloc_void(span),
+            _ => {
+                // For unhandled nodes, try to parse children
+                self.alloc_void(span)
+            },
+        }
+    }
+
+    fn parse_block(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Create a child scope for this block to properly handle variable shadowing.
+        // Inner `let` declarations will be in the child scope and won't overwrite
+        // outer variables in the parent scope.
+        let block_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
+        let block_parser = ExprParser::new(self.ctx, block_scope);
+
+        // Pre-pass: run Pass 1 + Pass 2 on any item definitions (struct, enum,
+        // impl, etc.) inside this block so their scopes, names, fields, and methods
+        // are fully registered before we parse expressions. Without this, nested
+        // structs/impls would never get registered and trait dispatch (e.g. .fmt())
+        // would fail.
+        {
+            // Capture current pending lengths so we can process only newly added items
+            let structs_start = self.ctx.pending_structs.len();
+            let enums_start = self.ctx.pending_enums.len();
+            let protocols_start = self.ctx.pending_protocols.len();
+            let mixins_start = self.ctx.pending_mixins.len();
+            let functions_start = self.ctx.pending_functions.len();
+            let type_aliases_start = self.ctx.pending_type_aliases.len();
+            let statics_start = self.ctx.pending_statics.len();
+            let macros_start = self.ctx.pending_macros.len();
+
+            let pre_cursor = node.walk();
+            defer pre_cursor.free();
+            for stmt in children_by!(node, FieldKind::Statements, &pre_cursor) {
+                if !stmt.is_named() {
+                    continue;
+                }
+                // statement -> inner: (_declaration_statement | expression_statement)
+                // _declaration_statement is hidden, so the inner field points directly
+                // to struct_definition, impl_block, etc.
+                let inner_opt = child_by!(stmt, FieldKind::Inner);
+                if inner_opt.is_none() {
+                    continue;
+                }
+                let inner = inner_opt.unwrap();
+                let inner_kind = NODE_KINDS[inner.symbol() as usize];
+                switch inner_kind {
+                    NodeKind::StructDefinition,
+                    NodeKind::EnumDefinition,
+                    NodeKind::ProtocolDefinition,
+                    NodeKind::ImplBlock,
+                    NodeKind::TypeDefinition,
+                    NodeKind::FunctionDefinition,
+                    NodeKind::UseDeclaration,
+                    NodeKind::StaticDeclaration,
+                    NodeKind::ConstDeclaration,
+                    NodeKind::MacroDefinition => {
+                        let pass1 = Pass1::new(self.ctx, block_scope);
+                        pass1.visit_node(inner);
+                    },
+                    _ => {},
+                }
+            }
+
+            // Now run Pass 2 on any newly added pending items so their fields,
+            // methods, variants, etc. are fully built.
+            let pass2 = Pass2::new(self.ctx);
+            pass2.process_items_from(
+                node,
+                structs_start,
+                enums_start,
+                protocols_start,
+                mixins_start,
+                functions_start,
+                type_aliases_start,
+                statics_start,
+            );
+            // Inner-block macros also need their bodies pre-parsed before
+            // the rest of the block's statements are walked, otherwise their
+            // invocations resolve to a name with no body and silently no-op.
+            pass2.process_macros_from(node, macros_start);
+        }
+
+        // Two-pass collection: first gather raw statement nodes (filtering
+        // cfg-suppressed ones), then decide which one is the block's *value*
+        // following alumina-boot's rule (see make_return_expression in
+        // src/alumina-boot/src/ast/expressions.rs:240):
+        //
+        //   - If the last non-suppressed statement is an `expression_statement`
+        //     whose inner kind is one of the block-ending expressions
+        //     (Block, If, Switch, While, Loop, For, StaticFor) AND has no
+        //     trailing `;`, that statement's *expression* is the block's value.
+        //   - Otherwise the block's value is `()` (Void).
+        //
+        // The tree-sitter grammar puts trailing block-ending expressions
+        // into the same Statements field as `expr;` statements (see grammar
+        // rule expression_statement) — they are distinguished only by the
+        // presence of `;`. parse_block previously flattened the whole list
+        // and let `mk_block` use the last statement's type, which made
+        // `{ memcpy(...); }` get `&mut c_void` instead of `()`.
+        let raw_stmts: Vector<Node> = Vector::new();
+        defer raw_stmts.free();
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Statements, &cursor) {
+            if !child.is_named() { continue; }
+            let inner_opt = child_by!(child, FieldKind::Inner);
+            if !inner_opt.is_none() {
+                let inner_kind = NODE_KINDS[inner_opt.unwrap().symbol() as usize];
+                if inner_kind == NodeKind::ExpressionStatement {
+                    let attrs_node = child_by!(inner_opt.unwrap(), FieldKind::Attributes);
+                    if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                        continue;
+                    }
+                }
+            }
+            raw_stmts.push(child);
+        }
+
+        let stmts: Vector<&Expr> = Vector::new();
+        defer stmts.free();
+
+        // Promote a trailing expression_ending_with_block to the block's
+        // result. If found, lower it via parse_expr (which unwraps the
+        // expression_statement to its inner expression — the value-producing
+        // form). Statements with explicit `;` keep their expression but get
+        // a synthesized Void appended at the end so the block's value is `()`.
+        let has_result_value = false;
+        if raw_stmts.len() > 0 {
+            let last = raw_stmts[raw_stmts.len() - 1];
+            let last_inner_opt = child_by!(last, FieldKind::Inner);
+            if !last_inner_opt.is_none() {
+                let last_inner = last_inner_opt.unwrap();
+                let last_inner_kind = NODE_KINDS[last_inner.symbol() as usize];
+                if last_inner_kind == NodeKind::ExpressionStatement {
+                    let stmt_inner_opt = child_by!(last_inner, FieldKind::Inner);
+                    if !stmt_inner_opt.is_none() {
+                        let stmt_inner_kind = NODE_KINDS[stmt_inner_opt.unwrap().symbol() as usize];
+                        let is_block_ending = stmt_inner_kind == NodeKind::Block
+                            || stmt_inner_kind == NodeKind::IfExpression
+                            || stmt_inner_kind == NodeKind::SwitchExpression
+                            || stmt_inner_kind == NodeKind::WhileExpression
+                            || stmt_inner_kind == NodeKind::LoopExpression
+                            || stmt_inner_kind == NodeKind::ForExpression
+                            || stmt_inner_kind == NodeKind::StaticForExpression;
+                        if is_block_ending {
+                            // Check that the statement has no trailing `;` —
+                            // if it does, the value is still discarded.
+                            if last_inner.end_byte() == stmt_inner_opt.unwrap().end_byte() {
+                                has_result_value = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let n_stmts = raw_stmts.len();
+        for i in 0usize..n_stmts {
+            let expr = block_parser.parse_expr(raw_stmts[i]);
+            stmts.push(expr);
+        }
+
+        // Also handle the FieldKind::Result child, which the tree-sitter
+        // grammar uses when a block has a trailing non-`;` expression that
+        // isn't a block-ending form (e.g. `{ x + 1 }`). When present, this
+        // child is the block's result.
+        let result_node = child_by!(node, FieldKind::Result);
+        if !result_node.is_none() {
+            let result_kind = NODE_KINDS[result_node.unwrap().symbol() as usize];
+            let suppressed = false;
+            if result_kind == NodeKind::ExpressionStatement {
+                let attrs_node = child_by!(result_node.unwrap(), FieldKind::Attributes);
+                if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                    suppressed = true;
+                }
+            }
+            if !suppressed {
+                stmts.push(block_parser.parse_expr(result_node.unwrap()));
+                has_result_value = true;
+            }
+        }
+
+        // If no expression produces a value, the block's value is `()`.
+        if !has_result_value {
+            stmts.push(self.alloc_void(span));
+        }
+
+        let result = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
+
+        let e = self.make_expr(ExprTag::Block, span);
+        e._data.list.args = result;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_int_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        let (value, suffix) = parse_int_with_suffix(text);
+        let e = self.make_expr(ExprTag::IntLit, span);
+        e._data.lit.int_val = value as u64;
+        e._data.lit.int_val_hi = (value >> 64) as u64;
+        e._data.lit.type_suffix = suffix;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_float_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        let (value, suffix) = parse_float_with_suffix(text);
+        let e = self.make_expr(ExprTag::FloatLit, span);
+        e._data.lit.float_val = value;
+        e._data.lit.type_suffix = suffix;
+        // Stash the raw text on the lit so lower-time f32 coercion can re-parse
+        // via strtof and avoid double-rounding. FloatLit doesn't otherwise use
+        // str_val, so the slot is free.
+        e._data.lit.str_val = text;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_bool_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        let e = self.make_expr(ExprTag::BoolLit, span);
+        e._data.lit.bool_val = text == "true";
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_string_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        // Strip quotes and handle escape sequences
+        let content = if text.len() >= 2 {
+            unescape_string(text[1..text.len()-1], self.ctx.arena)
+        } else {
+            ""
+        };
+        let e = self.make_expr(ExprTag::StringLit, span);
+        e._data.lit.str_val = content;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_char_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        // Strip quotes
+        let ch: u32 = if text.len() >= 3 {
+            if text[1] == '\\' && text.len() >= 4 {
+                // Escape sequence
+                switch text[2] {
+                    'n' => '\n' as u32,
+                    'r' => '\r' as u32,
+                    't' => '\t' as u32,
+                    '\\' => '\\' as u32,
+                    '\'' => '\'' as u32,
+                    '0' => 0u32,
+                    _ => text[2] as u32,
+                }
+            } else {
+                text[1] as u32
+            }
+        } else {
+            0u32
+        };
+        let e = self.make_expr(ExprTag::CharLit, span);
+        e._data.lit.int_val = ch as u64;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_identifier(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let name = self.ctx.node_text(node);
+        let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NamedItemTag::Local {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::Local, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Param {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::Param, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Function {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::FnRef, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Method {
+                let fn_id = item.kind.id2();
+                let e = self.make_expr(ExprTag::FnRef, span);
+                e._data.id_ref.id = fn_id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Static {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::StaticRef, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Const {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::StaticRef, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::BoundValue {
+                let e = self.make_expr(ExprTag::BoundValue, span);
+                e._data.id_ref.id = item.kind.id();       // binding id
+                e._data.id_ref.id2 = item.kind.id2();     // self_param id
+                e._data.id_ref.str_val = item.name;     // binding name (for field lookup)
+                e._data.id_ref.flag = item.kind.scope_idx == BoundType::ByReference as u32;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
+                let enum_id = item.kind.id();
+                let variant_id = item.kind.id2();
+                let e = self.make_expr(ExprTag::EnumRef, span);
+                e._data.id_ref.id = enum_id;
+                e._data.id_ref.id2 = variant_id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Macro {
+                // Macro used in expression context (e.g. as argument to bind!)
+                let e = self.make_expr(ExprTag::MacroInvocation, span);
+                e._data.macro_expr.str_val = self.ctx.intern_str(name);
+                e._data.macro_expr.args = &[];
+                return self.ctx.alloc_expr(e);
+            } else {
+                let e = self.make_expr(ExprTag::Local, span);
+                e._data.id_ref.id = Id { _value: 0 };
+                return self.ctx.alloc_expr(e);
+            }
+        } else {
+            // Unresolved at parse time. When parsing a macro body, the
+            // reference may bind to a local in the caller's scope —
+            // store the source name so expand_macro_expr can re-resolve
+            // at the call site (e.g. test_fmt's `macro chk(...) { ... &buf
+            // ... }` where `buf` is declared in test_fmt's body, BEFORE
+            // the macro definition textually but BEFORE the macro body
+            // is pre-parsed in source order).
+            let e = self.make_expr(ExprTag::Local, span);
+            e._data.id_ref.id = Id { _value: 0 };
+            if self.ctx.in_macro_body {
+                e._data.id_ref.str_val = self.ctx.intern_str(name);
+            }
+            self.ctx.alloc_expr(e)
+        }
+    }
+
+    // Walk `segments` looking for a TypeAlias / GenericParam anchor that the
+    // strict resolve_path can't return (it filters those out). The walk is
+    // tolerant of mid-path TypeAliases (`fmt::Result::ok` where `Result` is
+    // an alias) and of local-scope GenericParams that share a name with a
+    // sibling struct (`Self::equals` inside a protocol where some `#[lang]`
+    // struct also named `Self` is visible up the chain). Walks the parent
+    // chain at segment 0, descending into modules/struct-scopes only when
+    // the match is scope-bearing (Module/Struct/Enum/Protocol/BuiltinType).
+    // At each level a GenericParam / TypeAlias entry short-circuits as the
+    // anchor when only one trailing method segment remains.
+    fn find_typealias_or_generic_anchor(self: &ExprParser, segments: &[&[u8]]) -> Option<scope::NamedItem> {
+        if segments.len() < 2 { return Option::none(); }
+        let cur_scope = self.scope_idx;
+        let parent_chain = true;
+        let i: usize = 0;
+        loop {
+            if i + 1 >= segments.len() { return Option::none(); }
+            let anchor = if parent_chain {
+                self.find_anchor_in_parent_chain(cur_scope, segments[i])
+            } else {
+                self.lookup_in_module(cur_scope, segments[i])
+            };
+            if anchor.is_none() { return Option::none(); }
+            let res = anchor.unwrap();
+            if res.is_terminal {
+                if i + 2 == segments.len() {
+                    return Option::some(res.item);
+                }
+                return Option::none();
+            }
+            cur_scope = res.item.kind.scope_idx;
+            parent_chain = false;
+            i = i + 1;
+        }
+    }
+
+    fn find_anchor_in_parent_chain(self: &ExprParser, scope_idx: u32, name: &[u8]) -> Option<_AnchorWalk> {
+        let cur = scope_idx;
+        loop {
+            let scope = self.ctx.scopes.get(cur);
+            let found = scope.items.get(&name);
+            if found.is_some() {
+                let res = self.classify_anchor_item(found.unwrap());
+                if !res.is_none() { return res; }
+                // Found something but it's not a usable anchor or descend
+                // target at this level (e.g. Method, Local). Keep walking up.
+            }
+            // Star imports use module-style lookup (no parent walk needed).
+            for import_idx in scope.star_imports {
+                let imp_found = self.ctx.scopes.get(import_idx).items.get(&name);
+                if imp_found.is_some() {
+                    let res = self.classify_anchor_item(imp_found.unwrap());
+                    if !res.is_none() { return res; }
+                }
+            }
+            if scope.parent.is_none() { return Option::none(); }
+            cur = scope.parent.unwrap();
+        }
+    }
+
+    fn lookup_in_module(self: &ExprParser, scope_idx: u32, name: &[u8]) -> Option<_AnchorWalk> {
+        let scope = self.ctx.scopes.get(scope_idx);
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            let r = self.classify_anchor_item(found.unwrap());
+            if !r.is_none() { return r; }
+        }
+        for import_idx in scope.star_imports {
+            let imp_found = self.ctx.scopes.get(import_idx).items.get(&name);
+            if imp_found.is_some() {
+                let r = self.classify_anchor_item(imp_found.unwrap());
+                if !r.is_none() { return r; }
+            }
+        }
+        Option::none()
+    }
+
+    fn classify_anchor_item(self: &ExprParser, item_in: scope::NamedItem) -> Option<_AnchorWalk> {
+        let item = item_in;
+        // Follow use-aliases: `use io::Result;` makes `Result` an alias to
+        // the underlying io::Result type alias / struct. Resolving through
+        // the use lets us treat it like the target item for descend / anchor
+        // classification.
+        if item.kind.tag == scope::NamedItemTag::UseAlias {
+            let followed = self.ctx.scopes.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+            if followed.is_some() {
+                item = followed.unwrap();
+            } else {
+                // resolve_path returns None for TypeAlias targets — retry
+                // through resolve_in_module which preserves the terminal
+                // TypeAlias / GenericParam.
+                let segs = item.kind.path_segments();
+                if segs.len() == 0 { return Option::none(); }
+                let inner = self.lookup_in_chain_through_use(item.kind.scope_idx, segs);
+                if inner.is_none() { return Option::none(); }
+                item = inner.unwrap();
+            }
+        }
+        let tag = item.kind.tag;
+        if tag == scope::NamedItemTag::GenericParam || tag == scope::NamedItemTag::TypeAlias {
+            return Option::some(_AnchorWalk { item: item, is_terminal: true });
+        }
+        let descendable = (tag == scope::NamedItemTag::Module
+            || tag == scope::NamedItemTag::Struct
+            || tag == scope::NamedItemTag::Enum
+            || tag == scope::NamedItemTag::Protocol
+            || tag == scope::NamedItemTag::BuiltinType)
+            && item.kind.scope_idx != 0u32;
+        if descendable {
+            return Option::some(_AnchorWalk { item: item, is_terminal: false });
+        }
+        Option::none()
+    }
+
+    fn lookup_in_chain_through_use(self: &ExprParser, scope_idx: u32, segments: &[&[u8]]) -> Option<scope::NamedItem> {
+        // Walk a use-alias's path, descending into module/struct scopes and
+        // tolerating TypeAlias / GenericParam at the terminal. Mirrors what
+        // resolve_path would do but without filtering out TypeAlias.
+        if segments.len() == 0 { return Option::none(); }
+        let cur_scope = scope_idx;
+        let i: usize = 0;
+        loop {
+            let scope = self.ctx.scopes.get(cur_scope);
+            let found = scope.items.get(&segments[i]);
+            if found.is_none() {
+                // Try star imports
+                let imp_found_opt: Option<scope::NamedItem> = Option::none();
+                for import_idx in scope.star_imports {
+                    let imp_found = self.ctx.scopes.get(import_idx).items.get(&segments[i]);
+                    if imp_found.is_some() {
+                        imp_found_opt = imp_found;
+                        break;
+                    }
+                }
+                if imp_found_opt.is_none() {
+                    // Walk parent (only for first segment)
+                    if i == 0 && !scope.parent.is_none() {
+                        cur_scope = scope.parent.unwrap();
+                        continue;
+                    }
+                    return Option::none();
+                }
+                found = imp_found_opt;
+            }
+            let item = found.unwrap();
+            if i + 1 == segments.len() {
+                if item.kind.tag == scope::NamedItemTag::UseAlias {
+                    return self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
+                }
+                return Option::some(item);
+            }
+            if item.kind.tag == scope::NamedItemTag::UseAlias {
+                let target = self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
+                if target.is_none() { return Option::none(); }
+                item = target.unwrap();
+            }
+            // Descend through module/struct/etc only
+            let descendable = (item.kind.tag == scope::NamedItemTag::Module
+                || item.kind.tag == scope::NamedItemTag::Struct
+                || item.kind.tag == scope::NamedItemTag::Enum
+                || item.kind.tag == scope::NamedItemTag::Protocol
+                || item.kind.tag == scope::NamedItemTag::BuiltinType)
+                && item.kind.scope_idx != 0u32;
+            if !descendable { return Option::none(); }
+            cur_scope = item.kind.scope_idx;
+            i = i + 1;
+        }
+    }
+
+    fn parse_scoped_identifier(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let pass2 = Pass2 { ctx: self.ctx };
+        let segments = pass2.collect_type_path_segments(node);
+        let resolved = self.ctx.scopes.resolve_path(self.scope_idx, segments);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NamedItemTag::Function {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::FnRef, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Method {
+                let fn_id = item.kind.id2();
+                let e = self.make_expr(ExprTag::FnRef, span);
+                e._data.id_ref.id = fn_id;
+                // Carry the impl_scope_idx (set in process_mixins). Mono uses
+                // it to look up the mixin's type-args via get_mixin_type_args
+                // and bind the protocol's generics (Self + others) for static
+                // calls like `f64::nan()` — without a receiver or first arg
+                // to infer Self from, the binding source is the path's
+                // containing impl scope.
+                e._data.id_ref.id2 = Id { _value: item.kind.scope_idx as usize };
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Static {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::StaticRef, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Const {
+                let id = item.kind.id();
+                let e = self.make_expr(ExprTag::StaticRef, span);
+                e._data.id_ref.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::EnumVariant {
+                let enum_id = item.kind.id();
+                let variant_id = item.kind.id2();
+                let e = self.make_expr(ExprTag::EnumRef, span);
+                e._data.id_ref.id = enum_id;
+                e._data.id_ref.id2 = variant_id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NamedItemTag::Macro {
+                // Macro used in expression context (e.g. as argument to bind!)
+                let e = self.make_expr(ExprTag::MacroInvocation, span);
+                e._data.macro_expr.str_val = item.name;
+                e._data.macro_expr.args = &[];
+                return self.ctx.alloc_expr(e);
+            } else {
+                let e = self.make_expr(ExprTag::Local, span);
+                e._data.id_ref.id = Id { _value: 0 };
+                return self.ctx.alloc_expr(e);
+            }
+        } else {
+            // Resolve through TypeAlias / GenericParam anchors that occur
+            // anywhere in the path (not just segment 0). Walk segments one at
+            // a time descending into module/struct/enum/protocol scopes; on
+            // hitting a TypeAlias / GenericParam mid-path, build a Defered so
+            // mono dispatches via lower_defered_call. Without this, paths like
+            // `fmt::Result::ok(())` (Result is a type alias) bottom out as
+            // "expression is not callable" at the call site.
+            if segments.len() >= 2 {
+                let anchor_item = self.find_typealias_or_generic_anchor(segments);
+                if !anchor_item.is_none() {
+                    let item = anchor_item.unwrap();
+                    let e = self.make_expr(ExprTag::Defered, span);
+                    e._data.id_ref.id = item.kind.id();
+                    e._data.id_ref.str_val = segments[segments.len() - 1];
+                    return self.ctx.alloc_expr(e);
+                }
+            }
+            let e = self.make_expr(ExprTag::Local, span);
+            e._data.id_ref.id = Id { _value: 0 };
+            self.ctx.alloc_expr(e)
+        }
+    }
+
+    fn parse_binary(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let left = child_by!(node, FieldKind::Left);
+        let right = child_by!(node, FieldKind::Right);
+        let op_node = child_by!(node, FieldKind::Operator);
+
+        if left.is_none() || right.is_none() || op_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let op_text = self.ctx.node_text(op_node.unwrap());
+        let op = parse_binop(op_text);
+
+        let lhs = self.parse_expr(left.unwrap());
+        let rhs = self.parse_expr(right.unwrap());
+
+        let e = self.make_expr(ExprTag::Binary, span);
+        e._data.binary.bin_op = op;
+        e._data.binary.lhs = lhs;
+        e._data.binary.rhs = rhs;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_unary(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let operand_node = child_by!(node, FieldKind::Value);
+        let op_node = child_by!(node, FieldKind::Operator);
+
+        if operand_node.is_none() || op_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let op_text = self.ctx.node_text(op_node.unwrap());
+        let op = if op_text == "-" { UnOp::Neg }
+                 else if op_text == "!" { UnOp::Not }
+                 else if op_text == "~" { UnOp::BitNot }
+                 else { UnOp::Neg };
+
+        let operand = self.parse_expr(operand_node.unwrap());
+
+        let e = self.make_expr(ExprTag::Unary, span);
+        e._data.unary.un_op = op;
+        e._data.unary.lhs = operand;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_assignment(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let left = child_by!(node, FieldKind::Left);
+        let right = child_by!(node, FieldKind::Right);
+        if left.is_none() || right.is_none() {
+            return self.alloc_void(span);
+        }
+        let lhs = self.parse_expr(left.unwrap());
+        let rhs = self.parse_expr(right.unwrap());
+
+        let e = self.make_expr(ExprTag::Assign, span);
+        e._data.assign.assign_op = AssignOp::Assign;
+        e._data.assign.lhs = lhs;
+        e._data.assign.rhs = rhs;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_compound_assignment(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let left = child_by!(node, FieldKind::Left);
+        let right = child_by!(node, FieldKind::Right);
+        let op_node = child_by!(node, FieldKind::Operator);
+        if left.is_none() || right.is_none() || op_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let op_text = self.ctx.node_text(op_node.unwrap());
+        let op = parse_assign_op(op_text);
+
+        let lhs = self.parse_expr(left.unwrap());
+        let rhs = self.parse_expr(right.unwrap());
+
+        let e = self.make_expr(ExprTag::Assign, span);
+        e._data.assign.assign_op = op;
+        e._data.assign.lhs = lhs;
+        e._data.assign.rhs = rhs;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_call(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let func = child_by!(node, FieldKind::Function);
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        if func.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Check for turbofish calls like zeroed::<T>() or identity::<i32>()
+        let func_node = func.unwrap();
+        let func_kind = NODE_KINDS[func_node.symbol() as usize];
+        if func_kind == NodeKind::Turbofish || func_kind == NodeKind::GenericTypeWithTurbofish {
+            let result = self.try_parse_intrinsic_call(func_node, span);
+            if result.tag != ExprTag::Void {
+                // Intrinsic call (e.g., zeroed::<T>())
+                return self.ctx.alloc_expr(result);
+            }
+            // Non-intrinsic turbofish: parse as generic call with type args
+            let turbofish_result = self.parse_turbofish_call(node, func_node, span);
+            if turbofish_result.tag != ExprTag::Void {
+                return self.ctx.alloc_expr(turbofish_result);
+            }
+        }
+
+        // Check for ScopedIdentifier with turbofish in path, e.g. Wrapper::<i32>::new(args)
+        if func_kind == NodeKind::ScopedIdentifier {
+            let path_child = child_by!(func_node, FieldKind::Path);
+            if !path_child.is_none() {
+                let path_kind = NODE_KINDS[path_child.unwrap().symbol() as usize];
+                if path_kind == NodeKind::GenericTypeWithTurbofish || path_kind == NodeKind::Turbofish || path_kind == NodeKind::GenericType {
+                    // Extract type arguments from the turbofish in the path
+                    let turbo_node = path_child.unwrap();
+                    let type_args_node = child_by!(turbo_node, FieldKind::TypeArguments);
+                    let pass2 = Pass2 { ctx: self.ctx };
+                    let type_args = if !type_args_node.is_none() {
+                        pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
+                    } else {
+                        let empty: &[&Ty] = &[];
+                        empty
+                    };
+
+                    // Resolve the scoped identifier (which finds the method)
+                    let callee = self.parse_scoped_identifier(func_node, span);
+
+                    let call_args = if !args_node.is_none() {
+                        self.parse_arg_list(args_node.unwrap())
+                    } else {
+                        let empty: &[&Expr] = &[];
+                        empty
+                    };
+
+                    let e = self.make_expr(ExprTag::Call, span);
+                    e._data.call.lhs = callee;
+                    e._data.call.args = call_args;
+                    e._data.call.type_args = type_args;
+                    return self.ctx.alloc_expr(e);
+                }
+            }
+        }
+
+        let callee = self.parse_expr(func_node);
+        let args = if !args_node.is_none() {
+            self.parse_arg_list(args_node.unwrap())
+        } else {
+            let empty: &[&Expr] = &[];
+            empty
+        };
+
+        let e = self.make_expr(ExprTag::Call, span);
+        e._data.call.lhs = callee;
+        e._data.call.args = args;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn try_parse_intrinsic_call(self: &ExprParser, func_node: Node, span: Span) -> Expr {
+        // Turbofish has field("function", ...) and field("type_arguments", ...)
+        // GenericTypeWithTurbofish has field("type", ...) and field("type_arguments", ...)
+        let path_node = child_by!(func_node, FieldKind::Function);
+        let path_node2 = if path_node.is_none() { child_by!(func_node, FieldKind::Type) } else { path_node };
+        let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
+
+        if path_node2.is_none() || type_args_node.is_none() {
+            return Expr::void_expr();
+        }
+
+        // Get the function path text
+        let pass2 = Pass2 { ctx: self.ctx };
+        let segments = pass2.collect_type_path_segments(path_node2.unwrap());
+        if segments.len() == 0 {
+            return Expr::void_expr();
+        }
+
+        let last_seg = segments[segments.len() - 1];
+
+        // Check for std::mem::zeroed::<T>()
+        if last_seg == "zeroed" {
+            let type_args = pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx);
+            if type_args.len() >= 1 {
+                let e = self.make_expr(ExprTag::Zeroed, span);
+                e._data.typed.ty = type_args[0];
+                return e;
+            }
+        }
+
+        Expr::void_expr()
+    }
+
+    fn parse_turbofish_value(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Handle func::<T> as a standalone value (function pointer reference)
+        // We emit this as a Call expression with 0 args but with type_args set,
+        // so that lower_call handles the turbofish resolution.
+        let path_node = child_by!(node, FieldKind::Function);
+        let path_node2 = if path_node.is_none() { child_by!(node, FieldKind::Type) } else { path_node };
+        let type_args_node = child_by!(node, FieldKind::TypeArguments);
+
+        if path_node2.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Resolve the function
+        let callee = self.parse_expr(path_node2.unwrap());
+
+        // Parse type arguments
+        let pass2 = Pass2 { ctx: self.ctx };
+        let type_args = if !type_args_node.is_none() {
+            pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
+        } else {
+            let empty: &[&Ty] = &[];
+            empty
+        };
+
+        // Use TurbofishValue tag to distinguish from a real Call with 0 args.
+        let e = self.make_expr(ExprTag::TurbofishValue, span);
+        e._data.call.lhs = callee;
+        e._data.call.args = &[];
+        e._data.call.type_args = type_args;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_turbofish_call(self: &ExprParser, call_node: Node, func_node: Node, span: Span) -> Expr {
+        // Parse the function path from the turbofish
+        let path_node = child_by!(func_node, FieldKind::Function);
+        let path_node2 = if path_node.is_none() { child_by!(func_node, FieldKind::Type) } else { path_node };
+        let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
+
+        if path_node2.is_none() {
+            return Expr::void_expr();
+        }
+
+        // Resolve the function
+        let callee = self.parse_expr(path_node2.unwrap());
+
+        // Parse type arguments
+        let pass2 = Pass2 { ctx: self.ctx };
+        let type_args = if !type_args_node.is_none() {
+            pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
+        } else {
+            let empty: &[&Ty] = &[];
+            empty
+        };
+
+        // Parse call arguments from the outer call node
+        let args_node = child_by!(call_node, FieldKind::Arguments);
+        let args = if !args_node.is_none() {
+            self.parse_arg_list(args_node.unwrap())
+        } else {
+            let empty: &[&Expr] = &[];
+            empty
+        };
+
+        let e = self.make_expr(ExprTag::Call, span);
+        e._data.call.lhs = callee;
+        e._data.call.args = args;
+        e._data.call.type_args = type_args;
+        e
+    }
+
+    fn parse_arg_list(self: &ExprParser, node: Node) -> &[&Expr] {
+        let args: Vector<&Expr> = Vector::new();
+        defer args.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            if child.is_named() {
+                let kind = NODE_KINDS[child.symbol() as usize];
+                if kind == NodeKind::EtCeteraExpression {
+                    if self.ctx.in_macro_body {
+                        // During pre-parse, store as ExprTag::EtCetera
+                        args.push(self.parse_expr(child));
+                    } else {
+                        // Expand et cetera: re-parse inner expression for each variadic arg
+                        let inner = child_by!(child, FieldKind::Inner);
+                        if !inner.is_none() && self.ctx.macro_variadic_args.len() > 0usize {
+                            let inner_node = inner.unwrap();
+                            for vi in 0usize..self.ctx.macro_variadic_args.len() {
+                                self.ctx.macro_et_cetera_idx = vi as i32;
+                                args.push(self.parse_expr(inner_node));
+                            }
+                            self.ctx.macro_et_cetera_idx = NO_VARIADIC;
+                        }
+                    }
+                } else if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
+                    args.push(self.parse_expr(child));
+                }
+            }
+        }
+
+        self.ctx.arena.alloc_slice_copy::<&Expr>(args.as_slice())
+    }
+
+    fn parse_field(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let obj = child_by!(node, FieldKind::Value);
+        let field = child_by!(node, FieldKind::Field);
+        if obj.is_none() || field.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Check if the field child is a tuple_index_expression (e.g. t.0 or t.(expr))
+        let field_node = field.unwrap();
+        let field_kind = NODE_KINDS[field_node.symbol() as usize];
+        if field_kind == NodeKind::TupleIndexExpression {
+            let obj_expr = self.parse_expr(obj.unwrap());
+            // TupleIndexExpression has a single "field" child containing the index
+            let idx_node = child_by!(field_node, FieldKind::Field);
+            if !idx_node.is_none() {
+                let idx_inner = idx_node.unwrap();
+                let idx_kind = NODE_KINDS[idx_inner.symbol() as usize];
+                if idx_kind == NodeKind::IntegerLiteral {
+                    // Simple literal index: t.0, t.1, etc.
+                    let idx = parse_usize(self.ctx.node_text(idx_inner));
+                    let e = self.make_expr(ExprTag::TupleIndex, span);
+                    e._data.index.lhs = obj_expr;
+                    e._data.index.index_val = idx;
+                    return self.ctx.alloc_expr(e);
+                }
+                // Expression index: t.(expr) - parse and const-eval later
+                let idx_expr = self.parse_expr(idx_inner);
+                let e = self.make_expr(ExprTag::TupleIndex, span);
+                e._data.index.lhs = obj_expr;
+                e._data.index.opt_expr = Option::some(idx_expr);
+                return self.ctx.alloc_expr(e);
+            }
+            // Fallback: try parsing the whole text as a number
+            let idx = parse_usize(self.ctx.node_text(field_node));
+            let e = self.make_expr(ExprTag::TupleIndex, span);
+            e._data.index.lhs = obj_expr;
+            e._data.index.index_val = idx;
+            return self.ctx.alloc_expr(e);
+        }
+
+        let obj_expr = self.parse_expr(obj.unwrap());
+        let field_name = self.ctx.intern_str(self.ctx.node_text(field_node));
+
+        let e = self.make_expr(ExprTag::FieldAccess, span);
+        e._data.field.lhs = obj_expr;
+        e._data.field.str_val = field_name;
+
+        // UFCS hint: try to resolve field_name as a free function in scope.
+        // If found, store its ID+1 in id2 so mono can try UFCS fallback.
+        // We store id+1 because id=0 is valid; id2._value==0 means "no hint".
+        //
+        // Previously gated under !in_macro_body, which suppressed macro
+        // hygiene's ability to bind `use`-introduced names: a body like
+        // `macro foo($a) { use std::fmt::debug; $a.debug() }` would parse
+        // the `.debug()` without a UFCS hint and fail at mono time. Allow
+        // the hint inside macro bodies too — names introduced by uses
+        // inside the body resolve at definition time, which matches user
+        // intent for macros that pull in helpers. The hygiene caveat is
+        // that the hint pre-binds to whatever was in scope at definition,
+        // not the expansion site.
+        // Walk the scope chain looking specifically for a free FUNCTION named
+        // `field_name`. Plain `scopes.resolve` returns the first match — which
+        // for a name like `find` inside `impl SplitIterator { fn next() { … } }`
+        // is the mixin'd `IteratorExt::find` (now Method-tagged per pass2's
+        // mixin registration), shadowing the local module's free fn. The UFCS
+        // hint should only fire for honest free functions, so skip past any
+        // non-Function and keep walking up.
+        let fn_item = self.ctx.scopes.resolve_function_for_ufcs(self.scope_idx, field_name);
+        if fn_item.is_some() {
+            e._data.field.id2 = Id { _value: fn_item.unwrap()._value + 1usize };
+        }
+
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_tuple_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // TupleIndexExpression as top-level (shouldn't normally happen,
+        // as it's typically inside FieldExpression, but handle gracefully)
+        let field = child_by!(node, FieldKind::Field);
+        if !field.is_none() {
+            return self.parse_expr(field.unwrap());
+        }
+        self.alloc_void(span)
+    }
+
+    fn parse_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let obj = child_by!(node, FieldKind::Value);
+        let index = child_by!(node, FieldKind::Index);
+        if obj.is_none() || index.is_none() {
+            return self.alloc_void(span);
+        }
+        let obj_expr = self.parse_expr(obj.unwrap());
+        let idx_expr = self.parse_expr(index.unwrap());
+
+        let e = self.make_expr(ExprTag::Index, span);
+        e._data.index.lhs = obj_expr;
+        e._data.index.rhs = idx_expr;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_ref(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+        if inner.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(ExprTag::Ref, span);
+        e._data.typed.lhs = self.parse_expr(inner.unwrap());
+        e._data.typed.flag = is_mut;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_deref(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        if inner.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(ExprTag::Deref, span);
+        e._data.typed.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_cast(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        let type_node = child_by!(node, FieldKind::Type);
+        if value.is_none() || type_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
+
+        let e = self.make_expr(ExprTag::Cast, span);
+        e._data.typed.lhs = self.parse_expr(value.unwrap());
+        e._data.typed.ty = ty;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_type_check(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        let type_node = child_by!(node, FieldKind::Type);
+        if value.is_none() || type_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
+
+        let e = self.make_expr(ExprTag::TypeCheck, span);
+        e._data.typed.lhs = self.parse_expr(value.unwrap());
+        e._data.typed.ty = ty;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_if(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let cond = child_by!(node, FieldKind::Condition);
+        let then_node = child_by!(node, FieldKind::Consequence);
+        let else_node = child_by!(node, FieldKind::Alternative);
+
+        if cond.is_none() || then_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let cond_expr = self.parse_expr(cond.unwrap());
+        let then_expr = self.parse_expr(then_node.unwrap());
+        let else_expr: Option<&Expr> = if !else_node.is_none() {
+            // Else clause wraps its content
+            let inner = child_by!(else_node.unwrap(), FieldKind::Inner);
+            if !inner.is_none() {
+                Option::some(self.parse_expr(inner.unwrap()))
+            } else {
+                // Direct else body
+                Option::some(self.parse_expr(else_node.unwrap()))
+            }
+        } else {
+            Option::none()
+        };
+
+        // Check if this is "when" (static if) vs "if"
+        let kind_node = child_by!(node, FieldKind::Kind);
+        let is_when = if !kind_node.is_none() {
+            self.ctx.node_text(kind_node.unwrap()) == "when"
+        } else {
+            false
+        };
+
+        let tag = if is_when { ExprTag::When } else { ExprTag::If };
+        let e = self.make_expr(tag, span);
+        e._data.cond.cond = cond_expr;
+        e._data.cond.lhs = then_expr;
+        e._data.cond.opt_expr = else_expr;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_switch(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        if value.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let value_expr = self.parse_expr(value.unwrap());
+        let arms: Vector<SwitchArm> = Vector::new();
+        defer arms.free();
+
+        let body = child_by!(node, FieldKind::Body);
+        if !body.is_none() {
+            let cursor = body.unwrap().walk();
+            defer cursor.free();
+            for child in children_by!(body.unwrap(), FieldKind::Arm, &cursor) {
+                let kind = NODE_KINDS[child.symbol() as usize];
+                if kind == NodeKind::SwitchArm {
+                    let pattern_node = child_by!(child, FieldKind::Pattern);
+                    let body_node = child_by!(child, FieldKind::Value);
+
+                    let patterns: Vector<&Expr> = Vector::new();
+                    #[allow(defer_in_a_loop)]
+                    defer patterns.free();
+
+                    if !pattern_node.is_none() {
+                        // Check for wildcard/default pattern "_"
+                        let pat_text = self.ctx.node_text(pattern_node.unwrap());
+                        let is_wildcard = pat_text.len() == 1 && pat_text[0] == '_';
+                        if !is_wildcard {
+                            // Parse pattern values
+                            let cursor2 = pattern_node.unwrap().walk();
+                            #[allow(defer_in_a_loop)]
+                            defer cursor2.free();
+                            for pat_child in pattern_node.unwrap().children(&cursor2) {
+                                if pat_child.is_named() {
+                                    patterns.push(self.parse_expr(pat_child));
+                                }
+                            }
+                            // If pattern node itself is a value
+                            if patterns.len() == 0 {
+                                patterns.push(self.parse_expr(pattern_node.unwrap()));
+                            }
+                        }
+                    }
+
+                    let body_expr = if !body_node.is_none() {
+                        self.parse_expr(body_node.unwrap())
+                    } else {
+                        self.alloc_void(Span::empty())
+                    };
+
+                    arms.push(SwitchArm {
+                        pattern: self.ctx.arena.alloc_slice_copy::<&Expr>(patterns.as_slice()),
+                        body: body_expr,
+                    });
+                }
+            }
+        }
+
+        let e = self.make_expr(ExprTag::Switch, span);
+        e._data.switch_expr.lhs = value_expr;
+        e._data.switch_expr.switch_arms = self.ctx.arena.alloc_slice_copy::<SwitchArm>(arms.as_slice());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_while(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let cond = child_by!(node, FieldKind::Condition);
+        let body = child_by!(node, FieldKind::Body);
+        if cond.is_none() || body.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(ExprTag::While, span);
+        e._data.loop_expr.cond = self.parse_expr(cond.unwrap());
+        e._data.loop_expr.lhs = self.parse_expr(body.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_for(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let name_node = child_by!(node, FieldKind::Name);
+        let iter_node = child_by!(node, FieldKind::Value);
+        let body = child_by!(node, FieldKind::Body);
+
+        if iter_node.is_none() || body.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Create a child scope for the loop so the loop variable doesn't pollute the parent scope
+        let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
+        let loop_parser = ExprParser::new(self.ctx, loop_scope);
+
+        let e = self.make_expr(ExprTag::For, span);
+
+        if name_node.is_some() {
+            // Simple case: for item in iterable { body }
+            let var_id = self.ctx.next_id();
+            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+            self.ctx.scopes.add_item(loop_scope, NamedItem {
+                name: var_name,
+                kind: NamedItemKind::local(var_id),
+                span: self.ctx.make_span(name_node.unwrap()),
+            });
+
+            e._data.for_expr.id = var_id;
+            e._data.for_expr.args = &[];
+        } else {
+            // Tuple unpacking: for (a, b, ...) in iterable { body }
+            // Collect element names from tree-sitter Element children
+            let cursor = node.walk();
+            defer cursor.free();
+
+            let elem_exprs: Vector<&Expr> = Vector::new();
+            defer elem_exprs.free();
+            for elem_node in children_by!(node, FieldKind::Element, &cursor) {
+                let elem_id = self.ctx.next_id();
+                let elem_name = self.ctx.intern_str(self.ctx.node_text(elem_node));
+
+                self.ctx.scopes.add_item(loop_scope, NamedItem {
+                    name: elem_name,
+                    kind: NamedItemKind::local(elem_id),
+                    span: self.ctx.make_span(elem_node),
+                });
+
+                // Store element ID and name in an ExprTag::Local node
+                let elem_expr = self.make_expr(ExprTag::Local, self.ctx.make_span(elem_node));
+                elem_expr._data.id_ref.id = elem_id;
+                elem_expr._data.id_ref.str_val = elem_name;
+                elem_exprs.push(self.ctx.alloc_expr(elem_expr));
+            }
+
+            // Use a hidden temporary for the whole tuple value
+            let var_id = self.ctx.next_id();
+            e._data.for_expr.id = var_id;
+            e._data.for_expr.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elem_exprs.as_slice());
+        }
+
+        e._data.for_expr.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
+        e._data.for_expr.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_loop(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let body = child_by!(node, FieldKind::Body);
+        if body.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(ExprTag::Loop, span);
+        e._data.loop_expr.lhs = self.parse_expr(body.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_break(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Inner);
+        let e = self.make_expr(ExprTag::Break, span);
+        if !value.is_none() {
+            e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+        }
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_return(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Inner);
+        let e = self.make_expr(ExprTag::Return, span);
+        if !value.is_none() {
+            e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+        }
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_let(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Honour `#[cfg(...)]` on let declarations: if the condition is false,
+        // drop the let entirely (no scope binding, no initializer side-effect).
+        // Without this, two cfg-paired `let x = ...` lines (the readdir /
+        // readdir64 split in `std/fs/unix.alu`) both parse, both run, and the
+        // second shadows the first — silently consuming directory entries.
+        let attrs_node = child_by!(node, FieldKind::Attributes);
+        if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+            return self.alloc_void(span);
+        }
+
+        let name_node = child_by!(node, FieldKind::Name);
+        let type_node = child_by!(node, FieldKind::Type);
+        let value_node = child_by!(node, FieldKind::Value);
+
+        if !name_node.is_none() {
+            // Simple let: let x = expr;
+            let var_id = self.ctx.next_id();
+            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+            let pass2 = Pass2 { ctx: self.ctx };
+            let ty: Option<&Ty> = if !type_node.is_none() {
+                Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
+            } else {
+                Option::none()
+            };
+
+            let init: Option<&Expr> = if !value_node.is_none() {
+                Option::some(self.parse_expr(value_node.unwrap()))
+            } else {
+                Option::none()
+            };
+
+            // Register in scope AFTER parsing the initializer
+            // This ensures the initializer can reference shadowed variables
+            // (e.g., `let x = x.method()` where x in the initializer refers
+            // to the previously defined x, not the one being defined)
+            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                name: var_name,
+                kind: NamedItemKind::local(var_id),
+                span: self.ctx.make_span(name_node.unwrap()),
+            });
+
+            let e = self.make_expr(ExprTag::Let, span);
+            e._data.let_expr.id = var_id;
+            e._data.let_expr.str_val = var_name;
+            e._data.let_expr.opt_ty = ty;
+            e._data.let_expr.opt_expr = init;
+            return self.ctx.alloc_expr(e);
+        }
+
+        // Tuple destructuring: let (a, b) = expr;
+        let elements: Vector<Node> = Vector::new();
+        defer elements.free();
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Element, &cursor) {
+            elements.push(child);
+        }
+
+        if elements.len() == 0 || value_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Desugar: let (a, b) = expr;
+        // Into: { let _tmp = expr; let a = _tmp.0; let b = _tmp.1; }
+        let tmp_id = self.ctx.next_id();
+        let init_expr = self.parse_expr(value_node.unwrap());
+
+        // let _tmp = expr
+        let tmp_let = self.make_expr(ExprTag::Let, span);
+        tmp_let._data.let_expr.id = tmp_id;
+        tmp_let._data.let_expr.opt_expr = Option::some(init_expr);
+        let ir_tmp_let = self.ctx.alloc_expr(tmp_let);
+
+        // Build block: _tmp_let, then each element let
+        let stmts = self.ctx.arena.alloc_slice::<&Expr>(elements.len() + 1);
+        stmts[0] = ir_tmp_let;
+
+        for i in 0usize..elements.len() {
+            let elem_node = elements[i];
+            let elem_id = self.ctx.next_id();
+            let elem_name = self.ctx.intern_str(self.ctx.node_text(elem_node));
+
+            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                name: elem_name,
+                kind: NamedItemKind::local(elem_id),
+                span: self.ctx.make_span(elem_node),
+            });
+
+            // _tmp reference
+            let tmp_ref = self.make_expr(ExprTag::Local, span);
+            tmp_ref._data.id_ref.id = tmp_id;
+            let ir_tmp_ref = self.ctx.alloc_expr(tmp_ref);
+
+            // _tmp.i (tuple index)
+            let idx_expr = self.make_expr(ExprTag::TupleIndex, span);
+            idx_expr._data.index.lhs = ir_tmp_ref;
+            idx_expr._data.index.index_val = i;
+            let ir_idx = self.ctx.alloc_expr(idx_expr);
+
+            // let elem = _tmp.i
+            let elem_let = self.make_expr(ExprTag::Let, span);
+            elem_let._data.let_expr.id = elem_id;
+            elem_let._data.let_expr.opt_expr = Option::some(ir_idx);
+            stmts[i + 1] = self.ctx.alloc_expr(elem_let);
+        }
+
+        let block = self.make_expr(ExprTag::Block, span);
+        block._data.list.args = stmts;
+        self.ctx.alloc_expr(block)
+    }
+
+    fn parse_struct_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let type_node = child_by!(node, FieldKind::Name);
+        let init_node = child_by!(node, FieldKind::Arguments);
+
+        if type_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
+
+        let fields: Vector<FieldInit> = Vector::new();
+        defer fields.free();
+
+        if !init_node.is_none() {
+            let cursor = init_node.unwrap().walk();
+            defer cursor.free();
+            for child in init_node.unwrap().children(&cursor) {
+                let kind = NODE_KINDS[child.symbol() as usize];
+                if kind == NodeKind::StructInitializerItem {
+                    let name_node = child_by!(child, FieldKind::Field);
+                    let value_node = child_by!(child, FieldKind::Value);
+                    if !name_node.is_none() && !value_node.is_none() {
+                        fields.push(FieldInit {
+                            name: self.ctx.intern_str(self.ctx.node_text(name_node.unwrap())),
+                            value: self.parse_expr(value_node.unwrap()),
+                        });
+                    }
+                }
+            }
+        }
+
+        let e = self.make_expr(ExprTag::StructLit, span);
+        e._data.struct_lit.ty = ty;
+        e._data.struct_lit.field_inits = self.ctx.arena.alloc_slice_copy::<FieldInit>(fields.as_slice());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_tuple_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let elems: Vector<&Expr> = Vector::new();
+        defer elems.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Element, &cursor) {
+            elems.push(self.parse_expr(child));
+        }
+
+        let e = self.make_expr(ExprTag::TupleLit, span);
+        e._data.list.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_array_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let elems: Vector<&Expr> = Vector::new();
+        defer elems.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Element, &cursor) {
+            elems.push(self.parse_expr(child));
+        }
+
+        let e = self.make_expr(ExprTag::ArrayLit, span);
+        e._data.list.args = self.ctx.arena.alloc_slice_copy::<&Expr>(elems.as_slice());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_lambda(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let params_node = child_by!(node, FieldKind::Parameters);
+        let body_node = child_by!(node, FieldKind::Body);
+
+        if body_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        // Create a child scope for the lambda (captures and params live here)
+        let lambda_scope = self.ctx.scopes.create_scope(scope::ScopeKind::Block, Option::some(self.scope_idx));
+
+        let params: Vector<LambdaParam> = Vector::new();
+        defer params.free();
+
+        let bindings: Vector<ClosureBinding> = Vector::new();
+        defer bindings.free();
+
+        // Generate a self_param id for closure struct access (only used if there are captures)
+        let self_param_id = self.ctx.next_id();
+
+        if !params_node.is_none() {
+            let cursor = params_node.unwrap().walk();
+            defer cursor.free();
+            let pass2 = Pass2 { ctx: self.ctx };
+            for child in params_node.unwrap().children(&cursor) {
+                if child.is_named() {
+                    let kind = NODE_KINDS[child.symbol() as usize];
+                    let id = self.ctx.next_id();
+
+                    if kind == NodeKind::BoundIdentifier {
+                        // Closure capture: =name (by value) or &name (by reference)
+                        let name_node = child_by!(child, FieldKind::Name);
+                        let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+                        let by_ref_node = child_by!(child, FieldKind::ByReference);
+                        let bound_type = if !by_ref_node.is_none() {
+                            BoundType::ByReference
+                        } else {
+                            BoundType::ByValue
+                        };
+
+                        // Resolve the original variable in the parent scope (self.scope_idx)
+                        let value_expr: &Expr = {
+                            let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+                            if resolved.is_some() {
+                                let item = resolved.unwrap();
+                                if item.kind.tag == scope::NamedItemTag::Local {
+                                    let ve = self.make_expr(ExprTag::Local, span);
+                                    ve._data.id_ref.id = item.kind.id();
+                                    self.ctx.alloc_expr(ve)
+                                } else if item.kind.tag == scope::NamedItemTag::Param {
+                                    let ve = self.make_expr(ExprTag::Param, span);
+                                    ve._data.id_ref.id = item.kind.id();
+                                    self.ctx.alloc_expr(ve)
+                                } else if item.kind.tag == scope::NamedItemTag::BoundValue {
+                                    // Nested closure: capture from enclosing closure
+                                    let ve = self.make_expr(ExprTag::BoundValue, span);
+                                    ve._data.id_ref.id = item.kind.id();
+                                    ve._data.id_ref.id2 = item.kind.id2();
+                                    ve._data.id_ref.str_val = item.name;
+                                    ve._data.id_ref.flag = item.kind.scope_idx == BoundType::ByReference as u32;
+                                    self.ctx.alloc_expr(ve)
+                                } else {
+                                    self.alloc_void(span) // Can only close over locals
+                                }
+                            } else {
+                                self.alloc_void(span)
+                            }
+                        };
+
+                        // Register the bound value in the lambda scope
+                        self.ctx.scopes.add_item(lambda_scope, NamedItem {
+                            name: name,
+                            kind: NamedItemKind::bound_value(id, self_param_id, bound_type),
+                            span: self.ctx.make_span(child),
+                        });
+
+                        bindings.push(ClosureBinding {
+                            id: id,
+                            name: name,
+                            value: value_expr,
+                            bound_type: bound_type,
+                        });
+                    } else {
+                        // Regular parameter
+                        let name: &[u8] = "";
+                        let ty: Option<&Ty> = Option::none();
+
+                        if kind == NodeKind::Parameter {
+                            let name_node = child_by!(child, FieldKind::Name);
+                            let type_node = child_by!(child, FieldKind::Type);
+                            if !name_node.is_none() {
+                                name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+                            }
+                            if !type_node.is_none() {
+                                ty = Option::some(pass2.parse_type(type_node.unwrap(), lambda_scope));
+                            }
+                        } else {
+                            name = self.ctx.intern_str(self.ctx.node_text(child));
+                        }
+
+                        // Register lambda param in the lambda scope
+                        self.ctx.scopes.add_item(lambda_scope, NamedItem {
+                            name: name,
+                            kind: NamedItemKind::local(id),
+                            span: self.ctx.make_span(child),
+                        });
+
+                        params.push(LambdaParam {
+                            id: id,
+                            name: name,
+                            ty: ty,
+                        });
+                    }
+                }
+            }
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ret_node = child_by!(node, FieldKind::ReturnType);
+        let ret_ty: Option<&Ty> = if !ret_node.is_none() {
+            Option::some(pass2.parse_type(ret_node.unwrap(), lambda_scope))
+        } else {
+            Option::none()
+        };
+
+        // Parse body in the lambda scope
+        let lambda_parser = ExprParser::new(self.ctx, lambda_scope);
+        let body = lambda_parser.parse_expr(body_node.unwrap());
+
+        let e = self.make_expr(ExprTag::Lambda, span);
+        e._data.lambda.lambda_params = self.ctx.arena.alloc_slice_copy::<LambdaParam>(params.as_slice());
+        e._data.lambda.closure_bindings = self.ctx.arena.alloc_slice_copy::<ClosureBinding>(bindings.as_slice());
+        e._data.lambda.opt_ty = ret_ty;
+        e._data.lambda.lhs = body;
+        // Store the self_param_id for use in mono
+        e._data.lambda.id = self_param_id;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_defer(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Inner);
+        if inner.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(ExprTag::Defer, span);
+        e._data.defer.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_try(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Inner);
+        if inner.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let inner_expr = self.parse_expr(inner.unwrap());
+
+        // Desugar expr? to try!(expr) macro invocation, matching alumina-boot.
+        // Look up the "try" macro via scope resolution (respects use aliases and shadowing).
+        let name = self.ctx.intern_str("try");
+        let macro_entry = self.ctx.resolve_macro(self.scope_idx, name);
+        if macro_entry.is_some() {
+            let entry = macro_entry.unwrap();
+
+            let try_args = self.ctx.arena.alloc_slice::<&Expr>(1usize);
+            try_args[0] = inner_expr;
+            return self.do_expand_macro(entry, try_args, span);
+        }
+
+        // No try macro found - emit error
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "no `try` macro in scope for `?` operator (import std::result::try or std::option::try)"));
+        self.alloc_void(span)
+    }
+
+    fn parse_range(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let lower = child_by!(node, FieldKind::Lower);
+        let upper = child_by!(node, FieldKind::Upper);
+        let inclusive_node = child_by!(node, FieldKind::Inclusive);
+
+        let e = self.make_expr(ExprTag::Range, span);
+        e._data.range.flag = if !inclusive_node.is_none() {
+            let text = self.ctx.node_text(inclusive_node.unwrap());
+            text.len() == 3  // "..=" is 3 bytes, ".." is 2 bytes
+        } else {
+            false
+        };
+
+        if !lower.is_none() {
+            e._data.range.lhs = self.parse_expr(lower.unwrap());
+        }
+        if !upper.is_none() {
+            e._data.range.rhs = self.parse_expr(upper.unwrap());
+        }
+        self.ctx.alloc_expr(e)
+    }
+
+    // ============================================================
+    // Macro handling
+    // ============================================================
+
+    fn parse_macro_invocation(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let name_node = child_by!(node, FieldKind::Macro);
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        if name_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let macro_node = name_node.unwrap();
+        let macro_node_kind = NODE_KINDS[macro_node.symbol() as usize];
+
+        // Resolve macro name - handle both simple identifiers and scoped paths
+        let name = self.ctx.intern_str(self.ctx.node_text(macro_node));
+        let macro_item_id: usize = 0;
+
+        // $m!(...) inside a macro body — the macro name itself is a macro
+        // parameter. Record the param idx so expand_macro_expr can substitute
+        // the actual macro reference at expansion time.
+        let name_param_idx: i32 = -1i32;
+        if self.ctx.in_macro_body && macro_node_kind == NodeKind::MacroIdentifier {
+            let raw = self.ctx.node_text(macro_node);
+            let stripped = if raw.len() > 0 && raw[0] == '$' { raw[1..] } else { raw };
+            let pname = self.ctx.intern_str(stripped);
+            for pi in 0usize..self.ctx.macro_param_names.len() {
+                if self.ctx.macro_param_names[pi] == pname {
+                    name_param_idx = pi as i32;
+                    break;
+                }
+            }
+        }
+
+        // For scoped identifiers (e.g. std::io::errno_try), resolve through scope system
+        if macro_node_kind == NodeKind::ScopedIdentifier {
+            let pass2 = Pass2 { ctx: self.ctx };
+            let segments = pass2.collect_type_path_segments(macro_node);
+            let resolved = self.ctx.scopes.resolve_path(self.scope_idx, segments);
+            if resolved.is_some() {
+                let item = resolved.unwrap();
+                if item.kind.tag == scope::NamedItemTag::Macro {
+                    macro_item_id = item.kind.id()._value;
+                    name = item.name;
+                }
+            }
+        }
+
+        let args = if !args_node.is_none() {
+            self.parse_arg_list(args_node.unwrap())
+        } else {
+            let empty: &[&Expr] = &[];
+            empty
+        };
+
+        // When pre-parsing a macro body, store as ExprTag::MacroInvocation without expanding
+        if self.ctx.in_macro_body {
+            let e = self.make_expr(ExprTag::MacroInvocation, span);
+            e._data.macro_expr.str_val = name;
+            e._data.macro_expr.args = args;
+            e._data.macro_expr.flag = true;  // Mark as actual invocation (not bare macro reference)
+            if name_param_idx >= 0i32 {
+                e._data.macro_expr.is_param_subst = true;
+                e._data.macro_expr.param_idx = name_param_idx;
+            }
+            return self.ctx.alloc_expr(e);
+        }
+
+        // Try to expand the macro - use scope-resolved ID if available, otherwise resolve by name
+        let macro_entry: Option<MacroEntry> = if macro_item_id != 0 {
+            self.ctx.resolve_macro_by_id(macro_item_id)
+        } else {
+            self.ctx.resolve_macro(self.scope_idx, name)
+        };
+        if macro_entry.is_some() {
+            let entry = macro_entry.unwrap();
+
+            // Handle builtin macros with special compiler logic
+            if entry.is_builtin {
+                return self.expand_builtin_macro(name, args, span);
+            }
+
+            // Expand using pre-parsed body
+            return self.do_expand_macro(entry, args, span);
+        }
+
+        // Unresolved macro at expansion time. Cannot diagnose here: some
+        // call sites land in unreachable `else when` branches that are
+        // dropped at mono time (e.g. `compile_fail!(...)` inside a
+        // type-guarded fallback), so a parse-time error would fire false
+        // positives. Mono's `lower_expr` default case diagnoses if the
+        // unresolved invocation actually reaches lowering.
+        let e = self.make_expr(ExprTag::MacroInvocation, span);
+        e._data.macro_expr.str_val = name;
+        e._data.macro_expr.args = args;
+        self.ctx.alloc_expr(e)
+    }
+
+    // Expand a builtin macro (one with the #[builtin] attribute).
+    // Dispatches to specialized logic based on macro name.
+    fn expand_builtin_macro(self: &ExprParser, name: &[u8], args: &[&Expr], span: Span) -> &Expr {
+        // For source-location builtins, prefer the outermost macro call's
+        // span over the (potentially body-internal) `span` we were called
+        // with. Matches alumina-boot's "outermost macro invocation" rule.
+        let span = if (name == "file" || name == "line" || name == "column" || name == "stringify")
+            && self.ctx.macro_outer_span.is_some() {
+            self.ctx.macro_outer_span.unwrap()
+        } else {
+            span
+        };
+        switch name {
+        "cfg" => {
+            // cfg!(flag) -> bool literal
+            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
+                let flag = args[0].str_val();
+                let e = self.make_expr(ExprTag::BoolLit, span);
+                e._data.lit.bool_val = self.ctx.has_cfg(flag);
+                return self.ctx.alloc_expr(e);
+            }
+            let e = self.make_expr(ExprTag::BoolLit, span);
+            e._data.lit.bool_val = false;
+            self.ctx.alloc_expr(e)
+        }
+        "line" => {
+            let line: u64 = 0;
+            if span.file_id < self.ctx.diag.files.len() as u32 {
+                let file = &self.ctx.diag.files[span.file_id as usize];
+                let (l, _c) = file.line_col(span.start);
+                line = l as u64;
+            }
+            let e = self.make_expr(ExprTag::IntLit, span);
+            e._data.lit.int_val = line;
+            self.ctx.alloc_expr(e)
+        }
+        "column" => {
+            let col: u64 = 0;
+            if span.file_id < self.ctx.diag.files.len() as u32 {
+                let file = &self.ctx.diag.files[span.file_id as usize];
+                let (_l, c) = file.line_col(span.start);
+                col = c as u64;
+            }
+            let e = self.make_expr(ExprTag::IntLit, span);
+            e._data.lit.int_val = col;
+            self.ctx.alloc_expr(e)
+        }
+        "file" => {
+            let path: &[u8] = "";
+            if span.file_id < self.ctx.diag.files.len() as u32 {
+                let file = &self.ctx.diag.files[span.file_id as usize];
+                path = file.path;
+            }
+            let e = self.make_expr(ExprTag::StringLit, span);
+            e._data.lit.str_val = path;
+            self.ctx.alloc_expr(e)
+        }
+        "stringify" => {
+            let text: &[u8] = "";
+            if args.len() > 0usize {
+                let arg = args[0];
+                if arg.span.start < arg.span.end {
+                    if arg.span.file_id < self.ctx.diag.files.len() as u32 {
+                        let file = &self.ctx.diag.files[arg.span.file_id as usize];
+                        let start = arg.span.start as usize;
+                        let end = arg.span.end as usize;
+                        if end <= file.contents.len() {
+                            text = self.ctx.intern_str(file.contents[start..end]);
+                        }
+                    }
+                }
+            }
+            let e = self.make_expr(ExprTag::StringLit, span);
+            e._data.lit.str_val = text;
+            self.ctx.alloc_expr(e)
+        }
+        "env" => {
+            let value: &[u8] = "";
+            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
+                let var_name = args[0].str_val();
+                let buf = self.ctx.arena.alloc_slice::<u8>(var_name.len() + 1);
+                var_name.copy_to_nonoverlapping(&buf[0]);
+                buf[var_name.len()] = 0u8;
+                let result = libc::getenv(&buf[0] as &libc::c_char);
+                if result as usize != 0usize {
+                    let len: usize = 0;
+                    while *((result as usize + len) as &u8) != 0u8 {
+                        len = len + 1;
+                    }
+                    let val_buf = self.ctx.arena.alloc_slice::<u8>(len);
+                    for i in 0usize..len {
+                        val_buf[i] = *((result as usize + i) as &u8);
+                    }
+                    value = val_buf;
+                }
+            }
+            let e = self.make_expr(ExprTag::StringLit, span);
+            e._data.lit.str_val = value;
+            self.ctx.alloc_expr(e)
+        }
+        "concat" => {
+            let total_len: usize = 0;
+            for i in 0usize..args.len() {
+                if args[i].tag == ExprTag::StringLit {
+                    total_len = total_len + args[i].str_val().len();
+                }
+            }
+            let buf = self.ctx.arena.alloc_slice::<u8>(total_len);
+            let offset: usize = 0;
+            for i in 0usize..args.len() {
+                if args[i].tag == ExprTag::StringLit {
+                    let s = args[i].str_val();
+                    for j in 0usize..s.len() {
+                        buf[offset + j] = s[j];
+                    }
+                    offset = offset + s.len();
+                }
+            }
+            let e = self.make_expr(ExprTag::StringLit, span);
+            e._data.lit.str_val = buf;
+            self.ctx.alloc_expr(e)
+        }
+        "include_bytes" => {
+            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
+                let path = args[0].str_val();
+                let path_buf = self.ctx.arena.alloc_slice::<u8>(path.len() + 1);
+                path.copy_to_nonoverlapping(&path_buf[0]);
+                path_buf[path.len()] = 0u8;
+                let fp = libc::fopen(&path_buf[0] as &libc::c_char, &"rb\0"[0] as &libc::c_char);
+                if fp as usize != 0usize {
+                    libc::fseek(fp, 0i64, 2i32); // SEEK_END
+                    let size = libc::ftell(fp) as usize;
+                    libc::fseek(fp, 0i64, 0i32); // SEEK_SET
+                    let data = self.ctx.arena.alloc_slice::<u8>(size);
+                    libc::fread(&data[0] as &mut libc::c_void, 1usize, size, fp);
+                    libc::fclose(fp);
+                    let e = self.make_expr(ExprTag::StringLit, span);
+                    e._data.lit.str_val = data;
+                    return self.ctx.alloc_expr(e);
+                }
+            }
+            let e = self.make_expr(ExprTag::StringLit, span);
+            e._data.lit.str_val = "";
+            self.ctx.alloc_expr(e)
+        }
+        "format_args" => self.expand_format_args(args, span),
+        "bind" => {
+            if args.len() == 0usize {
+                return self.alloc_void(span);
+            }
+            let macro_ref = args[0];
+            let macro_name: &[u8] = "";
+            let prev_bound: &[&Expr] = &[];
+            if macro_ref.tag == ExprTag::MacroInvocation {
+                macro_name = macro_ref.str_val();
+                prev_bound = macro_ref.args();
+            }
+            let new_bound_count = prev_bound.len() + args.len() - 1;
+            let bound_args = self.ctx.arena.alloc_slice::<&Expr>(new_bound_count);
+            for i in 0usize..prev_bound.len() {
+                bound_args[i] = prev_bound[i];
+            }
+            for i in 1usize..args.len() {
+                bound_args[prev_bound.len() + i - 1] = args[i];
+            }
+            let e = self.make_expr(ExprTag::MacroInvocation, span);
+            e._data.macro_expr.str_val = macro_name;
+            e._data.macro_expr.args = bound_args;
+            self.ctx.alloc_expr(e)
+        }
+        "reduce" => {
+            if args.len() < 2usize {
+                return self.alloc_void(span);
+            }
+            let macro_ref = args[0];
+            let macro_name: &[u8] = "";
+            let prev_bound: &[&Expr] = &[];
+            if macro_ref.tag == ExprTag::MacroInvocation {
+                macro_name = macro_ref.str_val();
+                prev_bound = macro_ref.args();
+            }
+            let accumulator: &Expr = args[1];
+            for i in 2usize..args.len() {
+                let total = prev_bound.len() + 2;
+                let call_args = self.ctx.arena.alloc_slice::<&Expr>(total);
+                for j in 0usize..prev_bound.len() {
+                    call_args[j] = prev_bound[j];
+                }
+                call_args[prev_bound.len()] = accumulator;
+                call_args[prev_bound.len() + 1] = args[i];
+                let macro_entry = self.ctx.resolve_macro(self.scope_idx, macro_name);
+                if macro_entry.is_some() {
+                    let entry = macro_entry.unwrap();
+                    accumulator = self.do_expand_macro(entry, call_args, span);
+                }
+            }
+            accumulator
+        }
+        "count" => {
+            let e = self.make_expr(ExprTag::IntLit, span);
+            e._data.lit.int_val = args.len() as u64;
+            self.ctx.alloc_expr(e)
+        }
+        _ => self.alloc_void(span),
+        }
+    }
+
+    // Expand format_args!(wrapper_macro, fmt_string, args...)
+    // Parses the format string, generates interleaved string pieces and argument
+    // references, then calls the wrapper macro with all pieces.
+    fn expand_format_args(self: &ExprParser, args: &[&Expr], span: Span) -> &Expr {
+        if args.len() < 2usize {
+            return self.alloc_void(span);
+        }
+
+        // First arg should be a macro reference (ExprTag::MacroInvocation with no args,
+        // or a bound macro). We need to find the macro name.
+        let wrapper_expr = args[0];
+        let fmt_str_expr = args[1];
+
+        // Format string must be a string literal
+        if fmt_str_expr.tag != ExprTag::StringLit {
+            return self.alloc_void(span);
+        }
+        let fmt_str = fmt_str_expr.str_val();
+
+        // Parse the format string into pieces
+        let pieces: Vector<&Expr> = Vector::new();
+        defer pieces.free();
+
+        // Collect bound args from wrapper (if it's a bound macro / ExprTag::MacroInvocation)
+        // In practice, wrapper is passed as a macro parameter ($fmt) which is just an Expr.
+        // We need to figure out the wrapper macro name and any bound args.
+        // For now, collect interleaved pieces.
+
+        let num_format_args = args.len() - 2;
+        let string_part: Vector<u8> = Vector::new();
+        defer string_part.free();
+        let next_arg_idx: usize = 0;
+
+        let i: usize = 0;
+        while i < fmt_str.len() {
+            if fmt_str[i] == '{' {
+                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '{' {
+                    // Escaped brace: {{ -> {
+                    string_part.push('{');
+                    i = i + 2;
+                } else {
+                    // Start of format placeholder
+                    // Flush current string part
+                    if string_part.len() > 0usize {
+                        let e = self.make_expr(ExprTag::StringLit, span);
+                        e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
+                        pieces.push(self.ctx.alloc_expr(e));
+                        string_part.clear();
+                    }
+
+                    // Parse the placeholder: {}, {0}, {1}, etc.
+                    i = i + 1;
+                    let arg_idx = next_arg_idx;
+                    let has_explicit_idx = false;
+                    let explicit_idx: usize = 0;
+
+                    while i < fmt_str.len() && fmt_str[i] != '}' {
+                        if fmt_str[i] >= '0' && fmt_str[i] <= '9' {
+                            has_explicit_idx = true;
+                            explicit_idx = explicit_idx * 10 + (fmt_str[i] - '0') as usize;
+                        }
+                        i = i + 1;
+                    }
+
+                    if has_explicit_idx {
+                        arg_idx = explicit_idx;
+                    } else {
+                        next_arg_idx = next_arg_idx + 1;
+                    }
+
+                    // Add the argument reference
+                    if arg_idx < num_format_args {
+                        pieces.push(args[arg_idx + 2]);
+                    }
+
+                    if i < fmt_str.len() {
+                        i = i + 1; // skip closing }
+                    }
+                }
+            } else if fmt_str[i] == '}' {
+                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '}' {
+                    // Escaped brace: }} -> }
+                    string_part.push('}');
+                    i = i + 2;
+                } else {
+                    // Stray }
+                    i = i + 1;
+                }
+            } else {
+                string_part.push(fmt_str[i]);
+                i = i + 1;
+            }
+        }
+
+        // Flush remaining string part
+        if string_part.len() > 0usize {
+            let e = self.make_expr(ExprTag::StringLit, span);
+            e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
+            pieces.push(self.ctx.alloc_expr(e));
+        }
+
+        // Now invoke the wrapper macro with the pieces.
+        // The wrapper is args[0], which should be a macro reference.
+        // We need to expand: wrapper_macro(pieces...)
+        // The wrapper is typically passed as bind!(static_format_args, fmt),
+        // which means args[0] is an ExprTag::MacroInvocation.
+        //
+        // However, in aluminac's macro system, bound macros are tricky since
+        // we don't have first-class macro values. The wrapper is passed as a $param
+        // which is whatever expression was substituted.
+        //
+        // For now, if wrapper is an ExprTag::MacroInvocation, invoke that macro with
+        // the collected pieces as args.
+        if wrapper_expr.tag == ExprTag::MacroInvocation {
+            let wrapper_name = wrapper_expr.str_val();
+            // Combine wrapper's existing args with format pieces
+            let wrapper_args = wrapper_expr.args();
+            let total_args = wrapper_args.len() + pieces.len();
+            let all_args = self.ctx.arena.alloc_slice::<&Expr>(total_args);
+            for j in 0usize..wrapper_args.len() {
+                all_args[j] = wrapper_args[j];
+            }
+            for j in 0usize..pieces.len() {
+                all_args[wrapper_args.len() + j] = pieces[j];
+            }
+
+            // Look up and expand the macro using pre-parsed body
+            let macro_entry = self.ctx.resolve_macro(self.scope_idx, wrapper_name);
+            if macro_entry.is_some() {
+                let entry = macro_entry.unwrap();
+                return self.do_expand_macro(entry, all_args, span);
+            }
+        }
+
+        // Fallback: return void
+        self.alloc_void(span)
+    }
+
+    fn parse_universal_macro(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // obj.macro!(args)
+        let value = child_by!(node, FieldKind::Value);
+        let macro_node = child_by!(node, FieldKind::Macro);
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        if value.is_none() || macro_node.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let obj = self.parse_expr(value.unwrap());
+        let name = self.ctx.intern_str(self.ctx.node_text(macro_node.unwrap()));
+
+        let all_args: Vector<&Expr> = Vector::new();
+        defer all_args.free();
+        all_args.push(obj);
+
+        if !args_node.is_none() {
+            let extra_args = self.parse_arg_list(args_node.unwrap());
+            for i in 0usize..extra_args.len() {
+                all_args.push(extra_args[i]);
+            }
+        }
+
+        let args_slice = self.ctx.arena.alloc_slice_copy::<&Expr>(all_args.as_slice());
+
+        // Try to expand the macro
+        let macro_entry = self.ctx.resolve_macro(self.scope_idx, name);
+        if macro_entry.is_some() {
+            let entry = macro_entry.unwrap();
+
+            if entry.is_builtin {
+                return self.expand_builtin_macro(name, args_slice, span);
+            }
+
+            return self.do_expand_macro(entry, args_slice, span);
+        }
+
+        let e = self.make_expr(ExprTag::MacroInvocation, span);
+        e._data.macro_expr.str_val = name;
+        e._data.macro_expr.args = args_slice;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_static_for(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // Grammar: for const name in value { body }
+        // Fields: name (identifier), value (expression), body (block)
+        let name_node = child_by!(node, FieldKind::Name);
+        let iter_node = child_by!(node, FieldKind::Value);
+        let body = child_by!(node, FieldKind::Body);
+
+        if name_node.is_none() || iter_node.is_none() || body.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let var_id = self.ctx.next_id();
+        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+        // Create a child scope for the loop so the loop variable is accessible in the body
+        let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
+        let loop_parser = ExprParser::new(self.ctx, loop_scope);
+
+        // Register the loop variable in the child scope
+        self.ctx.scopes.add_item(loop_scope, NamedItem {
+            name: var_name,
+            kind: NamedItemKind::local(var_id),
+            span: self.ctx.make_span(name_node.unwrap()),
+        });
+
+        let e = self.make_expr(ExprTag::StaticFor, span);
+        e._data.for_expr.id = var_id;
+        e._data.for_expr.lhs = self.parse_expr(iter_node.unwrap()); // iter parsed in parent scope
+        e._data.for_expr.rhs = loop_parser.parse_expr(body.unwrap()); // body parsed in child scope
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_et_cetera(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Inner);
+        if inner.is_none() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(ExprTag::EtCetera, span);
+        e._data.defer.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    // === AST-based macro expansion ===
+
+    // Entry point: expand a macro with pre-parsed body.
+    // Sets up param_args and variadic_args, then calls expand_macro_expr.
+    fn do_expand_macro(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
+        // Track the OUTERMOST macro call's span so that builtin location
+        // macros (file!/line!/column!/stringify!) inside the body resolve
+        // to the user's call site rather than to the macro body's position.
+        // Only the outermost expansion sets the span; nested expansions
+        // inherit it.
+        let prev_outer = self.ctx.macro_outer_span;
+        if prev_outer.is_none() {
+            self.ctx.macro_outer_span = Option::some(span);
+        }
+        let result = self.do_expand_macro_inner(entry, call_args, span);
+        self.ctx.macro_outer_span = prev_outer;
+        result
+    }
+
+    fn do_expand_macro_inner(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
+        let param_count = entry.params.len();
+        let param_args = self.ctx.arena.alloc_slice::<&Expr>(param_count);
+        let variadic_args: &[&Expr] = &[];
+
+        if entry.variadic_param_idx != NO_VARIADIC {
+            let vi = entry.variadic_param_idx as usize;
+            // Non-variadic params before variadic
+            for i in 0usize..vi {
+                if i < call_args.len() {
+                    param_args[i] = call_args[i];
+                } else {
+                    param_args[i] = self.alloc_void(span);
+                }
+            }
+            // Variadic args: everything between non-variadic params
+            let non_variadic_count = param_count - 1; // exclude the variadic param itself
+            let etc_count = if call_args.len() > non_variadic_count {
+                call_args.len() - non_variadic_count
+            } else {
+                0usize
+            };
+            let etc_args = self.ctx.arena.alloc_slice::<&Expr>(etc_count);
+            for i in 0usize..etc_count {
+                etc_args[i] = call_args[vi + i];
+            }
+            variadic_args = etc_args;
+            // Placeholder for variadic param slot
+            param_args[vi] = self.alloc_void(span);
+            // Non-variadic params after variadic
+            for i in vi + 1..param_count {
+                let arg_idx = i + etc_count - 1;
+                if arg_idx < call_args.len() {
+                    param_args[i] = call_args[arg_idx];
+                } else {
+                    param_args[i] = self.alloc_void(span);
+                }
+            }
+        } else {
+            for i in 0usize..param_count {
+                if i < call_args.len() {
+                    param_args[i] = call_args[i];
+                } else {
+                    param_args[i] = self.alloc_void(span);
+                }
+            }
+        }
+
+        // Create ID replacement map for hygiene
+        let id_map: HashMap<usize, Id> = HashMap::new();
+        defer id_map.free();
+
+        let result = self.expand_macro_expr(
+            entry.body,
+            param_args,
+            variadic_args,
+            entry.variadic_param_idx,
+            NO_VARIADIC,  // not in et cetera
+            &id_map,
+        );
+        result
+    }
+
+    // Recursively expand a pre-parsed macro body expression.
+    // Substitutes ExprTag::MacroParam with args, expands ExprTag::EtCetera,
+    // and recursively expands nested ExprTag::MacroInvocation.
+    fn expand_macro_expr(
+        self: &ExprParser,
+        expr: &Expr,
+        param_args: &[&Expr],
+        variadic_args: &[&Expr],
+        variadic_param_idx: i32,
+        et_cetera_idx: i32,
+        id_map: &mut HashMap<usize, Id>,
+    ) -> &Expr {
+        // Substitute macro parameter
+        if expr.tag == ExprTag::MacroParam {
+            let idx = expr.int_val() as i32;
+            if expr.flag() && et_cetera_idx != NO_VARIADIC {
+                // Variadic param in et cetera context
+                let vi = et_cetera_idx as usize;
+                if vi < variadic_args.len() {
+                    return variadic_args[vi];
+                }
+                return self.alloc_void(expr.span);
+            }
+            if idx >= 0i32 && (idx as usize) < param_args.len() {
+                return param_args[idx as usize];
+            }
+            return self.alloc_void(expr.span);
+        }
+
+        // Expand nested macro invocation (only actual invocations, not bare references)
+        if expr.tag == ExprTag::MacroInvocation && expr.flag() {
+            // First expand the args
+            let expanded_args = self.expand_macro_args_list(
+                expr.args(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
+            );
+
+            // $m!(...) — the macro name itself is a macro parameter. Substitute
+            // it with the actual macro reference (a MacroInvocation, possibly
+            // bound), prepend its bound args to the current args, and expand
+            // the resolved macro.
+            if expr._data.macro_expr.is_param_subst {
+                let pidx = expr._data.macro_expr.param_idx;
+                if pidx >= 0i32 && (pidx as usize) < param_args.len() {
+                    let macro_ref = param_args[pidx as usize];
+                    if macro_ref.tag == ExprTag::MacroInvocation {
+                        let real_name = macro_ref.str_val();
+                        let prev_bound = macro_ref.args();
+                        let total = prev_bound.len() + expanded_args.len();
+                        let combined = self.ctx.arena.alloc_slice::<&Expr>(total);
+                        for i in 0usize..prev_bound.len() {
+                            combined[i] = prev_bound[i];
+                        }
+                        for i in 0usize..expanded_args.len() {
+                            combined[prev_bound.len() + i] = expanded_args[i];
+                        }
+                        let macro_entry = self.ctx.resolve_macro(self.scope_idx, real_name);
+                        if macro_entry.is_some() {
+                            let entry = macro_entry.unwrap();
+                            if entry.is_builtin {
+                                return self.expand_builtin_macro(real_name, combined, expr.span);
+                            }
+                            return self.do_expand_macro(entry, combined, expr.span);
+                        }
+                        // Unresolved underlying macro — keep as MacroInvocation with the resolved name
+                        let e = *expr;
+                        e._data.macro_expr.is_param_subst = false;
+                        e._data.macro_expr.param_idx = -1i32;
+                        e._data.macro_expr.str_val = real_name;
+                        e.set_args(combined);
+                        return self.ctx.alloc_expr(e);
+                    }
+                }
+                // Substitution failed — fall through to void
+                return self.alloc_void(expr.span);
+            }
+
+            // Look up the macro via scope resolution
+            let macro_entry = self.ctx.resolve_macro(self.scope_idx, expr.str_val());
+            if macro_entry.is_some() {
+                let entry = macro_entry.unwrap();
+                if entry.is_builtin {
+                    return self.expand_builtin_macro(expr.str_val(), expanded_args, expr.span);
+                }
+                return self.do_expand_macro(entry, expanded_args, expr.span);
+            }
+            // Unresolved macro - keep with expanded args
+            let e = *expr;
+            e.set_args(expanded_args);
+            return self.ctx.alloc_expr(e);
+        }
+
+        // Leaf expressions that don't need expansion
+        if expr.tag == ExprTag::IntLit || expr.tag == ExprTag::FloatLit ||
+           expr.tag == ExprTag::BoolLit || expr.tag == ExprTag::StringLit ||
+           expr.tag == ExprTag::CharLit || expr.tag == ExprTag::NullLit ||
+           expr.tag == ExprTag::Void || expr.tag == ExprTag::Zeroed {
+            return expr;
+        }
+
+        // For non-macro identifiers (resolved at pre-parse time), just return as-is
+        if expr.tag == ExprTag::Local || expr.tag == ExprTag::Param ||
+           expr.tag == ExprTag::StaticRef || expr.tag == ExprTag::FnRef ||
+           expr.tag == ExprTag::EnumRef || expr.tag == ExprTag::BoundValue {
+            // Check if this local needs ID remapping (hygiene)
+            if expr.tag == ExprTag::Local {
+                // Unresolved at macro-body-pre-parse time: parse_identifier
+                // stashed the source name on the Local's str_val. Re-resolve
+                // against the call-site scope (e.g. `&buf` where buf is a
+                // function-local in the macro's caller).
+                if expr.id()._value == 0usize && expr.str_val().len() > 0usize {
+                    let resolved = self.ctx.scopes.resolve(self.scope_idx, expr.str_val());
+                    if resolved.is_some() {
+                        let item = resolved.unwrap();
+                        if item.kind.tag == scope::NamedItemTag::Local {
+                            let e = self.make_expr(ExprTag::Local, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Param {
+                            let e = self.make_expr(ExprTag::Param, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Static {
+                            let e = self.make_expr(ExprTag::StaticRef, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Const {
+                            let e = self.make_expr(ExprTag::StaticRef, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        } else if item.kind.tag == scope::NamedItemTag::Function {
+                            let e = self.make_expr(ExprTag::FnRef, expr.span);
+                            e._data.id_ref.id = item.kind.id();
+                            return self.ctx.alloc_expr(e);
+                        }
+                    }
+                }
+                let mapped = id_map.get(&expr.id()._value);
+                if mapped.is_some() {
+                    let e = *expr;
+                    e.set_id(mapped.unwrap());
+                    return self.ctx.alloc_expr(e);
+                }
+            }
+            return expr;
+        }
+
+        // Clone the expression and recursively expand children
+        let e = *expr;
+
+        // Generate fresh ID for let bindings (hygiene)
+        if e.tag == ExprTag::Let {
+            let new_id = self.ctx.next_id();
+            id_map.insert(e._data.let_expr.id._value, new_id);
+            e._data.let_expr.id = new_id;
+            // Don't register the new local in the caller's scope — that
+            // would shadow the caller's same-named binding via the by-name
+            // HashMap and break hygiene. References inside the macro body
+            // already carry the macro-defined id (resolved during pre-parse
+            // of the body), and the id_map remapping above takes them to
+            // the fresh id. mono later registers the local in local_defs
+            // when it lowers the Let, which is sufficient for codegen.
+        }
+
+        // Use a tag-dispatched approach for expand to avoid accessor/setter overhead
+        // and ensure correct union variant access
+        if e.tag == ExprTag::Binary {
+            e._data.binary.lhs = self.expand_macro_expr(e._data.binary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.binary.rhs = self.expand_macro_expr(e._data.binary.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Unary {
+            e._data.unary.lhs = self.expand_macro_expr(e._data.unary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Assign {
+            e._data.assign.lhs = self.expand_macro_expr(e._data.assign.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.assign.rhs = self.expand_macro_expr(e._data.assign.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Call || e.tag == ExprTag::TurbofishValue {
+            if e._data.call.lhs as &void as usize != 0usize {
+                e._data.call.lhs = self.expand_macro_expr(e._data.call.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.call.args.len() > 0usize {
+                e._data.call.args = self.expand_macro_args_list(e._data.call.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::FieldAccess {
+            e._data.field.lhs = self.expand_macro_expr(e._data.field.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Index || e.tag == ExprTag::TupleIndex {
+            if e._data.index.lhs as &void as usize != 0usize {
+                e._data.index.lhs = self.expand_macro_expr(e._data.index.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.index.rhs as &void as usize != 0usize {
+                e._data.index.rhs = self.expand_macro_expr(e._data.index.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.index.opt_expr.is_some() {
+                e._data.index.opt_expr = Option::some(self.expand_macro_expr(e._data.index.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::Ref || e.tag == ExprTag::Deref || e.tag == ExprTag::Cast || e.tag == ExprTag::TypeCheck {
+            e._data.typed.lhs = self.expand_macro_expr(e._data.typed.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::If || e.tag == ExprTag::When {
+            e._data.cond.cond = self.expand_macro_expr(e._data.cond.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.cond.lhs = self.expand_macro_expr(e._data.cond.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            if e._data.cond.opt_expr.is_some() {
+                e._data.cond.opt_expr = Option::some(self.expand_macro_expr(e._data.cond.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::Switch {
+            e._data.switch_expr.lhs = self.expand_macro_expr(e._data.switch_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            if e._data.switch_expr.switch_arms.len() > 0usize {
+                let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e._data.switch_expr.switch_arms.len());
+                for i in 0usize..e._data.switch_expr.switch_arms.len() {
+                    let arm = e._data.switch_expr.switch_arms[i];
+                    let new_patterns = self.ctx.arena.alloc_slice::<&Expr>(arm.pattern.len());
+                    for j in 0usize..arm.pattern.len() {
+                        new_patterns[j] = self.expand_macro_expr(arm.pattern[j], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                    }
+                    new_arms[i] = SwitchArm {
+                        pattern: new_patterns,
+                        body: self.expand_macro_expr(arm.body, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                    };
+                }
+                e._data.switch_expr.switch_arms = new_arms;
+            }
+        } else if e.tag == ExprTag::While || e.tag == ExprTag::Loop {
+            if e._data.loop_expr.cond as &void as usize != 0usize {
+                e._data.loop_expr.cond = self.expand_macro_expr(e._data.loop_expr.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            e._data.loop_expr.lhs = self.expand_macro_expr(e._data.loop_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::For || e.tag == ExprTag::StaticFor {
+            e._data.for_expr.lhs = self.expand_macro_expr(e._data.for_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            e._data.for_expr.rhs = self.expand_macro_expr(e._data.for_expr.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            if e._data.for_expr.args.len() > 0usize {
+                e._data.for_expr.args = self.expand_macro_args_list(e._data.for_expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::Break || e.tag == ExprTag::Return {
+            if e._data.jump.opt_expr.is_some() {
+                e._data.jump.opt_expr = Option::some(self.expand_macro_expr(e._data.jump.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::Let {
+            if e._data.let_expr.opt_expr.is_some() {
+                e._data.let_expr.opt_expr = Option::some(self.expand_macro_expr(e._data.let_expr.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            }
+        } else if e.tag == ExprTag::StructLit {
+            if e._data.struct_lit.field_inits.len() > 0usize {
+                let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e._data.struct_lit.field_inits.len());
+                for i in 0usize..e._data.struct_lit.field_inits.len() {
+                    new_inits[i] = FieldInit {
+                        name: e._data.struct_lit.field_inits[i].name,
+                        value: self.expand_macro_expr(e._data.struct_lit.field_inits[i].value, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                    };
+                }
+                e._data.struct_lit.field_inits = new_inits;
+            }
+        } else if e.tag == ExprTag::TupleLit || e.tag == ExprTag::ArrayLit || e.tag == ExprTag::Block {
+            if e._data.list.args.len() > 0usize {
+                e._data.list.args = self.expand_macro_args_list(e._data.list.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::Lambda {
+            e._data.lambda.lhs = self.expand_macro_expr(e._data.lambda.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        } else if e.tag == ExprTag::Range {
+            if e._data.range.lhs as &void as usize != 0usize {
+                e._data.range.lhs = self.expand_macro_expr(e._data.range.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            if e._data.range.rhs as &void as usize != 0usize {
+                e._data.range.rhs = self.expand_macro_expr(e._data.range.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+        } else if e.tag == ExprTag::Defer || e.tag == ExprTag::EtCetera {
+            e._data.defer.lhs = self.expand_macro_expr(e._data.defer.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        }
+
+        // Expand lambda params (their types use Ty, not Expr - skip for now)
+        // Lambda bodies are in lhs, already handled above
+
+        self.ctx.alloc_expr(e)
+    }
+
+    // Expand an argument list, handling ExprTag::EtCetera by unrolling variadic args.
+    fn expand_macro_args_list(
+        self: &ExprParser,
+        args: &[&Expr],
+        param_args: &[&Expr],
+        variadic_args: &[&Expr],
+        variadic_param_idx: i32,
+        et_cetera_idx: i32,
+        id_map: &mut HashMap<usize, Id>,
+    ) -> &[&Expr] {
+        let result: Vector<&Expr> = Vector::new();
+        defer result.free();
+
+        for i in 0usize..args.len() {
+            if args[i].tag == ExprTag::EtCetera {
+                // Expand inner expression for each variadic arg
+                let inner = args[i].lhs();
+                for vi in 0usize..variadic_args.len() {
+                    result.push(self.expand_macro_expr(
+                        inner, param_args, variadic_args, variadic_param_idx, vi as i32, id_map
+                    ));
+                }
+            } else {
+                result.push(self.expand_macro_expr(
+                    args[i], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
+                ));
+            }
+        }
+
+        self.ctx.arena.alloc_slice_copy::<&Expr>(result.as_slice())
+    }
+}

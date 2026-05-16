@@ -1,0 +1,51 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `intrinsics::fields::<T>()` returns a tuple of `Field<T, FieldT_i>`
+// descriptors, built via the `field_descriptor_new` lang item. Mirrors
+// alumina-boot's `intr_fields`. Replaces aluminac's prior empty-slice
+// stub.
+
+use std::intrinsics::fields;
+
+struct Point { x: i32, y: i32 }
+
+struct Mixed {
+    flag: bool,        // 1 byte at offset 0
+    // 3 bytes padding
+    count: i32,        // 4 bytes at offset 4
+    big: i64,          // 8 bytes at offset 8
+    tiny: u8,          // 1 byte at offset 16
+    // 3 bytes trailing padding (struct alignment 8 → size 24)
+}
+
+union U { a: i32, b: f64, c: u8 }
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Simple struct: two i32 fields, offsets 0 and 4.
+    let p = fields::<Point>();
+    if p.0.name().unwrap() != "x" { return 1i32; }
+    if p.0.offset() != 0usize     { return 2i32; }
+    if p.1.name().unwrap() != "y" { return 3i32; }
+    if p.1.offset() != 4usize     { return 4i32; }
+
+    // Mixed-alignment struct: padding visible in offsets.
+    let m = fields::<Mixed>();
+    if m.0.name().unwrap() != "flag"  { return 10i32; }
+    if m.0.offset() != 0usize         { return 11i32; }
+    if m.1.name().unwrap() != "count" { return 12i32; }
+    if m.1.offset() != 4usize         { return 13i32; }
+    if m.2.name().unwrap() != "big"   { return 14i32; }
+    if m.2.offset() != 8usize         { return 15i32; }
+    if m.3.name().unwrap() != "tiny"  { return 16i32; }
+    if m.3.offset() != 16usize        { return 17i32; }
+
+    // Union: every field starts at offset 0.
+    let u = fields::<U>();
+    if u.0.name().unwrap() != "a" { return 20i32; }
+    if u.0.offset() != 0usize     { return 21i32; }
+    if u.1.name().unwrap() != "b" { return 22i32; }
+    if u.1.offset() != 0usize     { return 23i32; }
+    if u.2.name().unwrap() != "c" { return 24i32; }
+    if u.2.offset() != 0usize     { return 25i32; }
+
+    0i32
+}

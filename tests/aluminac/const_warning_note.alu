@@ -1,0 +1,24 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// const_warning / const_note fire only when reached during const eval and
+// surface as compile diagnostics on the const item's init span. Unlike the
+// always-emit compile_warn / compile_note family, these are a no-op when
+// the call is reached at runtime (or never reached).
+//
+// The const_panic_compile_fail test covers the matching error severity.
+// This test wedges a non-failing const eval through both severities and
+// checks that the program still compiles to a usable binary.
+
+extern "intrinsic" fn const_warning(msg: &[u8]);
+extern "intrinsic" fn const_note(msg: &[u8]);
+
+const TRIGGER: i32 = {
+    const_warning("evaluated this const at compile time");
+    const_note("with two pieces of advice");
+    42i32
+};
+
+fn main(args: &[&[u8]]) -> i32 {
+    if TRIGGER != 42 { return 1i32; }
+    0i32
+}

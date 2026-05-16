@@ -1696,36 +1696,58 @@ mod internal {
         /// Adds two numbers, wrapping around at the boundary of the type.
         #[inline]
         fn wrapping_add(lhs: Self, rhs: Self) -> Self {
-            if runtime::in_const_context() {
+            #[cfg(boot)]
+            {
+                if runtime::in_const_context() {
+                    ((lhs as unsigned_of<Self>) + (rhs as unsigned_of<Self>)) as Self
+                } else {
+                    let ret: Self;
+                    intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret);
+                    ret
+                }
+            }
+            #[cfg(not(boot))]
+            {
+                // LLVM `add` (no nsw/nuw) wraps for both signed and unsigned operands.
                 ((lhs as unsigned_of<Self>) + (rhs as unsigned_of<Self>)) as Self
-            } else {
-                let ret: Self;
-                intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret);
-                ret
             }
         }
 
         /// Subtracts two numbers, wrapping around at the boundary of the type.
         #[inline]
         fn wrapping_sub(lhs: Self, rhs: Self) -> Self {
-            if runtime::in_const_context() {
+            #[cfg(boot)]
+            {
+                if runtime::in_const_context() {
+                    ((lhs as unsigned_of<Self>) - (rhs as unsigned_of<Self>)) as Self
+                } else {
+                    let ret: Self;
+                    intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret);
+                    ret
+                }
+            }
+            #[cfg(not(boot))]
+            {
                 ((lhs as unsigned_of<Self>) - (rhs as unsigned_of<Self>)) as Self
-            } else {
-                let ret: Self;
-                intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret);
-                ret
             }
         }
 
         /// Multiplies two numbers, wrapping around at the boundary of the type.
         #[inline]
         fn wrapping_mul(lhs: Self, rhs: Self) -> Self {
-            if runtime::in_const_context() {
+            #[cfg(boot)]
+            {
+                if runtime::in_const_context() {
+                    ((lhs as unsigned_of<Self>) * (rhs as unsigned_of<Self>)) as Self
+                } else {
+                    let ret: Self;
+                    intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret);
+                    ret
+                }
+            }
+            #[cfg(not(boot))]
+            {
                 ((lhs as unsigned_of<Self>) * (rhs as unsigned_of<Self>)) as Self
-            } else {
-                let ret: Self;
-                intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret);
-                ret
             }
         }
 
@@ -1750,33 +1772,92 @@ mod internal {
         /// Tries to add two numbers, returning `Option::none()` if overflow occurrs.
         #[inline]
         fn checked_add(lhs: Self, rhs: Self) -> Option<Self> {
-            let ret: Self;
-            if intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret) {
-                Option::none()
-            } else {
-                Option::some(ret)
+            #[cfg(boot)]
+            {
+                let ret: Self;
+                if intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret) {
+                    Option::none()
+                } else {
+                    Option::some(ret)
+                }
+            }
+            #[cfg(not(boot))]
+            {
+                when lhs is Unsigned {
+                    let r = ((lhs as unsigned_of<Self>) + (rhs as unsigned_of<Self>)) as Self;
+                    if r < lhs { Option::none() } else { Option::some(r) }
+                } else {
+                    let r = ((lhs as unsigned_of<Self>) + (rhs as unsigned_of<Self>)) as Self;
+                    // Signed-add overflow iff (lhs ^ r) & (rhs ^ r) is negative — sign of result
+                    // differs from sign of both operands (which only happens when both operands
+                    // share the same sign).
+                    if ((lhs ^ r) & (rhs ^ r)) < 0 { Option::none() } else { Option::some(r) }
+                }
             }
         }
 
         /// Tries to subtract two numbers, returning `Option::none()` if overflow occurrs.
         #[inline]
         fn checked_sub(lhs: Self, rhs: Self) -> Option<Self> {
-            let ret: Self;
-            if intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret) {
-                Option::none()
-            } else {
-                Option::some(ret)
+            #[cfg(boot)]
+            {
+                let ret: Self;
+                if intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret) {
+                    Option::none()
+                } else {
+                    Option::some(ret)
+                }
+            }
+            #[cfg(not(boot))]
+            {
+                when lhs is Unsigned {
+                    if rhs > lhs {
+                        Option::none()
+                    } else {
+                        Option::some(lhs - rhs)
+                    }
+                } else {
+                    let r = ((lhs as unsigned_of<Self>) - (rhs as unsigned_of<Self>)) as Self;
+                    // Signed-sub overflow iff (lhs ^ rhs) & (lhs ^ r) is negative — operands
+                    // have different signs and sign of result differs from lhs.
+                    if ((lhs ^ rhs) & (lhs ^ r)) < 0 { Option::none() } else { Option::some(r) }
+                }
             }
         }
 
         /// Tries to multiply two numbers, returning `Option::none()` if overflow occurrs.
         #[inline]
         fn checked_mul(lhs: Self, rhs: Self) -> Option<Self> {
-            let ret: Self;
-            if intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret) {
-                Option::none()
-            } else {
-                Option::some(ret)
+            #[cfg(boot)]
+            {
+                let ret: Self;
+                if intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret) {
+                    Option::none()
+                } else {
+                    Option::some(ret)
+                }
+            }
+            #[cfg(not(boot))]
+            {
+                when lhs is Unsigned {
+                    if lhs == 0 {
+                        Option::some(0 as Self)
+                    } else {
+                        let r = ((lhs as unsigned_of<Self>) * (rhs as unsigned_of<Self>)) as Self;
+                        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+                    }
+                } else {
+                    if lhs == 0 || rhs == 0 {
+                        Option::some(0 as Self)
+                    } else if (lhs == Self::min_value() && rhs == -1)
+                        || (rhs == Self::min_value() && lhs == -1)
+                    {
+                        Option::none()
+                    } else {
+                        let r = ((lhs as unsigned_of<Self>) * (rhs as unsigned_of<Self>)) as Self;
+                        if r / lhs != rhs { Option::none() } else { Option::some(r) }
+                    }
+                }
             }
         }
 
@@ -1956,8 +2037,6 @@ mod internal {
         /// ```
         #[inline]
         fn count_ones(self: Self) -> u32 {
-            use libc::{c_int, c_ulong, c_ulonglong, c_uint};
-
             when self is usize {
                 #[cfg(target_pointer_width = "64")]
                 {
@@ -1968,17 +2047,25 @@ mod internal {
                     (self as u32).count_ones()
                 }
             } else {
-                let ret = when self is u128 {
-                    return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
-                } else when self is c_ulonglong {
-                    intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
-                } else when self is c_ulong {
-                    intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
-                } else {
-                    intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
-                };
+                #[cfg(boot)]
+                {
+                    use libc::{c_int, c_ulong, c_ulonglong, c_uint};
+                    let ret = when self is u128 {
+                        return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
+                    } else when self is c_ulonglong {
+                        intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
+                    } else when self is c_ulong {
+                        intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
+                    } else {
+                        intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
+                    };
 
-                ret as u32
+                    ret as u32
+                }
+                #[cfg(not(boot))]
+                {
+                    intrinsics::llvm::<Self>("llvm.ctpop", self) as u32
+                }
             }
         }
 
@@ -1999,7 +2086,6 @@ mod internal {
         /// ```
         #[inline]
         fn leading_zeros(self: Self) -> u32 {
-            use libc::{c_int, c_ulong, c_uint, c_ulonglong};
             use mem::size_of;
 
             if runtime::in_const_context() {
@@ -2033,32 +2119,40 @@ mod internal {
                     (self as u32).leading_zeros()
                 }
             } else {
-                if self == 0 {
-                    return (size_of::<Self>() * 8) as u32;
-                }
-
-                let ret = when self is u128 {
-                    let head = (self >> 64) as u64;
-                    if head == 0 {
-                        return (self as u64).leading_zeros() + 64;
-                    } else {
-                        return head.leading_zeros();
+                #[cfg(boot)]
+                {
+                    use libc::{c_int, c_ulong, c_uint, c_ulonglong};
+                    if self == 0 {
+                        return (size_of::<Self>() * 8) as u32;
                     }
-                } else when self is c_ulonglong {
-                    intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
-                } else when self is c_ulong {
-                    intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
-                } else when self is c_uint {
-                    intrinsics::codegen_func::<c_int>("__builtin_clz", self)
-                } else {
-                    let val =
-                        ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
-                        (c_uint::max_value() >> (8 * size_of::<Self>()));
 
-                    intrinsics::codegen_func::<c_int>("__builtin_clz", val)
-                };
+                    let ret = when self is u128 {
+                        let head = (self >> 64) as u64;
+                        if head == 0 {
+                            return (self as u64).leading_zeros() + 64;
+                        } else {
+                            return head.leading_zeros();
+                        }
+                    } else when self is c_ulonglong {
+                        intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
+                    } else when self is c_ulong {
+                        intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
+                    } else when self is c_uint {
+                        intrinsics::codegen_func::<c_int>("__builtin_clz", self)
+                    } else {
+                        let val =
+                            ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
+                            (c_uint::max_value() >> (8 * size_of::<Self>()));
 
-                ret as u32
+                        intrinsics::codegen_func::<c_int>("__builtin_clz", val)
+                    };
+
+                    ret as u32
+                }
+                #[cfg(not(boot))]
+                {
+                    intrinsics::llvm::<Self>("llvm.ctlz", self, false) as u32
+                }
             }
         }
 
@@ -2069,7 +2163,6 @@ mod internal {
         /// ```
         #[inline]
         fn trailing_zeros(self: Self) -> u32 {
-            use libc::{c_int, c_ulong, c_uint, c_ulonglong};
             use mem::size_of;
 
             if runtime::in_const_context() {
@@ -2103,31 +2196,39 @@ mod internal {
                     (self as u32).trailing_zeros()
                 }
             } else {
-                if self == 0 {
-                    return (size_of::<Self>() * 8) as u32;
-                }
-
-                let ret = when self is u128 {
-                    let tail = self as u64;
-                    if tail == 0 {
-                        return ((self >> 64) as u64).trailing_zeros() + 64;
-                    } else {
-                        return tail.trailing_zeros();
+                #[cfg(boot)]
+                {
+                    use libc::{c_int, c_ulong, c_uint, c_ulonglong};
+                    if self == 0 {
+                        return (size_of::<Self>() * 8) as u32;
                     }
-                } else when self is c_ulonglong {
-                    intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
-                } else when self is c_ulong {
-                    intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
-                } else when self is c_uint {
-                    intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
-                } else {
-                    let val =
-                        (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
 
-                    intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
-                };
+                    let ret = when self is u128 {
+                        let tail = self as u64;
+                        if tail == 0 {
+                            return ((self >> 64) as u64).trailing_zeros() + 64;
+                        } else {
+                            return tail.trailing_zeros();
+                        }
+                    } else when self is c_ulonglong {
+                        intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
+                    } else when self is c_ulong {
+                        intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
+                    } else when self is c_uint {
+                        intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
+                    } else {
+                        let val =
+                            (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
 
-                ret as u32
+                        intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
+                    };
+
+                    ret as u32
+                }
+                #[cfg(not(boot))]
+                {
+                    intrinsics::llvm::<Self>("llvm.cttz", self, false) as u32
+                }
             }
         }
 

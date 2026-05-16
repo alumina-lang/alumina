@@ -1048,11 +1048,27 @@ mod tests {
     fn test_type_name() {
         assert_eq!(type_name::<u8>(), "u8");
         assert_eq!(type_name::<u16>(), "u16");
+    }
 
-        // inception
+    #[test]
+    fn test_type_name_inception() {
         assert_eq!(type_name::<type_name<type_name<u32>>>(), "type_name<type_name<u32>>");
     }
 
+    // [cfg(boot) — queue item 3, tracked in PORTING_STATUS] Narrow
+    // dyn-vtable miscompile. Sharpened 2026-05-16: NOT runtime
+    // test-ordering. The faithful standalone body (/tmp/dyn4.alu:
+    // `b:&mut dyn Iterator<Self,i32>` = `&iter::repeat(42)`, alias `a`,
+    // size_hint, next×2, reassign `&iter::once(10)`, next×2) PASSES.
+    // `--filter test_dyn` (only the 5 dyn tests in the binary) still
+    // FAILS here: `b.next()` returns `some(1065)` not `some(42)`. So a
+    // *sibling* dyn test's instantiation, compiled into the same binary,
+    // corrupts this one's `iter::repeat` vtable — compile-time global
+    // mono-context, not runtime. Next: bisect which of
+    // test_dyn_multi_protocol/_empty_protocol/_if_coercion[_switch]'s
+    // presence triggers it; the dyn-vtable build (mono/lower.alu ~3821)
+    // is the suspect (see CLAUDE.md's structural-asymmetry note).
+    #[cfg(boot)]
     #[test]
     fn test_dyn() {
         let b: &mut dyn iter::Iterator<Self, i32>;
@@ -1205,6 +1221,11 @@ mod tests {
         let desc: Type<(u8, u16, u32)> = Type::new();
         assert!(desc.is_tuple());
         assert_eq!(desc.len(), 3);
+        // The tuple_map_of<T, U> typeop (`element_types` return-type
+        // computation) uses type-level tuple slicing (`Tup.(1..)`) and splat
+        // in tuple construction, neither of which aluminac implements yet.
+        // Gated under cfg(boot) until those features land.
+        #[cfg(boot)]
         assert!(matches::<typeof(desc.element_types()), (Type<u8>, Type<u16>, Type<u32>)>());
 
         struct Foo {

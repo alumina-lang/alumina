@@ -1,0 +1,43 @@
+// Test: proto_array_of / proto_pointer_of / proto_same_layout_as lang
+// items now have real semantics in `t is X` checks. Other newly-registered
+// protocols (proto_const, proto_static, proto_meta, proto_range_of,
+// proto_same_base_as) are still trivially-true stubs — see PORTING_STATUS.md.
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+use std::builtins::{ArrayOf, PointerOf, SameLayoutAs};
+
+fn main() -> i32 {
+    // ArrayOf<T>: matches arrays whose element type is T.
+    let arr_u32: [u32; 4] = [1u32, 2u32, 3u32, 4u32];
+    if !(arr_u32 is ArrayOf<u32>) { return 1; }
+    if arr_u32 is ArrayOf<u64> { return 2; }
+    if arr_u32 is ArrayOf<i32> { return 3; }   // signed != unsigned
+
+    let arr_u8: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    if !(arr_u8 is ArrayOf<u8>) { return 4; }
+    if arr_u8 is ArrayOf<u32> { return 5; }
+
+    // Non-array against ArrayOf<u32> should not match.
+    let scalar: u32 = 42u32;
+    if scalar is ArrayOf<u32> { return 6; }
+
+    // PointerOf<T>: matches pointers whose pointee is T.
+    let p: &u32 = &arr_u32[0];
+    if !(p is PointerOf<u32>) { return 7; }
+    if p is PointerOf<u64> { return 8; }
+
+    let p_u8: &u8 = &arr_u8[0];
+    if !(p_u8 is PointerOf<u8>) { return 9; }
+    if p_u8 is PointerOf<u32> { return 10; }
+
+    // SameLayoutAs<T>: same size and alignment.
+    if !(0u32 is SameLayoutAs<i32>) { return 11; }   // both 4 bytes, align 4
+    if !(0u64 is SameLayoutAs<i64>) { return 12; }   // both 8 bytes, align 8
+    if 0u32 is SameLayoutAs<u64> { return 13; }      // 4 vs 8 bytes
+    if 0u8 is SameLayoutAs<u16> { return 14; }       // 1 vs 2 bytes
+
+    // f32 and i32 share layout.
+    if !(0.0f32 is SameLayoutAs<i32>) { return 15; }
+
+    0
+}

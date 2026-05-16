@@ -1,0 +1,65 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// `check_protocol_conformance` must verify the type's method's
+// generic-bounds are satisfiable, not just that the method exists by
+// name. Sysroot's `Option<T>::fmt<T: Formattable<T, F>, F>` would
+// otherwise be considered conforming for any T (including T=()),
+// causing the panic chain (`unwrap_panic_ok` → `dyn_format_arg` →
+// `Option::fmt` → `().fmt(...)`) to crash mid-mono.
+//
+// The fix: when checking if X conforms to a protocol, find the type's
+// method, infer the method's generics from the receiver, and
+// recursively check each method-generic-param's bounds.
+
+protocol Printable<Self> {
+    fn show(self: &Self);
+}
+
+// Container::show requires its T to be Printable.
+struct Container<T> {
+    value: T,
+}
+
+impl Container<T> {
+    fn show<T: Printable<T>>(self: &Container<T>) {
+        self.value.show();
+    }
+}
+
+// HasPrint provides show — Container<HasPrint> conforms to Printable.
+struct HasPrint {}
+impl HasPrint {
+    fn show(self: &HasPrint) {}
+}
+
+// NoPrint has no show method — Container<NoPrint> should NOT conform.
+struct NoPrint {}
+
+fn main() -> i32 {
+    let c1: Container<HasPrint> = Container { value: HasPrint {} };
+    when c1 is Printable<Container<HasPrint>> {} else { return 1; }
+
+    // Container<NoPrint> has the show method by name (Container::show
+    // exists), but the bound `T: Printable<T>` fails for T=NoPrint.
+    // Pre-fix, this would have evaluated to true.
+    let c2: Container<NoPrint> = Container { value: NoPrint {} };
+    when c2 is Printable<Container<NoPrint>> { return 2; } else { /* expected */ }
+
+    // Real-world repro from sysroot: Option<()> shouldn't conform to
+    // Formattable because Option::fmt has a `T: Formattable<T, F>`
+    // bound that fails for T=() (no fmt method on `()`). This was the
+    // gating failure for `std/process` unification (see
+    // PORTING_STATUS).
+    let opt: Option<()> = Option::some(());
+    when opt is std::fmt::Formattable<Option<()>, std::panicking::internal::PanicFormatter> {
+        return 3;
+    } else { /* expected */ }
+
+    // Sanity: Option<i32> SHOULD conform — i32 has fmt.
+    let opt_i: Option<i32> = Option::some(42);
+    when opt_i is std::fmt::Formattable<Option<i32>, std::panicking::internal::PanicFormatter> {
+        // expected
+    } else { return 4; }
+
+    0
+}

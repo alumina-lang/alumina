@@ -1,0 +1,1470 @@
+// Pass 2: AST construction
+//
+// Processes pending items from Pass 1, builds function bodies, type definitions,
+// struct fields, enum variants, etc.
+
+use parser::*;
+use parser::expr::ExprParser;
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
+use tree_sitter::{Node, TSFieldId, TSTreeCursor};
+
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+
+struct Pass2 {
+    ctx: &mut ParseContext,
+}
+
+impl Pass2 {
+    fn new(ctx: &mut ParseContext) -> Pass2 {
+        Pass2 { ctx: ctx }
+    }
+
+    fn run(self: &mut Pass2, root: Node) {
+        // Process all pending items
+        // For each pending function, re-find the node and parse the body
+        // We store byte offsets and walk the tree to find matching nodes
+
+        // Note: macros are collected separately via collect_macros()
+        self.process_structs(root);
+        self.process_enums(root);
+        self.process_protocols(root);
+        self.process_mixins(root);
+        self.process_functions(root);
+        self.process_type_aliases(root);
+        self.process_statics(root);
+    }
+
+    /// Process pending items added after the given starting indices.
+    /// Used by parse_block to handle items defined inside function bodies.
+    fn process_items_from(
+        self: &mut Pass2,
+        root: Node,
+        structs_start: usize,
+        enums_start: usize,
+        protocols_start: usize,
+        mixins_start: usize,
+        functions_start: usize,
+        type_aliases_start: usize,
+        statics_start: usize,
+    ) {
+        // Each loop below copies its pending entry by value: any of the
+        // build_* calls can ultimately parse an expression/body that triggers
+        // recursive Pass1, which may push to the same pending vector and
+        // invalidate a borrow. See the comment on `process_functions`.
+        let si = structs_start;
+        loop {
+            if si >= self.ctx.pending_structs.len() { break; }
+            let pending = self.ctx.pending_structs[si];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_struct(item_node, &pending);
+            si = si + 1usize;
+        }
+        let ei = enums_start;
+        loop {
+            if ei >= self.ctx.pending_enums.len() { break; }
+            let pending = self.ctx.pending_enums[ei];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_enum(item_node, &pending);
+            ei = ei + 1usize;
+        }
+        let pi = protocols_start;
+        loop {
+            if pi >= self.ctx.pending_protocols.len() { break; }
+            let pending = self.ctx.pending_protocols[pi];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_protocol(item_node, &pending);
+            pi = pi + 1usize;
+        }
+        // Mixins reference protocol items, so they must come after protocols
+        self.process_mixins_from(root, mixins_start);
+        // Functions are processed last since they may contain nested blocks.
+        let fi = functions_start;
+        loop {
+            if fi >= self.ctx.pending_functions.len() { break; }
+            let pending = self.ctx.pending_functions[fi];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_function(root, item_node, &pending);
+            fi = fi + 1usize;
+        }
+        let ti = type_aliases_start;
+        loop {
+            if ti >= self.ctx.pending_type_aliases.len() { break; }
+            let pending = self.ctx.pending_type_aliases[ti];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_type_alias(item_node, &pending);
+            ti = ti + 1usize;
+        }
+        let xi = statics_start;
+        loop {
+            if xi >= self.ctx.pending_statics.len() { break; }
+            let pending = self.ctx.pending_statics[xi];
+            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_static(item_node, &pending);
+            xi = xi + 1usize;
+        }
+    }
+
+    fn process_mixins_from(self: &mut Pass2, root: Node, start: usize) {
+        let i = start;
+        loop {
+            if i >= self.ctx.pending_mixins.len() { break; }
+            let pending = self.ctx.pending_mixins[i];
+            i = i + 1usize;
+            let mixin_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let proto_node = child_by!(mixin_node, FieldKind::Protocol);
+            if proto_node.is_none() {
+                continue;
+            }
+            let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
+            let proto_id_val: usize = 0usize;
+            let has_proto_id = false;
+            let mixin_ty_args: &[&Ty] = &[];
+            if proto_ty.tag == TyTag::Named {
+                proto_id_val = proto_ty.id()._value;
+                has_proto_id = true;
+            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner().tag == TyTag::Named {
+                proto_id_val = proto_ty.inner().id()._value;
+                has_proto_id = true;
+                mixin_ty_args = proto_ty.elems();
+            }
+            if !has_proto_id {
+                continue;
+            }
+            let impl_scope_idx = pending.impl_scope_idx;
+            let proto_scope = self.ctx.scopes.find_protocol_scope_by_id(proto_id_val);
+            if proto_scope.is_some() {
+                let proto_scope_idx = proto_scope.unwrap();
+                for pair in self.ctx.scopes.get(proto_scope_idx).items {
+                    let item = pair.1;
+                    if item.kind.tag == NamedItemTag::Function || item.kind.tag == NamedItemTag::Method {
+                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&item.name);
+                        if existing.is_none() {
+                            // Register as Method (not Function) so parse_field's
+                            // UFCS-hint resolution doesn't promote a mixin'd
+                            // protocol method into a free-function candidate.
+                            // Surfaced by sysroot's `SplitIterator::next` →
+                            // `self.data.find(self.sep)`: the parser's
+                            // scopes.resolve walk hit the impl scope's mixin'd
+                            // `IteratorExt::find` BEFORE the local module's
+                            // free fn `string::find`, set the UFCS hint to the
+                            // wrong id, and try_ufcs_call mono'd iter's find
+                            // body with Self unbound. try_lower_method_call's
+                            // fn_id extraction handles both tags via id2() for
+                            // Method, so dispatch on the impl type still works.
+                            let fn_id_val = item.kind.id();
+                            // Mirror process_mixins: stash impl_scope_idx so
+                            // static path-calls like `Type::static_method()`
+                            // can bind the protocol's generics.
+                            let mk = NamedItemKind::method(fn_id_val, fn_id_val);
+                            mk.scope_idx = impl_scope_idx;
+                            self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
+                                name: item.name,
+                                kind: mk,
+                                span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                            });
+                            if mixin_ty_args.len() > 0 {
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, fn_id_val._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_macros(self: &mut Pass2, root: Node) {
+        self.process_macros_from(root, 0usize);
+    }
+
+    fn process_macros_from(self: &mut Pass2, root: Node, start: usize) {
+        let mac_len = self.ctx.pending_macros.len();
+        if mac_len == 0usize || start >= mac_len {
+            return;
+        }
+        let i = start;
+        loop {
+            if i >= mac_len { break; }
+            // Snapshot index so a realloc of `pending_macros` (triggered by
+            // macro-body parsing pushing more pending entries) doesn't dangle
+            // our reference. See the comment on `process_functions`.
+            let pending = self.ctx.pending_macros[i];
+            i = i + 1usize;
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+
+            // Parse parameter names
+            let params_node = child_by!(node, FieldKind::Parameters);
+            let param_names: Vector<&[u8]> = Vector::new();
+            #[allow(defer_in_a_loop)]
+            defer param_names.free();
+
+            let variadic_idx: i32 = NO_VARIADIC;
+            if !params_node.is_none() {
+                let cursor = params_node.unwrap().walk();
+                #[allow(defer_in_a_loop)]
+                defer cursor.free();
+                let param_idx: i32 = 0i32;
+                for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
+                    let name_node = child_by!(param, FieldKind::Name);
+                    if !name_node.is_none() {
+                        let name_text = self.ctx.node_text(name_node.unwrap());
+                        // Strip the $ prefix
+                        let name = if name_text.len() > 0 && name_text[0] == '$' {
+                            self.ctx.intern_str(name_text[1..])
+                        } else {
+                            self.ctx.intern_str(name_text)
+                        };
+                        param_names.push(name);
+                        // Check if this param is variadic (has EtCetera child)
+                        let etc = child_by!(param, FieldKind::EtCetera);
+                        if !etc.is_none() {
+                            variadic_idx = param_idx;
+                        }
+                        param_idx = param_idx + 1i32;
+                    }
+                }
+            }
+
+            // Get body node position
+            let body_node = child_by!(node, FieldKind::Body);
+            if !body_node.is_none() {
+                let body = body_node.unwrap();
+                let params_slice = self.ctx.arena.alloc_slice_copy::<&[u8]>(param_names.as_slice());
+
+                // Pre-parse the macro body in definition-site scope
+                let body_expr: &Expr = if !pending.is_builtin {
+                    // Set up macro body pre-parsing state
+                    let prev_in_macro_body = self.ctx.in_macro_body;
+                    let prev_param_names = self.ctx.macro_param_names;
+                    let prev_variadic_idx = self.ctx.macro_variadic_param_idx;
+                    self.ctx.in_macro_body = true;
+                    self.ctx.macro_param_names = params_slice;
+                    self.ctx.macro_variadic_param_idx = variadic_idx;
+
+                    let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+                    let parsed = expr_parser.parse_expr(body);
+
+                    // Restore state
+                    self.ctx.in_macro_body = prev_in_macro_body;
+                    self.ctx.macro_param_names = prev_param_names;
+                    self.ctx.macro_variadic_param_idx = prev_variadic_idx;
+                    parsed
+                } else {
+                    // Builtin macros don't need pre-parsed bodies
+                    null
+                };
+
+                let entry = MacroEntry {
+                    params: params_slice,
+                    body: body_expr,
+                    source: self.ctx.source,
+                    is_builtin: pending.is_builtin,
+                    variadic_param_idx: variadic_idx,
+                    scope_idx: pending.scope_idx,
+                };
+                self.ctx.macro_defs.insert(pending.id._value, entry);
+                self.ctx.macro_name_to_id.insert(pending.name, pending.id._value);
+            }
+        }
+    }
+
+    fn find_node_at(self: &Pass2, root: Node, start: u32, end: u32) -> Node {
+        // Find the deepest node matching the given byte range.
+        // We recurse even when a match is found, because wrapper nodes (e.g.
+        // statement) can have the same byte range as their inner content node
+        // (e.g. struct_definition).
+        let cursor = root.walk();
+        defer cursor.free();
+        if cursor.goto_first_child_for_byte(start as usize).is_some() {
+            let node = cursor.node();
+            if node.start_byte() as u32 == start && node.end_byte() as u32 == end {
+                // Try to find a deeper match
+                let deeper = self.find_node_at(node, start, end);
+                if deeper.start_byte() as u32 == start && deeper.end_byte() as u32 == end {
+                    return deeper;
+                }
+                return node;
+            }
+            return self.find_node_at(node, start, end);
+        }
+        root
+    }
+
+    fn process_functions(self: &mut Pass2, root: Node) {
+        // Copy each pending entry by value: body parsing inside `build_function`
+        // can trigger recursive Pass1 (for block-local items), which pushes to
+        // `pending_functions` and may realloc it. A borrow into the Vector
+        // would dangle across that push; the local copy survives.
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_functions.len() { break; }
+            let pending = self.ctx.pending_functions[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_function(root, node, &pending);
+            i = i + 1usize;
+        }
+    }
+
+    fn build_function(self: &mut Pass2, root: Node, node: Node, pending: &PendingFunction) {
+        // For methods inside an `impl Foo<K, V, ...>` block, re-register the
+        // impl's generic params in this function's scope so name lookups bind
+        // to THIS impl's ids. The struct's shared scope only retains whichever
+        // impl was visited last in pass1 (add_item overwrites by name); without
+        // rebinding here, `key: K` in an earlier impl's method would resolve
+        // to a later impl's K id and mono substitution would pick up the wrong
+        // type. Function scope shadows impl/struct scope on lookup, so this
+        // is sufficient.
+        if pending.impl_generic_param_ids.len() > 0
+            && pending.impl_generic_param_ids.len() == pending.impl_generic_param_names.len() {
+            for ig in 0usize..pending.impl_generic_param_ids.len() {
+                let name = pending.impl_generic_param_names[ig];
+                // Only inject the impl's binding if the function's scope
+                // doesn't already have an entry under that name (which would
+                // be a method-own generic param `fn foo<T>(...)` shadowing
+                // the impl's `T`). Without this check we'd overwrite the
+                // method's `T` id with the impl's `T` id, breaking
+                // `impl Foo<T> { fn bar<T>(...) }`-style shadowing.
+                let existing = self.ctx.scopes.get(pending.scope_idx).items.get(&name);
+                if existing.is_none() {
+                    self.ctx.scopes.add_item(pending.scope_idx, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::generic_param(pending.impl_generic_param_ids[ig]),
+                        span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                    });
+                }
+            }
+        }
+
+        // Parse generic parameters
+        let fn_generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Prepend impl generic params if this is a method in a generic impl
+        let generic_params = if pending.impl_generic_param_ids.len() > 0 {
+            let impl_count = pending.impl_generic_param_ids.len();
+
+            // Re-parse the enclosing `impl Foo<...>` block's generic params
+            // so the prepended entries carry their *bounds* (e.g.
+            // `Rg: RangeOf<T>`). The ids/names lists on `pending` don't
+            // include bounds; without them, RangeOf-bound type inference for
+            // impl generics (e.g. `Uniform::new(range) -> Uniform<T,Rg>`
+            // deriving T from Rg=Range<i32>) can't fire and T mono's as void.
+            // parse_generic_params resolves placeholder ids via
+            // pending.scope_idx, where the impl generics were just
+            // re-registered above, so the parsed ids match
+            // impl_generic_param_ids and the bound Tys reference the right
+            // placeholders. Falls back to the old empty-bounds entries if the
+            // impl decl range is unavailable or the count doesn't line up.
+            let impl_gps: &[GenericParam] = &[];
+            if pending.impl_decl_end > pending.impl_decl_start {
+                let impl_node = self.find_node_at(root, pending.impl_decl_start, pending.impl_decl_end);
+                impl_gps = self.parse_generic_params(impl_node, pending.scope_idx);
+            }
+            let use_parsed = impl_gps.len() == impl_count;
+
+            let total = impl_count + fn_generic_params.len();
+            let combined = self.ctx.arena.alloc_slice::<GenericParam>(total);
+            for i in 0usize..impl_count {
+                if use_parsed {
+                    // Keep the per-impl id captured in pass1 (the parsed id
+                    // also resolves to it post-rebind, but the captured one
+                    // is authoritative for the multi-impl rebind machinery).
+                    combined[i] = GenericParam {
+                        id: pending.impl_generic_param_ids[i],
+                        name: impl_gps[i].name,
+                        bounds: impl_gps[i].bounds,
+                        default_ty: impl_gps[i].default_ty,
+                    };
+                } else {
+                    combined[i] = GenericParam {
+                        id: pending.impl_generic_param_ids[i],
+                        name: "_impl_generic",
+                        bounds: &[],
+                        default_ty: Option::none(),
+                    };
+                }
+            }
+            for i in 0usize..fn_generic_params.len() {
+                combined[impl_count + i] = fn_generic_params[i];
+            }
+            combined as &[GenericParam]
+        } else {
+            fn_generic_params
+        };
+
+        // Parse parameters
+        let params = self.parse_fn_params(node, pending.scope_idx);
+
+        // Parse return type
+        let return_type = self.parse_return_type(node, pending.scope_idx);
+
+        // Parse ABI
+        let extern_node = child_by!(node, FieldKind::Extern);
+        let abi: Option<&[u8]> = if !extern_node.is_none() {
+            // Check for explicit ABI string (e.g., extern "C", extern "intrinsic")
+            let abi_node = child_by!(node, FieldKind::Abi);
+            if !abi_node.is_none() {
+                let abi_text = self.ctx.node_text(abi_node.unwrap());
+                // Strip quotes from string literal
+                if abi_text.len() >= 2 && abi_text[0] == '"' {
+                    Option::some(self.ctx.intern_str(abi_text[1..abi_text.len()-1]))
+                } else {
+                    Option::some("C")
+                }
+            } else {
+                // Just `extern fn` with no ABI string - default to "C"
+                Option::some("C")
+            }
+        } else {
+            Option::none()
+        };
+
+        // Check variadic: `...` is a field of parameter_list, not function_definition
+        let params_node = child_by!(node, FieldKind::Parameters);
+        let is_variadic = if !params_node.is_none() {
+            !child_by!(params_node.unwrap(), FieldKind::EtCetera).is_none()
+        } else {
+            false
+        };
+
+        // Parse body
+        let body_node = child_by!(node, FieldKind::Body);
+        let body: Option<&Expr> = if !body_node.is_none() {
+            let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+            Option::some(expr_parser.parse_expr(body_node.unwrap()))
+        } else {
+            Option::none()
+        };
+
+        // Tag "main" functions with AttrTag::Main
+        let attributes = if pending.name == "main" && body.is_some() {
+            let new_attrs = self.ctx.arena.alloc_slice::<Attribute>(pending.attributes.len() + 1);
+            for ai in 0usize..pending.attributes.len() {
+                new_attrs[ai] = pending.attributes[ai];
+            }
+            new_attrs[pending.attributes.len()] = Attribute::main_attr();
+            new_attrs as &[Attribute]
+        } else {
+            pending.attributes
+        };
+
+        let fn_def = FnDef {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            params: params,
+            return_type: return_type,
+            body: body,
+            attributes: attributes,
+            is_variadic: is_variadic,
+            abi: abi,
+            span: Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 },
+        };
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ItemTag::Function;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item._data.fn_def = fn_def;
+        self.ctx.items.push(item);
+    }
+
+    fn parse_generic_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[GenericParam] {
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_none() {
+            return &[];
+        }
+
+        let params: Vector<GenericParam> = Vector::new();
+        defer params.free();
+
+        let cursor = type_args.unwrap().walk();
+        defer cursor.free();
+        for arg in children_by!(type_args.unwrap(), FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[arg.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(arg, FieldKind::Placeholder);
+                if !placeholder.is_none() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    // Reuse the ID from Pass1's scope registration
+                    let resolved = self.ctx.scopes.resolve(scope_idx, name);
+                    let id = if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
+                        resolved.unwrap().kind.id()
+                    } else {
+                        self.ctx.next_id()
+                    };
+
+                    // Parse bounds
+                    let bounds = self.parse_generic_bounds(arg, scope_idx);
+
+                    // Parse default
+                    let default_node = child_by!(arg, FieldKind::Default);
+                    let default_ty: Option<&Ty> = if !default_node.is_none() {
+                        Option::some(self.parse_type(default_node.unwrap(), scope_idx))
+                    } else {
+                        Option::none()
+                    };
+
+                    params.push(GenericParam {
+                        id: id,
+                        name: name,
+                        bounds: bounds,
+                        default_ty: default_ty,
+                    });
+                }
+            }
+        }
+
+        if params.len() == 0 {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<GenericParam>(params.as_slice())
+    }
+
+    fn parse_generic_bounds(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
+        let bound_node = child_by!(node, FieldKind::Bound);
+        if bound_node.is_none() {
+            return &[];
+        }
+
+        let bounds: Vector<&Ty> = Vector::new();
+        defer bounds.free();
+
+        // A bound can be a single protocol or multiple with +
+        let cursor = bound_node.unwrap().walk();
+        defer cursor.free();
+        for child in bound_node.unwrap().children(&cursor) {
+            if child.is_named() {
+                bounds.push(self.parse_type(child, scope_idx));
+            }
+        }
+
+        if bounds.len() == 0 {
+            // Single bound
+            bounds.push(self.parse_type(bound_node.unwrap(), scope_idx));
+        }
+
+        self.ctx.arena.alloc_slice_copy::<&Ty>(bounds.as_slice())
+    }
+
+    fn parse_fn_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[FnParam] {
+        let params_node = child_by!(node, FieldKind::Parameters);
+        if params_node.is_none() {
+            return &[];
+        }
+
+        let params: Vector<FnParam> = Vector::new();
+        defer params.free();
+
+        let cursor = params_node.unwrap().walk();
+        defer cursor.free();
+        for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
+            let name = self.ctx.intern_str(self.ctx.node_text(child_by!(param, FieldKind::Name).unwrap()));
+            let type_node = child_by!(param, FieldKind::Type);
+            let ty = if !type_node.is_none() {
+                self.parse_type(type_node.unwrap(), scope_idx)
+            } else {
+                self.ctx.alloc_ty(Ty::unresolved())
+            };
+
+            // Look up the param ID from scope (registered in Pass1)
+            let scope_item = self.ctx.scopes.resolve(scope_idx, name);
+            let param_id = if scope_item.is_some() {
+                scope_item.unwrap().kind.id()
+            } else {
+                self.ctx.next_id()
+            };
+
+            params.push(FnParam {
+                id: param_id,
+                name: name,
+                ty: ty,
+            });
+        }
+
+        self.ctx.arena.alloc_slice_copy::<FnParam>(params.as_slice())
+    }
+
+    fn parse_return_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
+        let ret_node = child_by!(node, FieldKind::ReturnType);
+        if ret_node.is_none() {
+            return self.ctx.alloc_ty(Ty::void_ty());
+        }
+        let unwrapped = ret_node.unwrap();
+        let result = self.parse_type(unwrapped, scope_idx);
+        result
+    }
+
+    fn parse_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::PrimitiveType => {
+                let text = self.ctx.node_text(node);
+                let builtin = parse_builtin_type(text);
+                if builtin.is_some() {
+                    let ty = Ty::builtin_ty(builtin.unwrap());
+                    let result = self.ctx.alloc_ty(ty);
+                    return result;
+                }
+                // Unknown primitive
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TypeIdentifier => {
+                let name = self.ctx.node_text(node);
+                // Try to resolve as builtin first
+                let builtin = parse_builtin_type(name);
+                if builtin.is_some() {
+                    return self.ctx.alloc_ty(Ty::builtin_ty(builtin.unwrap()));
+                }
+                // Look up in scope
+                let resolved = self.ctx.scopes.resolve(scope_idx, name);
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if item.kind.tag == scope::NamedItemTag::Struct {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Enum {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Protocol {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::GenericParam {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::placeholder(id));
+                    } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
+                        let bt = item.kind.builtin();
+                        return self.ctx.alloc_ty(Ty::builtin_ty(bt));
+                    } else if item.kind.tag == scope::NamedItemTag::Function {
+                        // A function name used in a type position is the
+                        // function's zero-sized item type. Resolves to Ty::Named
+                        // and is monomorphized to IrTyTag::Fn — see
+                        // resolve_named_type in mono/lower.alu.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Const ||
+                              item.kind.tag == scope::NamedItemTag::Static {
+                        // A const/static used as a type-arg (sysroot:
+                        // `underlying_type_of<MY_CONST>`, `value_of::<MY_CONST>`).
+                        // Produces Ty::Named here; resolve_named_type sees
+                        // the id in `static_defs` and lowers to IrTy::ItemRef
+                        // so typeop_underlying_type_of and value_of can
+                        // recover the declared type / fetch the value.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    }
+                }
+                // Unqualified-name failures fall through to Ty::unresolved
+                // silently. Adding a parse-time diagnostic here surfaces
+                // real-but-tolerated patterns we don't yet handle: `Self`
+                // outside protocol-method context (used in `&dyn Proto<Self>`
+                // signatures in plain fns), unqualified protocol references
+                // like `Pointer` / `Equatable` in bound positions even when
+                // imported via `use`, and unqualified struct refs like
+                // `RangeFull`. Each is a real resolver gap that needs its
+                // own slice — tracked as item #7 in "Highest-leverage
+                // remaining work". Diagnostic was added and reverted
+                // 2026-05-14 after surfacing >3 such cases in the test
+                // suite (dyn_dispatch_compiles, method_arg_slice_empty,
+                // mixin_self_via_operator, range_equatable).
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::PointerOf => {
+                let inner = child_by!(node, FieldKind::Inner);
+                let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+                if !inner.is_none() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::pointer_ty(inner_ty, !is_mut));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::DerefOf => {
+                // `*T` in type position — the pointee of T.
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::deref_of_ty(inner_ty));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::DynOf => {
+                // `&dyn P` (or `&mut dyn P`, `&dyn (P + Q + ...)`). The
+                // grammar emits one or more `inner` fields. For the
+                // single-inner case we keep the inner Ty as-is; for the
+                // multi-protocol case we synthesize a TupleTy containing
+                // each protocol — resolve_type's Dyn branch unpacks it
+                // back into the dyn struct's Protos type-arg.
+                let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+                let cursor = node.walk();
+                defer cursor.free();
+                let inner_tys: Vector<&Ty> = Vector::new();
+                defer inner_tys.free();
+                for inner_node in children_by!(node, FieldKind::Inner, &cursor) {
+                    inner_tys.push(self.parse_type(inner_node, scope_idx));
+                }
+                if inner_tys.len() == 0usize {
+                    return self.ctx.alloc_ty(Ty::unresolved());
+                }
+                let combined: &Ty = if inner_tys.len() == 1usize {
+                    inner_tys[0]
+                } else {
+                    let elems = self.ctx.arena.alloc_slice_copy::<&Ty>(inner_tys.as_slice());
+                    self.ctx.alloc_ty(Ty::tuple_ty(elems))
+                };
+                self.ctx.alloc_ty(Ty::dyn_ty(combined, !is_mut))
+            },
+            NodeKind::SliceOf => {
+                let inner = child_by!(node, FieldKind::Inner);
+                let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+                if !inner.is_none() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::slice_ty(inner_ty, !is_mut));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::ArrayOf => {
+                let inner = child_by!(node, FieldKind::Inner);
+                let size_node = child_by!(node, FieldKind::Size);
+                if !inner.is_none() && !size_node.is_none() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    // Parse size as expression for const evaluation
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let size_expr = expr_parser.parse_expr(size_node.unwrap());
+                    return self.ctx.alloc_ty(Ty::array_ty_with_expr(inner_ty, size_expr));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TupleType => {
+                let elems: Vector<&Ty> = Vector::new();
+                defer elems.free();
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in children_by!(node, FieldKind::Element, &cursor) {
+                    elems.push(self.parse_type(child, scope_idx));
+                }
+                self.ctx.alloc_ty(Ty::tuple_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(elems.as_slice())))
+            },
+            NodeKind::NeverType => {
+                self.ctx.alloc_ty(Ty::never_ty())
+            },
+            NodeKind::FunctionPointer, NodeKind::FunctionProtocol => {
+                // fn(A, B) -> R (function pointer type) or Fn(A, B) -> R (Fn protocol bound)
+                // Both have the same structure: parameters and optional return type
+                let params_node = child_by!(node, FieldKind::Parameters);
+                let ret_node = child_by!(node, FieldKind::ReturnType);
+
+                let param_types: Vector<&Ty> = Vector::new();
+                defer param_types.free();
+                if !params_node.is_none() {
+                    let cursor = params_node.unwrap().walk();
+                    defer cursor.free();
+                    for child in params_node.unwrap().children(&cursor) {
+                        if child.is_named() {
+                            param_types.push(self.parse_type(child, scope_idx));
+                        }
+                    }
+                }
+                let ret: &Ty = if !ret_node.is_none() {
+                    self.parse_type(ret_node.unwrap(), scope_idx)
+                } else {
+                    self.ctx.alloc_ty(Ty::void_ty())
+                };
+
+                self.ctx.alloc_ty(Ty::fn_pointer_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(param_types.as_slice()), ret))
+            },
+            NodeKind::GenericType => {
+                let base_node = child_by!(node, FieldKind::Type);
+                let args_node = child_by!(node, FieldKind::TypeArguments);
+                if !base_node.is_none() && !args_node.is_none() {
+                    let base = self.parse_type(base_node.unwrap(), scope_idx);
+                    let type_args = self.parse_type_args(args_node.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::generic_ty(base, type_args));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                // Qualified type like std::io::File
+                let segments = self.collect_type_path_segments(node);
+                let resolved = self.ctx.scopes.resolve_path(scope_idx, segments);
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if item.kind.tag == scope::NamedItemTag::Struct {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Enum {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Protocol {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Function {
+                        // A function path used in type position resolves to
+                        // the function's zero-sized item type. Mirrors the
+                        // TypeIdentifier branch above for unqualified names.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NamedItemTag::Const ||
+                              item.kind.tag == scope::NamedItemTag::Static {
+                        // Const/static used as a type-arg — see TypeIdentifier
+                        // branch above.
+                        let id = item.kind.id();
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    }
+                }
+                // Path didn't resolve to anything (or resolved to an item kind
+                // that can't appear in a type position). Without this
+                // diagnostic, callers like resolve_named_type would silently
+                // fall through to void_ty — see the underlying_type_of
+                // regression in PORTING_STATUS.md item #6.
+                let text = self.ctx.node_text(node);
+                let msg_prefix: &[u8] = "unresolved type path: ";
+                let buf = self.ctx.arena.alloc_slice::<u8>(msg_prefix.len() + text.len());
+                msg_prefix.copy_to_nonoverlapping(&buf[0]);
+                text.copy_to_nonoverlapping(&buf[msg_prefix.len()]);
+                self.ctx.error(node, buf as &[u8]);
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::GenericTypeWithTurbofish => {
+                // Pair::<A, B> syntax - same as GenericType but with ::
+                let base_node = child_by!(node, FieldKind::Type);
+                let args_node = child_by!(node, FieldKind::TypeArguments);
+                if !base_node.is_none() && !args_node.is_none() {
+                    let base = self.parse_type(base_node.unwrap(), scope_idx);
+                    let type_args = self.parse_type_args(args_node.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::generic_ty(base, type_args));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TypeOf => {
+                // typeof(expr)
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_none() {
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let expr = expr_parser.parse_expr(inner.unwrap());
+                    return self.ctx.alloc_ty(Ty::typeof_ty(expr));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TupleIndexOf => {
+                // `T.N` in type position — the Nth element of the tuple
+                // type T (e.g. `generic_args_of<Type<X>>.0`, which is how
+                // `std::typing::type_of` is defined). `inner` is the type;
+                // `index` is a tuple_index_expression wrapping the integer.
+                let inner_node = child_by!(node, FieldKind::Inner);
+                let index_node = child_by!(node, FieldKind::Index);
+                if !inner_node.is_none() && !index_node.is_none() {
+                    let inner_ty = self.parse_type(inner_node.unwrap(), scope_idx);
+                    // Unwrap tuple_index_expression -> its Field child
+                    // (an integer literal) -> usize.
+                    let idx_holder = index_node.unwrap();
+                    let idx_field = child_by!(idx_holder, FieldKind::Field);
+                    let idx: usize = if idx_field.is_none() {
+                        parse_usize(self.ctx.node_text(idx_holder))
+                    } else {
+                        parse_usize(self.ctx.node_text(idx_field.unwrap()))
+                    };
+                    return self.ctx.alloc_ty(Ty::tuple_index_of_ty(inner_ty, idx));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::WhenType => {
+                // when cond { TypeA } else { TypeB }
+                let cond_node = child_by!(node, FieldKind::Condition);
+                let then_node = child_by!(node, FieldKind::Consequence);
+                let else_node = child_by!(node, FieldKind::Alternative);
+                if !cond_node.is_none() && !then_node.is_none() && !else_node.is_none() {
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let cond_expr = expr_parser.parse_expr(cond_node.unwrap());
+                    let then_ty = self.parse_type(then_node.unwrap(), scope_idx);
+                    let else_ty = self.parse_type(else_node.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::when_ty(cond_expr, then_ty, else_ty));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::MacroIdentifier => {
+                // $T in macro body - look up in macro_args as a type
+                let text = self.ctx.node_text(node);
+                let name = if text.len() > 0 && text[0] == '$' {
+                    self.ctx.intern_str(text[1..])
+                } else {
+                    self.ctx.intern_str(text)
+                };
+
+                // When pre-parsing macro body, create TyTag::Typeof(ExprTag::MacroParam)
+                if self.ctx.in_macro_body {
+                    let param_idx: i32 = -1i32;
+                    for pi in 0usize..self.ctx.macro_param_names.len() {
+                        if self.ctx.macro_param_names[pi] == name {
+                            param_idx = pi as i32;
+                            break;
+                        }
+                    }
+                    if param_idx >= 0i32 {
+                        let param_expr = Expr::void_expr();
+                        param_expr.tag = ExprTag::MacroParam;
+                        param_expr._data.id_ref.str_val = name;
+                        param_expr._data.id_ref.int_val = param_idx as u64;
+                        param_expr._data.id_ref.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        return self.ctx.alloc_ty(Ty::typeof_ty(self.ctx.alloc_expr(param_expr)));
+                    }
+                    return self.ctx.alloc_ty(Ty::unresolved());
+                }
+
+                let arg = self.ctx.macro_args.get(&name);
+                if arg.is_some() {
+                    // The macro arg is an Expr, but we need a Ty
+                    // If it's a named ref, extract the type
+                    let expr = arg.unwrap();
+                    if expr.ty() as &void as usize != 0usize {
+                        return expr.ty();
+                    }
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::Identifier => {
+                // Plain identifier used as a type (e.g. in macro expansion)
+                let name = self.ctx.node_text(node);
+                let builtin = parse_builtin_type(name);
+                if builtin.is_some() {
+                    return self.ctx.alloc_ty(Ty::builtin_ty(builtin.unwrap()));
+                }
+                let resolved = self.ctx.scopes.resolve(scope_idx, name);
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if item.kind.tag == scope::NamedItemTag::Struct {
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id()));
+                    } else if item.kind.tag == scope::NamedItemTag::Enum {
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id()));
+                    } else if item.kind.tag == scope::NamedItemTag::GenericParam {
+                        return self.ctx.alloc_ty(Ty::placeholder(item.kind.id()));
+                    } else if item.kind.tag == scope::NamedItemTag::BuiltinType {
+                        return self.ctx.alloc_ty(Ty::builtin_ty(item.kind.builtin()));
+                    } else if item.kind.tag == scope::NamedItemTag::TypeAlias {
+                        return self.ctx.alloc_ty(Ty::named(item.kind.id()));
+                    }
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            _ => {
+                // Fall back: unhandled type node kind
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+        }
+    }
+
+    fn parse_type_args(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
+        let args: Vector<&Ty> = Vector::new();
+        defer args.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            if child.is_named() {
+                args.push(self.parse_type(child, scope_idx));
+            }
+        }
+
+        self.ctx.arena.alloc_slice_copy::<&Ty>(args.as_slice())
+    }
+
+    fn collect_type_path_segments(self: &mut Pass2, node: Node) -> &[&[u8]] {
+        let segments: Vector<&[u8]> = Vector::new();
+        defer segments.free();
+        self.collect_type_path_inner(node, &segments);
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(segments.as_slice())
+    }
+
+    fn collect_type_path_inner(self: &mut Pass2, node: Node, segments: &mut Vector<&[u8]>) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::Identifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::TypeIdentifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_none() {
+                    self.collect_type_path_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_none() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::ScopedIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_none() {
+                    self.collect_type_path_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_none() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::GenericTypeWithTurbofish => {
+                // Extract just the type name, ignoring type arguments
+                let inner_type = child_by!(node, FieldKind::Type);
+                if !inner_type.is_none() {
+                    self.collect_type_path_inner(inner_type.unwrap(), segments);
+                }
+            },
+            NodeKind::GenericType => {
+                // GenericType can be aliased from GenericTypeWithTurbofish
+                let inner_type = child_by!(node, FieldKind::Type);
+                if !inner_type.is_none() {
+                    self.collect_type_path_inner(inner_type.unwrap(), segments);
+                }
+            },
+            NodeKind::Turbofish => {
+                // Extract just the function name, ignoring type arguments
+                let inner_fn = child_by!(node, FieldKind::Function);
+                if !inner_fn.is_none() {
+                    self.collect_type_path_inner(inner_fn.unwrap(), segments);
+                }
+            },
+            _ => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+        }
+    }
+
+    fn process_structs(self: &mut Pass2, root: Node) {
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_structs.len() { break; }
+            let pending = self.ctx.pending_structs[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_struct(node, &pending);
+            i = i + 1usize;
+        }
+    }
+
+    // Evaluate `#[cfg(...)]` attributes attached to a struct field. Returns
+    // true if the field should be included, false if any cfg evaluates
+    // false (i.e. the field is excluded under the current configuration).
+    // Non-cfg attributes on fields are currently ignored (fields don't
+    // carry attributes on the IR side; this only gates inclusion).
+    fn eval_field_cfg(self: &mut Pass2, field_node: Node) -> bool {
+        let attr_node = child_by!(field_node, FieldKind::Attributes);
+        if attr_node.is_none() {
+            return true;
+        }
+        let cursor = attr_node.unwrap().walk();
+        defer cursor.free();
+        for child in attr_node.unwrap().children(&cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind != NodeKind::AttributeItem {
+                continue;
+            }
+            let inner_node = child_by!(child, FieldKind::Inner);
+            if inner_node.is_none() {
+                continue;
+            }
+            let meta = inner_node.unwrap();
+            let name_node = child_by!(meta, FieldKind::Name);
+            if name_node.is_none() {
+                continue;
+            }
+            let name = self.ctx.node_text(name_node.unwrap());
+            if name == "cfg" {
+                if !self.ctx.eval_cfg_meta_item(meta) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn build_struct(self: &mut Pass2, node: Node, pending: &PendingStruct) {
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Parse fields
+        let fields: Vector<StructField> = Vector::new();
+        defer fields.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Body, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::StructField {
+                // Honour `#[cfg(...)]` on struct fields. Without this,
+                // cfg-gated alternates (e.g. sysroot's Instant declares
+                // `spec: timespec` under cfg(not(macos)) and `inner: u64`
+                // under cfg(macos)) both end up in the struct layout,
+                // doubling its size and shifting subsequent field
+                // offsets. See PORTING_STATUS.md `[PARTIAL] std/time.alu`.
+                if !self.eval_field_cfg(child) {
+                    continue;
+                }
+                let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
+                let type_node = child_by!(child, FieldKind::Type);
+                let ty = if !type_node.is_none() {
+                    self.parse_type(type_node.unwrap(), pending.scope_idx)
+                } else {
+                    self.ctx.alloc_ty(Ty::unresolved())
+                };
+                fields.push(StructField {
+                    id: self.ctx.next_id(),
+                    name: name,
+                    ty: ty,
+                });
+            }
+        }
+
+        let fields_slice = self.ctx.arena.alloc_slice_copy::<StructField>(fields.as_slice());
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ItemTag::Struct;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item._data.struct_def = StructDef {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            fields: fields_slice,
+            attributes: pending.attributes,
+            is_union: pending.is_union,
+            scope_idx: pending.scope_idx,
+        };
+        self.ctx.items.push(item);
+    }
+
+    fn process_enums(self: &mut Pass2, root: Node) {
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_enums.len() { break; }
+            let pending = self.ctx.pending_enums[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_enum(node, &pending);
+            i = i + 1usize;
+        }
+    }
+
+    fn build_enum(self: &mut Pass2, node: Node, pending: &PendingEnum) {
+        let variants: Vector<EnumVariant> = Vector::new();
+        defer variants.free();
+
+        // Check for underlying type
+        let type_node = child_by!(node, FieldKind::Type);
+        let underlying: Option<&Ty> = if !type_node.is_none() {
+            Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
+        } else {
+            Option::none()
+        };
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Body, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::EnumItem {
+                let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
+                let value_node = child_by!(child, FieldKind::Value);
+                let value: Option<&Expr> = if !value_node.is_none() {
+                    let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+                    Option::some(expr_parser.parse_expr(value_node.unwrap()))
+                } else {
+                    Option::none()
+                };
+                // Look up the variant ID from scope (registered in pass1)
+                let scope_item = self.ctx.scopes.resolve(pending.scope_idx, name);
+                let variant_id = if scope_item.is_some() && scope_item.unwrap().kind.tag == scope::NamedItemTag::EnumVariant {
+                    scope_item.unwrap().kind.id2()
+                } else {
+                    self.ctx.next_id()
+                };
+                variants.push(EnumVariant {
+                    id: variant_id,
+                    name: name,
+                    value: value,
+                });
+            }
+        }
+
+        let variants_slice = self.ctx.arena.alloc_slice_copy::<EnumVariant>(variants.as_slice());
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ItemTag::Enum;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item._data.enum_def = EnumDef {
+            id: pending.id,
+            name: pending.name,
+            underlying_type: underlying,
+            variants: variants_slice,
+            attributes: pending.attributes,
+            scope_idx: pending.scope_idx,
+        };
+        self.ctx.items.push(item);
+    }
+
+    fn process_protocols(self: &mut Pass2, root: Node) {
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_protocols.len() { break; }
+            let pending = self.ctx.pending_protocols[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_protocol(node, &pending);
+            i = i + 1usize;
+        }
+    }
+
+    fn build_protocol(self: &mut Pass2, node: Node, pending: &PendingProtocol) {
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Protocol methods are accessible via the protocol's scope.
+        // We collect them by walking the node body and parsing function signatures.
+        let methods: Vector<FnDef> = Vector::new();
+        defer methods.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Body, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::FunctionDefinition {
+                let fn_name_node = child_by!(child, FieldKind::Name);
+                if fn_name_node.is_none() { continue; }
+                let fn_name = self.ctx.intern_str(self.ctx.node_text(fn_name_node.unwrap()));
+
+                // Look up the fn ID from the protocol's scope
+                let scope_item = self.ctx.scopes.resolve(pending.scope_idx, fn_name);
+                let fn_id = if scope_item.is_some() {
+                    scope_item.unwrap().kind.id()
+                } else {
+                    self.ctx.next_id()
+                };
+
+                // Find the function's own scope from pending_functions.
+                // Parameters are registered in the function scope (child of protocol scope),
+                // so we must use it for parsing params and body.
+                let fn_scope_idx = pending.scope_idx;
+                for pfi in 0usize..self.ctx.pending_functions.len() {
+                    if self.ctx.pending_functions[pfi].id._value == fn_id._value {
+                        fn_scope_idx = self.ctx.pending_functions[pfi].scope_idx;
+                        break;
+                    }
+                }
+
+                let fn_generic_params = self.parse_generic_params(child, fn_scope_idx);
+                let fn_params = self.parse_fn_params(child, fn_scope_idx);
+                let fn_ret = self.parse_return_type(child, fn_scope_idx);
+
+                // Parse optional body (default method implementation)
+                let fn_body_node = child_by!(child, FieldKind::Body);
+                let fn_body: Option<&Expr> = if !fn_body_node.is_none() {
+                    let expr_parser = ExprParser::new(self.ctx, fn_scope_idx);
+                    Option::some(expr_parser.parse_expr(fn_body_node.unwrap()))
+                } else {
+                    Option::none()
+                };
+
+                // Mirror alumina-boot: a protocol method's generic_params are
+                // *only* the method's own. The protocol's generics (Self + any
+                // others like F in `Formattable<Self, F>`) are bound at the
+                // dispatch site via type_map using `proto_method_proto_gp_ids`
+                // (registered in `MonoCtx::build_lookup_tables`). This keeps
+                // FnDef shapes uniform with `build_function`'s impl-method
+                // path and removes the need for length-matching branches in
+                // the dyn vtable build.
+                methods.push(FnDef {
+                    id: fn_id,
+                    name: fn_name,
+                    generic_params: fn_generic_params,
+                    params: fn_params,
+                    return_type: fn_ret,
+                    body: fn_body,
+                    attributes: &[],
+                    is_variadic: false,
+                    abi: Option::none(),
+                    span: Span { file_id: self.ctx.file_id, start: child.start_byte() as u32, end: child.end_byte() as u32 },
+                });
+            }
+        }
+
+        let methods_slice = self.ctx.arena.alloc_slice_copy::<FnDef>(methods.as_slice());
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ItemTag::Protocol;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item._data.protocol_def = ProtocolDef {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            methods: methods_slice,
+            mixins: &[],
+            scope_idx: pending.scope_idx,
+            attributes: pending.attributes,
+        };
+        self.ctx.items.push(item);
+    }
+
+    fn process_mixins(self: &mut Pass2, root: Node) {
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_mixins.len() { break; }
+            let pending = self.ctx.pending_mixins[i];
+            i = i + 1usize;
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+
+            // Get the protocol type from the mixin node
+            let proto_node = child_by!(node, FieldKind::Protocol);
+            if proto_node.is_none() {
+                continue;
+            }
+
+            // Parse the protocol type reference
+            let proto_ty = self.parse_type(proto_node.unwrap(), pending.type_scope_idx);
+
+            // Extract the protocol ID and type args from the type
+            // It could be TyTag::Named (simple) or TyTag::Generic (with type args)
+            let proto_id_val: usize = 0usize;
+            let has_proto_id = false;
+            let mixin_ty_args: &[&Ty] = &[];
+            if proto_ty.tag == TyTag::Named {
+                proto_id_val = proto_ty.id()._value;
+                has_proto_id = true;
+            } else if proto_ty.tag == TyTag::Generic && proto_ty.inner().tag == TyTag::Named {
+                proto_id_val = proto_ty.inner().id()._value;
+                has_proto_id = true;
+                mixin_ty_args = proto_ty.elems();  // e.g. [Counter, i32] from mixin IteratorExt<Counter, i32>
+            }
+
+            if !has_proto_id {
+                continue;
+            }
+
+            // Find the protocol's scope and copy its methods to the impl scope.
+            // Uses the shared scope system so cross-file mixins work.
+            let impl_scope_idx = pending.impl_scope_idx;
+            let proto_scope = self.ctx.scopes.find_protocol_scope_by_id(proto_id_val);
+            if proto_scope.is_some() {
+                let proto_scope_idx = proto_scope.unwrap();
+                for pair in self.ctx.scopes.get(proto_scope_idx).items {
+                    let item = pair.1;
+                    if item.kind.tag == NamedItemTag::Function || item.kind.tag == NamedItemTag::Method {
+                        // Only add if not already present (direct methods take priority)
+                        let existing = self.ctx.scopes.get(impl_scope_idx).items.get(&item.name);
+                        if existing.is_none() {
+                            // See the same-shape comment on the earlier mirror
+                            // of this loop (process_mixins). Method tag (not
+                            // Function) so parser's UFCS-hint resolution
+                            // doesn't grab mixin'd protocol methods.
+                            let fn_id_val = item.kind.id();
+                            // Stash impl_scope_idx in the Method's scope_idx
+                            // field. Static path-calls like `f64::nan()` use it
+                            // to bind the protocol's generics from the mixin's
+                            // own type-args at call time — without it, Self
+                            // stays unbound and the body lowers to void.
+                            let mk = NamedItemKind::method(fn_id_val, fn_id_val);
+                            mk.scope_idx = impl_scope_idx;
+                            self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
+                                name: item.name,
+                                kind: mk,
+                                span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                            });
+                            // Store mixin type args so mono can substitute protocol generics
+                            if mixin_ty_args.len() > 0 {
+                                self.ctx.scopes.set_mixin_info(impl_scope_idx, fn_id_val._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_type_aliases(self: &mut Pass2, root: Node) {
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_type_aliases.len() { break; }
+            let pending = self.ctx.pending_type_aliases[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_type_alias(node, &pending);
+            i = i + 1usize;
+        }
+    }
+
+    fn build_type_alias(self: &mut Pass2, node: Node, pending: &PendingTypeAlias) {
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        let inner_node = child_by!(node, FieldKind::Inner);
+        let target = if !inner_node.is_none() {
+            self.parse_type(inner_node.unwrap(), pending.scope_idx)
+        } else {
+            // Opaque type alias (no = ...) - treat as void
+            let ty = Ty::void_ty();
+            self.ctx.arena.alloc(ty) as &Ty
+        };
+
+        let alias = TypeAlias {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            target: target,
+            attributes: pending.attributes,
+        };
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ItemTag::TypeAlias;
+        item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end };
+        item._data.type_alias = alias;
+        self.ctx.items.push(item);
+    }
+
+    fn process_statics(self: &mut Pass2, root: Node) {
+        let i = 0usize;
+        loop {
+            if i >= self.ctx.pending_statics.len() { break; }
+            let pending = self.ctx.pending_statics[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_static(node, &pending);
+            i = i + 1usize;
+        }
+    }
+
+    fn build_static(self: &mut Pass2, node: Node, pending: &PendingStatic) {
+        let generic_params: &[GenericParam] = if pending.has_generic_params {
+            self.parse_generic_params(node, pending.scope_idx)
+        } else {
+            &[]
+        };
+
+        let type_node = child_by!(node, FieldKind::Type);
+        let ty: Option<&Ty> = if !type_node.is_none() {
+            Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
+        } else {
+            Option::none()
+        };
+
+        let value_node = child_by!(node, FieldKind::Init);
+        let init: Option<&Expr> = if !value_node.is_none() {
+            let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+            Option::some(expr_parser.parse_expr(value_node.unwrap()))
+        } else {
+            Option::none()
+        };
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ItemTag::Static;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item._data.static_def = StaticDef {
+            id: pending.id,
+            name: pending.name,
+            ty: ty,
+            init: init,
+            attributes: pending.attributes,
+            is_const: pending.is_const,
+            generic_params: generic_params,
+        };
+        self.ctx.items.push(item);
+    }
+}

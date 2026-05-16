@@ -1,0 +1,26 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// in_const_context() flips between contexts: const_eval evaluates it to
+// true, runtime codegen emits false. Sysroot's `print!` / `eprint!` macros
+// use this to dispatch between fmt::write! and a const-buffer code path.
+
+extern "intrinsic" fn in_const_context() -> bool;
+
+const FOLDED: bool = in_const_context();
+const LEN: usize = if in_const_context() { 5usize } else { 0usize };
+
+fn main(args: &[&[u8]]) -> i32 {
+    // At const time, in_const_context returns true.
+    if !FOLDED { return 1i32; }
+
+    // The const-required array length proves it folded to the if-true arm.
+    let arr: [u8; LEN];
+    let n: usize = 0;
+    for _ in 0usize..LEN { n = n + 1; }
+    if n != 5 { return 2i32; }
+
+    // At runtime, the same call returns false.
+    if in_const_context() { return 3i32; }
+
+    0i32
+}

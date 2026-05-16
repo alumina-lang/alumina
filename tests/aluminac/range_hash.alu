@@ -1,0 +1,43 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// All six range variants implement hash + Hashable mixin so they can be
+// used as hash-map keys. Note: ranges aren't auto-imported in user scope,
+// so we either fully-qualify (std::range::Range<i32>) or `use` them.
+
+use std::range::{Range, RangeFrom, RangeTo, RangeToInclusive, RangeFull, RangeInclusive};
+use std::hash::hash_of;
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Range
+    let r1 = 1i32..5i32;
+    let r2 = 1i32..5i32;
+    let r3 = 1i32..6i32;
+    if hash_of::<Range<i32>>(&r1) != hash_of::<Range<i32>>(&r2) { return 1i32; }
+    if hash_of::<Range<i32>>(&r1) == hash_of::<Range<i32>>(&r3) { return 2i32; }
+
+    // RangeFrom
+    let rf1 = 1i32..;
+    let rf2 = 2i32..;
+    if hash_of::<RangeFrom<i32>>(&rf1) == hash_of::<RangeFrom<i32>>(&rf2) { return 3i32; }
+
+    // RangeTo
+    let rt1 = ..5i32;
+    let rt2 = ..6i32;
+    if hash_of::<RangeTo<i32>>(&rt1) == hash_of::<RangeTo<i32>>(&rt2) { return 4i32; }
+
+    // RangeToInclusive
+    let rti1 = ..=5i32;
+    let rti2 = ..=6i32;
+    if hash_of::<RangeToInclusive<i32>>(&rti1) == hash_of::<RangeToInclusive<i32>>(&rti2) { return 5i32; }
+
+    // RangeInclusive
+    let ri1 = 1i32..=5i32;
+    let ri2 = 1i32..=6i32;
+    if hash_of::<RangeInclusive<i32>>(&ri1) == hash_of::<RangeInclusive<i32>>(&ri2) { return 6i32; }
+
+    // RangeFull — no payload, all instances hash identically.
+    let rfu1: RangeFull<i32> = RangeFull { };
+    let rfu2: RangeFull<i32> = RangeFull { };
+    if hash_of::<RangeFull<i32>>(&rfu1) != hash_of::<RangeFull<i32>>(&rfu2) { return 7i32; }
+
+    0i32
+}

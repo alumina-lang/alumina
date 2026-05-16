@@ -1,0 +1,35 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Option::iter() returns a OnceIterator so options compose with iterator
+// combinators and drive for-loops directly.
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Some yields the value exactly once.
+    let total: i32 = 0;
+    for x in Option::some(7i32).iter() {
+        total = total + x;
+    }
+    if total != 7 { return 1i32; }
+
+    // None yields nothing — for-loop body doesn't run.
+    let count: i32 = 0;
+    for x in Option::none::<i32>().iter() {
+        count = count + 1;
+    }
+    if count != 0 { return 2i32; }
+
+    // Composes with .map().
+    let total2: i32 = 0;
+    for x in Option::some(5i32).iter().map(|x: i32| -> i32 { x * 2 }) {
+        total2 = total2 + x;
+    }
+    if total2 != 10 { return 3i32; }
+
+    // None .filter() chain produces nothing.
+    let count2: i32 = 0;
+    for x in Option::none::<i32>().iter().map(|x: i32| -> i32 { x + 1 }) {
+        count2 = count2 + 1;
+    }
+    if count2 != 0 { return 4i32; }
+
+    0i32
+}

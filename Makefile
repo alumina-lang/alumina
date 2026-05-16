@@ -7,7 +7,8 @@ ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
 	CARGO_FLAGS += --profile release
 	CARGO_TARGET_DIR = target/release
-	CFLAGS += -O3 -g
+	CFLAGS += -O3
+	ALUMINAC_FLAGS += -O3
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
@@ -16,12 +17,14 @@ else ifdef FAST_DEBUG
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 else ifdef PROFILING
 	BUILD_DIR = $(BUILD_ROOT)/profiling
 	CARGO_FLAGS += --profile profiling
 	CARGO_TARGET_DIR = target/profiling
 	CFLAGS += -g3 -fPIE -rdynamic -O3
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 else ifdef COVERAGE
 	CC ?= clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
@@ -29,6 +32,7 @@ else ifdef COVERAGE
 	CARGO_TARGET_DIR = target/coverage
 	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 	export RUSTFLAGS += -Cinstrument-coverage
 	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
@@ -37,6 +41,7 @@ else
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
 	ALUMINA_FLAGS += --debug
+	ALUMINAC_FLAGS += -g
 endif
 
 LDFLAGS ?= -lm
@@ -172,7 +177,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(TREE_SITTER_SOURCES) $(CODEGEN_SOURCES)
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
-libraries/aluminac/lib/node_kinds.alu: $(CODEGEN)
+libraries/aluminac-common/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) --output $@
 
 $(LIBRARIES_TESTS).c: $(ALU_TEST_DEPS) $(ALU_LIBRARIES)
@@ -182,12 +187,72 @@ $(LIBRARIES_TESTS).c: $(ALU_TEST_DEPS) $(ALU_LIBRARIES)
 $(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
+## ----------------------- Self-hosted compiler (aluminac) ---------------
+
+ALUMINAC_S1 = $(BUILD_DIR)/aluminac_s1
+ALUMINAC_S2 = $(BUILD_DIR)/aluminac_s2
+ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
+
+# sysroot-aluminac/ was eliminated 2026-05-16 once it became
+# byte-identical to sysroot/ (parity complete). aluminac now bootstraps
+# and tests against the single unified sysroot/.
+SYSROOT_ALUMINAC = sysroot/
+STDLIB_ALUMINAC_TESTS = $(BUILD_DIR)/stdlib-aluminac-tests
+
+SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
+ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
+ALUMINAC_MODULES_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu')
+
+ALUMINAC_INPUTS = $(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
+		$(call alumina_modules,$(ALUMINAC_COMMON_SOURCES),libraries/,/) \
+		$(call alumina_modules,$(ALUMINAC_MODULES_SOURCES),src/,/)
+
+LLVM_CONFIG ?= llvm-config-22
+LLVM_LINK_FLAGS = $(shell $(LLVM_CONFIG) --ldflags --libs --system-libs)
+
+$(ALUMINAC_S1).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
+		$(ALUMINAC_INPUTS)
+
+$(ALUMINAC_S1): $(ALUMINAC_S1).c $(BUILD_DIR)/parser.o $(MINICORO)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$($(LLVM_CONFIG) --ldflags --libs --system-libs)
+
+BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURCES) $(ALUMINAC_MAIN) $(SYSROOT_ALUMINAC_FILES)
+
+$(ALUMINAC_S2): $(ALUMINAC_S1) $(BOOTSTRAP_DEPS)
+	$(ALUMINAC_S1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		-o $(ALUMINAC_S2) \
+		$(ALUMINAC_INPUTS)
+
+$(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
+	$(ALUMINAC_S2) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		-o $(ALUMINAC_S3) \
+		$(ALUMINAC_INPUTS)
+
+$(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
+	cp $^ $@
+
+$(STDLIB_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES)
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --cfg test_std --sysroot $(SYSROOT_ALUMINAC) \
+		-o $@
+
+.PHONY: bootstrap
+bootstrap: $(ALUMINAC_S3)
+	@echo "Comparing stage 2 and stage 3 outputs..."
+	@cmp --silent $(ALUMINAC_S2) $(ALUMINAC_S3) && echo "Bootstrap successful: stage 2 and stage 3 outputs are identical." || (echo "Bootstrap failed: stage 2 and stage 3 outputs differ." && exit 1)
+
+.PHONY: clean-bootstrap
+clean-bootstrap:
+	rm -f $(ALUMINAC_S1) $(ALUMINAC_S1).c $(ALUMINAC_S2) $(ALUMINAC_S3) $(BUILD_DIR)/aluminac
+
 ## --------------------------------Tools -------------------------------
 
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc
 ALUMINA_DOC_SOURCES = $(shell find tools/alumina-doc/ -type f -name '*.alu')
 
-$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac/lib/node_kinds.alu
+$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac-common/node_kinds.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINA_DOC_SOURCES),tools/,/)
@@ -268,10 +333,20 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac porting-gates
+
+# Per-commit quality gates for the aluminac → alumina-boot parity work.
+# Runs the suites listed under "Quality gates" in PORTING.md. test-diag is
+# alumina-boot only; the others are run under both compilers where
+# applicable. Fail-fast: the recipe stops on the first failing gate.
+porting-gates: test-aluminac test-std-aluminac bootstrap test-std test-libraries test-lang test-diag
+	@echo "All porting quality gates passed."
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
+
+test-std-aluminac: $(STDLIB_ALUMINAC_TESTS)
+	$(STDLIB_ALUMINAC_TESTS) $(TEST_FLAGS)
 
 test-lang: alumina-boot $(LANG_TESTS)
 	$(LANG_TESTS) $(TEST_FLAGS)
@@ -282,6 +357,9 @@ test-libraries: alumina-boot $(LIBRARIES_TESTS)
 test-alumina-boot:
 	cargo test $(CARGO_FLAGS) --all-targets
 
+test-aluminac: $(BUILD_DIR)/aluminac
+	./tests/aluminac/run_tests.sh $(BUILD_DIR)/aluminac $(TEST_FILTER)
+
 test: test-alumina-boot test-std test-lang
 
 .DEFAULT_GOAL := all
@@ -289,15 +367,23 @@ all: alumina-boot
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
+.PHONY: $(BUILD_DIR)/quick.c $(BUILD_DIR)/quick
+ifdef QUICKBOOT
 $(BUILD_DIR)/quick.c: $(ALU_DEPS) quick.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
-
 $(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+else
+$(BUILD_DIR)/quick: $(BUILD_DIR)/aluminac quick.alu
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) -o $(BUILD_DIR)/quick quick=./quick.alu
+endif
 
 quick: $(BUILD_DIR)/quick
-	ln -sf $^.c $@.c
 	ln -sf $^ $@
+
+.PHONY: quick-ir
+quick-ir: $(BUILD_DIR)/aluminac
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) --emit-llvm quick=./quick.alu -o quick.ll
 
 ## ------------------------------ Benchmarking -------------------------
 
@@ -388,4 +474,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust test-libraries test-docs test-diag test examples
+dist-check: lint-rust test-libraries test-docs test-diag test examples bootstrap test-aluminac

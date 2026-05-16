@@ -1,0 +1,222 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+fn test_xxhash_basic() -> i32 {
+    use std::hash::xxhash::Xxh64;
+
+    // Empty input
+    let h = Xxh64::new();
+    let r1 = h.finish();
+
+    // Same empty input should produce same hash
+    let h = Xxh64::new();
+    let r2 = h.finish();
+    if r1 != r2 { return 1i32; }
+
+    // Non-empty input
+    let h = Xxh64::new();
+    h.write("hello");
+    let r3 = h.finish();
+
+    // Same input, same hash
+    let h = Xxh64::new();
+    h.write("hello");
+    let r4 = h.finish();
+    if r3 != r4 { return 2i32; }
+
+    // Different input, different hash
+    let h = Xxh64::new();
+    h.write("world");
+    let r5 = h.finish();
+    if r3 == r5 { return 3i32; }
+
+    0i32
+}
+
+fn test_xxhash_chunks() -> i32 {
+    use std::hash::xxhash::Xxh64;
+
+    // Writing all at once vs. writing in chunks should produce same hash
+    let h1 = Xxh64::new();
+    h1.write("the quick brown fox jumps over the lazy dog");
+
+    let h2 = Xxh64::new();
+    h2.write("the quick brown fox");
+    h2.write(" jumps over the lazy dog");
+
+    let h3 = Xxh64::new();
+    h3.write("the ");
+    h3.write("quick ");
+    h3.write("brown ");
+    h3.write("fox ");
+    h3.write("jumps ");
+    h3.write("over ");
+    h3.write("the ");
+    h3.write("lazy ");
+    h3.write("dog");
+
+    let r1 = h1.finish();
+    let r2 = h2.finish();
+    let r3 = h3.finish();
+
+    if r1 != r2 { return 10i32; }
+    if r1 != r3 { return 11i32; }
+
+    0i32
+}
+
+fn test_xxhash_known_values() -> i32 {
+    use std::hash::xxhash::Xxh64;
+
+    // Test known hash values with seed 0xdeadb33f
+    // Empty string
+    let h = Xxh64::new();
+    let r = h.finish();
+    // The hash of empty with seed 0xdeadb33f + PRIME_5
+    // Just check it's non-zero and consistent
+    if r == 0u64 { return 20i32; }
+
+    // Single byte
+    let h = Xxh64::new();
+    h.write(&[0u8]);
+    let r1 = h.finish();
+
+    let h = Xxh64::new();
+    h.write(&[1u8]);
+    let r2 = h.finish();
+
+    if r1 == r2 { return 21i32; }
+
+    0i32
+}
+
+fn test_xxhash_large() -> i32 {
+    use std::hash::xxhash::Xxh64;
+
+    // Test with data larger than CHUNK_SIZE (32 bytes) to exercise main loop
+    let buf: [u8; 64];
+    let i = 0usize;
+    while i < 64usize {
+        buf[i] = i as u8;
+        i = i + 1usize;
+    }
+
+    let h = Xxh64::new();
+    h.write(buf[..]);
+    let r1 = h.finish();
+
+    // Write in two halves
+    let h = Xxh64::new();
+    h.write(buf[0usize..32usize]);
+    h.write(buf[32usize..64usize]);
+    let r2 = h.finish();
+
+    if r1 != r2 { return 30i32; }
+
+    // Different data should hash differently
+    buf[0] = 255u8;
+    let h = Xxh64::new();
+    h.write(buf[..]);
+    let r3 = h.finish();
+
+    if r1 == r3 { return 31i32; }
+
+    0i32
+}
+
+fn test_rotate_left() -> i32 {
+    let v: u64 = 1u64;
+    if v.rotate_left(1usize) != 2u64 { return 40i32; }
+    if v.rotate_left(63usize) != 0x8000000000000000u64 { return 41i32; }
+    if v.rotate_left(0usize) != 1u64 { return 42i32; }
+
+    let v: u64 = 0x8000000000000000u64;
+    if v.rotate_left(1usize) != 1u64 { return 43i32; }
+
+    0i32
+}
+
+fn test_hash_of() -> i32 {
+    use std::hash::hash_of;
+
+    // hash_of for integers
+    let a: i32 = 42i32;
+    let b: i32 = 42i32;
+    let c: i32 = 43i32;
+
+    let ha = hash_of::<i32>(&a);
+    let hb = hash_of::<i32>(&b);
+    let hc = hash_of::<i32>(&c);
+
+    if ha != hb { return 50i32; }
+    if ha == hc { return 51i32; }
+
+    // hash_of for u64
+    let x: u64 = 100u64;
+    let y: u64 = 100u64;
+    let hx = hash_of::<u64>(&x);
+    let hy = hash_of::<u64>(&y);
+    if hx != hy { return 52i32; }
+
+    // hash_of for bool
+    let t = true;
+    let f = false;
+    let ht = hash_of::<bool>(&t);
+    let hf = hash_of::<bool>(&f);
+    if ht == hf { return 53i32; }
+
+    0i32
+}
+
+fn test_hash_with_seed() -> i32 {
+    use std::hash::xxhash::Xxh64;
+
+    let a: i32 = 42i32;
+    let h1 = {
+        let h = Xxh64::with_seed(0u64);
+        a.hash(&h);
+        h.finish()
+    };
+    let h2 = {
+        let h = Xxh64::with_seed(1u64);
+        a.hash(&h);
+        h.finish()
+    };
+
+    // Different seeds should produce different hashes
+    if h1 == h2 { return 60i32; }
+
+    // Same seed, same hash
+    let h3 = {
+        let h = Xxh64::with_seed(0u64);
+        a.hash(&h);
+        h.finish()
+    };
+    if h1 != h3 { return 61i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_xxhash_basic();
+    if r != 0i32 { return r; }
+
+    let r = test_xxhash_chunks();
+    if r != 0i32 { return r; }
+
+    let r = test_xxhash_known_values();
+    if r != 0i32 { return r; }
+
+    let r = test_xxhash_large();
+    if r != 0i32 { return r; }
+
+    let r = test_rotate_left();
+    if r != 0i32 { return r; }
+
+    let r = test_hash_of();
+    if r != 0i32 { return r; }
+
+    let r = test_hash_with_seed();
+    if r != 0i32 { return r; }
+
+    0i32
+}
