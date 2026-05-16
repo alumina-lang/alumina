@@ -41,17 +41,17 @@ fn test_hashset_extended() -> i32 {
     }
     if count != 3usize { return 14i32; }
 
-    // Test from_slice
+    // sysroot HashSet has from_iter (no from_slice)
     let arr: [i32; 5] = [10i32, 20i32, 30i32, 20i32, 10i32];
-    let s2: HashSet<i32> = HashSet::from_slice(arr[..]);
+    let s2: HashSet<i32> = HashSet::from_iter(&arr[..].iter());
     defer s2.free();
     if s2.len() != 3usize { return 15i32; }
 
-    // Test extend_from_slice
+    // sysroot HashSet has extend (no extend_from_slice)
     let s3: HashSet<i32> = HashSet::new();
     defer s3.free();
     let ext: [i32; 3] = [100i32, 200i32, 300i32];
-    s3.extend_from_slice(ext[..]);
+    s3.extend(&ext[..].iter());
     if s3.len() != 3usize { return 16i32; }
 
     0i32

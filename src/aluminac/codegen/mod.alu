@@ -249,6 +249,21 @@ impl CodegenCtx {
     }
 
     // Convert an IR type to LLVM type
+    // A truly zero-sized LLVM type for void / ZST tuple/struct members.
+    // LLVM forbids `void` as an aggregate member; the old placeholder was
+    // `i8`, which adds 1 byte + alignment padding so the LLVM layout of an
+    // aggregate containing a ZST member disagreed with `compute_type_size`
+    // (which omits ZST members). That mismatch made slice `[T]` index
+    // stride (LLVM-type-derived) differ from `size_of::<T>()` /
+    // `slice::alloc` (compute_type_size-derived) — e.g.
+    // `HashItem<(K,())>` indexed at stride 24 while sized 16 — corrupting
+    // the heap (HashSet bootstrap Bug B). An empty struct `{}` is size 0,
+    // align 1 in LLVM, so the aggregate layout matches compute_type_size
+    // and field indices/offsets stay consistent.
+    fn zst_member_type(self: &mut CodegenCtx) -> LLVMTypeRef {
+        LLVMStructTypeInContext(self.context, null, 0, 0i32)
+    }
+
     fn llvm_type(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
         let key = ty as &void as usize;
         // Safety: check for null/invalid type pointer
@@ -296,9 +311,12 @@ impl CodegenCtx {
             let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(ty.elems().len());
             for i in 0usize..ty.elems().len() {
                 let elem_ty = self.llvm_type(ty.elems()[i]);
-                // LLVM doesn't allow void as struct/tuple member
+                // LLVM doesn't allow void as a tuple member. Use a true
+                // zero-sized type so the tuple's LLVM layout matches
+                // compute_type_size (an i8 placeholder added size+padding,
+                // desyncing slice-index stride from size_of — Bug B).
                 if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
-                    llvm_elems[i] = self.i8_type;
+                    llvm_elems[i] = self.zst_member_type();
                 } else {
                     llvm_elems[i] = elem_ty;
                 }
@@ -410,9 +428,13 @@ impl CodegenCtx {
             let llvm_fields = self.arena.alloc_slice::<LLVMTypeRef>(s.fields.len());
             for i in 0usize..s.fields.len() {
                 let field_ty = self.llvm_type(s.fields[i].ty);
-                // LLVM doesn't allow void as struct member; use i8 placeholder
+                // LLVM doesn't allow void as a struct member. Use a true
+                // zero-sized type (not an i8 placeholder) so the struct's
+                // LLVM layout matches compute_type_size and the offsets of
+                // fields *after* a ZST member don't shift — same Bug B
+                // family as the tuple case above.
                 if LLVMGetTypeKind(field_ty) == LLVMTypeKind::Void {
-                    llvm_fields[i] = self.i8_type;
+                    llvm_fields[i] = self.zst_member_type();
                 } else {
                     llvm_fields[i] = field_ty;
                 }

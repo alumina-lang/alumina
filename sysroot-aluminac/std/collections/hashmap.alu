@@ -1,513 +1,948 @@
-// Open-addressing hash map with linear probing
-// Hashes raw bytes of keys using FNV-1a
-// Correctness relies on == for key comparison; hash is for bucket selection only
+use hash::{Hashable, Hasher, DefaultHash, hash_of};
+use option::{Option, try};
+use cmp::Equatable;
+use iter::Iterator;
 
-struct HashMap<K, V> {
-    _keys: &mut [K],
-    _values: &mut [V],
-    _states: &mut [u8],  // 0=vacant, 1=occupied, 2=tombstone
-    _length: usize,
-    _capacity: usize,
+const INITIAL_SIZE: usize = 32;
+
+
+/// A map (dictionary) implemented as a hash table.
+///
+/// The implementation is a simple linear probing hash table. Keys must satisfy the
+/// [Hashable] and [Equatable] protocols. There are no restriction on the value type.
+///
+/// ## Example
+/// ```
+/// use std::collections::HashMap;
+///
+/// let map = HashMap::new::<i32, i32>();
+/// defer map.free();
+///
+/// map.insert(1, 2);
+/// map.insert(2, 4);
+/// map.insert(3, 5);
+///
+/// assert!(map.get(&1) == Option::some(2));
+/// assert!(map.get(&2) == Option::some(4));
+/// assert!(map.get(&3) == Option::some(5));
+/// assert!(map.get(&4) == Option::none());
+/// ```
+struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
+    _buckets: &mut [HashItem<(K, V)>],
+    _length: usize
 }
 
-impl HashMap<K, V> {
-    /// Create an empty hash map.
-    fn new() -> HashMap<K, V> {
-        HashMap::<K, V> {
-            _keys: std::mem::slice_empty::<K>(),
-            _values: std::mem::slice_empty::<V>(),
-            _states: std::mem::slice_empty::<u8>(),
-            _length: 0usize,
-            _capacity: 0usize,
+impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
+    use mem::slice;
+
+    /// Creates an empty hash map
+    ///
+    /// Will not allocate until the first element is inserted.
+    fn new() -> HashMap<K, V, H> {
+        HashMap::<K, V, H> {
+            _buckets: slice::empty(),
+            _length: 0,
         }
     }
 
-    /// Create a hash map with pre-allocated capacity for at least `capacity` elements.
-    fn with_capacity(capacity: usize) -> HashMap<K, V> {
-        if capacity == 0usize {
-            return HashMap::new::<K, V>();
-        }
-        // Allocate enough buckets so load factor stays below 0.75
-        let buckets = capacity * 4usize / 3usize + 1usize;
-        if buckets < 16usize {
-            buckets = 16usize;
-        }
-        let map = HashMap::<K, V> {
-            _keys: std::mem::slice_alloc::<K>(buckets),
-            _values: std::mem::slice_alloc::<V>(buckets),
-            _states: std::mem::slice_alloc::<u8>(buckets),
-            _length: 0usize,
-            _capacity: buckets,
-        };
-        let i = 0usize;
-        while i < buckets {
-            map._states[i] = 0u8;
-            i = i + 1usize;
-        }
-        map
+    /// Creates an empty hash map that can store up to `capacity` items without
+    /// reallocating.
+    fn with_capacity(capacity: usize) -> HashMap<K, V, H> {
+        with_size(capacity * 4 / 3 + 1)
     }
 
-    /// Return the number of elements in the map.
-    fn len(self: &HashMap<K, V>) -> usize {
+    /// Creates a hashmap with a specific number of buckets.
+    ///
+    /// As [HashMap] uses amortized growth strategy, prefer to use [with_capacity] unless
+    /// you want to strictly control the size of the underlying array.
+    fn with_size(size: usize) -> HashMap<K, V, H> {
+        HashMap::<K, V, H> {
+            _buckets: if size != 0 {
+                slice::alloc_zeroed::<HashItem<(K, V)>>(size)
+            } else {
+                slice::empty()
+            },
+            _length: 0,
+        }
+    }
+
+    /// Reserves space for at least `additional` more elements to be inserted without
+    /// reallocating.
+    ///
+    /// This follows the amortized growth strategy.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::new();
+    /// defer map.free();
+    ///
+    /// map.reserve(100);
+    ///
+    /// map.insert(1, 2);
+    /// let ptr = map.get_ref(&1).unwrap();
+    ///
+    /// for i in 1..100 {
+    ///     map.insert(i, i * 2);
+    /// }
+    ///
+    /// /// The first element is still at the same position.
+    /// assert_eq!(ptr, map.get_ref(&1).unwrap());
+    /// ```
+    fn reserve(self: &mut HashMap<K, V, H>, additional: usize) -> bool {
+        // We keep the load factor below 0.75.
+        let new_length = self._length + additional;
+        if new_length * 4 > self._buckets.len() * 3 {
+            self.rehash(cmp::max(self._buckets.len() * 2, new_length * 2));
+            return true;
+        }
+        return false;
+    }
+
+    /// Resizes the underlying array to exactly the given `new_capacity`.
+    ///
+    /// Note that this could lead to poor performance if the resulting load factor
+    /// is close to 1. Prefer to use [reserve] to grow the map and [shrink_to_fit] to
+    /// shrink it.
+    ///
+    /// Panics if the new capacity is lower than the current size.
+    ///
+    /// ## Example
+    /// ```panics
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::new();
+    /// defer map.free();
+    ///
+    /// map.insert(1, 2);
+    /// map.insert(2, 4);
+    /// map.insert(3, 5);
+    ///
+    /// map.rehash(1); // panics
+    /// ```
+    #[cold]
+    #[inline(never)]
+    fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
+        assert!(self._length <= new_capacity);
+
+        let new_map = with_size::<K, V, H>(new_capacity);
+        for item in self {
+            new_map._insert(item, false);
+        }
+
+        self.free();
+        self._buckets = new_map._buckets;
+    }
+
+    /// Reduces the size of underlying storage to fit the contained elements if needed.
+    ///
+    /// Call this method after a lot of elements have been removed to shrink the
+    /// underlying storage. This can also improve map performance as it removes the
+    /// tombstones.
+    ///
+    /// This method keeps the load factor below 0.75 after shrinking.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::from_iter(
+    ///     &(0..1000)
+    ///         .map(|i: i32| -> (i32, i32) { (i, i * 2) })
+    /// );
+    /// defer map.free();
+    ///
+    /// map.retain(|k: &i32, _v: &i32| -> bool { *k % 10 == 0 });
+    /// map.shrink_to_fit(); // shrink the unused space
+    /// ```
+    fn shrink_to_fit(self: &mut HashMap<K, V, H>) {
+        if self._length == 0 {
+            self.move();
+        } else if self._length * 2 > INITIAL_SIZE {
+            self.rehash(self._length * 2);
+        }
+    }
+
+    /// Inserts a value into the map under a given key.
+    fn insert(self: &mut HashMap<K, V, H>, key: K, value: V) -> Option<V> {
+        if self._buckets.len() == 0 {
+            self.rehash(INITIAL_SIZE);
+        }
+
+        self._insert((key, value), true)
+    }
+
+    /// Retreives the value by given key.
+    fn get(self: &HashMap<K, V, H>, key: &K) -> Option<V> {
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        Option::some(self._get_slot(hash_of::<K, H>(key), comparer)?.item.1)
+    }
+
+    /// Retreives a pointer to the value by given key.
+    fn get_ref(self: &HashMap<K, V, H>, key: &K) -> Option<&V> {
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        Option::some(&self._get_slot(hash_of::<K, H>(key), comparer)?.item.1 as &V)
+    }
+
+    /// Retreives a mutable pointer to the value by given key.
+    fn get_mut(self: &mut HashMap<K, V, H>, key: &K) -> Option<&mut V> {
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        Option::some(&self._get_slot(hash_of::<K, H>(key), comparer)?.item.1)
+    }
+
+    /// Removes the element from the map.
+    ///
+    /// If the element with the given key was present in the map, the corresponding value is
+    /// returned. Otherwise, `Option::none()` is returned.
+    fn remove(self: &mut HashMap<K, V, H>, key: &K) -> Option<V> {
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        let item = self._get_slot(hash_of::<K, H>(key), comparer)?;
+        self._length -= 1;
+        item.state = State::Deleted;
+
+        // We leave the tombstones in the map and do not clean them up, which will lead to sub-optimal
+        // performance when a lot of items are deleted. Call shrink_to_fit() to get rid of them.
+
+        Option::some(item.item.1)
+    }
+
+    /// Returns the number of elements in the map.
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::new();
+    /// assert_eq!(map.len(), 0);
+    ///
+    /// map.insert(1, 2);
+    /// assert_eq!(map.len(), 1);
+    /// ```
+    #[inline]
+    fn len(self: &HashMap<K, V, H>) -> usize {
         self._length
     }
 
-    /// Return the number of buckets in the underlying storage.
-    fn capacity(self: &HashMap<K, V>) -> usize {
-        self._capacity
+    /// Returns `true` if the map is empty, `false` otherwise.
+    #[inline]
+    fn is_empty(self: &HashMap<K, V, H>) -> bool {
+        self._length == 0
     }
 
-    /// Returns `true` if the map contains no elements.
-    fn is_empty(self: &HashMap<K, V>) -> bool {
-        self._length == 0usize
+    /// Removes all elements from the array.
+    ///
+    /// This does not shrink the underlying array after clearing. If this is desired, call
+    /// [shrink_to_fit] afterwards.
+    fn clear(self: &mut HashMap<K, V, H>) {
+        for i in (0usize..self._buckets.len()) {
+            self._buckets[i].state = State::Vacant;
+        }
+        self._length = 0;
     }
 
-    fn _keys_equal(a: &K, b: &K) -> bool {
-        when *a is &[u8] {
-            // Slice key (&[u8]): compare pointed-to content bytes
-            let raw_a = a as &K as &usize;
-            let ptr_a = *raw_a as &u8;
-            let len_a = *(raw_a + 1);
-            let raw_b = b as &K as &usize;
-            let ptr_b = *raw_b as &u8;
-            let len_b = *(raw_b + 1);
-            if len_a != len_b {
-                return false;
-            }
-            let i = 0usize;
-            while i < len_a {
-                if *(ptr_a + i) != *(ptr_b + i) {
-                    return false;
-                }
-                i = i + 1usize;
-            }
-            return true;
-        } else {
-            return *a == *b;
-        }
-    }
-
-    fn _hash_key(key: &K) -> usize {
-        let h = 14695981039346656037usize; // FNV offset basis
-
-        when *key is &[u8] {
-            // Slice key (&[u8]): hash the pointed-to content bytes
-            // Fat pointer layout is {ptr: &u8, len: usize}
-            let raw = key as &K as &usize;
-            let ptr = *raw as &u8;
-            let len = *(raw + 1);
-            let i = 0usize;
-            while i < len {
-                let b = *(ptr + i) as usize;
-                h = h ^ b;
-                h = h * 1099511628211usize;
-                i = i + 1usize;
-            }
-        } else {
-            // Scalar type (usize, u64, etc.): hash raw bytes of value
-            let bytes = key as &K as &u8;
-            let key_size = std::mem::size_of::<K>();
-            let i = 0usize;
-            while i < key_size {
-                let b = *(bytes + i) as usize;
-                h = h ^ b;
-                h = h * 1099511628211usize;
-                i = i + 1usize;
-            }
-        }
-
-        h
-    }
-
-    fn _find_slot(self: &HashMap<K, V>, key: &K) -> usize {
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                return slot;
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return slot;
-            }
-            // state==2 (tombstone) or occupied with different key: continue probing
-            i = i + 1usize;
-        }
-        // Should never reach here if load factor < 1
-        idx
-    }
-
-    fn _find_slot_for_insert(self: &HashMap<K, V>, key: &K) -> usize {
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let first_tombstone = self._capacity; // sentinel: not found
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                // Empty slot: key doesn't exist. Use tombstone if we found one.
-                if first_tombstone < self._capacity {
-                    return first_tombstone;
-                }
-                return slot;
-            }
-            if self._states[slot] == 2u8 && first_tombstone == self._capacity {
-                first_tombstone = slot;
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return slot; // Key exists, return its slot for overwrite
-            }
-            i = i + 1usize;
-        }
-        if first_tombstone < self._capacity {
-            return first_tombstone;
-        }
-        idx
-    }
-
-    fn _grow(self: &mut HashMap<K, V>) {
-        let new_cap = if self._capacity == 0usize { 16usize } else { self._capacity * 2usize };
-        self._rehash(new_cap);
-    }
-
-    fn _rehash(self: &mut HashMap<K, V>, new_cap: usize) {
-        let old_keys = self._keys;
-        let old_values = self._values;
-        let old_states = self._states;
-        let old_cap = self._capacity;
-
-        self._keys = std::mem::slice_alloc::<K>(new_cap);
-        self._values = std::mem::slice_alloc::<V>(new_cap);
-        self._states = std::mem::slice_alloc::<u8>(new_cap);
-        self._capacity = new_cap;
-        self._length = 0usize;
-
-        // Zero new states
-        let i = 0usize;
-        while i < new_cap {
-            self._states[i] = 0u8;
-            i = i + 1usize;
-        }
-
-        // Re-insert existing entries
-        let j = 0usize;
-        while j < old_cap {
-            if old_states[j] == 1u8 {
-                self.insert(old_keys[j], old_values[j]);
-            }
-            j = j + 1usize;
-        }
-
-        if old_cap > 0usize {
-            std::mem::slice_free::<K>(old_keys);
-            std::mem::slice_free::<V>(old_values);
-            std::mem::slice_free::<u8>(old_states);
-        }
-    }
-
-    /// Reserve capacity for at least `additional` more elements.
-    fn reserve(self: &mut HashMap<K, V>, additional: usize) {
-        let needed = self._length + additional;
-        // Keep load factor below 0.75
-        if needed * 4usize > self._capacity * 3usize {
-            let new_cap = std::cmp::max(self._capacity * 2usize, needed * 4usize / 3usize + 1usize);
-            if new_cap < 16usize {
-                new_cap = 16usize;
-            }
-            self._rehash(new_cap);
-        }
-    }
-
-    /// Insert a key-value pair. If the key already exists, the value is updated
-    /// and the old value is returned.
-    fn insert(self: &mut HashMap<K, V>, key: K, value: V) -> Option<V> {
-        // Grow if load factor > 0.75
-        if self._capacity == 0usize || (self._length + 1usize) * 4usize > self._capacity * 3usize {
-            self._grow();
-        }
-
-        let slot = self._find_slot_for_insert(&key);
-        if self._states[slot] == 1u8 {
-            // Key exists, replace value
-            let old = self._values[slot];
-            self._values[slot] = value;
-            return Option::some(old);
-        }
-        self._length = self._length + 1usize;
-        self._keys[slot] = key;
-        self._values[slot] = value;
-        self._states[slot] = 1u8;
-        Option::none()
-    }
-
-    /// Get a copy of the value associated with the key.
-    fn get(self: &HashMap<K, V>, key: &K) -> Option<V> {
-        if self._capacity == 0usize {
-            return Option::none();
-        }
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                return Option::none();
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return Option::some(self._values[slot]);
-            }
-            i = i + 1usize;
-        }
-        Option::none()
-    }
-
-    /// Get a reference to the value associated with the key.
-    fn get_ref(self: &HashMap<K, V>, key: &K) -> Option<&V> {
-        if self._capacity == 0usize {
-            return Option::none();
-        }
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                return Option::none();
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return Option::some(&self._values[slot]);
-            }
-            i = i + 1usize;
-        }
-        Option::none()
-    }
-
-    /// Get a mutable reference to the value associated with the key.
-    fn get_mut(self: &mut HashMap<K, V>, key: &K) -> Option<&mut V> {
-        if self._capacity == 0usize {
-            return Option::none();
-        }
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                return Option::none();
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return Option::some(&self._values[slot]);
-            }
-            i = i + 1usize;
-        }
-        Option::none()
-    }
-
-    /// Returns true if the map contains the given key.
-    fn contains_key(self: &HashMap<K, V>, key: &K) -> bool {
-        if self._capacity == 0usize {
-            return false;
-        }
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                return false;
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                return true;
-            }
-            i = i + 1usize;
-        }
-        false
-    }
-
-    /// Remove the entry with the given key, returning the value if it existed.
-    fn remove(self: &mut HashMap<K, V>, key: &K) -> Option<V> {
-        if self._capacity == 0usize {
-            return Option::none();
-        }
-        let h = HashMap::<K, V>::_hash_key(key);
-        let idx = h % self._capacity;
-        let i = 0usize;
-        while i < self._capacity {
-            let slot = (idx + i) % self._capacity;
-            if self._states[slot] == 0u8 {
-                return Option::none();
-            }
-            if self._states[slot] == 1u8 && HashMap::<K, V>::_keys_equal(&self._keys[slot], key) {
-                self._states[slot] = 2u8; // tombstone
-                self._length = self._length - 1usize;
-                return Option::some(self._values[slot]);
-            }
-            i = i + 1usize;
-        }
-        Option::none()
-    }
-
-    /// Remove all entries from the map without releasing memory.
-    fn clear(self: &mut HashMap<K, V>) {
-        let i = 0usize;
-        while i < self._capacity {
-            self._states[i] = 0u8;
-            i = i + 1usize;
-        }
-        self._length = 0usize;
-    }
-
-    /// Remove entries that don't match the predicate.
-    fn retain<F: Fn(&K, &V) -> bool>(self: &mut HashMap<K, V>, func: F) {
-        let deleted = 0usize;
-        let i = 0usize;
-        while i < self._capacity {
-            if self._states[i] == 1u8 {
-                if !func(&self._keys[i], &self._values[i]) {
-                    self._states[i] = 2u8;
-                    deleted = deleted + 1usize;
-                }
-            }
-            i = i + 1usize;
-        }
-        self._length = self._length - deleted;
-    }
-
-    /// Return an iterator over the map's key-value pairs.
-    fn iter(self: &HashMap<K, V>) -> HashMapIterator<K, V> {
+    /// @ iter::IterableRef::iter_ref
+    fn iter(self: &HashMap<K, V, H>) -> HashMapIterator<K, V> {
         HashMapIterator::<K, V> {
-            _map: self,
-            _index: 0usize,
+            inner: self._buckets.iter_ref(),
+            remaining: self._length
         }
     }
 
-    /// Return an iterator over the map's keys.
-    fn keys(self: &HashMap<K, V>) -> HashMapKeyIterator<K, V> {
-        HashMapKeyIterator::<K, V> {
-            _map: self,
-            _index: 0usize,
+    /// @ iter::Iterable::iter
+    fn iter_ref(self: &HashMap<K, V, H>) -> HashMapRefIterator<K, V> {
+        HashMapRefIterator::<K, V> {
+            inner: self._buckets.iter_ref(),
+            remaining: self._length
         }
     }
 
-    /// Return an iterator over the map's values.
-    fn values(self: &HashMap<K, V>) -> HashMapValueIterator<K, V> {
-        HashMapValueIterator::<K, V> {
-            _map: self,
-            _index: 0usize,
+    /// @ iter::IterableMut::iter_mut
+    fn iter_mut(self: &mut HashMap<K, V, H>) -> HashMapMutIterator<K, V> {
+        HashMapMutIterator::<K, V> {
+            inner: self._buckets.iter_mut(),
+            remaining: self._length
         }
     }
 
-    /// Get the value for a key, inserting a default value if the key doesn't exist.
-    fn get_or_insert(self: &mut HashMap<K, V>, key: K, default: V) -> &mut V {
-        // Grow if needed
-        if self._capacity == 0usize || (self._length + 1usize) * 4usize > self._capacity * 3usize {
-            self._grow();
-        }
+    fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
+        let initial_index = (hash_of::<K, H>(&item.0) as usize) % self._buckets.len();
+        let index = initial_index;
+        let first_tombstone = Option::none::<usize>();
 
-        let slot = self._find_slot_for_insert(&key);
-        if self._states[slot] != 1u8 {
-            self._keys[slot] = key;
-            self._values[slot] = default;
-            self._states[slot] = 1u8;
-            self._length = self._length + 1usize;
+        loop {
+            switch self._buckets[index].state {
+                State::Vacant => {
+                    if grow && self.reserve(1) {
+                        return self._insert(item, false);
+                    }
+
+                    index = first_tombstone.unwrap_or(index);
+                    self._length += 1;
+                    self._buckets[index].state = State::Occupied;
+                    self._buckets[index].item = item;
+                    return Option::none();
+                }
+                State::Occupied => {
+                    if self._buckets[index].item.0 == item.0 {
+                        return Option::some(std::mem::replace(&self._buckets[index].item.1, item.1));
+                    }
+                }
+                State::Deleted => {
+                    if first_tombstone.is_none() {
+                        first_tombstone = Option::some(index);
+                    }
+                }
+            }
+            index = (index + 1) % self._buckets.len();
+            if index == initial_index {
+                assert!(grow);
+
+                // We wrapped around because of deleted items, we don't
+                // need to grow the hashmap, but we need to get rid of the
+                // tombstones by rehashing.
+                self.rehash(self._buckets.len());
+                return self._insert(item, false);
+            }
         }
-        &self._values[slot]
     }
 
-    /// Move the map's contents, leaving `self` empty.
-    fn move(self: &mut HashMap<K, V>) -> HashMap<K, V> {
+    fn _get_slot<Eq: Fn(&K) -> bool>(self: &HashMap<K, V, H>, hash: u64, equals: Eq) -> Option<&mut HashItem<(K, V)>> {
+        if self._length == 0 {
+            return Option::none();
+        }
+
+        let initial_index = (hash as usize) % self._buckets.len();
+        let index = initial_index;
+
+        loop {
+            switch self._buckets[index].state {
+                State::Vacant => {
+                    return Option::none();
+                }
+                State::Occupied => {
+                    if equals(&self._buckets[index].item.0) {
+                        return Option::some(&self._buckets[index]);
+                    }
+                }
+            }
+            index = (index + 1) % self._buckets.len();
+            if index == initial_index {
+                // We can wrap around if all the buckets are Occupied or Deleted
+                return Option::none();
+            }
+        }
+    }
+
+    /// Removes the elements not mathing the given predicate.
+    ///
+    /// This is more efficient than calling [remove] for each element.
+    ///
+    /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
+    /// is desired.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map = HashMap::new::<i32, i32>();
+    /// defer map.free();
+    ///
+    /// map.insert(1, 1);
+    /// map.insert(2, 100);
+    /// map.insert(3, 100);
+    /// map.insert(4, 4);
+    ///
+    /// map.retain(|k: &i32, v: &i32| -> bool { *k == *v });
+    ///
+    /// assert_eq!(map.get(&1), Option::some(1));
+    /// assert_eq!(map.get(&2), Option::none());
+    /// assert_eq!(map.get(&3), Option::none());
+    /// assert_eq!(map.get(&4), Option::some(4));
+    /// ```
+    fn retain<F: Fn(&K, &V) -> bool>(self: &mut HashMap<K, V, H>, func: F) {
+        let deleted = 0usize;
+        for i in (0usize..self._buckets.len()) {
+            if self._buckets[i].state == State::Occupied {
+                if !func(&self._buckets[i].item.0, &self._buckets[i].item.1) {
+                    self._buckets[i].state = State::Deleted;
+                    deleted += 1;
+                }
+            }
+        }
+        self._length -= deleted;
+    }
+
+    /// @ std::mem::Freeable::free
+    fn free(self: &mut HashMap<K, V, H>) {
+        if self._buckets.len() > 0 {
+            self._buckets.free();
+        }
+    }
+
+    /// Helper for collections that own heap-allocated objects. This is used to
+    /// be able to do `defer col.free_all()` without much boilerplate.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    /// use std::string::StringBuf;
+    /// use std::fmt::format;
+    ///
+    /// let v: HashMap<StringBuf, StringBuf> = HashMap::new();
+    /// defer v.free_all();
+    ///
+    /// for i in 1..10 {
+    ///     v.insert(
+    ///         "{} + {}".format!(i, i).unwrap(),
+    ///         "{}".format!(i + i).unwrap()
+    ///     );
+    /// }
+    /// ```
+    fn free_all(self: &mut HashMap<K, V, H>) {
+        use typing::matches;
+        use mem::Freeable;
+
+        when matches::<K, Freeable<K>>() || matches::<V, Freeable<V>>() {
+            for (key, value) in self {
+                when matches::<K, Freeable<K>>() {
+                    key.free();
+                }
+                when matches::<V, Freeable<V>>() {
+                    value.free();
+                }
+            }
+        }
+
+        self.free();
+    }
+
+    /// @ std::mem::Movable::move
+    fn move(self: &mut HashMap<K, V, H>) -> HashMap<K, V, H> {
         let ret = *self;
-        self._keys = std::mem::slice_empty::<K>();
-        self._values = std::mem::slice_empty::<V>();
-        self._states = std::mem::slice_empty::<u8>();
-        self._length = 0usize;
-        self._capacity = 0usize;
+        self._buckets = mem::slice::empty();
+        self._length = 0;
         ret
     }
 
-    /// Clone the map, copying all entries.
-    fn clone(self: &HashMap<K, V>) -> HashMap<K, V> {
-        let map = HashMap::with_capacity::<K, V>(self._length);
-        let i = 0usize;
-        while i < self._capacity {
-            if self._states[i] == 1u8 {
-                map.insert(self._keys[i], self._values[i]);
-            }
-            i = i + 1usize;
+    /// @ mem::Clonable::clone
+    fn clone(self: &HashMap<K, V, H>) -> HashMap<K, V, H> {
+        let ret = HashMap::with_capacity::<K, V, H>(self._length);
+        for item in self {
+            ret.insert(item.0, item.1);
         }
+        ret
+    }
+}
+
+impl HashMap<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, V, H: Hasher<H> = DefaultHash> {
+    /// Retreives the value by given borrowing of a key.
+    fn get_borrowed(self: &HashMap<K, V, H>, key: B) -> Option<V> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        Option::some(self._get_slot(hash_of::<B, H>(&key), comparer)?.item.1)
+    }
+
+    /// Retreives a pointer to the value by given borrowing of a key.
+    fn get_borrowed_ref(self: &HashMap<K, V, H>, key: B) -> Option<&V> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        Option::some(&self._get_slot(hash_of::<B, H>(&key), comparer)?.item.1 as &V)
+    }
+
+    /// Retreives a mutable pointer to the value by given key.
+    fn get_borrowed_mut(self: &mut HashMap<K, V, H>, key: B) -> Option<&mut V> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        Option::some(&self._get_slot(hash_of::<B, H>(&key), comparer)?.item.1)
+    }
+
+    /// Removes the element from the map by given borrowing of a key.
+    ///
+    /// If the element with the given key was present in the map, the corresponding value is
+    /// returned along with the key. Otherwise, `Option::none()` is returned.
+    fn remove_borrowed(self: &mut HashMap<K, V, H>, key: B) -> Option<(K, V)> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        let item = self._get_slot(hash_of::<B, H>(&key), comparer)?;
+        self._length -= 1;
+        item.state = State::Deleted;
+
+        // We leave the tombstones in the map and do not clean them up, which will lead to sub-optimal
+        // performance when a lot of items are deleted. Call shrink_to_fit() to get rid of them.
+
+        Option::some((item.item.0, item.item.1))
+    }
+}
+
+impl HashMap<
+    K: Hashable<K, H> + Equatable<K>,
+    V,
+    I: Iterator<I, (K, V)>,
+    H: Hasher<H> = DefaultHash
+> {
+    /// Creates a hash map from an iterator of key-value pairs
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    /// let map: HashMap<i32, i32> = HashMap::from_iter(
+    ///     &[(1, 2), (2, 4), (3, 5)].iter()
+    /// );
+    /// defer map.free();
+    ///
+    /// assert!(map.len() == 3);
+    /// assert!(map.get(&1) == Option::some(2));
+    /// ```
+    fn from_iter(iter: &mut I) -> HashMap<K, V, H> {
+        let map = HashMap::new::<K, V, H>();
+        map.extend(iter);
         map
     }
 
-    /// Free the map's underlying storage.
-    fn free(self: &mut HashMap<K, V>) {
-        if self._capacity > 0usize {
-            std::mem::slice_free::<K>(self._keys);
-            std::mem::slice_free::<V>(self._values);
-            std::mem::slice_free::<u8>(self._states);
+    /// Inserts additional elements into the map from an iterator
+    /// of key-value pairs.
+    fn extend(self: &mut HashMap<K, V, H>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0));
+
+        if self._buckets.len() == 0 {
+            self.rehash(INITIAL_SIZE);
         }
-        self._keys = std::mem::slice_empty::<K>();
-        self._values = std::mem::slice_empty::<V>();
-        self._states = std::mem::slice_empty::<u8>();
-        self._length = 0usize;
-        self._capacity = 0usize;
+
+        for item in iter {
+            self._insert(item, true);
+        }
     }
+}
+
+
+enum State {
+    Vacant = 0u8,
+    Occupied = 1,
+    Deleted = 2,
+}
+
+struct HashItem<T> {
+    state: State,
+    item: T
+}
+
+struct HashMapRefIterator<K, V> {
+    inner: mem::SliceRefIterator<&HashItem<(K, V)>>,
+    remaining: usize
+}
+
+impl HashMapRefIterator<K, V> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut HashMapRefIterator<K, V>) -> Option<(&K, &V)> {
+        use option::try;
+        loop {
+            let entry = self.inner.next()?;
+            if entry.state == State::Occupied {
+                self.remaining -= 1;
+                return Option::some((&entry.item.0, &entry.item.1));
+            }
+        }
+        Option::none()
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    fn next_back(self: &mut HashMapRefIterator<K, V>) -> Option<(&K, &V)> {
+        use option::try;
+        loop {
+            let entry = self.inner.next_back()?;
+            if entry.state == State::Occupied {
+                self.remaining -= 1;
+                return Option::some((&entry.item.0, &entry.item.1));
+            }
+        }
+        Option::none()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashMapRefIterator<K, V>) -> Option<usize> {
+        Option::some(self.remaining)
+    }
+
+    mixin iter::Iterator<HashMapRefIterator<K, V>, (&K, &V)>;
+    mixin iter::IteratorExt<HashMapRefIterator<K, V>, (&K, &V)>;
+    mixin iter::DoubleEndedIterator<HashMapRefIterator<K, V>, (&K, &V)>;
+    mixin iter::DoubleEndedIteratorExt<HashMapRefIterator<K, V>, (&K, &V)>;
+}
+
+struct HashMapMutIterator<K, V> {
+    inner: mem::SliceRefIterator<&mut HashItem<(K, V)>>,
+    remaining: usize
+}
+
+impl HashMapMutIterator<K, V> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut HashMapMutIterator<K, V>) -> Option<(&K, &mut V)> {
+        use option::try;
+        loop {
+            let entry = self.inner.next()?;
+            if entry.state == State::Occupied {
+                self.remaining -= 1;
+                return Option::some((&entry.item.0 as &K, &entry.item.1));
+            }
+        }
+        Option::none()
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    fn next_back(self: &mut HashMapMutIterator<K, V>) -> Option<(&K, &mut V)> {
+        use option::try;
+        loop {
+            let entry = self.inner.next_back()?;
+            if entry.state == State::Occupied {
+                self.remaining -= 1;
+                return Option::some((&entry.item.0 as &K, &entry.item.1));
+            }
+        }
+        Option::none()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashMapMutIterator<K, V>) -> Option<usize> {
+        Option::some(self.remaining)
+    }
+
+    mixin iter::Iterator<HashMapMutIterator<K, V>, (&K, &mut V)>;
+    mixin iter::IteratorExt<HashMapMutIterator<K, V>, (&K, &mut V)>;
+    mixin iter::DoubleEndedIterator<HashMapMutIterator<K, V>, (&K, &mut V)>;
+    mixin iter::DoubleEndedIteratorExt<HashMapMutIterator<K, V>, (&K, &mut V)>;
 }
 
 struct HashMapIterator<K, V> {
-    _map: &HashMap<K, V>,
-    _index: usize,
+    inner: mem::SliceRefIterator<&HashItem<(K, V)>>,
+    remaining: usize,
 }
 
 impl HashMapIterator<K, V> {
+    /// @ iter::Iterator::next
     fn next(self: &mut HashMapIterator<K, V>) -> Option<(K, V)> {
-        while self._index < self._map._capacity {
-            if self._map._states[self._index] == 1u8 {
-                let k = self._map._keys[self._index];
-                let v = self._map._values[self._index];
-                self._index = self._index + 1usize;
-                return Option::some((k, v));
+        use option::try;
+        loop {
+            let entry = self.inner.next()?;
+            if entry.state == State::Occupied {
+                self.remaining -= 1;
+                return Option::some(entry.item);
             }
-            self._index = self._index + 1usize;
         }
         Option::none()
     }
-}
 
-struct HashMapKeyIterator<K, V> {
-    _map: &HashMap<K, V>,
-    _index: usize,
-}
-
-impl HashMapKeyIterator<K, V> {
-    fn next(self: &mut HashMapKeyIterator<K, V>) -> Option<K> {
-        while self._index < self._map._capacity {
-            if self._map._states[self._index] == 1u8 {
-                let k = self._map._keys[self._index];
-                self._index = self._index + 1usize;
-                return Option::some(k);
+    /// @ iter::DoubleEndedIterator::next_back
+    fn next_back(self: &mut HashMapIterator<K, V>) -> Option<(K, V)> {
+        use option::try;
+        loop {
+            let entry = self.inner.next_back()?;
+            if entry.state == State::Occupied {
+                self.remaining -= 1;
+                return Option::some(entry.item);
             }
-            self._index = self._index + 1usize;
         }
         Option::none()
     }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashMapIterator<K, V>) -> Option<usize> {
+        Option::some(self.remaining)
+    }
+
+    mixin iter::Iterator<HashMapIterator<K, V>, (K, V)>;
+    mixin iter::IteratorExt<HashMapIterator<K, V>, (K, V)>;
+    mixin iter::DoubleEndedIterator<HashMapIterator<K, V>, (K, V)>;
+    mixin iter::DoubleEndedIteratorExt<HashMapIterator<K, V>, (K, V)>;
 }
 
-struct HashMapValueIterator<K, V> {
-    _map: &HashMap<K, V>,
-    _index: usize,
-}
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    struct DummyHasher {
+        state: u64
+    }
 
-impl HashMapValueIterator<K, V> {
-    fn next(self: &mut HashMapValueIterator<K, V>) -> Option<V> {
-        while self._index < self._map._capacity {
-            if self._map._states[self._index] == 1u8 {
-                let v = self._map._values[self._index];
-                self._index = self._index + 1usize;
-                return Option::some(v);
+    impl DummyHasher {
+        fn new() -> DummyHasher {
+            DummyHasher {
+                state: 0
             }
-            self._index = self._index + 1usize;
         }
-        Option::none()
+
+        fn write(self: &mut DummyHasher, val: &[u8]) {
+            val[..cmp::min(val.len(), mem::size_of::<u64>())]
+                .copy_to(&self.state as &mut u8);
+        }
+
+        fn finish(self: &mut DummyHasher) -> u64 {
+            self.state
+        }
+    }
+
+    #[test]
+    fn test_hashmap_new() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        assert!(map.len() == 0);
+    }
+
+    #[test]
+    fn test_hashmap_insert() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        assert!(map.insert(1, 2) == Option::none());
+        assert!(map.insert(1, 3) == Option::some(2));
+        assert!(map.insert(2, 4) == Option::none());
+        assert!(map.insert(3, 5) == Option::none());
+
+        assert!(map.len() == 3);
+    }
+
+    #[test]
+    fn test_hashmap_get() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        assert!(map.get(&1) == Option::some(2));
+        assert!(map.get(&2) == Option::some(4));
+        assert!(map.get(&3) == Option::some(5));
+        assert!(map.get(&4) == Option::none());
+    }
+
+    #[test]
+    fn test_hashmap_get_mut() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        *map.get_mut(&1).unwrap() = 3;
+
+        assert!(map.get(&1) == Option::some(3));
+    }
+
+    #[test]
+    fn test_hashmap_remove() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        assert!(map.remove(&1) == Option::some(2));
+        assert!(map.remove(&2) == Option::some(4));
+        assert!(map.remove(&3) == Option::some(5));
+        assert!(map.remove(&4) == Option::none());
+    }
+
+    #[test]
+    fn test_hashmap_len() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        assert!(map.len() == 3);
+    }
+
+    #[test]
+    fn test_hashmap_empty() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_hashmap_clear() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        map.clear();
+
+        assert!(map.len() == 0);
+    }
+
+    #[test]
+    fn test_hashmap_iter() {
+        let map = HashMap::new::<i32, i32, DummyHasher>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        let iter = map.iter();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        assert!(iter.next() == Option::some((1, 2)));
+        assert!(iter.next() == Option::some((2, 4)));
+        assert!(iter.next() == Option::some((3, 5)));
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert!(iter.next() == Option::none());
+
+        let iter = map.iter().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        assert!(iter.next() == Option::some((3, 5)));
+        assert!(iter.next() == Option::some((2, 4)));
+        assert!(iter.next() == Option::some((1, 2)));
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert!(iter.next() == Option::none());
+    }
+
+    #[test]
+    fn test_hashmap_iter_ref() {
+        let map = HashMap::new::<i32, i32, DummyHasher>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        let iter = map.iter_ref();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 1);
+        assert_eq!(*v.1, 2);
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 2);
+        assert_eq!(*v.1, 4);
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 3);
+        assert_eq!(*v.1, 5);
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+
+        assert!(iter.next().is_none());
+
+        let iter = map.iter_ref().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 3);
+        assert_eq!(*v.1, 5);
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 2);
+        assert_eq!(*v.1, 4);
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 1);
+        assert_eq!(*v.1, 2);
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_hashmap_iter_mut() {
+        let map = HashMap::new::<i32, i32, DummyHasher>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        let iter = map.iter_mut();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 1);
+        assert_eq!(*v.1, 2);
+        *v.1 = 100;
+
+        let iter = map.iter_mut().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 3);
+        assert_eq!(*v.1, 5);
+        *v.1 = 200;
+
+        assert_eq!(map.get(&1).unwrap(), 100);
+        assert_eq!(map.get(&3).unwrap(), 200);
+    }
+
+    #[test]
+    fn test_reserve() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.reserve(100);
+
+        let ptr = &map._buckets[0];
+        for i in 0..100 {
+            map.insert(i, i);
+        }
+
+        // Did not reallocate
+        assert_eq!(&map._buckets[0], ptr);
+    }
+
+    #[test]
+    fn test_hashmap_from_iter() {
+        let map: HashMap<i32, i32> = HashMap::from_iter(
+            &[(1, 2), (2, 4), (3, 5)].iter()
+        );
+        defer map.free();
+
+        assert!(map.len() == 3);
+    }
+
+    #[test]
+    fn test_hashmap_extend() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        map.extend(
+            &[(4, 6), (5, 7), (6, 8)].iter()
+        );
+
+        assert!(map.len() == 6);
+    }
+
+    #[test]
+    fn test_hashmap_move() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        let map2 = map.move();
+        defer map2.free();
+
+        assert!(map.len() == 0);
+        assert!(map2.len() == 3);
+    }
+
+    #[test]
+    fn test_hashmap_borrowed() {
+        use std::string::StringBuf;
+
+        let map = HashMap::new::<StringBuf, i32>();
+        defer map.free_all();
+
+        map.insert(StringBuf::from_slice("hello"), 42);
+        map.insert(StringBuf::from_slice("world"), 420);
+
+        assert_eq!(*map.get_borrowed_ref("world").unwrap(), 420);
+        *map.get_borrowed_mut("hello").unwrap() = 24;
+
+        assert_eq!(map.get_borrowed("hello"), Option::some(24));
+        let (k, _) = map.remove_borrowed("world").unwrap();
+        assert_eq!(k[..] as &[u8], "world");
+        k.free();
+
+        assert_eq!(map.len(), 1);
     }
 }
