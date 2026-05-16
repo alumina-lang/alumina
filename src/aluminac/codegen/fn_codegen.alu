@@ -387,7 +387,18 @@ impl FnCodegen {
         let result = switch expr.tag {
         IrTag::IntLit => {
             let ty = self.ctx.llvm_type(expr.ty);
-            LLVMConstInt(ty, expr.int_val(), 1i32)
+            // 128-bit (i128/u128): LLVMConstInt only takes one u64 word,
+            // so it would drop the high half. Emit the full value via
+            // arbitrary-precision with little-endian [lo, hi] words.
+            if LLVMGetTypeKind(ty) == LLVMTypeKind::Integer
+                && LLVMGetIntTypeWidth(ty) > 64u32 {
+                let words: [u64; 2];
+                words[0] = expr.int_val();
+                words[1] = expr.int_val_hi();
+                LLVMConstIntOfArbitraryPrecision(ty, 2u32, &words[0])
+            } else {
+                LLVMConstInt(ty, expr.int_val(), 1i32)
+            }
         }
         IrTag::FloatLit => {
             let ty = self.ctx.llvm_type(expr.ty);

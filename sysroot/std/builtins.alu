@@ -2400,11 +2400,6 @@ mod tests {
         assert_eq!(0x0123u16.swap_bytes(), 0x2301u16);
         assert_eq!(0x01234567u32.swap_bytes(), 0x67452301u32);
         assert_eq!(0x0123456789abcdefu64.swap_bytes(), 0xefcdab8967452301u64);
-        // Aluminac's integer literal parser stores in u64 and sign-extends to
-        // 128-bit, so 128-bit literals over u64 range are mis-parsed.
-        // Tracked under "u128 / i128 codegen + const-eval coverage" in
-        // PORTING_STATUS.md.
-        #[cfg(boot)]
         assert_eq!(
             0x000102030405060708090a0b0c0d0e0fu128.swap_bytes(),
             0x0f0e0d0c0b0a09080706050403020100u128
@@ -2485,8 +2480,6 @@ mod tests {
         assert_eq!(0xaaaau16.count_ones(), 8);
         assert_eq!(0xaaaaaaaau32.count_ones(), 16);
         assert_eq!(0xaaaaaaaaaaaaaaaau64.count_ones(), 32);
-        // 128-bit literal: aluminac mis-parses; see test_swap_bytes comment.
-        #[cfg(boot)]
         assert_eq!(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau128.count_ones(), 64);
 
         assert_eq!(0xaaaaaaaausize.count_ones(), 16);
@@ -2495,7 +2488,6 @@ mod tests {
         assert_eq!(0xaaaau16.count_zeros(), 8);
         assert_eq!(0xaaaaaaaau32.count_zeros(), 16);
         assert_eq!(0xaaaaaaaaaaaaaaaau64.count_zeros(), 32);
-        #[cfg(boot)]
         assert_eq!(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau128.count_zeros(), 64);
 
         #[cfg(target_pointer_width = "64")]
@@ -2699,10 +2691,6 @@ mod tests {
         assert_eq!(i64::max_value().checked_add(1), Option::none());
         assert_eq!(0i64.checked_add(1), Option::some(1i64));
 
-        // Aluminac mis-parses i128::max_value()'s 128-bit literal — see the
-        // PORTING_STATUS u128/i128 entry. Gate under cfg(boot) until literal
-        // support lands.
-        #[cfg(boot)]
         assert_eq!(i128::max_value().checked_add(1), Option::none());
         assert_eq!(0i128.checked_add(1), Option::some(1i128));
 
@@ -2793,8 +2781,6 @@ mod tests {
         assert_eq!(i64::max_value().checked_mul(2), Option::none());
         assert_eq!(1i64.checked_mul(2), Option::some(2i64));
 
-        // i128::max_value() literal mis-parsed under aluminac — see test_checked_add comment.
-        #[cfg(boot)]
         assert_eq!(i128::max_value().checked_mul(2), Option::none());
         assert_eq!(1i128.checked_mul(2), Option::some(2i128));
 

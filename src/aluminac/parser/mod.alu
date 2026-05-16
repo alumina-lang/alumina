@@ -456,9 +456,12 @@ fn parse_usize(text: &[u8]) -> usize {
     result
 }
 
-fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
-    let value: u64 = 0;
-    let base: u64 = 10;
+// Returns the full 128-bit value so i128/u128 literals (and
+// `0x7fff…ffffu128 as i128` style max_value defs) survive. Callers
+// that only care about <2^64 just use the low word (`as u64`).
+fn parse_int_with_suffix(text: &[u8]) -> (u128, Option<BuiltinType>) {
+    let value: u128 = 0;
+    let base: u128 = 10;
     let i: usize = 0;
     let negative: bool = false;
 
@@ -488,11 +491,11 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
         if c == '_' {
             i = i + 1;
         } else if base == 16 && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-            let digit: u64 = if c >= 'a' { (c - 'a' + 10) as u64 } else { (c - 'A' + 10) as u64 };
+            let digit: u128 = if c >= 'a' { (c - 'a' + 10) as u128 } else { (c - 'A' + 10) as u128 };
             value = value * base + digit;
             i = i + 1;
         } else if c >= '0' && c <= '9' {
-            value = value * base + (c - '0') as u64;
+            value = value * base + (c - '0') as u128;
             i = i + 1;
         } else {
             suffix_start = i;
@@ -508,7 +511,7 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
     };
 
     if negative {
-        value = (0u64 - value);
+        value = (0u128 - value);
     }
 
     (value, suffix)

@@ -372,7 +372,7 @@ enum ExprTag {
 }
 
 // Expression sub-structs for union variants
-struct _ExprLitData { int_val: u64, float_val: f64, bool_val: bool, str_val: &[u8], type_suffix: Option<BuiltinType> }
+struct _ExprLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8], type_suffix: Option<BuiltinType> }
 struct _ExprIdData { id: Id, id2: Id, str_val: &[u8], flag: bool, int_val: u64 }
 struct _ExprUnaryData { un_op: UnOp, lhs: &Expr }
 struct _ExprBinaryData { bin_op: BinOp, lhs: &Expr, rhs: &Expr }
@@ -440,6 +440,16 @@ impl Expr {
         } else {
             self._data.id_ref.int_val  // MacroParam, etc.
         }
+    }
+
+    // High 64 bits of a 128-bit integer literal (0 for ≤64-bit). The
+    // common `int_val()` stays the low word so the many small-value
+    // consumers (array sizes, tuple indices, …) are untouched.
+    fn int_val_hi(self: &Expr) -> u64 {
+        if self.tag == ExprTag::IntLit { self._data.lit.int_val_hi } else { 0u64 }
+    }
+    fn int_val_u128(self: &Expr) -> u128 {
+        ((self.int_val_hi() as u128) << 64) | (self.int_val() as u128)
     }
 
     fn float_val(self: &Expr) -> f64 { self._data.lit.float_val }
@@ -1180,7 +1190,7 @@ struct IrSwitchArm {
 }
 
 // IrExpr sub-structs for union variants
-struct _IrLitData { int_val: u64, float_val: f64, bool_val: bool, str_val: &[u8] }
+struct _IrLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8] }
 struct _IrVarData { id: Id, param_idx: u32 }
 struct _IrBinData { bin_op: BinOp, lhs: &IrExpr, rhs: &IrExpr }
 struct _IrUnData { un_op: UnOp, lhs: &IrExpr }
@@ -1240,6 +1250,10 @@ impl IrExpr {
 
     // Simple single-variant accessors
     fn int_val(self: &IrExpr) -> u64 { self._data.lit.int_val }
+    fn int_val_hi(self: &IrExpr) -> u64 { self._data.lit.int_val_hi }
+    fn int_val_u128(self: &IrExpr) -> u128 {
+        ((self._data.lit.int_val_hi as u128) << 64) | (self._data.lit.int_val as u128)
+    }
     fn float_val(self: &IrExpr) -> f64 { self._data.lit.float_val }
     fn bool_val(self: &IrExpr) -> bool { self._data.lit.bool_val }
     fn bin_op(self: &IrExpr) -> BinOp { self._data.bin.bin_op }

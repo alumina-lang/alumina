@@ -943,7 +943,15 @@ impl CodegenCtx {
         switch expr.tag {
         IrTag::IntLit => {
             let ty = self.llvm_type(expr.ty);
-            LLVMConstInt(ty, expr.int_val(), 1i32)
+            if LLVMGetTypeKind(ty) == LLVMTypeKind::Integer
+                && LLVMGetIntTypeWidth(ty) > 64u32 {
+                let words: [u64; 2];
+                words[0] = expr.int_val();
+                words[1] = expr.int_val_hi();
+                LLVMConstIntOfArbitraryPrecision(ty, 2u32, &words[0])
+            } else {
+                LLVMConstInt(ty, expr.int_val(), 1i32)
+            }
         }
         IrTag::FloatLit => {
             let ty = self.llvm_type(expr.ty);

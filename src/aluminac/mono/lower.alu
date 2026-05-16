@@ -126,6 +126,17 @@ impl Mono {
         let e = IrExpr::void_expr(ty);
         e.tag = IrTag::IntLit;
         e._data.lit.int_val = val;
+        e._data.lit.int_val_hi = 0u64;
+        self.ctx.arena.alloc(e) as &IrExpr
+    }
+
+    // 128-bit-aware literal: preserves the high word so i128/u128
+    // literals (and `0x7fff…ffffu128 as i128`) survive to codegen.
+    fn mk_int_lit_u128(self: &mut Mono, ty: &IrTy, val: u128) -> &IrExpr {
+        let e = IrExpr::void_expr(ty);
+        e.tag = IrTag::IntLit;
+        e._data.lit.int_val = val as u64;
+        e._data.lit.int_val_hi = (val >> 64) as u64;
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
@@ -1495,7 +1506,7 @@ impl Mono {
     fn lower_expr_coerced(self: &mut Mono, expr: &Expr, expected_ty: &IrTy) -> &IrExpr {
         // For unsuffixed integer literals, use the expected type directly
         if expr.tag == ExprTag::IntLit && expr.type_suffix().is_none() && expected_ty.tag == IrTyTag::Builtin {
-            let r = self.mk_int_lit(expected_ty, expr.int_val());
+            let r = self.mk_int_lit_u128(expected_ty, expr.int_val_u128());
             let m = r as &void as &mut IrExpr;
             m.span = expr.span;
             return r;
@@ -1581,7 +1592,7 @@ impl Mono {
             } else {
                 self.ctx.intern_builtin_ty(BuiltinType::I32) // default int type
             };
-            self.mk_int_lit(ty, expr.int_val())
+            self.mk_int_lit_u128(ty, expr.int_val_u128())
         } else if expr.tag == ExprTag::FloatLit {
             let ty = if expr.type_suffix().is_some() {
                 self.ctx.intern_builtin_ty(expr.type_suffix().unwrap())

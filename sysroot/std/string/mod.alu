@@ -860,18 +860,10 @@ mod tests {
         assert_eq!(parse_integer::<i8>("128", 10), Option::none());
         assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128 as i8));
         assert_eq!(parse_integer::<i8>("-129", 10), Option::none());
-        // aluminac: skip the i128::MAX literal cases. parse_integer's runtime
-        // value is correct, but aluminac's parser truncates integer literals
-        // beyond u64 range to u64 (see the u128/i128 const-eval entry in
-        // PORTING_STATUS.md), so the literal RHS comparison value here
-        // doesn't match parse_integer's output. alumina-boot's make test-std
-        // still exercises this path.
-        #[cfg(boot)]
         assert_eq!(
             parse_integer::<i128>("170141183460469231731687303715884105727", 10),
             Option::some(170141183460469231731687303715884105727i128)
         );
-        #[cfg(boot)]
         assert_eq!(
             parse_integer::<i128>("170141183460469231731687303715884105728", 10),
             Option::none()

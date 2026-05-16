@@ -389,7 +389,8 @@ impl ExprParser {
         let text = self.ctx.node_text(node);
         let (value, suffix) = parse_int_with_suffix(text);
         let e = self.make_expr(ExprTag::IntLit, span);
-        e._data.lit.int_val = value;
+        e._data.lit.int_val = value as u64;
+        e._data.lit.int_val_hi = (value >> 64) as u64;
         e._data.lit.type_suffix = suffix;
         self.ctx.alloc_expr(e)
     }
