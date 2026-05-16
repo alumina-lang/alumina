@@ -1,0 +1,55 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: a field-less ("ZST") struct literal evaluated in a
+// `const` initializer crashed `gen_const_init` (codegen/mod.alu) with
+// `&fields[0]` indexing an empty slice — the StructLit branch lacked
+// the empty-items guard that ArrayLit / TupleLit already had. This is
+// exactly sysroot `test.alu`'s `TEST_CASES` const: it materializes an
+// array of `TestCase` whose elements derive from `attributed::<()>(..)`
+// reflection `Type<F>` descriptors (ZST structs) inside a `for const`
+// loop, via `intrinsics::with_span_of`. Blocker #1 on unifying
+// test.alu (the last divergent sysroot file).
+
+use std::intrinsics;
+use std::typing::type_of;
+
+struct TestCase { path: &[u8], name: &[u8], test: fn(), ignore: bool }
+impl TestCase {
+    fn new<F: std::builtins::NamedFunction + Fn()>() -> TestCase {
+        use std::intrinsics::has_attribute;
+        let desc = std::typing::Type::new::<F>();
+        TestCase {
+            path: desc.module_path().unwrap_or(""),
+            name: desc.name().unwrap_or(""),
+            test: desc.as_fn(),
+            ignore: has_attribute::<F>("test::ignore")
+        }
+    }
+}
+
+#[test] fn t_one() {}
+#[test] fn t_two() {}
+
+const TEST_CASES = {
+    use std::typing::type_of;
+    use std::intrinsics::attributed;
+    const cases = attributed::<()>("test");
+    let ret: [TestCase; cases.len()];
+    for const idx in 0usize..cases.len() {
+        let desc = cases.(idx);
+        ret[idx] = intrinsics::with_span_of::<type_of<typeof(desc)>>(
+            TestCase::new::<type_of<typeof(desc)>>()
+        );
+    }
+    ret
+};
+
+fn main() -> i32 {
+    // The fix is purely that the field-less-StructLit const initializer
+    // (ZST `Type<F>` reflection descriptor) no longer crashes
+    // gen_const_init with `&fields[0]` on an empty slice. The guarantee
+    // is: compiles, and the const array materializes with the right
+    // element count. (Whether `desc.as_fn()` yields a callable pointer
+    // under aluminac is a separate reflection blocker for test.alu.)
+    if TEST_CASES.len() != 2usize { return 1; }
+    0
+}

@@ -1018,6 +1018,13 @@ impl CodegenCtx {
             else { std::mem::zeroed::<LLVMValueRef>() }
         }
         IrTag::StructLit => {
+            // A field-less struct literal (e.g. a ZST reflection
+            // descriptor like `Type<F>`) has no LLVM aggregate elements;
+            // `&fields[0]` would index an empty slice. Mirror the
+            // ArrayLit / TupleLit empty guards below.
+            if expr.items().len() == 0usize {
+                return LLVMConstNull(self.llvm_type(expr.ty));
+            }
             let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
             for i in 0usize..expr.items().len() {
                 fields[i] = self.gen_const_init(expr.items()[i]);
