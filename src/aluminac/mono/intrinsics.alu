@@ -28,6 +28,11 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "transmute" => lower_transmute(m, ir_type_args, expr),
         "stack_alloc" => lower_stack_alloc(m, ir_type_args, expr),
         "llvm" => lower_llvm(m, ir_type_args, expr),
+        "atomic_load" => lower_atomic(m, ir_type_args, expr, "load"),
+        "atomic_store" => lower_atomic(m, ir_type_args, expr, "store"),
+        "atomic_rmw" => lower_atomic(m, ir_type_args, expr, "rmw"),
+        "atomic_cmpxchg" => lower_atomic(m, ir_type_args, expr, "cmpxchg"),
+        "atomic_fence" => lower_atomic(m, ir_type_args, expr, "fence"),
         "const_panic" => lower_const_panic(m, expr),
         "const_warning" => lower_const_diag_tag(m, expr, IrTag::ConstWarning),
         "const_note" => lower_const_diag_tag(m, expr, IrTag::ConstNote),
@@ -249,6 +254,34 @@ fn lower_llvm(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
     let result = IrExpr::void_expr(ret_ty);
     result.tag = IrTag::LlvmIntrinsic;
     result._data.codegen.str_val = intrinsic_name;
+    result._data.codegen.items = ir_args;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_atomic(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr, op: &[u8]) -> &IrExpr {
+    // Atomic intrinsics. Return type is the T type-arg (void for
+    // store/fence, bool for cmpxchg — the sysroot decl pins those).
+    // All args are lowered and stored positionally; codegen interprets
+    // them per `op`:
+    //   load(ptr, ordering) -> T
+    //   store(ptr, value, ordering)
+    //   rmw(op_code, ptr, value, ordering) -> T
+    //   cmpxchg(ptr, expected, desired, weak, succ_ord, fail_ord) -> bool
+    //   fence(ordering)
+    let ret_ty = if ir_type_args.len() > 0 { ir_type_args[0] } else { m.ctx.void_ty };
+    if op == "store" || op == "fence" {
+        ret_ty = m.ctx.void_ty;
+    } else if op == "cmpxchg" {
+        ret_ty = m.ctx.bool_ty;
+    }
+    let n = expr.args().len();
+    let ir_args = m.ctx.arena.alloc_slice::<&IrExpr>(n);
+    for i in 0usize..n {
+        ir_args[i] = m.lower_expr(expr.args()[i]);
+    }
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::AtomicOp;
+    result._data.codegen.str_val = op;
     result._data.codegen.items = ir_args;
     m.ctx.arena.alloc(result)
 }

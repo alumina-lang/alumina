@@ -253,4 +253,17 @@ extern "intrinsic" fn with_span_of<T, E>(expr: E) -> E;
     /// Allocate `size` bytes on the current function's stack. The returned
     /// pointer's lifetime is the enclosing function call.
     extern "intrinsic" fn stack_alloc<T>(size: usize) -> &mut T;
+
+    // Atomic operations, backed by LLVM atomic instructions. alumina-boot
+    // dispatches to the C `__atomic_*` builtins via codegen_func; aluminac
+    // emits `load atomic` / `store atomic` / `atomicrmw` / `cmpxchg` /
+    // `fence` directly. `ordering` is the sysroot `sync::Ordering` enum
+    // cast to i32 (Relaxed=0, Acquire=2, Release=3, AcqRel=4, SeqCst=5);
+    // aluminac maps it to LLVMAtomicOrdering. `op` for atomic_rmw:
+    // 0=xchg 1=add 2=sub 3=and 4=nand 5=or 6=xor.
+    extern "intrinsic" fn atomic_load<T>(ptr: &T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_store<T>(ptr: &mut T, value: T, ordering: i32);
+    extern "intrinsic" fn atomic_rmw<T>(op: i32, ptr: &mut T, value: T, ordering: i32) -> T;
+    extern "intrinsic" fn atomic_cmpxchg<T>(ptr: &mut T, expected: T, desired: T, weak: bool, success_ordering: i32, failure_ordering: i32) -> bool;
+    extern "intrinsic" fn atomic_fence(ordering: i32);
 }
