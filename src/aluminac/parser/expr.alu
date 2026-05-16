@@ -2115,29 +2115,8 @@ impl ExprParser {
             e._data.lit.int_val = args.len() as u64;
             self.ctx.alloc_expr(e)
         }
-        "test_cases" => self.expand_test_cases(span),
         _ => self.alloc_void(span),
         }
-    }
-
-    // Expand test_cases!() -> tuple of all #[test] function references
-    fn expand_test_cases(self: &ExprParser, span: Span) -> &Expr {
-        // Use the shared all_test_functions list (populated across all source files)
-        let test_fns = self.ctx.all_test_functions;
-
-        // Build a tuple expression: (fn1, fn2, fn3, ...)
-        let tuple_args = self.ctx.arena.alloc_slice::<&Expr>(test_fns.len());
-        for i in 0usize..test_fns.len() {
-            let pf = &test_fns[i];
-            let fn_expr = self.make_expr(ExprTag::FnRef, span);
-            fn_expr._data.id_ref.id = pf.id;
-            fn_expr._data.id_ref.str_val = pf.name;
-            tuple_args[i] = self.ctx.alloc_expr(fn_expr);
-        }
-
-        let tuple = self.make_expr(ExprTag::TupleLit, span);
-        tuple._data.list.args = tuple_args;
-        self.ctx.alloc_expr(tuple)
     }
 
     // Expand format_args!(wrapper_macro, fmt_string, args...)
