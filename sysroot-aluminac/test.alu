@@ -1,191 +1,337 @@
-//! Minimal unit test runner for aluminac.
-//!
-//! When `--test` is provided to the compiler, this module is included and its
-//! `#[test_main]` function replaces the normal `main` entrypoint. Each test
-//! case is executed in a forked subprocess.
+#![cfg_attr(not(test_std), diag::hide_from_backtrace)]
 
-use std::macros::test_cases;
-use std::process::{Stdio, Forked, ExitStatus};
-use std::collections::Vector;
-use std::string::StringBuf;
-use std::time::{Instant, Duration};
+//! Minimal unit test runner
+//!
+//! When `--cfg test` is provided as an argument to the compiler, this module will override
+//! the `main` entrypoint with the test runner which will run all the test cases defined in
+//! the code that is being compiled.
+//!
+//! Each test case is executed in a subprocess.
+//!
+//! ## Example
+//! ```bare
+//! fn add(x: i32, y: i32) -> i32 {
+//!     x + y
+//! }
+//!
+//! fn sub(x: i32, y: i32) -> i32 {
+//!     x - y
+//! }
+//!
+//! #[cfg(test)]
+//! mod tests {
+//!     #[test]
+//!     fn test_add() {
+//!         assert_eq!(1.add(2), 3);
+//!     }
+//!
+//!     #[test]
+//!     fn test_sub() {
+//!         assert_eq!(1.sub(2), -1);
+//!     }
+//!
+//!     #[test]
+//!     fn test_panic() {
+//!         test::assert_panics!(panic!("oops"));
+//!     }
+//! }
+//! ```
+//!
+//! ## Test attributes
+//!
+//! The following attribute is supported: `#[test::ignore]` to skip execution of a test (useful e.g. to make sure
+//! that a test compiles but is not run). This can be used in combination with `#[cfg_attr(...)]` to conditionally
+//! enable a test only on certain configurations.
+//!
+//! ```bare
+//! #[cfg_attr(not(target_arch = "x86_64"), test::ignore)]
+//! fn test_is_x86_64() {
+//!     assert_eq!(cfg!(target_arch), "x86_64");
+//! }
+//! ```
+//!
+//! ## Custom test frameworks
+//!
+//! Nothing prevents you from writing your own framework, just compile with
+//! `--cfg custom_test_framework`. The [TestCase] and [TEST_CASES] constants are public and can be used to
+//! implement custom test runners, or they can be discovered through reflection in a different way.
+//! cases.
 
 /// Test case metadata
 struct TestCase {
-    /// The test case name (mangled type name of the function)
+    /// The module path of the test case
+    path: &[u8],
+    /// The test case name
     name: &[u8],
     /// The test case function
     test: fn(),
+    /// Whether this test is ignored
+    ignore: bool
 }
 
-/// Discover test cases from the `test_cases!()` builtin macro.
-const _TESTS = test_cases!();
-const TEST_CASES: [TestCase; _TESTS.len()] = {
-    let ret: [TestCase; _TESTS.len()];
-    for const i in 0usize.._TESTS.len() {
-        ret[i] = TestCase {
-            name: std::typing::type_name::<typeof(_TESTS.(i))>(),
-            test: _TESTS.(i),
-        };
+impl TestCase {
+    /// Create a new test case from a named function
+    fn new<F: std::builtins::NamedFunction + Fn()>() -> TestCase {
+        use std::intrinsics::has_attribute;
+
+        let desc = std::typing::Type::new::<F>();
+        TestCase {
+            path: desc.module_path().unwrap_or(""),
+            name: desc.name().unwrap_or(""),
+            test: desc.as_fn(),
+            ignore: has_attribute::<F>("test::ignore")
+        }
+    }
+
+    /// Runs the test case in a forked process
+    fn run(test: &TestCase) -> TestResult {
+        let start_time = Instant::now();
+        let child = Forked::new()
+            .stdin(Stdio::Null)
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap();
+
+        if child.is_none() {
+            test.test();
+            process::exit(0);
+        }
+
+        let child = child.unwrap();
+        let output = child.wait_with_output().unwrap();
+        let end_time = Instant::now();
+
+        defer output.free();
+
+        TestResult {
+            test: *test,
+            duration: end_time.duration_since(&start_time),
+            success: output.status.success(),
+            stdout: output.stdout.move(),
+            stderr: output.stderr.move(),
+            status: output.status
+        }
+    }
+}
+
+/// List of all discovered test cases
+const TEST_CASES = {
+    use std::typing::type_of;
+    use std::intrinsics::attributed;
+
+    const cases = attributed::<()>("test");
+    let ret: [TestCase; cases.len()];
+    for const idx in 0usize..cases.len() {
+        let desc = cases.(idx);
+        ret[idx] = intrinsics::with_span_of::<type_of<typeof(desc)>>(
+            TestCase::new::<type_of<typeof(desc)>>()
+        );
     }
     ret
 };
 
+use std::process::{Stdio, Forked, ExitStatus};
+use std::collections::Vector;
+use std::cmp::sort_by_key;
+use std::string::{split, StringBuf};
+use std::time::{Instant, Duration};
+
 /// Holder for the results of a test case.
 struct TestResult {
+    /// The test case metadata
     test: TestCase,
+    /// The duration of the test case
     duration: Duration,
+    /// Whether the test case succeeded
     success: bool,
+    /// Captured standard output of the test case
     stdout: StringBuf,
+    /// Captured standard error of the test case
     stderr: StringBuf,
-    status: ExitStatus,
+    /// The exit status of the test case process
+    status: ExitStatus
 }
 
 impl TestResult {
-    fn move(self: &mut TestResult) -> TestResult {
+    /// @ std::mem::Movable::move
+    fn move(self: TestResult) -> TestResult {
         TestResult {
             test: self.test,
             duration: self.duration,
             success: self.success,
             stdout: self.stdout.move(),
             stderr: self.stderr.move(),
-            status: self.status,
+            status: self.status
         }
     }
 
+    /// @ std::mem::Freeable::free
     fn free(self: &mut TestResult) {
         self.stdout.free();
         self.stderr.free();
     }
 }
 
-/// Run a single test case in a forked subprocess.
-fn run_test(test: &TestCase) -> TestResult {
-    let start_time = Instant::now();
-    let child = Forked::new()
-        .stdin(Stdio::Null)
-        .stdout(Stdio::Piped)
-        .stderr(Stdio::Piped)
-        .spawn()
-        .unwrap();
-
-    if child.is_none() {
-        // In child process
-        test.test();
-        std::process::exit(0i32);
-    }
-
-    let child = child.unwrap();
-    let output = child.wait_with_output().unwrap();
-    let end_time = Instant::now();
-
-    defer output.free();
-
-    TestResult {
-        test: *test,
-        duration: end_time.duration_since(&start_time),
-        success: output.status.success(),
-        stdout: output.stdout.move(),
-        stderr: output.stderr.move(),
-        status: output.status,
-    }
-}
-
-/// Command line arguments for the test runner.
-struct Args {
-    filter: Option<&[u8]>,
-    timings: bool,
-}
-
-fn parse_args(args: &[&[u8]]) -> Args {
-    let res = Args {
-        filter: Option::none(),
-        timings: false,
-    };
-
-    if args.len() == 0 {
-        return res;
-    }
-
-    let i = 1usize;
-    while i < args.len() {
-        let arg = args[i];
-        if (arg == "--filter" || arg == "-f") && i + 1usize < args.len() {
-            i = i + 1usize;
-            res.filter = Option::some(args[i]);
-        } else if arg == "--timings" {
-            res.timings = true;
-        } else {
-            eprintln!("usage: {} [--filter <FILTER>] [--timings]", args[0]);
-            std::process::exit(1i32);
-        }
-        i = i + 1usize;
-    }
-
-    res
-}
-
 /// Test runner entrypoint.
+#[cfg(all(test, not(custom_test_framework)))]
 #[test_main]
 fn main(args: &[&[u8]]) -> i32 {
+    /// Command line arguments for the test runner.
+    struct Args {
+        prefix: Option<&[u8]>,
+        filter: Option<&[u8]>,
+        timings: bool,
+    }
+
+    impl Args {
+        fn default() -> Args {
+            Args {
+                prefix: Option::none(),
+                filter: Option::none(),
+                timings: false
+            }
+        }
+    }
+
+    fn print_help_string(args: &[&[u8]]) -> ! {
+        eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
+        process::exit(1);
+    }
+
+    /// Parse command line arguments.
+    fn parse_args(args: &[&[u8]]) -> Args {
+        enum State {
+            Normal,
+            Prefix,
+            Filter
+        }
+
+        let state = State::Normal;
+        let res = Args::default();
+
+        if args.len() == 0 {
+            return res;
+        }
+
+        for arg in args[1..] {
+            state = switch state {
+                State::Normal => switch arg {
+                    "--prefix", "-p" => State::Prefix,
+                    "--filter", "-f" => State::Filter,
+                    "--timings" => {
+                        res.timings = true;
+                        State::Normal
+                    },
+                    _ => print_help_string(args)
+                },
+                State::Prefix => {
+                    res.prefix = Option::some(arg);
+                    State::Normal
+                },
+                State::Filter => {
+                    res.filter = Option::some(arg);
+                    State::Normal
+                },
+                _ => unreachable!()
+            };
+        }
+
+        if state != State::Normal {
+            print_help_string(args);
+        }
+
+        res
+    }
+
+    /// Filter tests based on user-provided criteria (e.g. path prefix).
+    fn filter_tests(args: Args) -> (Vector<TestCase>, usize) {
+        use string::{starts_with, contains};
+
+        let test_cases: Vector<TestCase> = Vector::new();
+        defer test_cases.free();
+
+        for test in TEST_CASES {
+            if args.prefix.is_some() && !test.path[2..].starts_with(args.prefix.unwrap()) {
+                continue
+            }
+
+            if args.filter.is_some() && !test.name.contains(args.filter.unwrap()) {
+                continue
+            }
+
+            test_cases.push(test);
+        }
+
+        test_cases
+            .as_slice_mut()
+            .sort_by_key(|m: &TestCase| -> (&[u8], &[u8]) {
+                (m.path, m.name)
+            });
+
+        let filtered_count = TEST_CASES.len() - test_cases.len();
+
+        (test_cases.move(), filtered_count)
+    }
+
+    use std::process::env;
+
     let args = parse_args(args);
     let start_time = Instant::now();
 
     // https://bixense.com/clicolors/
     let colors = (
-        std::process::env().get("CLICOLOR").unwrap_or("1") != "0"
+        env().get("CLICOLOR").unwrap_or("1") != "0"
             && libc::isatty(libc::STDERR_FILENO) != 0
-        ) || std::process::env().get("CLICOLOR_FORCE").unwrap_or("0") != "0";
+        ) || env().get("CLICOLOR_FORCE").unwrap_or("0") != "0";
 
     let results: Vector<TestResult> = Vector::new();
     defer results.free_all();
 
     let num_failed = 0;
     let num_passed = 0;
-    let filtered_count = 0;
+    let num_ignored = 0;
 
-    // Filter tests
-    let test_cases: Vector<TestCase> = Vector::new();
+    let (test_cases, filtered_count) = filter_tests(args);
     defer test_cases.free();
 
-    for test in TEST_CASES {
-        if args.filter.is_some() && !std::string::contains(test.name, args.filter.unwrap()) {
-            filtered_count = filtered_count + 1;
+    eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
+    for test in test_cases {
+        eprint!("test {}::{} ... ", test.path[2..], test.name);
+        #[allow(warnings)]
+        if test.ignore {
+            if colors {
+                eprintln!("\x1b[0;33mignored\x1b[0m.");
+            } else {
+                eprintln!("ignored.");
+            }
+            num_ignored += 1;
             continue;
         }
-        test_cases.push(test);
-    }
+        let result = test.run();
+        results.push(result);
 
-    eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
-
-    for test in test_cases {
-        eprint!("test {} ... ", test.name);
-
-        let result = run_test(&test);
-        if result.success {
-            num_passed = num_passed + 1;
+        let message = if result.success {
+            num_passed += 1;
             if colors {
-                if args.timings {
-                    eprintln!("\x1b[0;32mok\x1b[0m [{}].", result.duration);
-                } else {
-                    eprintln!("\x1b[0;32mok\x1b[0m.");
-                }
+                "\x1b[0;32mok\x1b[0m"
             } else {
-                if args.timings {
-                    eprintln!("ok [{}].", result.duration);
-                } else {
-                    eprintln!("ok.");
-                }
+                "ok"
             }
         } else {
-            num_failed = num_failed + 1;
+            num_failed += 1;
             if colors {
-                eprintln!("\x1b[0;31mFAILED\x1b[0m.");
+                "\x1b[0;31mFAILED\x1b[0m"
             } else {
-                eprintln!("FAILED.");
+                "FAILED"
             }
+        };
+
+        if args.timings {
+            eprintln!("{} [{}].", message, result.duration);
+        } else {
+            eprintln!("{}.", message);
         }
-        results.push(result);
     }
 
     let end_time = Instant::now();
@@ -198,41 +344,156 @@ fn main(args: &[&[u8]]) -> i32 {
         for result in results {
             if !result.success {
                 if result.status.code().is_some() {
-                    eprintln!("{} exited with code {}", result.test.name, result.status.code().unwrap());
+                    eprintln!("{}::{} exited with code {}", result.test.path[2..], result.test.name, result.status.code().unwrap());
                     eprintln!("");
                 } else if result.status.signal().is_some() {
-                    eprintln!("{} was killed by signal {}", result.test.name, result.status.signal().unwrap());
+                    eprintln!("{}::{} was killed by signal {}", result.test.path[2..], result.test.name, result.status.signal().unwrap());
                     eprintln!("");
                 }
                 if result.stdout.len() > 0 {
-                    eprintln!("---- {} stdout ----", result.test.name);
+                    eprintln!("---- {}::{} stdout ----", result.test.path[2..], result.test.name);
                     eprintln!("{}", result.stdout[..]);
                     eprintln!("");
                 }
                 if result.stderr.len() > 0 {
-                    eprintln!("---- {} stderr ----", result.test.name);
+                    eprintln!("---- {}::{} stderr ----", result.test.path[2..], result.test.name);
                     eprintln!("{}", result.stderr[..]);
                     eprintln!("");
                 }
             }
         }
         if colors {
-            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; finished in {}",
-                num_passed, num_failed, elapsed);
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
         } else {
-            eprintln!("test result: FAILED. {} passed; {} failed; finished in {}",
-                num_passed, num_failed, elapsed);
+            eprintln!("test result: FAILED. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
         }
-        1i32
+        1
     } else {
         eprintln!("");
         if colors {
-            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; finished in {}",
-                num_passed, num_failed, elapsed);
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
         } else {
-            eprintln!("test result: ok. {} passed; {} failed; finished in {}",
-                num_passed, num_failed, elapsed);
+            eprintln!("test result: ok. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
         }
-        0i32
+        0
+    }
+}
+
+
+/// Assert that the inner block abnormally terminates the process.
+///
+/// The inner block is executed in a forked process. If the block runs to completion, the macro will panic.
+///
+/// ## Example
+/// ```bare
+/// use test::assert_terminates;
+///
+/// #[test]
+/// fn test_trap() {
+///     assert_terminates({
+///         std::intrinsics::trap();
+///     });
+/// }
+/// ```
+macro assert_terminates($inner) {
+    use std::process::Forked;
+    let child = Forked::new()
+        .spawn()
+        .unwrap();
+    if child.is_none() {
+        $inner;
+        process::exit(0);
+    }
+    let child = child.unwrap();
+    let output = child.wait().unwrap();
+    if output.success() {
+        panic!("child process ran to completion");
+    }
+}
+
+/// Assert that the inner block panics.
+///
+/// If the block does not panic, the macro will.
+///
+/// ## Example
+/// ```bare
+/// use test::assert_panics;
+///
+/// #[test]
+/// fn test_panic() {
+///     assert_panics!({
+///         panic!("oops");
+///     });
+/// }
+/// ```
+macro assert_panics($inner) {
+    use std::panicking::internal::{
+        jmp_buf, setjmp, set_panic_hook, PANIC_HOOK, PANICKING
+    };
+
+    let panicked = false;
+    let prev_panic_hook = PANIC_HOOK;
+
+    let buf: jmp_buf;
+    set_panic_hook(&buf as &mut void, internal::assert_panic_hook);
+    if setjmp(&buf) == 0 {
+        $inner;
+    } else {
+        panicked = true;
+    };
+
+    PANIC_HOOK = prev_panic_hook;
+    PANICKING = false;
+
+    if !panicked {
+        panic!("assertion failed: block did not panic");
+    }
+}
+
+#[docs(no_index)]
+mod internal {
+    #[inline(never)]
+    fn assert_panic_hook(ptr: &mut void, _: &std::panicking::PanicInfo) {
+        use std::panicking::internal::{jmp_buf, longjmp};
+        longjmp(ptr as &mut jmp_buf, 1);
+    }
+}
+
+/// Quis testabitur ipsos testes
+#[cfg(test_std)]
+mod tests {
+    #[test]
+    fn regular_test() {
+    }
+
+    #[test]
+    #[test::ignore]
+    fn ignored_test() {}
+
+    #[test]
+    fn should_panic_test() {
+        assert_panics!({
+            panic!("oops")
+        });
     }
 }
