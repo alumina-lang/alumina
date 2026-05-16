@@ -193,7 +193,10 @@ ALUMINAC_S1 = $(BUILD_DIR)/aluminac_s1
 ALUMINAC_S2 = $(BUILD_DIR)/aluminac_s2
 ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
 
-SYSROOT_ALUMINAC = sysroot-aluminac/
+# sysroot-aluminac/ was eliminated 2026-05-16 once it became
+# byte-identical to sysroot/ (parity complete). aluminac now bootstraps
+# and tests against the single unified sysroot/.
+SYSROOT_ALUMINAC = sysroot/
 STDLIB_ALUMINAC_TESTS = $(BUILD_DIR)/stdlib-aluminac-tests
 
 SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
