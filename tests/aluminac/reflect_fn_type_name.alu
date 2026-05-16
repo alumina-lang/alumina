@@ -1,0 +1,26 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: `std::typing::Type::new::<F>().name()` for a *named
+// function* type must return the function's short name (alumina-boot
+// returns `some_function`). aluminac's lower_type_name(named_only) and
+// lower_module_path only handled Struct/Enum; an IrTyTag::Fn fell
+// through to void → None. This is part of test.alu blocker #4: the
+// runner does `Type::new::<F>().name()` to label each test case.
+//
+// (The fuller `attributed::<()>("test")` → `type_of<typeof(desc)>` →
+// `Type::new` chain is still incomplete — the typeop does not unwrap
+// the reflected descriptor to a Fn IrTy — so the test.alu swap still
+// can't land; tracked in PORTING_STATUS. This guards the direct case.)
+
+fn some_function() {}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let t = std::typing::Type::new::<some_function>();
+    let name = t.name().unwrap_or("<none>");
+    if !std::string::contains(name, "some_function") { return 1; }
+
+    // Struct names still work (unchanged path).
+    struct Widget { a: i32 }
+    let w = std::typing::Type::new::<Widget>();
+    if !std::string::contains(w.name().unwrap_or("<none>"), "Widget") { return 2; }
+    0
+}

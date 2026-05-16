@@ -414,6 +414,14 @@ fn lower_type_name(m: &mut Mono, ir_type_args: &[&IrTy], named_only: bool) -> &I
             type_str = measured_ty.struct_ref().name;
         } else if measured_ty.tag == IrTyTag::Enum {
             type_str = measured_ty.enum_ref().name;
+        } else if measured_ty.tag == IrTyTag::Fn {
+            // Named-function type (e.g. test.alu's `F: NamedFunction`).
+            // alumina-boot's type_name returns the function's short name.
+            let fn_ref = measured_ty.fn_item_ref();
+            let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
+            if def_opt.is_some() {
+                type_str = def_opt.unwrap().name;
+            }
         }
         // For non-named types, return void instead of empty string
         if type_str.len() == 0 {
@@ -440,16 +448,28 @@ fn lower_module_path(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     // own name. Other types fall back to void so std::typing::Type::module_path's
     // `when ... is ()` branch returns None.
     let scope_idx: u32 = 0;
+    // For Fn types the container scope IS the module (no body scope to
+    // skip), so module_path is taken from it directly rather than from
+    // its parent — tracked separately via `fn_container`.
+    let fn_container: u32 = 0;
     if ir_type_args.len() > 0 {
         let t = ir_type_args[0];
         if t.tag == IrTyTag::Struct {
             scope_idx = t.struct_ref().scope_idx;
         } else if t.tag == IrTyTag::Enum {
             scope_idx = t.enum_ref().scope_idx;
+        } else if t.tag == IrTyTag::Fn {
+            let fn_ref = t.fn_item_ref();
+            let cont = m.ctx.scopes.find_fn_container_scope_by_id(fn_ref.id._value);
+            if cont.is_some() {
+                fn_container = cont.unwrap();
+            }
         }
     }
     let path: &[u8] = "";
-    if scope_idx != 0 {
+    if fn_container != 0 {
+        path = m.ctx.scopes.module_path_for_scope(m.ctx.arena, fn_container);
+    } else if scope_idx != 0 {
         let parent = m.ctx.scopes.get(scope_idx).parent;
         if parent.is_some() {
             path = m.ctx.scopes.module_path_for_scope(m.ctx.arena, parent.unwrap());

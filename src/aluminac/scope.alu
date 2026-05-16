@@ -235,6 +235,27 @@ impl ScopeArena {
         Option::none()
     }
 
+    // The scope that *contains* the named function/method with this id
+    // (i.e. the enclosing module/impl scope, not a body scope). Used by
+    // the `module_path` / `type_name` reflection intrinsics for
+    // `IrTyTag::Fn` types — FnDef carries no scope_idx, so we locate it
+    // by scanning, mirroring find_protocol_scope_by_id.
+    fn find_fn_container_scope_by_id(self: &ScopeArena, fn_id: usize) -> Option<u32> {
+        for i in 0usize..self.scopes.len() {
+            let scope = &self.scopes[i];
+            for pair in scope.items {
+                let tag = pair.1.kind.tag;
+                if tag == NamedItemTag::Function && pair.1.kind.id()._value == fn_id {
+                    return Option::some(i as u32);
+                }
+                if tag == NamedItemTag::Method && pair.1.kind.id2()._value == fn_id {
+                    return Option::some(i as u32);
+                }
+            }
+        }
+        Option::none()
+    }
+
     fn mixin_key(scope_idx: u32, fn_id: usize) -> u64 {
         ((scope_idx as u64) << 32u64) | (fn_id as u64)
     }
