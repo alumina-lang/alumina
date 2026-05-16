@@ -7078,23 +7078,20 @@ impl Mono {
                         // Non-generic function call: emit as CallKind::Direct
                         // For protocol methods, set up Self type from first argument
                         let self_param_opt = self.ctx.proto_method_self_id.get(&def.id._value);
-                        if self_param_opt.is_some() && expr.args().len() > 0 {
-                            let first_arg_ir = self.lower_expr(expr.args()[0]);
-                            let self_ty = if first_arg_ir.ty.tag == IrTyTag::Pointer {
-                                first_arg_ir.ty.inner()
-                            } else {
-                                first_arg_ir.ty
-                            };
-                            self.type_map.insert(self_param_opt.unwrap(), self_ty);
-                        } else if self.ctx.proto_method_proto_gp_ids.get(&def.id._value).is_some()
+                        // A *static path-call* to a mixin'd protocol method
+                        // (`Type::method(args)`, e.g. `u16::parse(s)` or
+                        // `f64::nan()`) — the path resolver stashed the
+                        // impl_scope_idx in lhs.id2 (set in process_mixins).
+                        // Self must come from the *path type* (the mixin's
+                        // type-args), NOT the first value argument. This must
+                        // take precedence over the first-arg heuristic below:
+                        // for `u16::parse(s: &[u8])` the first-arg rule would
+                        // wrongly bind Self=&[u8] (surfaced via net's
+                        // address parser → parse_integer::<&[u8]>).
+                        let did_mixin_self = false;
+                        if self.ctx.proto_method_proto_gp_ids.get(&def.id._value).is_some()
                             && expr.lhs().tag == ExprTag::FnRef
                             && expr.lhs().id2()._value != 0usize {
-                            // Static call to a mixin'd protocol method like
-                            // `f64::nan()` — no receiver / first arg to infer
-                            // Self from. The path resolver stashed the
-                            // impl_scope_idx in id2 (set in process_mixins);
-                            // look up the mixin's type-args from that scope
-                            // and bind the protocol's generics.
                             let impl_scope_idx = expr.lhs().id2()._value as u32;
                             let mixin_ast_args = self.ctx.scopes.get_mixin_type_args(impl_scope_idx, def.id._value);
                             if mixin_ast_args.is_some() {
@@ -7104,7 +7101,20 @@ impl Mono {
                                     resolved[i] = self.resolve_type(ast_args[i]);
                                 }
                                 let _ = self.bind_proto_generics(def, resolved);
+                                did_mixin_self = true;
                             }
+                        }
+                        if !did_mixin_self && self_param_opt.is_some() && expr.args().len() > 0 {
+                            // Receiver-style call (e.g. UFCS / value call where
+                            // the first arg IS the receiver): infer Self from
+                            // the first argument's type.
+                            let first_arg_ir = self.lower_expr(expr.args()[0]);
+                            let self_ty = if first_arg_ir.ty.tag == IrTyTag::Pointer {
+                                first_arg_ir.ty.inner()
+                            } else {
+                                first_arg_ir.ty
+                            };
+                            self.type_map.insert(self_param_opt.unwrap(), self_ty);
                         }
                         let fn_idx = self.mono_function(def, &[]);
                         let ir_fn = &self.ctx.ir_functions[fn_idx];
