@@ -1,0 +1,36 @@
+// ALUMINAC_FLAGS: --sysroot sysroot-aluminac
+// Regression: type-level tuple projection `T.N` (grammar node
+// `tuple_index_of`) was entirely unhandled — parse_type fell through
+// to Ty::unresolved, so `generic_args_of<X>.0` and therefore
+// `std::typing::type_of<T>` (defined as `generic_args_of<T>.0`)
+// produced void. This broke `Type::new::<type_of<typeof(desc)>>()`,
+// the core of sysroot test.alu's reflective test discovery
+// (`attributed::<()>("test")` → descriptor → type_of<typeof> →
+// Type::new → .name()). Now: TyTag::TupleIndexOf + parse_type case +
+// resolve_type projecting the Nth element of the tuple IrTy.
+
+use std::typing::{Type, type_of};
+use std::builtins::generic_args_of;
+
+fn some_fn() {}
+struct SomeS { x: i32 }
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Direct generic_args_of<...>.0
+    let a = Type::new::<generic_args_of<Type<some_fn>>.0>();
+    if !std::string::contains(a.name().unwrap_or("<none>"), "some_fn") { return 1; }
+
+    // The std::typing::type_of alias = generic_args_of<T>.0
+    let descF: Type<some_fn> = Type::new::<some_fn>();
+    let backF = Type::new::<type_of<typeof(descF)>>();
+    if !std::string::contains(backF.name().unwrap_or("<none>"), "some_fn") { return 2; }
+
+    let descS: Type<SomeS> = Type::new::<SomeS>();
+    let backS = Type::new::<type_of<typeof(descS)>>();
+    if !std::string::contains(backS.name().unwrap_or("<none>"), "SomeS") { return 3; }
+
+    // Second tuple slot too (generic_args_of<Result<A,B>>.1 == B).
+    let r = Type::new::<generic_args_of<std::result::Result<SomeS, some_fn>>.1>();
+    if !std::string::contains(r.name().unwrap_or("<none>"), "some_fn") { return 4; }
+    0
+}

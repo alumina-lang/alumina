@@ -141,6 +141,7 @@ enum TyTag {
     When = 12i32,
     DerefOf = 13i32,    // *T in type position — pointee of T
     Dyn = 14i32,        // &dyn Proto — fat pointer with vtable; resolves to lang(dyn) struct
+    TupleIndexOf = 15i32, // T.N in type position — Nth element of tuple type T
 }
 
 struct _TyPointerData { inner: &Ty, is_const: bool }
@@ -172,7 +173,7 @@ impl Ty {
     fn id(self: &Ty) -> Id { self._data.id }
     fn inner(self: &Ty) -> &Ty {
         if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf || self.tag == TyTag::Dyn { self._data.pointer.inner }
-        else if self.tag == TyTag::Array { self._data.array.inner }
+        else if self.tag == TyTag::Array || self.tag == TyTag::TupleIndexOf { self._data.array.inner }
         else if self.tag == TyTag::Generic { self._data.generic.inner }
         else { self._data.when.inner } // When
     }
@@ -216,6 +217,12 @@ impl Ty {
     }
     fn tuple_ty(elems: &[&Ty]) -> Ty {
         Ty { tag: TyTag::Tuple, _data: _TyData { elems: elems } }
+    }
+    // `T.N` in type position: the Nth element of the tuple type `inner`
+    // (reuses the array data slot — inner + a usize). Resolved in
+    // mono/lower.alu's resolve_type.
+    fn tuple_index_of_ty(inner: &Ty, index: usize) -> Ty {
+        Ty { tag: TyTag::TupleIndexOf, _data: _TyData { array: _TyArrayData { inner: inner, array_size: index } } }
     }
     fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
         Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret } } }

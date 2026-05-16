@@ -855,6 +855,28 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::TupleIndexOf => {
+                // `T.N` in type position — the Nth element of the tuple
+                // type T (e.g. `generic_args_of<Type<X>>.0`, which is how
+                // `std::typing::type_of` is defined). `inner` is the type;
+                // `index` is a tuple_index_expression wrapping the integer.
+                let inner_node = child_by!(node, FieldKind::Inner);
+                let index_node = child_by!(node, FieldKind::Index);
+                if !inner_node.is_none() && !index_node.is_none() {
+                    let inner_ty = self.parse_type(inner_node.unwrap(), scope_idx);
+                    // Unwrap tuple_index_expression -> its Field child
+                    // (an integer literal) -> usize.
+                    let idx_holder = index_node.unwrap();
+                    let idx_field = child_by!(idx_holder, FieldKind::Field);
+                    let idx: usize = if idx_field.is_none() {
+                        parse_usize(self.ctx.node_text(idx_holder))
+                    } else {
+                        parse_usize(self.ctx.node_text(idx_field.unwrap()))
+                    };
+                    return self.ctx.alloc_ty(Ty::tuple_index_of_ty(inner_ty, idx));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             NodeKind::WhenType => {
                 // when cond { TypeA } else { TypeB }
                 let cond_node = child_by!(node, FieldKind::Condition);

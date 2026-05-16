@@ -360,6 +360,21 @@ impl Mono {
                     self.ctx.void_ty
                 }
             }
+            TyTag::TupleIndexOf => {
+                // `T.N` — the Nth element of the tuple type T. Composes
+                // with `generic_args_of<...>` (which resolves to an IR
+                // Tuple), so `std::typing::type_of<Type<X>>` =
+                // `generic_args_of<Type<X>>.0` recovers `X`.
+                let inner_ir = self.resolve_type(ty.inner());
+                let idx = ty.array_size();
+                if inner_ir.tag == IrTyTag::Tuple {
+                    let elems = inner_ir.elems();
+                    if idx < elems.len() {
+                        return elems[idx];
+                    }
+                }
+                self.ctx.void_ty
+            }
             TyTag::Dyn => {
                 // `&dyn Proto` (or `&dyn (A + B + ...)`) — resolve to the
                 // lang(dyn) struct from sysroot (`struct dyn<Protos, Ptr>`).
