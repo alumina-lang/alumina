@@ -519,6 +519,17 @@ impl FnCodegen {
             let result_ty = self.ctx.llvm_type(expr.ty);
 
             if self.is_void_type(result_ty) {
+                // The field is zero-sized (e.g. `(K, ()).1`), so it has no
+                // runtime value — but the base expression may still have
+                // side effects or control flow (calls, an early `return`
+                // nested in a block-expr, etc.). Evaluate it for effect
+                // before discarding, exactly as the non-void path does via
+                // gen_lvalue. Skipping this dropped the entire base
+                // computation — surfaced as `HashMap<K, ()>::get`
+                // (`Option::some(self._get_slot(..)?.item.1)`) eliding the
+                // `?` early-return and false-positiving on absent keys,
+                // which hangs HashSet-using code (mono_enum's dedup loop).
+                self.gen_lvalue(expr.lhs());
                 return LLVMGetUndef(self.ctx.i8_type);
             }
 
