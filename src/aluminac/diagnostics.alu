@@ -55,22 +55,15 @@ impl SourceFile {
 }
 
 fn compute_line_starts(contents: &[u8], arena: &mut aluminac_common::arena::Arena) -> &[u32] {
-    // Count lines first
-    let count: usize = 1;
-    for i in 0usize..contents.len() {
-        if contents[i] == '\n' {
-            count = count + 1;
-        }
-    }
+    // Count lines first (one more line than the number of newlines).
+    let count: usize = 1 + contents.iter().filter(|b: u8| -> bool { b == '\n' }).count();
     let starts = arena.alloc_slice::<u32>(count);
     starts[0] = 0;
     let idx: usize = 1;
-    for i in 0usize..contents.len() {
-        if contents[i] == '\n' {
-            if idx < count {
-                starts[idx] = (i + 1) as u32;
-                idx = idx + 1;
-            }
+    for (i, byte) in contents.iter().enumerate() {
+        if byte == '\n' && idx < count {
+            starts[idx] = (i + 1) as u32;
+            idx += 1;
         }
     }
     starts[0..idx]
