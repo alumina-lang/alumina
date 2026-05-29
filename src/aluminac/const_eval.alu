@@ -8,7 +8,7 @@ use ast::*;
 use layout::{compute_type_size, compute_type_align};
 use aluminac_common::arena::Arena;
 use std::collections::HashMap;
-use std::option::Option;
+use std::option::{Option, try};
 
 const MAX_RECURSION_DEPTH: usize = 100;
 const MAX_ITERATIONS: usize = 1000000;
@@ -1578,15 +1578,11 @@ fn materialize_to_ir(
         if ty.tag == IrTyTag::Tuple {
             for i in 0usize..val.elems().len() {
                 let elem_ty = if i < ty.elems().len() { ty.elems()[i] } else { void_ty };
-                let m = materialize_to_ir(arena, val.elems()[i], elem_ty, void_ty);
-                if m.is_none() { return Option::none(); }
-                items[i] = m.unwrap();
+                items[i] = materialize_to_ir(arena, val.elems()[i], elem_ty, void_ty)?;
             }
         } else {
             for i in 0usize..val.elems().len() {
-                let m = materialize_to_ir(arena, val.elems()[i], void_ty, void_ty);
-                if m.is_none() { return Option::none(); }
-                items[i] = m.unwrap();
+                items[i] = materialize_to_ir(arena, val.elems()[i], void_ty, void_ty)?;
             }
         }
         let r = IrExpr::void_expr(ty);
@@ -1597,9 +1593,7 @@ fn materialize_to_ir(
         let items = arena.alloc_slice::<&IrExpr>(val.elems().len());
         let elem_ty = if ty.tag == IrTyTag::Array { ty.inner() } else { void_ty };
         for i in 0usize..val.elems().len() {
-            let m = materialize_to_ir(arena, val.elems()[i], elem_ty, void_ty);
-            if m.is_none() { return Option::none(); }
-            items[i] = m.unwrap();
+            items[i] = materialize_to_ir(arena, val.elems()[i], elem_ty, void_ty)?;
         }
         let r = IrExpr::void_expr(ty);
         r.tag = IrTag::ArrayLit;
@@ -1615,9 +1609,7 @@ fn materialize_to_ir(
                     field_ty = ty.struct_ref().fields[fidx].ty;
                 }
             }
-            let m = materialize_to_ir(arena, val.fields()[i].value, field_ty, void_ty);
-            if m.is_none() { return Option::none(); }
-            items[i] = m.unwrap();
+            items[i] = materialize_to_ir(arena, val.fields()[i].value, field_ty, void_ty)?;
         }
         let r = IrExpr::void_expr(ty);
         r.tag = IrTag::StructLit;

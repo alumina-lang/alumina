@@ -9,7 +9,7 @@ use scope::*;
 use diagnostics::DiagnosticContext;
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet, Vector};
-use std::option::Option;
+use std::option::{Option, try};
 
 struct Mono {
     ctx: &mut MonoCtx,
@@ -2074,11 +2074,7 @@ impl Mono {
         }
 
         let method_item = self.ctx.scopes.get(scope_idx).items.get(&method_name);
-        if method_item.is_none() {
-            return Option::none();
-        }
-
-        let item = method_item.unwrap();
+        let item = method_item?;
         let fn_id_val = if item.kind.tag == scope::NamedItemTag::Method {
             item.kind.id2()._value
         } else if item.kind.tag == scope::NamedItemTag::Function {
@@ -2252,10 +2248,7 @@ impl Mono {
 
         // Find the method on the concrete type
         let method_def = self.find_method_in_scope(concrete_ty, method_name);
-        if method_def.is_none() {
-            return Option::none();
-        }
-        let def = method_def.unwrap();
+        let def = method_def?;
 
         // Build type args from the concrete type's struct type args.
         // Only use them when the count matches the method's generic params,
@@ -3489,11 +3482,7 @@ impl Mono {
 
         // Look up the method name in the concrete type's scope
         let method_item = self.ctx.scopes.get(scope_idx).items.get(&def.name);
-        if method_item.is_none() {
-            return Option::none();
-        }
-
-        let item = method_item.unwrap();
+        let item = method_item?;
         if item.kind.tag != scope::NamedItemTag::Function && item.kind.tag != scope::NamedItemTag::Method {
             return Option::none();
         }
@@ -3506,12 +3495,10 @@ impl Mono {
             item.kind.id()._value
         };
         let concrete_def = self.ctx.fn_defs.get(&fn_id_val);
-        if concrete_def.is_none() {
-            return Option::none();
-        }
+        let concrete_def_v = concrete_def?;
 
         // Don't redirect to ourselves (same function)
-        if concrete_def.unwrap().id._value == def.id._value {
+        if concrete_def_v.id._value == def.id._value {
             return Option::none();
         }
 
@@ -3560,7 +3547,7 @@ impl Mono {
             self.type_map.remove(&collected_ids[k]);
         }
 
-        let result = self.mono_function(concrete_def.unwrap(), type_args);
+        let result = self.mono_function(concrete_def_v, type_args);
 
         // Restore the bindings the dispatcher had set, so the caller's
         // context isn't disturbed by the redirect.
@@ -4121,10 +4108,7 @@ impl Mono {
         }
 
         let method_item = self.ctx.scopes.get(scope_idx).items.get(&method_name);
-        if method_item.is_none() {
-            return Option::none();
-        }
-        let item = method_item.unwrap();
+        let item = method_item?;
 
         let fn_id = if item.kind.tag == NamedItemTag::Function {
             item.kind.id()
@@ -4135,10 +4119,7 @@ impl Mono {
         };
 
         let fn_def = self.ctx.fn_defs.get(&fn_id._value);
-        if fn_def.is_none() {
-            return Option::none();
-        }
-        let def = fn_def.unwrap();
+        let def = fn_def?;
 
         // For mixin'd methods, resolve the mixin's type args.
         // The mixin type args contain Placeholder refs to the IMPL's generic params,
@@ -5873,10 +5854,7 @@ impl Mono {
     // obj.func(args) -> func(obj, args) or func(&obj, args)
     fn try_ufcs_call(self: &mut Mono, expr: &Expr, ir_obj: &IrExpr, fn_id: Id) -> Option<&IrExpr> {
         let fn_def = self.ctx.fn_defs.get(&fn_id._value);
-        if fn_def.is_none() {
-            return Option::none();
-        }
-        let def = fn_def.unwrap();
+        let def = fn_def?;
 
         let total_args = 1usize + expr.args().len();
 
@@ -6107,10 +6085,7 @@ impl Mono {
 
         // Look up the FnDef
         let fn_def = self.ctx.fn_defs.get(&fn_id._value);
-        if fn_def.is_none() {
-            return Option::none();
-        }
-        let def = fn_def.unwrap();
+        let def = fn_def?;
 
         // For Slice receivers, the earlier setup of `method_type_args`
         // (line ~5210) only knew `Ptr`, so it set `method_type_args = [Ptr]`.

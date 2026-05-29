@@ -16,7 +16,7 @@ use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
 use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 
 use std::collections::{HashMap, Vector};
-use std::option::Option;
+use std::option::{Option, try};
 
 struct ExprParser {
     ctx: &mut ParseContext,
@@ -546,8 +546,7 @@ impl ExprParser {
             } else {
                 self.lookup_in_module(cur_scope, segments[i])
             };
-            if anchor.is_none() { return Option::none(); }
-            let res = anchor.unwrap();
+            let res = anchor?;
             if res.is_terminal {
                 if i + 2 == segments.len() {
                     return Option::some(res.item);
@@ -579,8 +578,7 @@ impl ExprParser {
                     if res.is_some() { return res; }
                 }
             }
-            if scope.parent.is_none() { return Option::none(); }
-            cur = scope.parent.unwrap();
+            cur = scope.parent?;
         }
     }
 
@@ -618,8 +616,7 @@ impl ExprParser {
                 let segs = item.kind.path_segments();
                 if segs.is_empty() { return Option::none(); }
                 let inner = self.lookup_in_chain_through_use(item.kind.scope_idx, segs);
-                if inner.is_none() { return Option::none(); }
-                item = inner.unwrap();
+                item = inner?;
             }
         }
         let tag = item.kind.tag;
@@ -677,8 +674,7 @@ impl ExprParser {
             }
             if item.kind.tag == scope::NamedItemTag::UseAlias {
                 let target = self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
-                if target.is_none() { return Option::none(); }
-                item = target.unwrap();
+                item = target?;
             }
             // Descend through module/struct/etc only
             let descendable = (item.kind.tag == scope::NamedItemTag::Module
