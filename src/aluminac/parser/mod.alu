@@ -384,11 +384,12 @@ impl ParseContext {
             if attr_kind != NodeKind::AttributeItem { continue; }
             let meta = child_by!(attr, FieldKind::Inner);
             if meta.is_none() { continue; }
-            let name_node = child_by!(meta.unwrap(), FieldKind::Name);
+            let meta_node = meta.unwrap();
+            let name_node = child_by!(meta_node, FieldKind::Name);
             if name_node.is_none() { continue; }
             let name = self.node_text(name_node.unwrap());
             if name != "cfg" { continue; }
-            let args_node = child_by!(meta.unwrap(), FieldKind::Arguments);
+            let args_node = child_by!(meta_node, FieldKind::Arguments);
             if args_node.is_none() { continue; }
             if !self.eval_cfg_arguments_single(args_node.unwrap()) {
                 return true;

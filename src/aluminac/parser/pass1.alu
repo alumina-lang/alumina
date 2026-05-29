@@ -654,16 +654,17 @@ impl Pass1 {
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
         if type_args.is_some() {
+            let type_args_node = type_args.unwrap();
             // Visit to register generic params in scope
-            self.visit_node(type_args.unwrap());
+            self.visit_node(type_args_node);
             // Collect the IDs (and names) of the generic params we just
             // registered. Multiple impl blocks of the same struct write into
             // the SAME (struct-shared) scope, so later impls overwrite K /
             // V / H. Capturing the ids+names per-impl lets pass2 rebind the
             // correct ones in each method's function scope before parsing
             // its types.
-            self.impl_generic_param_ids = self.collect_generic_param_ids(type_args.unwrap());
-            self.impl_generic_param_names = self.collect_generic_param_names(type_args.unwrap());
+            self.impl_generic_param_ids = self.collect_generic_param_ids(type_args_node);
+            self.impl_generic_param_names = self.collect_generic_param_names(type_args_node);
             // Stash the impl block's byte range so pass2 can re-parse the
             // generic params *with bounds* (collect_* above only captures
             // ids/names — the `Rg: RangeOf<T>` bounds are needed for
@@ -807,9 +808,10 @@ impl Pass1 {
                 };
                 let list_node = child_by!(node, FieldKind::List);
                 if list_node.is_some() {
-                    let cursor = list_node.unwrap().walk();
+                    let list = list_node.unwrap();
+                    let cursor = list.walk();
                     defer cursor.free();
-                    for child in list_node.unwrap().children(&cursor) {
+                    for child in list.children(&cursor) {
                         if child.is_named() {
                             self.process_use(child, new_prefix);
                         }
@@ -1040,8 +1042,11 @@ impl Pass1 {
                 if placeholder.is_some() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let resolved = self.ctx.scopes.resolve(self.current_scope, name);
-                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
-                        ids.push(resolved.unwrap().kind.id());
+                    if resolved.is_some() {
+                        let resolved_item = resolved.unwrap();
+                        if resolved_item.kind.tag == scope::NamedItemTag::GenericParam {
+                            ids.push(resolved_item.kind.id());
+                        }
                     }
                 }
             }
@@ -1071,8 +1076,11 @@ impl Pass1 {
                 if placeholder.is_some() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let resolved = self.ctx.scopes.resolve(self.current_scope, name);
-                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
-                        names.push(name);
+                    if resolved.is_some() {
+                        let resolved_item = resolved.unwrap();
+                        if resolved_item.kind.tag == scope::NamedItemTag::GenericParam {
+                            names.push(name);
+                        }
                     }
                 }
             }
@@ -1124,11 +1132,12 @@ impl Pass1 {
         let type_scope_idx = self.current_scope;
         let combined_gp_ids = self.impl_generic_param_ids;
         if mixin_type_args.is_some() {
+            let mixin_type_args_node = mixin_type_args.unwrap();
             let mixin_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
             let prev = self.current_scope;
             self.current_scope = mixin_scope;
-            self.visit_node(mixin_type_args.unwrap());
-            let mixin_ids = self.collect_generic_param_ids(mixin_type_args.unwrap());
+            self.visit_node(mixin_type_args_node);
+            let mixin_ids = self.collect_generic_param_ids(mixin_type_args_node);
             self.current_scope = prev;
             type_scope_idx = mixin_scope;
             if !mixin_ids.is_empty() {

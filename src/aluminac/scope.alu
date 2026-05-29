@@ -337,8 +337,11 @@ impl ScopeArena {
                 }
                 if item.kind.tag == NamedItemTag::UseAlias {
                     let target = self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
-                    if target.is_some() && target.unwrap().kind.tag == NamedItemTag::Function {
-                        return Option::some(target.unwrap().kind.id());
+                    if target.is_some() {
+                        let target_item = target.unwrap();
+                        if target_item.kind.tag == NamedItemTag::Function {
+                            return Option::some(target_item.kind.id());
+                        }
                     }
                 }
                 // Non-Function match: skip past it, but check star-imports
@@ -346,8 +349,11 @@ impl ScopeArena {
             }
             for import_idx in scope.star_imports {
                 let imp_found = self.get(import_idx).items.get(&name);
-                if imp_found.is_some() && imp_found.unwrap().kind.tag == NamedItemTag::Function {
-                    return Option::some(imp_found.unwrap().kind.id());
+                if imp_found.is_some() {
+                    let imp_fn = imp_found.unwrap();
+                    if imp_fn.kind.tag == NamedItemTag::Function {
+                        return Option::some(imp_fn.kind.id());
+                    }
                 }
             }
             if scope.parent.is_none() { break; }
@@ -530,8 +536,13 @@ impl ScopeArena {
                         return imp_found;
                     }
                     let imp_resolved = self.follow_use_alias(imp_found.unwrap());
-                    if imp_resolved.is_some() && imp_resolved.unwrap().kind.tag == NamedItemTag::Module {
-                        return self.resolve_in_module(imp_resolved.unwrap().kind.scope_idx, segments[1..]);
+                    if imp_resolved.is_some() {
+                        let imp_resolved_item = imp_resolved.unwrap();
+                        if imp_resolved_item.kind.tag == NamedItemTag::Module {
+                            return self.resolve_in_module(imp_resolved_item.kind.scope_idx, segments[1..]);
+                        } else {
+                            return Option::none();
+                        }
                     } else {
                         return Option::none();
                     }

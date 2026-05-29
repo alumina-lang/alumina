@@ -1709,10 +1709,11 @@ impl Mono {
                 if !self.ctx.emitted_globals.contains(&def.id._value) {
                     self.ctx.emitted_globals.insert(def.id._value);
                     let init: Option<&IrExpr> = if def.init.is_some() {
+                        let init_expr = def.init.unwrap();
                         let init_ir = if !ty.is_void() {
-                            self.lower_expr_coerced(def.init.unwrap(), ty)
+                            self.lower_expr_coerced(init_expr, ty)
                         } else {
-                            self.lower_expr(def.init.unwrap())
+                            self.lower_expr(init_expr)
                         };
                         // If no explicit type, infer from init
                         if ty.is_void() {
@@ -1722,7 +1723,7 @@ impl Mono {
                         // gets simple literals instead of arbitrary IR.
                         if def.is_const {
                             let (cv, panic_msg, warn_msg, note_msg) = self.try_const_eval_with_diags(init_ir);
-                            let span = def.init.unwrap().span;
+                            let span = init_expr.span;
                             if warn_msg.len() > 0 {
                                 self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, warn_msg));
                             }
@@ -1733,8 +1734,9 @@ impl Mono {
                                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, panic_msg));
                             }
                             if cv.is_some() {
-                                self.ctx.const_values.insert(def.id._value, cv.unwrap());
-                                Option::some(self.constvalue_to_ir(cv.unwrap(), ty))
+                                let cv_val = cv.unwrap();
+                                self.ctx.const_values.insert(def.id._value, cv_val);
+                                Option::some(self.constvalue_to_ir(cv_val, ty))
                             } else {
                                 Option::some(init_ir)
                             }
@@ -2772,15 +2774,16 @@ impl Mono {
                 self.lower_expr(expr.lhs())
             };
             let ir_else: Option<&IrExpr> = if expr.opt_expr().is_some() {
+                let else_expr = expr.opt_expr().unwrap();
                 let else_result = if propagate {
-                    self.lower_expr_coerced(expr.opt_expr().unwrap(), outer_expected)
+                    self.lower_expr_coerced(else_expr, outer_expected)
                 } else {
                     // Set expected_type hint from then branch for else branch inference.
                     let saved_expected = self.expected_type;
                     if !ir_then.ty.is_void() && !ir_then.ty.is_never() {
                         self.expected_type = ir_then.ty;
                     }
-                    let r = self.lower_expr(expr.opt_expr().unwrap());
+                    let r = self.lower_expr(else_expr);
                     self.expected_type = saved_expected;
                     r
                 };
@@ -2975,10 +2978,11 @@ impl Mono {
                 // first break can pick up a hint from `let x: Option<…> =
                 // loop { break Option::none() … }` shaped contexts.
                 let preview_ty = self.loop_contexts[ctx_idx].break_value_ty;
+                let break_expr = expr.opt_expr().unwrap();
                 let ir_val = if !preview_ty.is_void() {
-                    self.lower_expr_coerced(expr.opt_expr().unwrap(), preview_ty)
+                    self.lower_expr_coerced(break_expr, preview_ty)
                 } else {
-                    self.lower_expr(expr.opt_expr().unwrap())
+                    self.lower_expr(break_expr)
                 };
                 if !self.loop_contexts[ctx_idx].has_value && !ir_val.ty.is_void() {
                     self.loop_contexts[ctx_idx].break_value_ty = ir_val.ty;
@@ -3009,8 +3013,9 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Return {
             if expr.opt_expr().is_some() {
-                let ir_val = self.lower_expr_coerced(expr.opt_expr().unwrap(), self.return_type);
-                let ir_val = self.check_and_coerce(ir_val, self.return_type, expr.opt_expr().unwrap().span);
+                let ret_expr = expr.opt_expr().unwrap();
+                let ir_val = self.lower_expr_coerced(ret_expr, self.return_type);
+                let ir_val = self.check_and_coerce(ir_val, self.return_type, ret_expr.span);
                 let result = IrExpr::void_expr(self.ctx.never_ty);
                 result.tag = IrTag::Return;
                 result._data.ret.opt_expr = Option::some(ir_val);
@@ -4723,10 +4728,11 @@ impl Mono {
         } else if impl_ty.tag == IrTyTag::Slice {
             let lang_id = self.ctx.get_lang_item("slice");
             if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
+                let lang_item_id = lang_id.unwrap();
+                let sd = self.ctx.struct_defs.get(&lang_item_id);
                 if sd.is_some() {
                     impl_scope_idx = sd.unwrap().scope_idx;
-                    slice_lang_struct_id = lang_id.unwrap();
+                    slice_lang_struct_id = lang_item_id;
                     let elem_ty = self.slice_elem_ty(impl_ty);
                     slice_ptr_ty = self.ctx.make_ptr_ty(elem_ty, impl_ty.is_const());
                 }

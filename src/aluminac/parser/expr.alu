@@ -150,10 +150,11 @@ impl ExprParser {
                     // Find param index
                     let param_idx = self.ctx.macro_param_names.iter().find_index(|=name, e: &[u8]| -> bool { e == name });
                     if param_idx.is_some() {
+                        let pidx = param_idx.unwrap();
                         let e = self.make_expr(ExprTag::MacroParam, span);
                         e._data.id_ref.str_val = name;
-                        e._data.id_ref.int_val = param_idx.unwrap() as u64;
-                        e._data.id_ref.flag = ((param_idx.unwrap() as i32) == self.ctx.macro_variadic_param_idx);
+                        e._data.id_ref.int_val = pidx as u64;
+                        e._data.id_ref.flag = ((pidx as i32) == self.ctx.macro_variadic_param_idx);
                         return self.ctx.alloc_expr(e);
                     }
                     return self.alloc_void(span);
@@ -292,9 +293,10 @@ impl ExprParser {
             if !child.is_named() { continue; }
             let inner_opt = child_by!(child, FieldKind::Inner);
             if inner_opt.is_some() {
-                let inner_kind = NODE_KINDS[inner_opt.unwrap().symbol() as usize];
+                let inner_node = inner_opt.unwrap();
+                let inner_kind = NODE_KINDS[inner_node.symbol() as usize];
                 if inner_kind == NodeKind::ExpressionStatement {
-                    let attrs_node = child_by!(inner_opt.unwrap(), FieldKind::Attributes);
+                    let attrs_node = child_by!(inner_node, FieldKind::Attributes);
                     if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
                         continue;
                     }
@@ -321,7 +323,8 @@ impl ExprParser {
                 if last_inner_kind == NodeKind::ExpressionStatement {
                     let stmt_inner_opt = child_by!(last_inner, FieldKind::Inner);
                     if stmt_inner_opt.is_some() {
-                        let stmt_inner_kind = NODE_KINDS[stmt_inner_opt.unwrap().symbol() as usize];
+                        let stmt_inner = stmt_inner_opt.unwrap();
+                        let stmt_inner_kind = NODE_KINDS[stmt_inner.symbol() as usize];
                         let is_block_ending = stmt_inner_kind == NodeKind::Block
                             || stmt_inner_kind == NodeKind::IfExpression
                             || stmt_inner_kind == NodeKind::SwitchExpression
@@ -332,7 +335,7 @@ impl ExprParser {
                         if is_block_ending {
                             // Check that the statement has no trailing `;` —
                             // if it does, the value is still discarded.
-                            if last_inner.end_byte() == stmt_inner_opt.unwrap().end_byte() {
+                            if last_inner.end_byte() == stmt_inner.end_byte() {
                                 has_result_value = true;
                             }
                         }
@@ -352,16 +355,17 @@ impl ExprParser {
         // child is the block's result.
         let result_node = child_by!(node, FieldKind::Result);
         if result_node.is_some() {
-            let result_kind = NODE_KINDS[result_node.unwrap().symbol() as usize];
+            let result = result_node.unwrap();
+            let result_kind = NODE_KINDS[result.symbol() as usize];
             let suppressed = false;
             if result_kind == NodeKind::ExpressionStatement {
-                let attrs_node = child_by!(result_node.unwrap(), FieldKind::Attributes);
+                let attrs_node = child_by!(result, FieldKind::Attributes);
                 if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
                     suppressed = true;
                 }
             }
             if !suppressed {
-                stmts.push(block_parser.parse_expr(result_node.unwrap()));
+                stmts.push(block_parser.parse_expr(result));
                 has_result_value = true;
             }
         }
@@ -873,10 +877,10 @@ impl ExprParser {
         if func_kind == NodeKind::ScopedIdentifier {
             let path_child = child_by!(func_node, FieldKind::Path);
             if path_child.is_some() {
-                let path_kind = NODE_KINDS[path_child.unwrap().symbol() as usize];
+                let turbo_node = path_child.unwrap();
+                let path_kind = NODE_KINDS[turbo_node.symbol() as usize];
                 if path_kind == NodeKind::GenericTypeWithTurbofish || path_kind == NodeKind::Turbofish || path_kind == NodeKind::GenericType {
                     // Extract type arguments from the turbofish in the path
-                    let turbo_node = path_child.unwrap();
                     let type_args_node = child_by!(turbo_node, FieldKind::TypeArguments);
                     let pass2 = Pass2 { ctx: self.ctx };
                     let type_args = if type_args_node.is_some() {
@@ -1264,9 +1268,10 @@ impl ExprParser {
 
         let body = child_by!(node, FieldKind::Body);
         if body.is_some() {
-            let cursor = body.unwrap().walk();
+            let body_node = body.unwrap();
+            let cursor = body_node.walk();
             defer cursor.free();
-            for child in children_by!(body.unwrap(), FieldKind::Arm, &cursor) {
+            for child in children_by!(body_node, FieldKind::Arm, &cursor) {
                 let kind = NODE_KINDS[child.symbol() as usize];
                 if kind == NodeKind::SwitchArm {
                     let pattern_node = child_by!(child, FieldKind::Pattern);
@@ -1277,22 +1282,23 @@ impl ExprParser {
                     defer patterns.free();
 
                     if pattern_node.is_some() {
+                        let pat_node = pattern_node.unwrap();
                         // Check for wildcard/default pattern "_"
-                        let pat_text = self.ctx.node_text(pattern_node.unwrap());
+                        let pat_text = self.ctx.node_text(pat_node);
                         let is_wildcard = pat_text.len() == 1 && pat_text[0] == '_';
                         if !is_wildcard {
                             // Parse pattern values
-                            let cursor2 = pattern_node.unwrap().walk();
+                            let cursor2 = pat_node.walk();
                             #[allow(defer_in_a_loop)]
                             defer cursor2.free();
-                            for pat_child in pattern_node.unwrap().children(&cursor2) {
+                            for pat_child in pat_node.children(&cursor2) {
                                 if pat_child.is_named() {
                                     patterns.push(self.parse_expr(pat_child));
                                 }
                             }
                             // If pattern node itself is a value
                             if patterns.is_empty() {
-                                patterns.push(self.parse_expr(pattern_node.unwrap()));
+                                patterns.push(self.parse_expr(pat_node));
                             }
                         }
                     }
@@ -1347,13 +1353,14 @@ impl ExprParser {
 
         if name_node.is_some() {
             // Simple case: for item in iterable { body }
+            let name_node_val = name_node.unwrap();
             let var_id = self.ctx.next_id();
-            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node_val));
 
             self.ctx.scopes.add_item(loop_scope, NamedItem {
                 name: var_name,
                 kind: NamedItemKind::local(var_id),
-                span: self.ctx.make_span(name_node.unwrap()),
+                span: self.ctx.make_span(name_node_val),
             });
 
             e._data.for_expr.id = var_id;
@@ -1440,8 +1447,9 @@ impl ExprParser {
 
         if name_node.is_some() {
             // Simple let: let x = expr;
+            let name_node_val = name_node.unwrap();
             let var_id = self.ctx.next_id();
-            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node_val));
 
             let pass2 = Pass2 { ctx: self.ctx };
             let ty: Option<&Ty> = if type_node.is_some() {
@@ -1463,7 +1471,7 @@ impl ExprParser {
             self.ctx.scopes.add_item(self.scope_idx, NamedItem {
                 name: var_name,
                 kind: NamedItemKind::local(var_id),
-                span: self.ctx.make_span(name_node.unwrap()),
+                span: self.ctx.make_span(name_node_val),
             });
 
             let e = self.make_expr(ExprTag::Let, span);
@@ -1551,9 +1559,10 @@ impl ExprParser {
         defer fields.free();
 
         if init_node.is_some() {
-            let cursor = init_node.unwrap().walk();
+            let init = init_node.unwrap();
+            let cursor = init.walk();
             defer cursor.free();
-            for child in init_node.unwrap().children(&cursor) {
+            for child in init.children(&cursor) {
                 let kind = NODE_KINDS[child.symbol() as usize];
                 if kind == NodeKind::StructInitializerItem {
                     let name_node = child_by!(child, FieldKind::Field);
@@ -1625,10 +1634,11 @@ impl ExprParser {
         let self_param_id = self.ctx.next_id();
 
         if params_node.is_some() {
-            let cursor = params_node.unwrap().walk();
+            let params_n = params_node.unwrap();
+            let cursor = params_n.walk();
             defer cursor.free();
             let pass2 = Pass2 { ctx: self.ctx };
-            for child in params_node.unwrap().children(&cursor) {
+            for child in params_n.children(&cursor) {
                 if child.is_named() {
                     let kind = NODE_KINDS[child.symbol() as usize];
                     let id = self.ctx.next_id();
@@ -2296,8 +2306,9 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
+        let name_node_val = name_node.unwrap();
         let var_id = self.ctx.next_id();
-        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node_val));
 
         // Create a child scope for the loop so the loop variable is accessible in the body
         let loop_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
@@ -2307,7 +2318,7 @@ impl ExprParser {
         self.ctx.scopes.add_item(loop_scope, NamedItem {
             name: var_name,
             kind: NamedItemKind::local(var_id),
-            span: self.ctx.make_span(name_node.unwrap()),
+            span: self.ctx.make_span(name_node_val),
         });
 
         let e = self.make_expr(ExprTag::StaticFor, span);
