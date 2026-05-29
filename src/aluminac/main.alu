@@ -13,7 +13,7 @@ use aluminac::diagnostics::DiagnosticContext;
 use tree_sitter::{Parser, Tree, TSLanguage};
 use std::collections::Vector;
 use std::option::Option;
-use std::string::StringBuf;
+use std::string::{StringBuf, starts_with, ends_with, contains};
 use std::fs::{Path, PathBuf, FileType, read_directory};
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
@@ -147,7 +147,7 @@ impl Compiler {
     /// e.g. sysroot/std/mem.alu -> "std::mem", sysroot/std/mod.alu -> "std"
     fn load_sysroot(self: &mut Compiler) -> bool {
         let sysroot = self.options.sysroot;
-        if sysroot.len() == 0 {
+        if sysroot.is_empty() {
             return true;
         }
 
@@ -161,7 +161,7 @@ impl Compiler {
         let root_prefix = StringBuf::new();
         dir_stack.push((root_path, root_prefix));
 
-        while dir_stack.len() > 0 {
+        while !dir_stack.is_empty() {
             let entry_pair = dir_stack.pop().unwrap();
             let dir_path = entry_pair.0;
             let mod_prefix = entry_pair.1;
@@ -206,16 +206,16 @@ impl Compiler {
                     child_path.push(Path::new(name));
 
                     let child_prefix = StringBuf::new();
-                    if mod_prefix.len() > 0 {
+                    if !mod_prefix.is_empty() {
                         child_prefix.extend_from_slice(mod_prefix.as_slice());
                         child_prefix.extend_from_slice("::");
                     }
                     child_prefix.extend_from_slice(name);
 
                     dir_stack.push((child_path, child_prefix));
-                } else if std::string::ends_with(name, ".alu") {
+                } else if name.ends_with(".alu") {
                     // Skip test.alu in the sysroot root unless in test mode
-                    if name == "test.alu" && mod_prefix.len() == 0 && !self.options.test_mode {
+                    if name == "test.alu" && mod_prefix.is_empty() && !self.options.test_mode {
                         continue;
                     }
 
@@ -229,12 +229,12 @@ impl Compiler {
 
                     if stem == "mod" {
                         // mod.alu -> just the directory's module prefix
-                        if mod_prefix.len() > 0 {
+                        if !mod_prefix.is_empty() {
                             module_path.extend_from_slice(mod_prefix.as_slice());
                         }
                         // root mod.alu has empty module_path (maps to root scope)
                     } else {
-                        if mod_prefix.len() > 0 {
+                        if !mod_prefix.is_empty() {
                             module_path.extend_from_slice(mod_prefix.as_slice());
                             module_path.extend_from_slice("::");
                         }
@@ -253,7 +253,7 @@ impl Compiler {
                     let file_contents = read_result.unwrap();
 
                     // Copy path and contents into arena for lifetime management
-                    let path_copy: &[u8] = if file_path_slice.len() > 0 {
+                    let path_copy: &[u8] = if !file_path_slice.is_empty() {
                         let p = self.arena.alloc_slice::<u8>(file_path_slice.len());
                         file_path_slice.copy_to_nonoverlapping(&p[0]);
                         p as &[u8]
@@ -261,7 +261,7 @@ impl Compiler {
                         ""
                     };
 
-                    let contents_copy: &[u8] = if file_contents.len() > 0 {
+                    let contents_copy: &[u8] = if !file_contents.is_empty() {
                         let c = self.arena.alloc_slice::<u8>(file_contents.len());
                         file_contents.as_slice().copy_to_nonoverlapping(&c[0]);
                         c as &[u8]
@@ -269,7 +269,7 @@ impl Compiler {
                         ""
                     };
 
-                    let mod_path_copy: &[u8] = if module_path.len() > 0 {
+                    let mod_path_copy: &[u8] = if !module_path.is_empty() {
                         let m = self.arena.alloc_slice::<u8>(module_path.len());
                         module_path.as_slice().copy_to_nonoverlapping(&m[0]);
                         m as &[u8]
@@ -298,7 +298,7 @@ impl Compiler {
     }
 
     fn compile(self: &mut Compiler) -> bool {
-        if self.source_files.len() == 0 {
+        if self.source_files.is_empty() {
             eprintln!("error: no source files");
             return false;
         }
@@ -332,7 +332,7 @@ impl Compiler {
         defer file_scopes.free();
         for i in 0usize..self.source_files.len() {
             let entry = &self.source_files[i];
-            let file_scope = if entry.module_path.len() == 0 || entry.module_path == "main" {
+            let file_scope = if entry.module_path.is_empty() || entry.module_path == "main" {
                 root_scope
             } else {
                 self.resolve_or_create_module_scope(root_scope, entry.module_path)
@@ -462,7 +462,7 @@ impl Compiler {
         }
 
         // Run optimization passes if requested
-        if self.options.optimize as i32 != OptLevel::O0 as i32 {
+        if self.options.optimize != OptLevel::O0 {
             if !ctx.optimize() {
                 eprintln!("error: LLVM optimization passes failed");
                 ctx.free();
@@ -520,32 +520,32 @@ impl Compiler {
 
         let prefix = "cc -o ";
         prefix.copy_to_nonoverlapping(&cmd[pos]);
-        pos = pos + prefix.len();
+        pos += prefix.len();
 
         output.copy_to_nonoverlapping(&cmd[pos]);
-        pos = pos + output.len();
+        pos += output.len();
 
         cmd[pos] = ' ';
-        pos = pos + 1;
+        pos += 1;
 
         obj_file.copy_to_nonoverlapping(&cmd[pos]);
-        pos = pos + obj_file.len();
+        pos += obj_file.len();
 
         let suffix = " -lm";
         suffix.copy_to_nonoverlapping(&cmd[pos]);
-        pos = pos + suffix.len();
+        pos += suffix.len();
 
         if self.options.debug_info {
             let dbg_flag = " -g";
             dbg_flag.copy_to_nonoverlapping(&cmd[pos]);
-            pos = pos + dbg_flag.len();
+            pos += dbg_flag.len();
         }
 
-        if extra.len() > 0usize {
+        if !extra.is_empty() {
             cmd[pos] = ' ';
-            pos = pos + 1;
+            pos += 1;
             extra.copy_to_nonoverlapping(&cmd[pos]);
-            pos = pos + extra.len();
+            pos += extra.len();
         }
 
         cmd[pos] = 0u8;
@@ -570,7 +570,7 @@ impl Compiler {
             let seg = iter.next();
             if seg.is_none() { break; }
             let s = seg.unwrap();
-            if s.len() > 0usize {
+            if !s.is_empty() {
                 current = self.ensure_module_scope(current, s);
             }
         }
@@ -596,19 +596,6 @@ impl Compiler {
             span: Span::empty(),
         });
         child
-    }
-
-    fn format_num(self: &mut Compiler, n: usize) -> &[u8] {
-        if n == 0 { return "0"; }
-        let buf = self.arena.alloc_slice::<u8>(20);
-        let pos: usize = 19;
-        let val = n;
-        while val > 0 && pos > 0 {
-            buf[pos] = ('0') + (val % 10) as u8;
-            val = val / 10;
-            pos = pos - 1;
-        }
-        buf[pos + 1..20]
     }
 
     fn intern_name(self: &mut Compiler, s: &[u8]) -> &[u8] {
@@ -677,7 +664,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
         let arg = args[i];
 
         if arg == "-o" {
-            i = i + 1;
+            i += 1;
             if i < args.len() {
                 options.output_file = args[i];
             }
@@ -706,17 +693,17 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
         } else if arg == "--no-verify" {
             options.verify_ir = false;
         } else if arg == "--link-args" {
-            i = i + 1;
+            i += 1;
             if i < args.len() {
                 options.extra_link_args = args[i];
             }
         } else if arg == "--sysroot" {
-            i = i + 1;
+            i += 1;
             if i < args.len() {
                 options.sysroot = args[i];
             }
         } else if arg == "--cfg" {
-            i = i + 1;
+            i += 1;
             if i < args.len() {
                 options.cfg_flags.push(args[i]);
             }
@@ -738,7 +725,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
         } else if arg == "--help" || arg == "-h" {
             print_usage();
             exit(0i32);
-        } else if arg.len() > 0 && arg[0] != '-' {
+        } else if !arg.is_empty() && arg[0] != '-' {
             // Check for module::path=file.alu format
             let eq_pos: usize = 0;
             let found_eq = false;
@@ -747,7 +734,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
                     found_eq = true;
                     break;
                 }
-                eq_pos = eq_pos + 1;
+                eq_pos += 1;
             }
             if found_eq {
                 files.push(SourceArg {
@@ -764,7 +751,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             eprintln!("unknown option");
         }
 
-        i = i + 1;
+        i += 1;
     }
 
     (options, files)
@@ -785,34 +772,34 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
     let triple = std::ffi::CString::from_raw(triple_raw).as_slice();
 
     let arch: &[u8] = "";
-    if matches_prefix(triple, "x86_64") {
+    if triple.starts_with("x86_64") {
         arch = "target_arch=x86_64";
-    } else if matches_prefix(triple, "aarch64") {
+    } else if triple.starts_with("aarch64") {
         arch = "target_arch=aarch64";
     }
-    if arch.len() > 0 && !already_has_key(&options.cfg_flags, "target_arch") {
+    if !arch.is_empty() && !already_has_key(&options.cfg_flags, "target_arch") {
         options.cfg_flags.push(arch);
     }
 
     // Pick target_os out of the triple — typically of form arch-vendor-os-env.
     // We only need to recognize the OSes sysroot/libc/mod.alu cares about.
     let os: &[u8] = "";
-    if contains_subseq(triple, "linux") {
+    if triple.contains("linux") {
         os = "target_os=linux";
-    } else if contains_subseq(triple, "darwin") {
+    } else if triple.contains("darwin") {
         os = "target_os=macos";
-    } else if contains_subseq(triple, "android") {
+    } else if triple.contains("android") {
         os = "target_os=android";
-    } else if contains_subseq(triple, "freebsd") {
+    } else if triple.contains("freebsd") {
         os = "target_os=freebsd";
-    } else if contains_subseq(triple, "netbsd") {
+    } else if triple.contains("netbsd") {
         os = "target_os=netbsd";
-    } else if contains_subseq(triple, "openbsd") {
+    } else if triple.contains("openbsd") {
         os = "target_os=openbsd";
-    } else if contains_subseq(triple, "windows") {
+    } else if triple.contains("windows") {
         os = "target_os=windows";
     }
-    if os.len() > 0 && !already_has_key(&options.cfg_flags, "target_os") {
+    if !os.is_empty() && !already_has_key(&options.cfg_flags, "target_os") {
         options.cfg_flags.push(os);
     }
 
@@ -820,9 +807,9 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
     // that branch on `usize`. Default to 64 on the supported architectures.
     // Stored unquoted; eval_cfg_meta_item strips quotes from source values.
     let ptr_width: &[u8] = "";
-    if matches_prefix(triple, "x86_64") || matches_prefix(triple, "aarch64") {
+    if triple.starts_with("x86_64") || triple.starts_with("aarch64") {
         ptr_width = "target_pointer_width=64";
-    } else if matches_prefix(triple, "i686") || matches_prefix(triple, "i386") {
+    } else if triple.starts_with("i686") || triple.starts_with("i386") {
         ptr_width = "target_pointer_width=32";
     }
 
@@ -830,18 +817,18 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
     // `target_env = "gnu"` / `"musl"`. Without this, those typedefs fail to
     // resolve and downstream uses silently become void.
     let env: &[u8] = "";
-    if contains_subseq(triple, "gnu") {
+    if triple.contains("gnu") {
         env = "target_env=gnu";
-    } else if contains_subseq(triple, "musl") {
+    } else if triple.contains("musl") {
         env = "target_env=musl";
-    } else if contains_subseq(triple, "android") {
+    } else if triple.contains("android") {
         env = "target_env=";
-    } else if contains_subseq(triple, "darwin") || contains_subseq(triple, "macos") {
+    } else if triple.contains("darwin") || triple.contains("macos") {
         // Apple platforms have no separate target_env; sysroot's cfgs
         // for macos don't gate on target_env so leave it unset.
         env = "";
     }
-    if env.len() > 0 && !already_has_key(&options.cfg_flags, "target_env") {
+    if !env.is_empty() && !already_has_key(&options.cfg_flags, "target_env") {
         options.cfg_flags.push(env);
     }
 
@@ -851,35 +838,14 @@ fn populate_host_cfgs(options: &mut CompilerOptions) {
     // here — eval_cfg_meta_item strips the quotes from source-level
     // `target_endian = "little"` before matching.
     let endian: &[u8] = "target_endian=little";
-    if endian.len() > 0 && !already_has_key(&options.cfg_flags, "target_endian") {
+    if !endian.is_empty() && !already_has_key(&options.cfg_flags, "target_endian") {
         options.cfg_flags.push(endian);
     }
-    if ptr_width.len() > 0 && !already_has_key(&options.cfg_flags, "target_pointer_width") {
+    if !ptr_width.is_empty() && !already_has_key(&options.cfg_flags, "target_pointer_width") {
         options.cfg_flags.push(ptr_width);
     }
 
     aluminac::llvm::LLVMDisposeMessage(triple_raw);
-}
-
-fn contains_subseq(s: &[u8], needle: &[u8]) -> bool {
-    if needle.len() == 0usize { return true; }
-    if s.len() < needle.len() { return false; }
-    for i in 0usize..(s.len() - needle.len() + 1usize) {
-        let m = true;
-        for j in 0usize..needle.len() {
-            if s[i + j] != needle[j] { m = false; break; }
-        }
-        if m { return true; }
-    }
-    false
-}
-
-fn matches_prefix(s: &[u8], prefix: &[u8]) -> bool {
-    if s.len() < prefix.len() { return false; }
-    for i in 0usize..prefix.len() {
-        if s[i] != prefix[i] { return false; }
-    }
-    true
 }
 
 fn already_has_key(flags: &Vector<&[u8]>, key: &[u8]) -> bool {

@@ -21,10 +21,6 @@ impl ArenaNode {
 
         node
     }
-
-    fn free(self: &mut ArenaNode) {
-        std::mem::free(self);
-    }
 }
 
 struct Arena {
@@ -55,7 +51,8 @@ impl Arena {
 
     #[cold]
     fn grow(self: &mut Arena, size: usize) {
-        // If we want a single large allocation, do not increase the increment.
+        // Double the increment so repeated growth amortises, then take at
+        // least the requested size for one-off large allocations.
         self.increment = self.increment * 2;
         let size = std::cmp::max(self.increment, size);
 

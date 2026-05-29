@@ -154,27 +154,19 @@ impl ConstEvaluator {
         if self.steps_remaining == 0 {
             return false;
         }
-        self.steps_remaining = self.steps_remaining - 1;
+        self.steps_remaining -= 1;
         true
     }
 
     fn var_id(self: &ConstEvaluator, id: Id) -> usize {
         let remapped = self.remapped.get(&id._value);
-        if remapped.is_some() {
-            remapped.unwrap()
-        } else {
-            id._value
-        }
+        remapped.unwrap_or(id._value)
     }
 
     fn load_var(self: &ConstEvaluator, id: Id) -> ConstValue {
         let vid = self.var_id(id);
         let v = self.variables.get(&vid);
-        if v.is_some() {
-            v.unwrap()
-        } else {
-            ConstValue::make_uninitialized()
-        }
+        v.unwrap_or(ConstValue::make_uninitialized())
     }
 
     fn store_var(self: &mut ConstEvaluator, id: Id, val: ConstValue) {
@@ -317,13 +309,13 @@ impl ConstEvaluator {
         IrTag::ConstWarning => {
             // Capture only the first warning so the single-slot field has
             // deterministic content; subsequent warnings drop silently.
-            if self.warning_msg.len() == 0 {
+            if self.warning_msg.is_empty() {
                 self.warning_msg = expr.str_val();
             }
             ConstResult::success(ConstValue::make_void())
         }
         IrTag::ConstNote => {
-            if self.note_msg.len() == 0 {
+            if self.note_msg.is_empty() {
                 self.note_msg = expr.str_val();
             }
             ConstResult::success(ConstValue::make_void())
@@ -833,7 +825,7 @@ impl ConstEvaluator {
     fn eval_block(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
         // Items are the block's statements + trailing expression
         // Last item is the block's value
-        if expr.items().len() == 0 {
+        if expr.items().is_empty() {
             return ConstResult::success(ConstValue::make_void());
         }
 
@@ -1216,7 +1208,7 @@ impl ConstEvaluator {
         }
         if func.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }
         let f = func.unwrap();
-        if !f.body.is_some() { return ConstResult::fail(ConstEvalError::unsupported()); }
+        if f.body.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }
 
         // Evaluate arguments
         let arg_values = self.arena.alloc_slice::<ConstValue>(expr.items().len());
@@ -1272,13 +1264,13 @@ impl ConstEvaluator {
         self.steps_remaining = child.steps_remaining;
         // Propagate panic / warning / note messages — anything captured in
         // the callee should reach the outermost try_const_eval caller.
-        if child.panic_msg.len() > 0 {
+        if !child.panic_msg.is_empty() {
             self.panic_msg = child.panic_msg;
         }
-        if self.warning_msg.len() == 0 && child.warning_msg.len() > 0 {
+        if self.warning_msg.is_empty() && !child.warning_msg.is_empty() {
             self.warning_msg = child.warning_msg;
         }
-        if self.note_msg.len() == 0 && child.note_msg.len() > 0 {
+        if self.note_msg.is_empty() && !child.note_msg.is_empty() {
             self.note_msg = child.note_msg;
         }
 
@@ -1347,7 +1339,7 @@ impl ConstEvaluator {
     fn eval_llvm_intrinsic(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstResult {
         let name = expr.str_val();
         let items = expr.items();
-        if items.len() == 0 {
+        if items.is_empty() {
             return ConstResult::fail(ConstEvalError::unsupported());
         }
         let arg_r = self.eval(items[0]);
@@ -1366,7 +1358,7 @@ impl ConstEvaluator {
             let count: u64 = 0;
             let v = val;
             while v != 0u64 {
-                count = count + (v & 1u64);
+                count += (v & 1u64);
                 v = v >> 1u64;
             }
             // ctpop returns iN matching input; the caller's `as u32` cast
@@ -1381,7 +1373,7 @@ impl ConstEvaluator {
             let count: u64 = 0;
             let mask = 1u64 << ((width - 1) as u64);
             while (val & mask) == 0u64 && count < width as u64 {
-                count = count + 1u64;
+                count += 1u64;
                 mask = mask >> 1u64;
             }
             return ConstResult::success(ConstValue::make_int(count, bt));
@@ -1392,7 +1384,7 @@ impl ConstEvaluator {
             let count: u64 = 0;
             let v = val;
             while (v & 1u64) == 0u64 && count < width as u64 {
-                count = count + 1u64;
+                count += 1u64;
                 v = v >> 1u64;
             }
             return ConstResult::success(ConstValue::make_int(count, bt));

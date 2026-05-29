@@ -224,8 +224,7 @@ impl ScopeArena {
     // Find a protocol's scope_idx by its item id.
     // Searches all scopes for a Protocol NamedItem with matching id.
     fn find_protocol_scope_by_id(self: &ScopeArena, proto_id: usize) -> Option<u32> {
-        for i in 0usize..self.scopes.len() {
-            let scope = &self.scopes[i];
+        for scope in self.scopes.iter_ref() {
             for pair in scope.items {
                 if pair.1.kind.tag == NamedItemTag::Protocol && pair.1.kind.id()._value == proto_id {
                     return Option::some(pair.1.kind.scope_idx);
@@ -619,8 +618,8 @@ impl ScopeArena {
         }
         // Reverse-collect into "a::b::c" form.
         let total: usize = 0;
-        for i in 0usize..segments.len() {
-            total = total + segments[i].len();
+        for seg_item in segments.iter() {
+            total = total + seg_item.len();
         }
         if segments.len() > 1 {
             total = total + 2 * (segments.len() - 1);

@@ -34,9 +34,9 @@ fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
     IrTyTag::Tuple, IrTyTag::Slice => {
         let size: usize = 0;
         let max_align: usize = 1;
-        for i in 0usize..ty.elems().len() {
-            let elem_size = compute_type_size(ty.elems()[i], pointer_size);
-            let elem_align = compute_type_align(ty.elems()[i], pointer_size);
+        for elem in ty.elems().iter() {
+            let elem_size = compute_type_size(elem, pointer_size);
+            let elem_align = compute_type_align(elem, pointer_size);
             if elem_align > max_align { max_align = elem_align; }
             let padding = (elem_align - (size % elem_align)) % elem_align;
             size = size + padding + elem_size;
@@ -49,9 +49,9 @@ fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
             // Union: size is max of all fields, aligned to max alignment
             let max_size: usize = 0;
             let max_align: usize = 1;
-            for i in 0usize..ty.struct_ref().fields.len() {
-                let fs = compute_type_size(ty.struct_ref().fields[i].ty, pointer_size);
-                let fa = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
+            for field in ty.struct_ref().fields.iter() {
+                let fs = compute_type_size(field.ty, pointer_size);
+                let fa = compute_type_align(field.ty, pointer_size);
                 if fs > max_size { max_size = fs; }
                 if fa > max_align { max_align = fa; }
             }
@@ -61,9 +61,9 @@ fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
             let size: usize = 0;
             let max_align: usize = 1;
             let is_packed = ty.struct_ref().is_packed;
-            for i in 0usize..ty.struct_ref().fields.len() {
-                let elem_size = compute_type_size(ty.struct_ref().fields[i].ty, pointer_size);
-                let elem_align = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
+            for field in ty.struct_ref().fields.iter() {
+                let elem_size = compute_type_size(field.ty, pointer_size);
+                let elem_align = compute_type_align(field.ty, pointer_size);
                 if elem_align > max_align { max_align = elem_align; }
                 let padding = if is_packed {
                     0usize
@@ -101,8 +101,8 @@ fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
     IrTyTag::Array => compute_type_align(ty.inner(), pointer_size),
     IrTyTag::Tuple, IrTyTag::Slice => {
         let max_align: usize = 1;
-        for i in 0usize..ty.elems().len() {
-            let a = compute_type_align(ty.elems()[i], pointer_size);
+        for elem in ty.elems().iter() {
+            let a = compute_type_align(elem, pointer_size);
             if a > max_align { max_align = a; }
         }
         max_align
@@ -112,8 +112,8 @@ fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
             return 1usize;
         }
         let max_align: usize = 1;
-        for i in 0usize..ty.struct_ref().fields.len() {
-            let a = compute_type_align(ty.struct_ref().fields[i].ty, pointer_size);
+        for field in ty.struct_ref().fields.iter() {
+            let a = compute_type_align(field.ty, pointer_size);
             if a > max_align { max_align = a; }
         }
         max_align

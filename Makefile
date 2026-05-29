@@ -333,7 +333,7 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac porting-gates
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac porting-gates idiom-gate
 
 # Per-commit quality gates for the aluminac → alumina-boot parity work.
 # Runs the suites listed under "Quality gates" in PORTING.md. test-diag is
@@ -341,6 +341,12 @@ alumina-boot: $(ALUMINA_BOOT)
 # applicable. Fail-fast: the recipe stops on the first failing gate.
 porting-gates: test-aluminac test-std-aluminac bootstrap test-std test-libraries test-lang test-diag
 	@echo "All porting quality gates passed."
+
+# Fast inner-loop gate for the aluminac idiomatic-cleanup batches: re-bootstrap
+# (asserts stage 2 == stage 3 byte-identity) and run the self-hosted test
+# suites. Lighter than porting-gates; use it after each cleanup batch.
+idiom-gate: bootstrap test-aluminac test-std-aluminac
+	@echo "idiom-gate passed: s2==s3 byte-identical and aluminac/std tests green."
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)

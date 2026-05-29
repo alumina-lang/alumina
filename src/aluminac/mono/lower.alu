@@ -295,11 +295,7 @@ impl Mono {
             TyTag::Builtin => self.ctx.intern_builtin_ty(ty.builtin()),
             TyTag::Placeholder => {
                 let resolved = self.type_map.get(&ty.id()._value);
-                if resolved.is_some() {
-                    resolved.unwrap()
-                } else {
-                    self.ctx.void_ty
-                }
+                resolved.unwrap_or(self.ctx.void_ty)
             }
             TyTag::Pointer => {
                 // Special case: &[T] and &mut [T] are fat pointers (slice type)
@@ -504,7 +500,7 @@ impl Mono {
                         for gi in 0usize..struct_def.generic_params.len() {
                             if struct_def.generic_params[gi].id._value == field_ast_ty.inner().id()._value {
                                 inferred[gi] = target_ty;
-                                inferred_count = inferred_count + 1usize;
+                                inferred_count += 1usize;
                                 break;
                             }
                         }
@@ -514,7 +510,7 @@ impl Mono {
                         for gi in 0usize..struct_def.generic_params.len() {
                             if struct_def.generic_params[gi].id._value == field_ast_ty.id()._value {
                                 inferred[gi] = value_ty;
-                                inferred_count = inferred_count + 1usize;
+                                inferred_count += 1usize;
                                 break;
                             }
                         }
@@ -541,7 +537,7 @@ impl Mono {
                 if attr.tag == AttrTag::Lang {
                     let lang = attr.str_val();
                     let bt = Mono::lang_name_to_builtin(lang);
-                    if bt as i32 != BuiltinType::Void as i32 {
+                    if bt != BuiltinType::Void {
                         return self.ctx.intern_builtin_ty(bt);
                     }
                     // #[lang(slice)] with type arg Ptr: slice<&T> → IrTyTag::Slice
@@ -602,10 +598,10 @@ impl Mono {
                             } else {
                                 f.fn_item_ref().mangled_name
                             };
-                            for i in 0usize..self.ctx.ir_functions.len() {
-                                if self.ctx.ir_functions[i].id._value == fn_id_for_args
-                                    && self.ctx.ir_functions[i].mangled_name == target_mangled {
-                                    let params = self.ctx.ir_functions[i].params;
+                            for func in self.ctx.ir_functions.iter() {
+                                if func.id._value == fn_id_for_args
+                                    && func.mangled_name == target_mangled {
+                                    let params = func.params;
                                     let skip: usize = if f.tag == IrTyTag::Closure { 1 } else { 0 };
                                     let n = if params.len() >= skip { params.len() - skip } else { 0 };
                                     let elems = self.ctx.arena.alloc_slice::<&IrTy>(n);
@@ -643,10 +639,10 @@ impl Mono {
                             } else {
                                 f.fn_item_ref().mangled_name
                             };
-                            for i in 0usize..self.ctx.ir_functions.len() {
-                                if self.ctx.ir_functions[i].id._value == fn_id_for_ret
-                                    && self.ctx.ir_functions[i].mangled_name == target_mangled {
-                                    return self.ctx.ir_functions[i].return_type;
+                            for func in self.ctx.ir_functions.iter() {
+                                if func.id._value == fn_id_for_ret
+                                    && func.mangled_name == target_mangled {
+                                    return func.return_type;
                                 }
                             }
                         } else if f.tag == IrTyTag::FnPointer {
@@ -827,8 +823,8 @@ impl Mono {
         // This prevents infinite recursion for self-referential structs (e.g. Node { next: &mut Node }).
         let placeholder_fields = self.ctx.arena.alloc_slice::<IrField>(0);
         let is_packed = false;
-        for j in 0usize..def.attributes.len() {
-            if def.attributes[j].tag == AttrTag::Packed {
+        for attr in def.attributes.iter() {
+            if attr.tag == AttrTag::Packed {
                 is_packed = true;
             }
         }
@@ -930,17 +926,17 @@ impl Mono {
         // Pass 2: assign auto-increment values to non-valued variants
         let counter: u64 = 0;
         for i in 0usize..def.variants.len() {
-            if !def.variants[i].value.is_some() {
+            if def.variants[i].value.is_none() {
                 // Find next value not already taken
                 while taken_values.contains(&counter) {
-                    counter = counter + 1;
+                    counter += 1;
                 }
                 taken_values.insert(counter);
                 variants[i] = IrEnumVariant {
                     name: def.variants[i].name,
                     value: counter,
                 };
-                counter = counter + 1;
+                counter += 1;
             }
         }
 
@@ -1027,8 +1023,8 @@ impl Mono {
         let proto_gp_ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
         if proto_gp_ids_opt.is_some() {
             let pgp_ids = proto_gp_ids_opt.unwrap();
-            for k in 0usize..pgp_ids.len() {
-                let bound_opt = self.type_map.get(&pgp_ids[k]);
+            for id in pgp_ids.iter() {
+                let bound_opt = self.type_map.get(&id);
                 if bound_opt.is_some() {
                     let p_addr = bound_opt.unwrap() as &void as usize as u64;
                     cache_key = cache_key ^ (p_addr * 0x9e3779b97f4a7c15u64);
@@ -1200,13 +1196,10 @@ impl Mono {
         self.current_mono_key = cache_key;
 
         // Lower body (may recursively call mono_function)
-        let body: Option<&IrExpr> = if def.body.is_some() {
-            let body_ir = self.lower_expr_coerced(def.body.unwrap(), self.return_type);
-            let body_ir = self.check_and_coerce(body_ir, self.return_type, def.body.unwrap().span);
-            Option::some(body_ir)
-        } else {
-            Option::none()
-        };
+        let body: Option<&IrExpr> = def.body.map(|=self, v: &Expr| -> &IrExpr {
+            let body_ir = self.lower_expr_coerced(v, self.return_type);
+            self.check_and_coerce(body_ir, self.return_type, v.span)
+        });
 
         self.current_mono_key = prev_mono_key;
 
@@ -1467,11 +1460,11 @@ impl Mono {
                 let fi: usize = 0;
                 if has_lower {
                     fields[fi] = self.mk_cast(raw_lower, elem_ty);
-                    fi = fi + 1;
+                    fi += 1;
                 }
                 if has_upper {
                     fields[fi] = self.mk_cast(raw_upper, elem_ty);
-                    fi = fi + 1;
+                    fi += 1;
                 }
                 if is_inclusive && has_lower && has_upper {
                     fields[fi] = self.mk_bool_lit(false);
@@ -1651,9 +1644,7 @@ impl Mono {
             self.mk_local(expr.id(), local_ty)
         } else if expr.tag == ExprTag::Param {
             let ty = self.local_types.get(&expr.id()._value);
-            let param_ty = if ty.is_some() { ty.unwrap() } else {
-                self.ctx.void_ty
-            };
+            let param_ty = ty.unwrap_or(self.ctx.void_ty);
             self.mk_local(expr.id(), param_ty)
         } else if expr.tag == ExprTag::FnRef {
             // Look up the function and get its type
@@ -1795,9 +1786,9 @@ impl Mono {
                     });
                 } else if ty.is_void() {
                     // Already emitted — look up the resolved type
-                    for gi in 0usize..self.ctx.ir_globals.len() {
-                        if self.ctx.ir_globals[gi].id._value == def.id._value {
-                            ty = self.ctx.ir_globals[gi].ty;
+                    for global in self.ctx.ir_globals.iter() {
+                        if global.id._value == def.id._value {
+                            ty = global.ty;
                             break;
                         }
                     }
@@ -1806,9 +1797,9 @@ impl Mono {
                 // Look up the IrGlobal's mangled_name from the cache so the
                 // GlobalRef matches whatever the emit branch above produced.
                 let global_mangled = def.name;
-                for gi in 0usize..self.ctx.ir_globals.len() {
-                    if self.ctx.ir_globals[gi].id._value == def.id._value {
-                        global_mangled = self.ctx.ir_globals[gi].mangled_name;
+                for global in self.ctx.ir_globals.iter() {
+                    if global.id._value == def.id._value {
+                        global_mangled = global.mangled_name;
                         break;
                     }
                 }
@@ -1934,7 +1925,7 @@ impl Mono {
     // returns 0; the call flow proceeds as before.
     fn bind_proto_generics(self: &mut Mono, def: &FnDef, args: &[&IrTy]) -> usize {
         let ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
-        if !ids_opt.is_some() {
+        if ids_opt.is_none() {
             return 0usize;
         }
         let ids = ids_opt.unwrap();
@@ -1985,7 +1976,7 @@ impl Mono {
         args: &[&Expr],
     ) {
         let ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
-        if !ids_opt.is_some() { return; }
+        if ids_opt.is_none() { return; }
         let ids = ids_opt.unwrap();
         if ids.len() == 0 { return; }
 
@@ -2339,8 +2330,8 @@ impl Mono {
         // or from padding above), use argument type inference to fill them in.
         if def.generic_params.len() > 0 {
             let has_unresolved = false;
-            for i in 0usize..method_type_args.len() {
-                if method_type_args[i].is_void() {
+            for ty_arg in method_type_args.iter() {
+                if ty_arg.is_void() {
                     has_unresolved = true;
                 }
             }
@@ -2379,8 +2370,8 @@ impl Mono {
                             }
                             method_type_args = merged0;
                             has_unresolved = false;
-                            for i in 0usize..method_type_args.len() {
-                                if method_type_args[i].is_void() {
+                            for ty_arg in method_type_args.iter() {
+                                if ty_arg.is_void() {
                                     has_unresolved = true;
                                 }
                             }
@@ -2578,11 +2569,11 @@ impl Mono {
         // arm — the bug that gated `std/process` unification at runtime.
         // Mirrors the if-arm expected_type propagation a few lines above.
         let unified_arm_ty: &IrTy = self.ctx.void_ty;
-        for i in 0usize..arms.len() {
-            if arms[i].pattern.len() > 0 {
+        for arm in arms.iter() {
+            if arm.pattern.len() > 0 {
                 // Probe the first arm's type (without committing to its IR —
                 // we re-lower below for ordering / propagation reasons).
-                let probe = self.lower_expr(arms[i].body);
+                let probe = self.lower_expr(arm.body);
                 if !probe.ty.is_void() && !probe.ty.is_never() {
                     unified_arm_ty = probe.ty;
                 }
@@ -2591,23 +2582,23 @@ impl Mono {
         }
 
         let default_body: &IrExpr = self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
-        for i in 0usize..arms.len() {
-            if arms[i].pattern.len() == 0 {
+        for arm in arms.iter() {
+            if arm.pattern.len() == 0 {
                 default_body = if propagate_to_arms {
-                    self.lower_expr_coerced(arms[i].body, outer_expected)
+                    self.lower_expr_coerced(arm.body, outer_expected)
                 } else if !unified_arm_ty.is_void() {
-                    self.lower_expr_coerced(arms[i].body, unified_arm_ty)
+                    self.lower_expr_coerced(arm.body, unified_arm_ty)
                 } else {
-                    self.lower_expr(arms[i].body)
+                    self.lower_expr(arm.body)
                 };
             }
         }
 
         // Count non-default arms
         let non_default_count: usize = 0;
-        for i in 0usize..arms.len() {
-            if arms[i].pattern.len() > 0 {
-                non_default_count = non_default_count + 1;
+        for arm in arms.iter() {
+            if arm.pattern.len() > 0 {
+                non_default_count += 1;
             }
         }
 
@@ -2616,17 +2607,17 @@ impl Mono {
         let else_expr: Option<&IrExpr> = Option::some(default_body);
         let arm_idx: usize = non_default_count;
         while arm_idx > 0 {
-            arm_idx = arm_idx - 1;
+            arm_idx -= 1;
 
             // Find the arm_idx'th non-default arm
             let actual_i: usize = 0;
             let count: usize = 0;
-            for i in 0usize..arms.len() {
-                if arms[i].pattern.len() > 0 {
+            for (i, arm) in arms.iter().enumerate() {
+                if arm.pattern.len() > 0 {
                     if count == arm_idx {
                         actual_i = i;
                     }
-                    count = count + 1;
+                    count += 1;
                 }
             }
 
@@ -2641,8 +2632,8 @@ impl Mono {
 
             // Build condition: tmp == pat[0] || tmp == pat[1] || ...
             let cond: &IrExpr = null;
-            for j in 0usize..arm.pattern.len() {
-                let pat_val = self.lower_expr(arm.pattern[j]);
+            for (j, pat) in arm.pattern.iter().enumerate() {
+                let pat_val = self.lower_expr(pat);
 
                 // Build the == comparison, using operator overload for non-primitive types
                 let eq_expr: &IrExpr = if ir_value.ty.tag == IrTyTag::Struct || ir_value.ty.tag == IrTyTag::Slice {
@@ -2747,7 +2738,7 @@ impl Mono {
         } else if expr.tag == ExprTag::Assign {
             let ir_lhs = self.lower_expr(expr.lhs());
             // For compound assignment, desugar to binary + assign (RHS type differs from LHS)
-            if expr.assign_op() as i32 != AssignOp::Assign as i32 {
+            if expr.assign_op() != AssignOp::Assign {
                 let ir_rhs = self.lower_expr(expr.rhs());
                 let bin_op = switch expr.assign_op() {
                     AssignOp::AddAssign => BinOp::Add,
@@ -3028,11 +3019,7 @@ impl Mono {
                 stmts[1] = break_alloc;
                 self.mk_block(stmts)
             } else {
-                let ir_val: Option<&IrExpr> = if expr.opt_expr().is_some() {
-                    Option::some(self.lower_expr(expr.opt_expr().unwrap()))
-                } else {
-                    Option::none()
-                };
+                let ir_val: Option<&IrExpr> = expr.opt_expr().map(|=self, v: &Expr| -> &IrExpr { self.lower_expr(v) });
                 let result = IrExpr::void_expr(self.ctx.never_ty);
                 result.tag = IrTag::Break;
                 result._data.ret.opt_expr = ir_val;
@@ -3358,9 +3345,9 @@ impl Mono {
             for i in 0usize..sr.fields.len() {
                 // Find the ConstField matching this field index
                 let field_val = ConstValue::make_void();
-                for j in 0usize..val.fields().len() {
-                    if val.fields()[j].field_idx == i as u32 {
-                        field_val = val.fields()[j].value;
+                for field in val.fields().iter() {
+                    if field.field_idx == i as u32 {
+                        field_val = field.value;
                     }
                 }
                 if field_val.tag == CValTag::Void {
@@ -3429,13 +3416,13 @@ impl Mono {
                 }
             }
             IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit => {
-                for i in 0usize..expr.items().len() {
-                    self.remap_ir_locals(expr.items()[i], remap);
+                for item in expr.items().iter() {
+                    self.remap_ir_locals(item, remap);
                 }
             }
             IrTag::StructLit => {
-                for i in 0usize..expr.items().len() {
-                    self.remap_ir_locals(expr.items()[i], remap);
+                for item in expr.items().iter() {
+                    self.remap_ir_locals(item, remap);
                 }
             }
             IrTag::Binary => {
@@ -3468,13 +3455,13 @@ impl Mono {
             }
             IrTag::Switch => {
                 self.remap_ir_locals(expr.lhs(), remap);
-                for i in 0usize..expr.switch_arms().len() {
-                    self.remap_ir_locals(expr.switch_arms()[i].body, remap);
+                for switch_arm in expr.switch_arms().iter() {
+                    self.remap_ir_locals(switch_arm.body, remap);
                 }
             }
             IrTag::Call => {
-                for i in 0usize..expr.items().len() {
-                    self.remap_ir_locals(expr.items()[i], remap);
+                for item in expr.items().iter() {
+                    self.remap_ir_locals(item, remap);
                 }
                 if expr.call_target().tag == CallKind::Indirect {
                     self.remap_ir_locals(expr.call_target().callee, remap);
@@ -3561,19 +3548,19 @@ impl Mono {
         let self_id_opt = self.ctx.proto_method_self_id.get(&def.id._value);
         let n_ids: usize = 0;
         if proto_gp_ids_opt.is_some() { n_ids = proto_gp_ids_opt.unwrap().len(); }
-        if self_id_opt.is_some() { n_ids = n_ids + 1; }
+        if self_id_opt.is_some() { n_ids += 1; }
         let collected_ids = self.ctx.arena.alloc_slice::<usize>(n_ids);
         let idx: usize = 0;
         if proto_gp_ids_opt.is_some() {
             let pg = proto_gp_ids_opt.unwrap();
             for k in 0usize..pg.len() {
                 collected_ids[idx] = pg[k];
-                idx = idx + 1;
+                idx += 1;
             }
         }
         if self_id_opt.is_some() {
             collected_ids[idx] = self_id_opt.unwrap();
-            idx = idx + 1;
+            idx += 1;
         }
         let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(n_ids);
         let saved_had = self.ctx.arena.alloc_slice::<bool>(n_ids);
@@ -3639,8 +3626,7 @@ impl Mono {
         // true (fmt found by name) and downstream code (panic chain via
         // dyn_format_arg, iter::test_fuse, ...) tries to mono Option<()>::fmt
         // and crashes mid-mono with a confusing diagnostic.
-        for i in 0usize..proto.methods.len() {
-            let method = &proto.methods[i];
+        for method in proto.methods.iter_ref() {
             let found = self.ctx.scopes.get(scope_idx).items.get(&method.name);
             if found.is_none() {
                 return false;
@@ -3677,7 +3663,7 @@ impl Mono {
         // pathologically nested types (e.g. Option<Option<...>>). 16 is deeper
         // than any sane sysroot type and well below stack-overflow risk.
         if self.bound_check_depth >= 16usize { return true; }
-        self.bound_check_depth = self.bound_check_depth + 1usize;
+        self.bound_check_depth += 1usize;
 
         // Match self_param against receiver_ty to bind method generics.
         let self_param_ty = m_def.params[0].ty;
@@ -3720,8 +3706,7 @@ impl Mono {
         for i in 0usize..n {
             if !found[i] { continue; }
             let gp = &m_def.generic_params[i];
-            for b in 0usize..gp.bounds.len() {
-                let bound_ty = gp.bounds[b];
+            for bound_ty in gp.bounds.iter() {
                 let bound_ir = self.resolve_type(bound_ty);
                 // Only check Protocol bounds for now; non-Protocol bounds
                 // (e.g. concrete-type equality bounds) are out of scope here.
@@ -3750,7 +3735,7 @@ impl Mono {
             }
         }
 
-        self.bound_check_depth = self.bound_check_depth - 1usize;
+        self.bound_check_depth -= 1usize;
         result
     }
 
@@ -3840,11 +3825,11 @@ impl Mono {
             let fn_ref = ty.fn_item_ref();
             let src_name: &[u8] = fn_ref.mangled_name;
             let src_type_args: &[&IrTy] = &[];
-            for i in 0usize..self.ctx.ir_functions.len() {
-                if self.ctx.ir_functions[i].id._value == fn_ref.id._value
-                    && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
-                    src_name = self.ctx.ir_functions[i].name;
-                    src_type_args = self.ctx.ir_functions[i].type_args;
+            for func in self.ctx.ir_functions.iter() {
+                if func.id._value == fn_ref.id._value
+                    && func.mangled_name == fn_ref.mangled_name {
+                    src_name = func.name;
+                    src_type_args = func.type_args;
                     break;
                 }
             }
@@ -3856,8 +3841,8 @@ impl Mono {
                 let total = src_name.len() + 2usize; // "name<>"
                 for i in 0usize..src_type_args.len() {
                     arg_names[i] = self.ir_type_name(src_type_args[i]);
-                    total = total + arg_names[i].len();
-                    if i > 0 { total = total + 2usize; } // ", "
+                    total += arg_names[i].len();
+                    if i > 0 { total += 2usize; } // ", "
                 }
                 let buf = self.ctx.arena.alloc_slice::<u8>(total);
                 src_name.copy_to_nonoverlapping(&buf[0]);
@@ -3867,10 +3852,10 @@ impl Mono {
                     if i > 0 {
                         buf[off] = ',';
                         buf[off + 1usize] = ' ';
-                        off = off + 2usize;
+                        off += 2usize;
                     }
                     arg_names[i].copy_to_nonoverlapping(&buf[off]);
-                    off = off + arg_names[i].len();
+                    off += arg_names[i].len();
                 }
                 buf[off] = '>';
                 buf as &[u8]
@@ -3889,12 +3874,7 @@ impl Mono {
 
         // Try to const-evaluate the condition
         let cond_result = self.try_const_eval_bool(ir_cond);
-        let cond_val = if cond_result.is_some() {
-            cond_result.unwrap()
-        } else {
-            // Cannot evaluate at compile time - default to false
-            false
-        };
+        let cond_val = cond_result.unwrap_or(false);
 
         if cond_val {
             self.lower_expr(expr.lhs())
@@ -4000,9 +3980,9 @@ impl Mono {
 
             // Check _is_some (field index 0)
             let is_some = false;
-            for fi in 0usize..opt_val.fields().len() {
-                if opt_val.fields()[fi].field_idx == 0u32 {
-                    is_some = opt_val.fields()[fi].value.int_val() != 0;
+            for field in opt_val.fields().iter() {
+                if field.field_idx == 0u32 {
+                    is_some = field.value.int_val() != 0;
                     break;
                 }
             }
@@ -4010,9 +3990,9 @@ impl Mono {
 
             // Extract _inner (field index 1)
             let inner_val = ConstValue::make_void();
-            for fi in 0usize..opt_val.fields().len() {
-                if opt_val.fields()[fi].field_idx == 1u32 {
-                    inner_val = opt_val.fields()[fi].value;
+            for field in opt_val.fields().iter() {
+                if field.field_idx == 1u32 {
+                    inner_val = field.value;
                     break;
                 }
             }
@@ -4467,7 +4447,7 @@ impl Mono {
                 let alias = alias_opt.unwrap();
                 if alias.generic_params.len() > 0 { break; }
                 check_ty = alias.target;
-                alias_steps = alias_steps + 1;
+                alias_steps += 1;
             }
 
             // Resolve the protocol name to check specific protocols.
@@ -4651,8 +4631,7 @@ impl Mono {
         let proto_method_def: Option<&FnDef> = Option::none();
         let cumulative: usize = 0;
         let elems = protos_tuple.elems();
-        for pi in 0usize..elems.len() {
-            let proto_ty = elems[pi];
+        for proto_ty in elems.iter() {
             if proto_ty.tag != IrTyTag::Protocol { continue; }
             let pdef = self.ctx.protocol_defs.get(&proto_ty.proto_id());
             if pdef.is_none() { continue; }
@@ -4665,7 +4644,7 @@ impl Mono {
                 }
             }
             if proto_method_def.is_some() { break; }
-            cumulative = cumulative + proto.methods.len();
+            cumulative += proto.methods.len();
         }
         if proto_method_def.is_none() {
             return Option::none();
@@ -4809,8 +4788,7 @@ impl Mono {
         let entries: Vector<&IrExpr> = Vector::new();
         defer entries.free();
 
-        for pi in 0usize..protos_tuple.elems().len() {
-            let proto_ty = protos_tuple.elems()[pi];
+        for proto_ty in protos_tuple.elems().iter() {
             if proto_ty.tag != IrTyTag::Protocol {
                 continue;
             }
@@ -4821,8 +4799,7 @@ impl Mono {
             }
             let proto = proto_def_opt.unwrap();
 
-            for mi in 0usize..proto.methods.len() {
-                let proto_method = &proto.methods[mi];
+            for proto_method in proto.methods.iter_ref() {
                 // Find the impl's method by name.
                 let item_opt = self.ctx.scopes.get(impl_scope_idx).items.get(&proto_method.name);
                 if item_opt.is_none() {
@@ -5672,19 +5649,19 @@ impl Mono {
                                 let ret_ty: &IrTy = self.ctx.void_ty;
                                 if arg_ir_ty.tag == IrTyTag::Closure {
                                     let cfn = arg_ir_ty.closure_fn();
-                                    for fi in 0usize..self.ctx.ir_functions.len() {
-                                        if self.ctx.ir_functions[fi].id._value == cfn.id._value
-                                            && self.ctx.ir_functions[fi].mangled_name == cfn.mangled_name {
-                                            ret_ty = self.ctx.ir_functions[fi].return_type;
+                                    for func in self.ctx.ir_functions.iter() {
+                                        if func.id._value == cfn.id._value
+                                            && func.mangled_name == cfn.mangled_name {
+                                            ret_ty = func.return_type;
                                             break;
                                         }
                                     }
                                 } else if arg_ir_ty.tag == IrTyTag::Fn {
                                     let fnref = arg_ir_ty.fn_item_ref();
-                                    for fi in 0usize..self.ctx.ir_functions.len() {
-                                        if self.ctx.ir_functions[fi].id._value == fnref.id._value
-                                            && self.ctx.ir_functions[fi].mangled_name == fnref.mangled_name {
-                                            ret_ty = self.ctx.ir_functions[fi].return_type;
+                                    for func in self.ctx.ir_functions.iter() {
+                                        if func.id._value == fnref.id._value
+                                            && func.mangled_name == fnref.mangled_name {
+                                            ret_ty = func.return_type;
                                             break;
                                         }
                                     }
@@ -5783,8 +5760,8 @@ impl Mono {
         // and we have an expected_type or return_type that's a concrete struct,
         // try to match placeholders against the struct's type args.
         let all_found = true;
-        for i in 0usize..num_generics {
-            if !found[i] { all_found = false; }
+        for f in found.iter() {
+            if !f { all_found = false; }
         }
         if !all_found {
             // Try inferring from return type context
@@ -6291,10 +6268,10 @@ impl Mono {
             // Fill remaining from combined_type_args where inference didn't produce a result
             for i in 0usize..num_generics {
                 if found[i] {
-                    found_count = found_count + 1usize;
+                    found_count += 1usize;
                 } else if i < combined_type_args.len() {
                     inferred[i] = combined_type_args[i];
-                    found_count = found_count + 1usize;
+                    found_count += 1usize;
                 }
             }
             // Infer generics from Fn bounds (e.g. F: Fn(T) -> Tm => infer Tm from lambda return type)
@@ -6320,21 +6297,21 @@ impl Mono {
                             if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty().is_some() {
                                 let ret_ty = self.resolve_type(arg_expr.opt_ty().unwrap());
                                 inferred[g] = ret_ty;
-                                found_count = found_count + 1usize;
+                                found_count += 1usize;
                             } else if arg_expr.tag == ExprTag::FnRef {
                                 // For named function refs, infer from the function's return type
                                 let fn_ref_def = self.ctx.fn_defs.get(&arg_expr.id()._value);
                                 if fn_ref_def.is_some() {
                                     let ret_ty = self.resolve_type(fn_ref_def.unwrap().return_type);
                                     inferred[g] = ret_ty;
-                                    found_count = found_count + 1usize;
+                                    found_count += 1usize;
                                 }
                             } else {
                                 // General case: lower the arg and check if it's a function pointer, Fn item, or closure
                                 let arg_ir = self.lower_expr(arg_expr);
                                 if arg_ir.ty.tag == IrTyTag::FnPointer {
                                     inferred[g] = arg_ir.ty.ret_ty();
-                                    found_count = found_count + 1usize;
+                                    found_count += 1usize;
                                 } else if arg_ir.ty.tag == IrTyTag::Fn {
                                     // Match on (id, mangled_name) and break: multiple
                                     // monos of the same source function share `id`,
@@ -6348,7 +6325,7 @@ impl Mono {
                                         if self.ctx.ir_functions[fi].id._value == fn_ref.id._value
                                             && self.ctx.ir_functions[fi].mangled_name == fn_ref.mangled_name {
                                             inferred[g] = self.ctx.ir_functions[fi].return_type;
-                                            found_count = found_count + 1usize;
+                                            found_count += 1usize;
                                             break;
                                         }
                                     }
@@ -6367,7 +6344,7 @@ impl Mono {
                                         if self.ctx.ir_functions[fi].id._value == cfn.id._value
                                             && self.ctx.ir_functions[fi].mangled_name == cfn.mangled_name {
                                             inferred[g] = self.ctx.ir_functions[fi].return_type;
-                                            found_count = found_count + 1usize;
+                                            found_count += 1usize;
                                             break;
                                         }
                                     }
@@ -6416,7 +6393,7 @@ impl Mono {
                                     }
                                     if resolved_ret.tag == IrTyTag::Struct && resolved_ret.struct_ref().type_args.len() > re {
                                         inferred[g] = resolved_ret.struct_ref().type_args[re];
-                                        found_count = found_count + 1usize;
+                                        found_count += 1usize;
                                     }
                                 }
                             }
@@ -6430,7 +6407,7 @@ impl Mono {
                                     if lp_ty.is_some() {
                                         let param_ty = self.resolve_type(lp_ty.unwrap());
                                         inferred[g] = param_ty;
-                                        found_count = found_count + 1usize;
+                                        found_count += 1usize;
                                     }
                                 }
                             }
@@ -6449,7 +6426,7 @@ impl Mono {
             // tried and reverted (it leaked `assert!`'s bool through `>=`
             // into T, regressing io's `assert_eq!(read_exact(..), ok(()))`).
             if self.infer_from_range_of_bounds(def, inferred, found) {
-                found_count = found_count + 1usize;
+                found_count += 1usize;
             }
 
             // Expected-return-type inference for a mixin'd method whose own
@@ -6494,7 +6471,7 @@ impl Mono {
                     if all_ok {
                         inferred[g] = self.expected_type;
                         found[g] = true;
-                        found_count = found_count + 1usize;
+                        found_count += 1usize;
                     }
                 }
             }
@@ -6712,7 +6689,7 @@ impl Mono {
 
         // Get the self param type (should be &ClosureStruct)
         let self_ty_opt = self.local_types.get(&self_param_id._value);
-        if !self_ty_opt.is_some() {
+        if self_ty_opt.is_none() {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             return self.ctx.arena.alloc(r);
         }
@@ -7466,14 +7443,14 @@ impl Mono {
         let a: i32 = 0;
         let a_ty = expr.ty;
         while a_ty.tag == IrTyTag::Pointer {
-            a = a + 1;
+            a += 1;
             a_ty = a_ty.inner();
         }
         // Count pointer depth of target type
         let b: i32 = 0;
         let b_ty = target_ty;
         while b_ty.tag == IrTyTag::Pointer {
-            b = b + 1;
+            b += 1;
             b_ty = b_ty.inner();
         }
         let diff = a - b;
@@ -7486,14 +7463,14 @@ impl Mono {
             let i = 0;
             while i < (0 - diff) {
                 result = self.mk_ref(result, false);
-                i = i + 1;
+                i += 1;
             }
         } else {
             // Need to deref
             let i = 0;
             while i < diff {
                 result = self.mk_deref(result, result.ty.inner());
-                i = i + 1;
+                i += 1;
             }
         }
         result

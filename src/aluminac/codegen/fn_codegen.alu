@@ -169,11 +169,11 @@ impl FnCodegen {
         LLVMPositionBuilderAtEnd(self.ctx.builder, self.entry_bb);
 
         // Create allocas for parameters
-        for i in 0usize..self.ir_fn.params.len() {
-            let param_ty = self.ctx.llvm_type(self.ir_fn.params[i].ty);
+        for (i, param) in self.ir_fn.params.iter().enumerate() {
+            let param_ty = self.ctx.llvm_type(param.ty);
             // Can't alloca void types
             let alloca_ty = if self.is_void_type(param_ty) { self.ctx.i8_type } else { param_ty };
-            let pname = self.ctx.null_terminate(self.ir_fn.params[i].name);
+            let pname = self.ctx.null_terminate(param.name);
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &pname[0] as &libc::c_char);
             if !self.is_void_type(param_ty) {
                 let param_val = LLVMGetParam(self.llvm_fn, i as u32);
@@ -181,11 +181,10 @@ impl FnCodegen {
             }
 
             // Store using the param's ID for lookup
-            self.locals.insert(self.ir_fn.params[i].id._value, alloca);
+            self.locals.insert(param.id._value, alloca);
         }
         // Create allocas for local variables
-        for i in 0usize..self.ir_fn.local_defs.len() {
-            let local = &self.ir_fn.local_defs[i];
+        for local in self.ir_fn.local_defs.iter_ref() {
             let local_ty = self.ctx.llvm_type(local.ty);
             // Can't alloca void types - use i8 as placeholder
             let alloca_ty = if LLVMGetTypeKind(local_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { local_ty };
@@ -218,8 +217,7 @@ impl FnCodegen {
             );
 
             // Parameters
-            for i in 0usize..self.ir_fn.params.len() {
-                let param = &self.ir_fn.params[i];
+            for (i, param) in self.ir_fn.params.iter().enumerate() {
                 if param.ty.is_void() || param.ty.is_never() { continue; }
                 let param_ty = self.ctx.llvm_type(param.ty);
                 if self.is_void_type(param_ty) { continue; }
@@ -256,8 +254,7 @@ impl FnCodegen {
             }
 
             // Locals
-            for i in 0usize..self.ir_fn.local_defs.len() {
-                let local = &self.ir_fn.local_defs[i];
+            for local in self.ir_fn.local_defs.iter_ref() {
                 if local.ty.is_void() || local.ty.is_never() { continue; }
                 let local_llvm_ty = self.ctx.llvm_type(local.ty);
                 if LLVMGetTypeKind(local_llvm_ty) == LLVMTypeKind::Void { continue; }
@@ -347,10 +344,8 @@ impl FnCodegen {
 
     fn gen_defers(self: &mut FnCodegen) {
         // Generate deferred expressions in reverse order
-        let i = self.defer_stack.len();
-        while i > 0usize {
-            i = i - 1usize;
-            self.gen_expr(self.defer_stack._data[i]);
+        for deferred in self.defer_stack.iter().rev() {
+            self.gen_expr(deferred);
         }
     }
 
@@ -494,14 +489,14 @@ impl FnCodegen {
         }
         IrTag::Block => {
             let result = LLVMGetUndef(self.ctx.void_type);
-            for i in 0usize..expr.items().len() {
+            for item in expr.items().iter() {
                 // Check if current block is terminated
                 let current_bb = LLVMGetInsertBlock(self.ctx.builder);
                 let term = LLVMGetBasicBlockTerminator(current_bb);
                 if (term as usize) != 0 {
                     break; // Block already terminated, skip rest
                 }
-                result = self.gen_expr(expr.items()[i]);
+                result = self.gen_expr(item);
             }
             result
         }
@@ -726,8 +721,8 @@ impl FnCodegen {
                 }
             } else {
                 let llvm_field_count = LLVMCountStructElementTypes(llvm_ty);
-                for i in 0usize..expr.items().len() {
-                    let field_val = self.gen_expr(expr.items()[i]);
+                for (i, field_expr) in expr.items().iter().enumerate() {
+                    let field_val = self.gen_expr(field_expr);
                     let fv_ty = LLVMTypeOf(field_val);
                     if !self.is_void_type(fv_ty) {
                         // Defensive: if AST items index exceeds LLVM struct
@@ -760,8 +755,8 @@ impl FnCodegen {
             let llvm_ty = self.ctx.llvm_type(expr.ty);
             let alloca = LLVMBuildAlloca(self.ctx.builder, llvm_ty, self.temp_cname());
 
-            for i in 0usize..expr.items().len() {
-                let elem_val = self.gen_expr(expr.items()[i]);
+            for (i, elem_expr) in expr.items().iter().enumerate() {
+                let elem_val = self.gen_expr(elem_expr);
                 let ev_ty = LLVMTypeOf(elem_val);
                 if !self.is_void_type(ev_ty) {
                     // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
@@ -788,8 +783,8 @@ impl FnCodegen {
             }
             let alloca = LLVMBuildAlloca(self.ctx.builder, llvm_ty, self.temp_cname());
 
-            for i in 0usize..expr.items().len() {
-                let elem_val = self.gen_expr(expr.items()[i]);
+            for (i, elem_expr) in expr.items().iter().enumerate() {
+                let elem_val = self.gen_expr(elem_expr);
                 let elem_val_ty = LLVMTypeOf(elem_val);
                 if LLVMGetTypeKind(elem_val_ty) == LLVMTypeKind::Void {
                     // Skip storing void values
@@ -871,8 +866,8 @@ impl FnCodegen {
             // Generate code for each argument and collect LLVM types
             let arg_vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(items.len());
             let arg_types = self.ctx.arena.alloc_slice::<LLVMTypeRef>(items.len());
-            for i in 0usize..items.len() {
-                arg_vals[i] = self.gen_expr(items[i]);
+            for (i, item) in items.iter().enumerate() {
+                arg_vals[i] = self.gen_expr(item);
                 arg_types[i] = LLVMTypeOf(arg_vals[i]);
             }
 
@@ -1103,19 +1098,11 @@ impl FnCodegen {
         switch expr.tag {
         IrTag::Local => {
             let alloca = self.locals.get(&expr.id()._value);
-            if alloca.is_some() {
-                alloca.unwrap()
-            } else {
-                LLVMGetUndef(self.ctx.ptr_type)
-            }
+            alloca.unwrap_or_else(|=self| -> LLVMValueRef { LLVMGetUndef(self.ctx.ptr_type) })
         }
         IrTag::Param => {
             let alloca = self.locals.get(&expr.id()._value);
-            if alloca.is_some() {
-                alloca.unwrap()
-            } else {
-                LLVMGetUndef(self.ctx.ptr_type)
-            }
+            alloca.unwrap_or_else(|=self| -> LLVMValueRef { LLVMGetUndef(self.ctx.ptr_type) })
         }
         IrTag::Deref => {
             // Deref of a pointer gives the pointer value itself as lvalue
@@ -1236,11 +1223,7 @@ impl FnCodegen {
         IrTag::GlobalRef => {
             let hash = self.ctx.name_hash(expr.global_ref().mangled_name);
             let existing = self.ctx.global_decls.get(&hash);
-            if existing.is_some() {
-                existing.unwrap()
-            } else {
-                LLVMGetUndef(self.ctx.ptr_type)
-            }
+            existing.unwrap_or_else(|=self| -> LLVMValueRef { LLVMGetUndef(self.ctx.ptr_type) })
         }
         _ => {
             // For non-lvalue expressions, create a temporary
@@ -2129,8 +2112,8 @@ impl FnCodegen {
             self.ctx.context, self.llvm_fn, &"switch.default\0"[0] as &libc::c_char
         );
         let has_user_default = false;
-        for i in 0usize..arms.len() {
-            if arms[i].is_default {
+        for arm in arms.iter_ref() {
+            if arm.is_default {
                 has_user_default = true;
                 break;
             }
@@ -2138,9 +2121,9 @@ impl FnCodegen {
 
         // Count total cases
         let num_cases: u32 = 0;
-        for i in 0usize..arms.len() {
-            if !arms[i].is_default {
-                num_cases = num_cases + arms[i].values.len() as u32;
+        for arm in arms.iter_ref() {
+            if !arm.is_default {
+                num_cases = num_cases + arm.values.len() as u32;
             }
         }
 
@@ -2152,10 +2135,10 @@ impl FnCodegen {
         let phi_count: u32 = 0;
 
         // Generate each arm
-        for i in 0usize..arms.len() {
-            if arms[i].is_default {
+        for (i, arm) in arms.iter().enumerate() {
+            if arm.is_default {
                 LLVMPositionBuilderAtEnd(self.ctx.builder, default_bb);
-                let arm_val = self.gen_expr(arms[i].body);
+                let arm_val = self.gen_expr(arm.body);
                 let end = LLVMGetInsertBlock(self.ctx.builder);
                 if (LLVMGetBasicBlockTerminator(end) as usize) == 0 {
                     if !is_void_result {
@@ -2169,25 +2152,25 @@ impl FnCodegen {
                 let arm_bb = LLVMAppendBasicBlockInContext(
                     self.ctx.context, self.llvm_fn, &"switch.case\0"[0] as &libc::c_char
                 );
-                for j in 0usize..arms[i].values.len() {
+                for j in 0usize..arm.values.len() {
                     // Check for duplicate case values (can happen with void discriminants)
                     let is_dup = false;
                     for pi in 0usize..i {
                         if !arms[pi].is_default {
                             for pj in 0usize..arms[pi].values.len() {
-                                if arms[pi].values[pj] == arms[i].values[j] {
+                                if arms[pi].values[pj] == arm.values[j] {
                                     is_dup = true;
                                 }
                             }
                         }
                     }
                     if !is_dup {
-                        let case_val = LLVMConstInt(val_ty, arms[i].values[j], 0i32);
+                        let case_val = LLVMConstInt(val_ty, arm.values[j], 0i32);
                         LLVMAddCase(switch_inst, case_val, arm_bb);
                     }
                 }
                 LLVMPositionBuilderAtEnd(self.ctx.builder, arm_bb);
-                let arm_val = self.gen_expr(arms[i].body);
+                let arm_val = self.gen_expr(arm.body);
                 let end = LLVMGetInsertBlock(self.ctx.builder);
                 if (LLVMGetBasicBlockTerminator(end) as usize) == 0 {
                     if !is_void_result {

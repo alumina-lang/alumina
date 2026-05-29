@@ -136,7 +136,7 @@ impl Pass1 {
                 }
                 let meta = inner_node.unwrap();
                 let name_node = child_by!(meta, FieldKind::Name);
-                if !name_node.is_none() {
+                if name_node.is_some() {
                     let name = self.ctx.node_text(name_node.unwrap());
                     switch name {
                         "inline" => {
@@ -151,10 +151,10 @@ impl Pass1 {
                                 if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
                                     inner = inner[1..inner.len() - 1];
                                 }
-                                while inner.len() > 0 && (inner[0] == ' ' || inner[0] == '\t') {
+                                while !inner.is_empty() && (inner[0] == ' ' || inner[0] == '\t') {
                                     inner = inner[1..];
                                 }
-                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
+                                while !inner.is_empty() && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
                                     inner = inner[0..inner.len() - 1];
                                 }
                                 inner
@@ -195,16 +195,16 @@ impl Pass1 {
                             // the function so downstream queries
                             // (`has_attribute`) match alumina-boot's behavior.
                             let args_node = child_by!(meta, FieldKind::Arguments);
-                            if !args_node.is_none() {
+                            if args_node.is_some() {
                                 let raw = self.ctx.node_text(args_node.unwrap());
                                 let inner = raw;
                                 if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
                                     inner = inner[1..inner.len() - 1];
                                 }
-                                while inner.len() > 0 && (inner[0] == ' ' || inner[0] == '\t') {
+                                while !inner.is_empty() && (inner[0] == ' ' || inner[0] == '\t') {
                                     inner = inner[1..];
                                 }
-                                while inner.len() > 0 && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
+                                while !inner.is_empty() && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
                                     inner = inner[0..inner.len() - 1];
                                 }
                                 if inner == "always" {
@@ -226,7 +226,7 @@ impl Pass1 {
                             // #[packed] (no arg) defaults to alignment 1.
                             // #[packed(N)] sets alignment to N.
                             let args_node = child_by!(meta, FieldKind::Arguments);
-                            if !args_node.is_none() {
+                            if args_node.is_some() {
                                 let val_text = self.ctx.node_text(args_node.unwrap());
                                 let val = parse_usize(val_text);
                                 if val == 0 { val = 1; }
@@ -245,7 +245,7 @@ impl Pass1 {
                         }
                         "align" => {
                             let args_node = child_by!(meta, FieldKind::Arguments);
-                            if !args_node.is_none() {
+                            if args_node.is_some() {
                                 let val_text = self.ctx.node_text(args_node.unwrap());
                                 let val = parse_usize(val_text);
                                 attrs.push(Attribute::align(val));
@@ -253,7 +253,7 @@ impl Pass1 {
                         }
                         "link_name" => {
                             let args_node = child_by!(meta, FieldKind::Arguments);
-                            if !args_node.is_none() {
+                            if args_node.is_some() {
                                 let link_name = self.ctx.node_text(args_node.unwrap());
                                 // Strip outer parens and one pair of surrounding quotes:
                                 // raw text is `("strlen")`.
@@ -269,7 +269,7 @@ impl Pass1 {
                         }
                         "lang" => {
                             let args_node = child_by!(meta, FieldKind::Arguments);
-                            if !args_node.is_none() {
+                            if args_node.is_some() {
                                 let lang_name = self.ctx.node_text(args_node.unwrap());
                                 if lang_name.len() >= 2 && lang_name[0] == '(' && lang_name[lang_name.len() - 1] == ')' {
                                     lang_name = lang_name[1..lang_name.len() - 1];
@@ -294,7 +294,7 @@ impl Pass1 {
             }
         }
 
-        if attrs.len() == 0 {
+        if attrs.is_empty() {
             return &[];
         }
         self.ctx.arena.alloc_slice_copy::<Attribute>(attrs.as_slice())
@@ -322,7 +322,7 @@ impl Pass1 {
 
         // Check for key = "value" form
         let value_node = child_by!(node, FieldKind::Value);
-        if !value_node.is_none() {
+        if value_node.is_some() {
             // key = "value" form: check if cfg flag matches the value
             let value_text = self.ctx.node_text(value_node.unwrap());
             // Strip quotes from string literal
@@ -354,7 +354,7 @@ impl Pass1 {
         }
 
         // Simple flag: check presence
-        if !args_node.is_none() {
+        if args_node.is_some() {
             // Unknown compound form, treat as false
             return false;
         }
@@ -411,7 +411,7 @@ impl Pass1 {
     fn visit_top_level_block_p1(self: &mut Pass1, node: Node) {
         // Check cfg attributes on top-level blocks
         let attr_node = child_by!(node, FieldKind::Attributes);
-        if !attr_node.is_none() {
+        if attr_node.is_some() {
             let _ = self.parse_attribute_list(attr_node.unwrap());
             if self.skip_item {
                 self.skip_item = false;
@@ -483,7 +483,7 @@ impl Pass1 {
         self.current_scope = child_scope;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_none() {
+        if type_args.is_some() {
             self.visit_node(type_args.unwrap());
         }
         self.visit_children_by_field(node, FieldKind::Parameters);
@@ -499,7 +499,7 @@ impl Pass1 {
 
         // Check if it's a union
         let kind_node = child_by!(node, FieldKind::Kind);
-        let is_union = !kind_node.is_none() && self.ctx.node_text(kind_node.unwrap()) == "union";
+        let is_union = kind_node.is_some() && self.ctx.node_text(kind_node.unwrap()) == "union";
 
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 
@@ -523,7 +523,7 @@ impl Pass1 {
         self.current_scope = child_scope;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_none() {
+        if type_args.is_some() {
             self.visit_node(type_args.unwrap());
         }
         self.visit_children_by_field(node, FieldKind::Body);
@@ -608,7 +608,7 @@ impl Pass1 {
         self.in_container = true;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_none() {
+        if type_args.is_some() {
             self.visit_node(type_args.unwrap());
         }
         self.visit_children_by_field(node, FieldKind::Body);
@@ -653,7 +653,7 @@ impl Pass1 {
         self.in_container = true;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_none() {
+        if type_args.is_some() {
             // Visit to register generic params in scope
             self.visit_node(type_args.unwrap());
             // Collect the IDs (and names) of the generic params we just
@@ -711,7 +711,7 @@ impl Pass1 {
         let prev = self.current_scope;
         self.current_scope = child_scope;
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        if !type_args.is_none() {
+        if type_args.is_some() {
             self.visit_node(type_args.unwrap());
         }
         self.current_scope = prev;
@@ -736,9 +736,9 @@ impl Pass1 {
                 // carries [outer]; combine it with our own segments so the
                 // alias path becomes [outer, a, b] not [a, b].
                 let own_segments = self.collect_path_segments(node);
-                if own_segments.len() > 0 {
+                if !own_segments.is_empty() {
                     let name = own_segments[own_segments.len() - 1];
-                    let segments = if prefix.len() > 0 {
+                    let segments = if !prefix.is_empty() {
                         let combined = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + own_segments.len());
                         for i in 0usize..prefix.len() {
                             combined[i] = prefix[i];
@@ -773,7 +773,7 @@ impl Pass1 {
             NodeKind::UseWildcard => {
                 // use a::*; - star import
                 let path_node = child_by!(node, FieldKind::Path);
-                if !path_node.is_none() {
+                if path_node.is_some() {
                     let segments = self.collect_path_segments(path_node.unwrap());
                     // Resolve the module path to get its scope
                     let resolved = self.ctx.scopes.resolve_path(self.current_scope, segments);
@@ -788,7 +788,7 @@ impl Pass1 {
             NodeKind::UseAsClause => {
                 let path_node = child_by!(node, FieldKind::Path);
                 let alias_node = child_by!(node, FieldKind::Alias);
-                if !path_node.is_none() && !alias_node.is_none() {
+                if path_node.is_some() && alias_node.is_some() {
                     let segments = self.collect_path_segments(path_node.unwrap());
                     let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
                     self.ctx.scopes.add_item(self.current_scope, NamedItem {
@@ -800,13 +800,13 @@ impl Pass1 {
             },
             NodeKind::ScopedUseList => {
                 let path_node = child_by!(node, FieldKind::Path);
-                let new_prefix = if !path_node.is_none() {
+                let new_prefix = if path_node.is_some() {
                     self.collect_path_segments(path_node.unwrap())
                 } else {
                     prefix
                 };
                 let list_node = child_by!(node, FieldKind::List);
-                if !list_node.is_none() {
+                if list_node.is_some() {
                     let cursor = list_node.unwrap().walk();
                     defer cursor.free();
                     for child in list_node.unwrap().children(&cursor) {
@@ -847,21 +847,21 @@ impl Pass1 {
             },
             NodeKind::ScopedIdentifier => {
                 let path = child_by!(node, FieldKind::Path);
-                if !path.is_none() {
+                if path.is_some() {
                     self.collect_path_segments_inner(path.unwrap(), segments);
                 }
                 let name = child_by!(node, FieldKind::Name);
-                if !name.is_none() {
+                if name.is_some() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
                 }
             },
             NodeKind::ScopedTypeIdentifier => {
                 let path = child_by!(node, FieldKind::Path);
-                if !path.is_none() {
+                if path.is_some() {
                     self.collect_path_segments_inner(path.unwrap(), segments);
                 }
                 let name = child_by!(node, FieldKind::Name);
-                if !name.is_none() {
+                if name.is_some() {
                     segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
                 }
             },
@@ -887,10 +887,10 @@ impl Pass1 {
         // that surfaced with sysroot's `process::unix::internal::environ`
         // staying null after the std/process unification.
         let extern_node = child_by!(node, FieldKind::Extern);
-        if !extern_node.is_none() {
+        if extern_node.is_some() {
             let abi: &[u8] = "C";
             let abi_node = child_by!(node, FieldKind::Abi);
-            if !abi_node.is_none() {
+            if abi_node.is_some() {
                 let abi_text = self.ctx.node_text(abi_node.unwrap());
                 if abi_text.len() >= 2 && abi_text[0] == '"' {
                     abi = self.ctx.intern_str(abi_text[1..abi_text.len()-1]);
@@ -905,7 +905,7 @@ impl Pass1 {
         }
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        let has_generic_params = !type_args.is_none();
+        let has_generic_params = type_args.is_some();
         let body_scope = if has_generic_params {
             self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope))
         } else {
@@ -944,7 +944,7 @@ impl Pass1 {
         if self.skip_item { self.skip_item = false; return; }
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
-        let has_generic_params = !type_args.is_none();
+        let has_generic_params = type_args.is_some();
         let body_scope = if has_generic_params {
             self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope))
         } else {
@@ -1019,7 +1019,7 @@ impl Pass1 {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::GenericArgument {
                 let placeholder = child_by!(child, FieldKind::Placeholder);
-                if !placeholder.is_none() {
+                if placeholder.is_some() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let id = self.ctx.next_id();
                     self.ctx.scopes.add_item(self.current_scope, NamedItem {
@@ -1042,7 +1042,7 @@ impl Pass1 {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::GenericArgument {
                 let placeholder = child_by!(child, FieldKind::Placeholder);
-                if !placeholder.is_none() {
+                if placeholder.is_some() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let resolved = self.ctx.scopes.resolve(self.current_scope, name);
                     if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
@@ -1052,7 +1052,7 @@ impl Pass1 {
             }
         }
 
-        if ids.len() == 0 {
+        if ids.is_empty() {
             return &[];
         }
         self.ctx.arena.alloc_slice_copy::<Id>(ids.as_slice())
@@ -1073,7 +1073,7 @@ impl Pass1 {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::GenericArgument {
                 let placeholder = child_by!(child, FieldKind::Placeholder);
-                if !placeholder.is_none() {
+                if placeholder.is_some() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let resolved = self.ctx.scopes.resolve(self.current_scope, name);
                     if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
@@ -1083,7 +1083,7 @@ impl Pass1 {
             }
         }
 
-        if names.len() == 0 {
+        if names.is_empty() {
             return &[];
         }
         self.ctx.arena.alloc_slice_copy::<&[u8]>(names.as_slice())
@@ -1128,7 +1128,7 @@ impl Pass1 {
         let mixin_type_args = child_by!(node, FieldKind::TypeArguments);
         let type_scope_idx = self.current_scope;
         let combined_gp_ids = self.impl_generic_param_ids;
-        if !mixin_type_args.is_none() {
+        if mixin_type_args.is_some() {
             let mixin_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
             let prev = self.current_scope;
             self.current_scope = mixin_scope;
@@ -1136,8 +1136,8 @@ impl Pass1 {
             let mixin_ids = self.collect_generic_param_ids(mixin_type_args.unwrap());
             self.current_scope = prev;
             type_scope_idx = mixin_scope;
-            if mixin_ids.len() > 0 {
-                if self.impl_generic_param_ids.len() == 0 {
+            if !mixin_ids.is_empty() {
+                if self.impl_generic_param_ids.is_empty() {
                     combined_gp_ids = mixin_ids;
                 } else {
                     let combined = self.ctx.arena.alloc_slice::<Id>(self.impl_generic_param_ids.len() + mixin_ids.len());

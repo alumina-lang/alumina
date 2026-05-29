@@ -96,7 +96,7 @@ impl ExprParser {
             NodeKind::RangeExpression => self.parse_range(node, span),
             NodeKind::ParenthesizedExpression => {
                 let inner = child_by!(node, FieldKind::Inner);
-                if !inner.is_none() {
+                if inner.is_some() {
                     return self.parse_expr(inner.unwrap());
                 }
                 self.alloc_void(span)
@@ -116,20 +116,20 @@ impl ExprParser {
                 // level attributes (`#[allow(...)]`, `#[docs(...)]`, etc.)
                 // are diagnostics-only and don't affect lowering.
                 let attrs_node = child_by!(node, FieldKind::Attributes);
-                if !attrs_node.is_none() {
+                if attrs_node.is_some() {
                     if self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
                         return self.alloc_void(span);
                     }
                 }
                 let inner = child_by!(node, FieldKind::Inner);
-                if !inner.is_none() {
+                if inner.is_some() {
                     return self.parse_expr(inner.unwrap());
                 }
                 self.alloc_void(span)
             },
             NodeKind::Statement => {
                 let inner = child_by!(node, FieldKind::Inner);
-                if !inner.is_none() {
+                if inner.is_some() {
                     return self.parse_expr(inner.unwrap());
                 }
                 self.alloc_void(span)
@@ -139,7 +139,7 @@ impl ExprParser {
             NodeKind::MacroIdentifier => {
                 // $param reference
                 let text = self.ctx.node_text(node);
-                let name = if text.len() > 0 && text[0] == '$' {
+                let name = if !text.is_empty() && text[0] == '$' {
                     self.ctx.intern_str(text[1..])
                 } else {
                     self.ctx.intern_str(text)
@@ -171,7 +171,7 @@ impl ExprParser {
                     return arg.unwrap();
                 }
                 // Check if this is the variadic param being expanded
-                if self.ctx.macro_variadic_name.len() > 0usize && name == self.ctx.macro_variadic_name {
+                if !self.ctx.macro_variadic_name.is_empty() && name == self.ctx.macro_variadic_name {
                     if self.ctx.macro_et_cetera_idx != NO_VARIADIC {
                         let idx = self.ctx.macro_et_cetera_idx as usize;
                         if idx < self.ctx.macro_variadic_args.len() {
@@ -297,11 +297,11 @@ impl ExprParser {
         for child in children_by!(node, FieldKind::Statements, &cursor) {
             if !child.is_named() { continue; }
             let inner_opt = child_by!(child, FieldKind::Inner);
-            if !inner_opt.is_none() {
+            if inner_opt.is_some() {
                 let inner_kind = NODE_KINDS[inner_opt.unwrap().symbol() as usize];
                 if inner_kind == NodeKind::ExpressionStatement {
                     let attrs_node = child_by!(inner_opt.unwrap(), FieldKind::Attributes);
-                    if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                    if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
                         continue;
                     }
                 }
@@ -318,15 +318,15 @@ impl ExprParser {
         // form). Statements with explicit `;` keep their expression but get
         // a synthesized Void appended at the end so the block's value is `()`.
         let has_result_value = false;
-        if raw_stmts.len() > 0 {
+        if !raw_stmts.is_empty() {
             let last = raw_stmts[raw_stmts.len() - 1];
             let last_inner_opt = child_by!(last, FieldKind::Inner);
-            if !last_inner_opt.is_none() {
+            if last_inner_opt.is_some() {
                 let last_inner = last_inner_opt.unwrap();
                 let last_inner_kind = NODE_KINDS[last_inner.symbol() as usize];
                 if last_inner_kind == NodeKind::ExpressionStatement {
                     let stmt_inner_opt = child_by!(last_inner, FieldKind::Inner);
-                    if !stmt_inner_opt.is_none() {
+                    if stmt_inner_opt.is_some() {
                         let stmt_inner_kind = NODE_KINDS[stmt_inner_opt.unwrap().symbol() as usize];
                         let is_block_ending = stmt_inner_kind == NodeKind::Block
                             || stmt_inner_kind == NodeKind::IfExpression
@@ -347,9 +347,8 @@ impl ExprParser {
             }
         }
 
-        let n_stmts = raw_stmts.len();
-        for i in 0usize..n_stmts {
-            let expr = block_parser.parse_expr(raw_stmts[i]);
+        for raw_stmt in raw_stmts.iter() {
+            let expr = block_parser.parse_expr(raw_stmt);
             stmts.push(expr);
         }
 
@@ -358,12 +357,12 @@ impl ExprParser {
         // isn't a block-ending form (e.g. `{ x + 1 }`). When present, this
         // child is the block's result.
         let result_node = child_by!(node, FieldKind::Result);
-        if !result_node.is_none() {
+        if result_node.is_some() {
             let result_kind = NODE_KINDS[result_node.unwrap().symbol() as usize];
             let suppressed = false;
             if result_kind == NodeKind::ExpressionStatement {
                 let attrs_node = child_by!(result_node.unwrap(), FieldKind::Attributes);
-                if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
                     suppressed = true;
                 }
             }
@@ -563,7 +562,7 @@ impl ExprParser {
             }
             cur_scope = res.item.kind.scope_idx;
             parent_chain = false;
-            i = i + 1;
+            i += 1;
         }
     }
 
@@ -574,7 +573,7 @@ impl ExprParser {
             let found = scope.items.get(&name);
             if found.is_some() {
                 let res = self.classify_anchor_item(found.unwrap());
-                if !res.is_none() { return res; }
+                if res.is_some() { return res; }
                 // Found something but it's not a usable anchor or descend
                 // target at this level (e.g. Method, Local). Keep walking up.
             }
@@ -583,7 +582,7 @@ impl ExprParser {
                 let imp_found = self.ctx.scopes.get(import_idx).items.get(&name);
                 if imp_found.is_some() {
                     let res = self.classify_anchor_item(imp_found.unwrap());
-                    if !res.is_none() { return res; }
+                    if res.is_some() { return res; }
                 }
             }
             if scope.parent.is_none() { return Option::none(); }
@@ -596,13 +595,13 @@ impl ExprParser {
         let found = scope.items.get(&name);
         if found.is_some() {
             let r = self.classify_anchor_item(found.unwrap());
-            if !r.is_none() { return r; }
+            if r.is_some() { return r; }
         }
         for import_idx in scope.star_imports {
             let imp_found = self.ctx.scopes.get(import_idx).items.get(&name);
             if imp_found.is_some() {
                 let r = self.classify_anchor_item(imp_found.unwrap());
-                if !r.is_none() { return r; }
+                if r.is_some() { return r; }
             }
         }
         Option::none()
@@ -623,7 +622,7 @@ impl ExprParser {
                 // through resolve_in_module which preserves the terminal
                 // TypeAlias / GenericParam.
                 let segs = item.kind.path_segments();
-                if segs.len() == 0 { return Option::none(); }
+                if segs.is_empty() { return Option::none(); }
                 let inner = self.lookup_in_chain_through_use(item.kind.scope_idx, segs);
                 if inner.is_none() { return Option::none(); }
                 item = inner.unwrap();
@@ -649,7 +648,7 @@ impl ExprParser {
         // Walk a use-alias's path, descending into module/struct scopes and
         // tolerating TypeAlias / GenericParam at the terminal. Mirrors what
         // resolve_path would do but without filtering out TypeAlias.
-        if segments.len() == 0 { return Option::none(); }
+        if segments.is_empty() { return Option::none(); }
         let cur_scope = scope_idx;
         let i: usize = 0;
         loop {
@@ -667,7 +666,7 @@ impl ExprParser {
                 }
                 if imp_found_opt.is_none() {
                     // Walk parent (only for first segment)
-                    if i == 0 && !scope.parent.is_none() {
+                    if i == 0 && scope.parent.is_some() {
                         cur_scope = scope.parent.unwrap();
                         continue;
                     }
@@ -696,7 +695,7 @@ impl ExprParser {
                 && item.kind.scope_idx != 0u32;
             if !descendable { return Option::none(); }
             cur_scope = item.kind.scope_idx;
-            i = i + 1;
+            i += 1;
         }
     }
 
@@ -761,7 +760,7 @@ impl ExprParser {
             // "expression is not callable" at the call site.
             if segments.len() >= 2 {
                 let anchor_item = self.find_typealias_or_generic_anchor(segments);
-                if !anchor_item.is_none() {
+                if anchor_item.is_some() {
                     let item = anchor_item.unwrap();
                     let e = self.make_expr(ExprTag::Defered, span);
                     e._data.id_ref.id = item.kind.id();
@@ -883,14 +882,14 @@ impl ExprParser {
         // Check for ScopedIdentifier with turbofish in path, e.g. Wrapper::<i32>::new(args)
         if func_kind == NodeKind::ScopedIdentifier {
             let path_child = child_by!(func_node, FieldKind::Path);
-            if !path_child.is_none() {
+            if path_child.is_some() {
                 let path_kind = NODE_KINDS[path_child.unwrap().symbol() as usize];
                 if path_kind == NodeKind::GenericTypeWithTurbofish || path_kind == NodeKind::Turbofish || path_kind == NodeKind::GenericType {
                     // Extract type arguments from the turbofish in the path
                     let turbo_node = path_child.unwrap();
                     let type_args_node = child_by!(turbo_node, FieldKind::TypeArguments);
                     let pass2 = Pass2 { ctx: self.ctx };
-                    let type_args = if !type_args_node.is_none() {
+                    let type_args = if type_args_node.is_some() {
                         pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
                     } else {
                         let empty: &[&Ty] = &[];
@@ -900,7 +899,7 @@ impl ExprParser {
                     // Resolve the scoped identifier (which finds the method)
                     let callee = self.parse_scoped_identifier(func_node, span);
 
-                    let call_args = if !args_node.is_none() {
+                    let call_args = if args_node.is_some() {
                         self.parse_arg_list(args_node.unwrap())
                     } else {
                         let empty: &[&Expr] = &[];
@@ -917,7 +916,7 @@ impl ExprParser {
         }
 
         let callee = self.parse_expr(func_node);
-        let args = if !args_node.is_none() {
+        let args = if args_node.is_some() {
             self.parse_arg_list(args_node.unwrap())
         } else {
             let empty: &[&Expr] = &[];
@@ -944,7 +943,7 @@ impl ExprParser {
         // Get the function path text
         let pass2 = Pass2 { ctx: self.ctx };
         let segments = pass2.collect_type_path_segments(path_node2.unwrap());
-        if segments.len() == 0 {
+        if segments.is_empty() {
             return Expr::void_expr();
         }
 
@@ -980,7 +979,7 @@ impl ExprParser {
 
         // Parse type arguments
         let pass2 = Pass2 { ctx: self.ctx };
-        let type_args = if !type_args_node.is_none() {
+        let type_args = if type_args_node.is_some() {
             pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
         } else {
             let empty: &[&Ty] = &[];
@@ -1010,7 +1009,7 @@ impl ExprParser {
 
         // Parse type arguments
         let pass2 = Pass2 { ctx: self.ctx };
-        let type_args = if !type_args_node.is_none() {
+        let type_args = if type_args_node.is_some() {
             pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
         } else {
             let empty: &[&Ty] = &[];
@@ -1019,7 +1018,7 @@ impl ExprParser {
 
         // Parse call arguments from the outer call node
         let args_node = child_by!(call_node, FieldKind::Arguments);
-        let args = if !args_node.is_none() {
+        let args = if args_node.is_some() {
             self.parse_arg_list(args_node.unwrap())
         } else {
             let empty: &[&Expr] = &[];
@@ -1049,7 +1048,7 @@ impl ExprParser {
                     } else {
                         // Expand et cetera: re-parse inner expression for each variadic arg
                         let inner = child_by!(child, FieldKind::Inner);
-                        if !inner.is_none() && self.ctx.macro_variadic_args.len() > 0usize {
+                        if inner.is_some() && !self.ctx.macro_variadic_args.is_empty() {
                             let inner_node = inner.unwrap();
                             for vi in 0usize..self.ctx.macro_variadic_args.len() {
                                 self.ctx.macro_et_cetera_idx = vi as i32;
@@ -1081,7 +1080,7 @@ impl ExprParser {
             let obj_expr = self.parse_expr(obj.unwrap());
             // TupleIndexExpression has a single "field" child containing the index
             let idx_node = child_by!(field_node, FieldKind::Field);
-            if !idx_node.is_none() {
+            if idx_node.is_some() {
                 let idx_inner = idx_node.unwrap();
                 let idx_kind = NODE_KINDS[idx_inner.symbol() as usize];
                 if idx_kind == NodeKind::IntegerLiteral {
@@ -1146,7 +1145,7 @@ impl ExprParser {
         // TupleIndexExpression as top-level (shouldn't normally happen,
         // as it's typically inside FieldExpression, but handle gracefully)
         let field = child_by!(node, FieldKind::Field);
-        if !field.is_none() {
+        if field.is_some() {
             return self.parse_expr(field.unwrap());
         }
         self.alloc_void(span)
@@ -1169,7 +1168,7 @@ impl ExprParser {
 
     fn parse_ref(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Value);
-        let is_mut = !child_by!(node, FieldKind::Mut).is_none();
+        let is_mut = child_by!(node, FieldKind::Mut).is_some();
         if inner.is_none() {
             return self.alloc_void(span);
         }
@@ -1234,10 +1233,10 @@ impl ExprParser {
 
         let cond_expr = self.parse_expr(cond.unwrap());
         let then_expr = self.parse_expr(then_node.unwrap());
-        let else_expr: Option<&Expr> = if !else_node.is_none() {
+        let else_expr: Option<&Expr> = if else_node.is_some() {
             // Else clause wraps its content
             let inner = child_by!(else_node.unwrap(), FieldKind::Inner);
-            if !inner.is_none() {
+            if inner.is_some() {
                 Option::some(self.parse_expr(inner.unwrap()))
             } else {
                 // Direct else body
@@ -1249,7 +1248,7 @@ impl ExprParser {
 
         // Check if this is "when" (static if) vs "if"
         let kind_node = child_by!(node, FieldKind::Kind);
-        let is_when = if !kind_node.is_none() {
+        let is_when = if kind_node.is_some() {
             self.ctx.node_text(kind_node.unwrap()) == "when"
         } else {
             false
@@ -1274,7 +1273,7 @@ impl ExprParser {
         defer arms.free();
 
         let body = child_by!(node, FieldKind::Body);
-        if !body.is_none() {
+        if body.is_some() {
             let cursor = body.unwrap().walk();
             defer cursor.free();
             for child in children_by!(body.unwrap(), FieldKind::Arm, &cursor) {
@@ -1287,7 +1286,7 @@ impl ExprParser {
                     #[allow(defer_in_a_loop)]
                     defer patterns.free();
 
-                    if !pattern_node.is_none() {
+                    if pattern_node.is_some() {
                         // Check for wildcard/default pattern "_"
                         let pat_text = self.ctx.node_text(pattern_node.unwrap());
                         let is_wildcard = pat_text.len() == 1 && pat_text[0] == '_';
@@ -1302,13 +1301,13 @@ impl ExprParser {
                                 }
                             }
                             // If pattern node itself is a value
-                            if patterns.len() == 0 {
+                            if patterns.is_empty() {
                                 patterns.push(self.parse_expr(pattern_node.unwrap()));
                             }
                         }
                     }
 
-                    let body_expr = if !body_node.is_none() {
+                    let body_expr = if body_node.is_some() {
                         self.parse_expr(body_node.unwrap())
                     } else {
                         self.alloc_void(Span::empty())
@@ -1419,7 +1418,7 @@ impl ExprParser {
     fn parse_break(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(ExprTag::Break, span);
-        if !value.is_none() {
+        if value.is_some() {
             e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
         self.ctx.alloc_expr(e)
@@ -1428,7 +1427,7 @@ impl ExprParser {
     fn parse_return(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(ExprTag::Return, span);
-        if !value.is_none() {
+        if value.is_some() {
             e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
         }
         self.ctx.alloc_expr(e)
@@ -1441,7 +1440,7 @@ impl ExprParser {
         // readdir64 split in `std/fs/unix.alu`) both parse, both run, and the
         // second shadows the first — silently consuming directory entries.
         let attrs_node = child_by!(node, FieldKind::Attributes);
-        if !attrs_node.is_none() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+        if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
             return self.alloc_void(span);
         }
 
@@ -1449,19 +1448,19 @@ impl ExprParser {
         let type_node = child_by!(node, FieldKind::Type);
         let value_node = child_by!(node, FieldKind::Value);
 
-        if !name_node.is_none() {
+        if name_node.is_some() {
             // Simple let: let x = expr;
             let var_id = self.ctx.next_id();
             let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
             let pass2 = Pass2 { ctx: self.ctx };
-            let ty: Option<&Ty> = if !type_node.is_none() {
+            let ty: Option<&Ty> = if type_node.is_some() {
                 Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
             } else {
                 Option::none()
             };
 
-            let init: Option<&Expr> = if !value_node.is_none() {
+            let init: Option<&Expr> = if value_node.is_some() {
                 Option::some(self.parse_expr(value_node.unwrap()))
             } else {
                 Option::none()
@@ -1494,7 +1493,7 @@ impl ExprParser {
             elements.push(child);
         }
 
-        if elements.len() == 0 || value_node.is_none() {
+        if elements.is_empty() || value_node.is_none() {
             return self.alloc_void(span);
         }
 
@@ -1561,7 +1560,7 @@ impl ExprParser {
         let fields: Vector<FieldInit> = Vector::new();
         defer fields.free();
 
-        if !init_node.is_none() {
+        if init_node.is_some() {
             let cursor = init_node.unwrap().walk();
             defer cursor.free();
             for child in init_node.unwrap().children(&cursor) {
@@ -1569,7 +1568,7 @@ impl ExprParser {
                 if kind == NodeKind::StructInitializerItem {
                     let name_node = child_by!(child, FieldKind::Field);
                     let value_node = child_by!(child, FieldKind::Value);
-                    if !name_node.is_none() && !value_node.is_none() {
+                    if name_node.is_some() && value_node.is_some() {
                         fields.push(FieldInit {
                             name: self.ctx.intern_str(self.ctx.node_text(name_node.unwrap())),
                             value: self.parse_expr(value_node.unwrap()),
@@ -1635,7 +1634,7 @@ impl ExprParser {
         // Generate a self_param id for closure struct access (only used if there are captures)
         let self_param_id = self.ctx.next_id();
 
-        if !params_node.is_none() {
+        if params_node.is_some() {
             let cursor = params_node.unwrap().walk();
             defer cursor.free();
             let pass2 = Pass2 { ctx: self.ctx };
@@ -1650,7 +1649,7 @@ impl ExprParser {
                         let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
                         let by_ref_node = child_by!(child, FieldKind::ByReference);
-                        let bound_type = if !by_ref_node.is_none() {
+                        let bound_type = if by_ref_node.is_some() {
                             BoundType::ByReference
                         } else {
                             BoundType::ByValue
@@ -1706,10 +1705,10 @@ impl ExprParser {
                         if kind == NodeKind::Parameter {
                             let name_node = child_by!(child, FieldKind::Name);
                             let type_node = child_by!(child, FieldKind::Type);
-                            if !name_node.is_none() {
+                            if name_node.is_some() {
                                 name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
                             }
-                            if !type_node.is_none() {
+                            if type_node.is_some() {
                                 ty = Option::some(pass2.parse_type(type_node.unwrap(), lambda_scope));
                             }
                         } else {
@@ -1735,7 +1734,7 @@ impl ExprParser {
 
         let pass2 = Pass2 { ctx: self.ctx };
         let ret_node = child_by!(node, FieldKind::ReturnType);
-        let ret_ty: Option<&Ty> = if !ret_node.is_none() {
+        let ret_ty: Option<&Ty> = if ret_node.is_some() {
             Option::some(pass2.parse_type(ret_node.unwrap(), lambda_scope))
         } else {
             Option::none()
@@ -1797,17 +1796,17 @@ impl ExprParser {
         let inclusive_node = child_by!(node, FieldKind::Inclusive);
 
         let e = self.make_expr(ExprTag::Range, span);
-        e._data.range.flag = if !inclusive_node.is_none() {
+        e._data.range.flag = if inclusive_node.is_some() {
             let text = self.ctx.node_text(inclusive_node.unwrap());
             text.len() == 3  // "..=" is 3 bytes, ".." is 2 bytes
         } else {
             false
         };
 
-        if !lower.is_none() {
+        if lower.is_some() {
             e._data.range.lhs = self.parse_expr(lower.unwrap());
         }
-        if !upper.is_none() {
+        if upper.is_some() {
             e._data.range.rhs = self.parse_expr(upper.unwrap());
         }
         self.ctx.alloc_expr(e)
@@ -1838,7 +1837,7 @@ impl ExprParser {
         let name_param_idx: i32 = -1i32;
         if self.ctx.in_macro_body && macro_node_kind == NodeKind::MacroIdentifier {
             let raw = self.ctx.node_text(macro_node);
-            let stripped = if raw.len() > 0 && raw[0] == '$' { raw[1..] } else { raw };
+            let stripped = if !raw.is_empty() && raw[0] == '$' { raw[1..] } else { raw };
             let pname = self.ctx.intern_str(stripped);
             for pi in 0usize..self.ctx.macro_param_names.len() {
                 if self.ctx.macro_param_names[pi] == pname {
@@ -1862,7 +1861,7 @@ impl ExprParser {
             }
         }
 
-        let args = if !args_node.is_none() {
+        let args = if args_node.is_some() {
             self.parse_arg_list(args_node.unwrap())
         } else {
             let empty: &[&Expr] = &[];
@@ -1927,7 +1926,7 @@ impl ExprParser {
         switch name {
         "cfg" => {
             // cfg!(flag) -> bool literal
-            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
+            if !args.is_empty() && args[0].tag == ExprTag::StringLit {
                 let flag = args[0].str_val();
                 let e = self.make_expr(ExprTag::BoolLit, span);
                 e._data.lit.bool_val = self.ctx.has_cfg(flag);
@@ -1971,7 +1970,7 @@ impl ExprParser {
         }
         "stringify" => {
             let text: &[u8] = "";
-            if args.len() > 0usize {
+            if !args.is_empty() {
                 let arg = args[0];
                 if arg.span.start < arg.span.end {
                     if arg.span.file_id < self.ctx.diag.files.len() as u32 {
@@ -1990,7 +1989,7 @@ impl ExprParser {
         }
         "env" => {
             let value: &[u8] = "";
-            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
+            if !args.is_empty() && args[0].tag == ExprTag::StringLit {
                 let var_name = args[0].str_val();
                 let buf = self.ctx.arena.alloc_slice::<u8>(var_name.len() + 1);
                 var_name.copy_to_nonoverlapping(&buf[0]);
@@ -1999,7 +1998,7 @@ impl ExprParser {
                 if result as usize != 0usize {
                     let len: usize = 0;
                     while *((result as usize + len) as &u8) != 0u8 {
-                        len = len + 1;
+                        len += 1;
                     }
                     let val_buf = self.ctx.arena.alloc_slice::<u8>(len);
                     for i in 0usize..len {
@@ -2014,20 +2013,20 @@ impl ExprParser {
         }
         "concat" => {
             let total_len: usize = 0;
-            for i in 0usize..args.len() {
-                if args[i].tag == ExprTag::StringLit {
-                    total_len = total_len + args[i].str_val().len();
+            for arg in args.iter() {
+                if arg.tag == ExprTag::StringLit {
+                    total_len += arg.str_val().len();
                 }
             }
             let buf = self.ctx.arena.alloc_slice::<u8>(total_len);
             let offset: usize = 0;
-            for i in 0usize..args.len() {
-                if args[i].tag == ExprTag::StringLit {
-                    let s = args[i].str_val();
+            for arg in args.iter() {
+                if arg.tag == ExprTag::StringLit {
+                    let s = arg.str_val();
                     for j in 0usize..s.len() {
                         buf[offset + j] = s[j];
                     }
-                    offset = offset + s.len();
+                    offset += s.len();
                 }
             }
             let e = self.make_expr(ExprTag::StringLit, span);
@@ -2035,7 +2034,7 @@ impl ExprParser {
             self.ctx.alloc_expr(e)
         }
         "include_bytes" => {
-            if args.len() > 0usize && args[0].tag == ExprTag::StringLit {
+            if !args.is_empty() && args[0].tag == ExprTag::StringLit {
                 let path = args[0].str_val();
                 let path_buf = self.ctx.arena.alloc_slice::<u8>(path.len() + 1);
                 path.copy_to_nonoverlapping(&path_buf[0]);
@@ -2059,7 +2058,7 @@ impl ExprParser {
         }
         "format_args" => self.expand_format_args(args, span),
         "bind" => {
-            if args.len() == 0usize {
+            if args.is_empty() {
                 return self.alloc_void(span);
             }
             let macro_ref = args[0];
@@ -2158,11 +2157,11 @@ impl ExprParser {
                 if i + 1 < fmt_str.len() && fmt_str[i + 1] == '{' {
                     // Escaped brace: {{ -> {
                     string_part.push('{');
-                    i = i + 2;
+                    i += 2;
                 } else {
                     // Start of format placeholder
                     // Flush current string part
-                    if string_part.len() > 0usize {
+                    if !string_part.is_empty() {
                         let e = self.make_expr(ExprTag::StringLit, span);
                         e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
                         pieces.push(self.ctx.alloc_expr(e));
@@ -2170,7 +2169,7 @@ impl ExprParser {
                     }
 
                     // Parse the placeholder: {}, {0}, {1}, etc.
-                    i = i + 1;
+                    i += 1;
                     let arg_idx = next_arg_idx;
                     let has_explicit_idx = false;
                     let explicit_idx: usize = 0;
@@ -2180,13 +2179,13 @@ impl ExprParser {
                             has_explicit_idx = true;
                             explicit_idx = explicit_idx * 10 + (fmt_str[i] - '0') as usize;
                         }
-                        i = i + 1;
+                        i += 1;
                     }
 
                     if has_explicit_idx {
                         arg_idx = explicit_idx;
                     } else {
-                        next_arg_idx = next_arg_idx + 1;
+                        next_arg_idx += 1;
                     }
 
                     // Add the argument reference
@@ -2195,26 +2194,26 @@ impl ExprParser {
                     }
 
                     if i < fmt_str.len() {
-                        i = i + 1; // skip closing }
+                        i += 1; // skip closing }
                     }
                 }
             } else if fmt_str[i] == '}' {
                 if i + 1 < fmt_str.len() && fmt_str[i + 1] == '}' {
                     // Escaped brace: }} -> }
                     string_part.push('}');
-                    i = i + 2;
+                    i += 2;
                 } else {
                     // Stray }
-                    i = i + 1;
+                    i += 1;
                 }
             } else {
                 string_part.push(fmt_str[i]);
-                i = i + 1;
+                i += 1;
             }
         }
 
         // Flush remaining string part
-        if string_part.len() > 0usize {
+        if !string_part.is_empty() {
             let e = self.make_expr(ExprTag::StringLit, span);
             e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
             pieces.push(self.ctx.alloc_expr(e));
@@ -2274,10 +2273,10 @@ impl ExprParser {
         defer all_args.free();
         all_args.push(obj);
 
-        if !args_node.is_none() {
+        if args_node.is_some() {
             let extra_args = self.parse_arg_list(args_node.unwrap());
-            for i in 0usize..extra_args.len() {
-                all_args.push(extra_args[i]);
+            for extra_arg in extra_args.iter() {
+                all_args.push(extra_arg);
             }
         }
 
@@ -2535,7 +2534,7 @@ impl ExprParser {
                 // stashed the source name on the Local's str_val. Re-resolve
                 // against the call-site scope (e.g. `&buf` where buf is a
                 // function-local in the macro's caller).
-                if expr.id()._value == 0usize && expr.str_val().len() > 0usize {
+                if expr.id()._value == 0usize && !expr.str_val().is_empty() {
                     let resolved = self.ctx.scopes.resolve(self.scope_idx, expr.str_val());
                     if resolved.is_some() {
                         let item = resolved.unwrap();
@@ -2603,7 +2602,7 @@ impl ExprParser {
             if e._data.call.lhs as &void as usize != 0usize {
                 e._data.call.lhs = self.expand_macro_expr(e._data.call.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-            if e._data.call.args.len() > 0usize {
+            if !e._data.call.args.is_empty() {
                 e._data.call.args = self.expand_macro_args_list(e._data.call.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
         } else if e.tag == ExprTag::FieldAccess {
@@ -2628,7 +2627,7 @@ impl ExprParser {
             }
         } else if e.tag == ExprTag::Switch {
             e._data.switch_expr.lhs = self.expand_macro_expr(e._data.switch_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            if e._data.switch_expr.switch_arms.len() > 0usize {
+            if !e._data.switch_expr.switch_arms.is_empty() {
                 let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e._data.switch_expr.switch_arms.len());
                 for i in 0usize..e._data.switch_expr.switch_arms.len() {
                     let arm = e._data.switch_expr.switch_arms[i];
@@ -2651,7 +2650,7 @@ impl ExprParser {
         } else if e.tag == ExprTag::For || e.tag == ExprTag::StaticFor {
             e._data.for_expr.lhs = self.expand_macro_expr(e._data.for_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             e._data.for_expr.rhs = self.expand_macro_expr(e._data.for_expr.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            if e._data.for_expr.args.len() > 0usize {
+            if !e._data.for_expr.args.is_empty() {
                 e._data.for_expr.args = self.expand_macro_args_list(e._data.for_expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
         } else if e.tag == ExprTag::Break || e.tag == ExprTag::Return {
@@ -2663,7 +2662,7 @@ impl ExprParser {
                 e._data.let_expr.opt_expr = Option::some(self.expand_macro_expr(e._data.let_expr.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
             }
         } else if e.tag == ExprTag::StructLit {
-            if e._data.struct_lit.field_inits.len() > 0usize {
+            if !e._data.struct_lit.field_inits.is_empty() {
                 let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e._data.struct_lit.field_inits.len());
                 for i in 0usize..e._data.struct_lit.field_inits.len() {
                     new_inits[i] = FieldInit {
@@ -2674,7 +2673,7 @@ impl ExprParser {
                 e._data.struct_lit.field_inits = new_inits;
             }
         } else if e.tag == ExprTag::TupleLit || e.tag == ExprTag::ArrayLit || e.tag == ExprTag::Block {
-            if e._data.list.args.len() > 0usize {
+            if !e._data.list.args.is_empty() {
                 e._data.list.args = self.expand_macro_args_list(e._data.list.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
         } else if e.tag == ExprTag::Lambda {
@@ -2709,10 +2708,10 @@ impl ExprParser {
         let result: Vector<&Expr> = Vector::new();
         defer result.free();
 
-        for i in 0usize..args.len() {
-            if args[i].tag == ExprTag::EtCetera {
+        for arg in args.iter() {
+            if arg.tag == ExprTag::EtCetera {
                 // Expand inner expression for each variadic arg
-                let inner = args[i].lhs();
+                let inner = arg.lhs();
                 for vi in 0usize..variadic_args.len() {
                     result.push(self.expand_macro_expr(
                         inner, param_args, variadic_args, variadic_param_idx, vi as i32, id_map
@@ -2720,7 +2719,7 @@ impl ExprParser {
                 }
             } else {
                 result.push(self.expand_macro_expr(
-                    args[i], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
+                    arg, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
                 ));
             }
         }

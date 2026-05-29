@@ -330,12 +330,7 @@ impl MonoCtx {
     // Note: 0 can be a valid ID, so use has_lang_item() to check existence.
     fn get_lang_item(self: &MonoCtx, name: &[u8]) -> Option<usize> {
         let hash = self.hash_lang_name(name);
-        let result = self.lang_items.get(&hash);
-        if result.is_some() {
-            Option::some(result.unwrap())
-        } else {
-            Option::none()
-        }
+        self.lang_items.get(&hash)
     }
 
     // Check if a given item ID matches a specific lang item name
@@ -609,17 +604,9 @@ fn monomorphize(
             }
             ctx.emitted_globals.insert(sd.id._value);
             let mono = Mono::new(&ctx);
-            let ty = if sd.ty.is_some() {
-                mono.resolve_type(sd.ty.unwrap())
-            } else {
-                ctx.void_ty
-            };
+            let ty = sd.ty.map(|&mono, v: &Ty| -> &IrTy { mono.resolve_type(v) }).unwrap_or(ctx.void_ty);
 
-            let init: Option<&IrExpr> = if sd.init.is_some() {
-                Option::some(mono.lower_expr(sd.init.unwrap()))
-            } else {
-                Option::none()
-            };
+            let init: Option<&IrExpr> = sd.init.map(|&mono, v: &Expr| -> &IrExpr { mono.lower_expr(v) });
 
             let is_extern = false;
             for attr in sd.attributes {

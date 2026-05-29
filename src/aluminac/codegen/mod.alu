@@ -10,6 +10,7 @@ use aluminac_common::arena::Arena;
 use diagnostics::DiagnosticContext;
 use std::collections::HashMap;
 use std::option::Option;
+use std::string::starts_with;
 
 // Codegen context - holds all state needed during LLVM IR generation
 struct CodegenCtx {
@@ -137,16 +138,7 @@ impl CodegenCtx {
 
         // Detect target arch from the triple ("x86_64-..." vs "aarch64-...")
         let triple_str = std::ffi::CString::from_raw(triple).as_slice();
-        let prefix = "x86_64";
-        let is_x86_64 = triple_str.len() >= prefix.len();
-        if is_x86_64 {
-            for i in 0usize..prefix.len() {
-                if triple_str[i] != prefix[i] {
-                    is_x86_64 = false;
-                    break;
-                }
-            }
-        }
+        let is_x86_64 = triple_str.starts_with("x86_64");
 
         LLVMDisposeMessage(triple);
         LLVMDisposeMessage(cpu);
@@ -309,8 +301,8 @@ impl CodegenCtx {
                 return self.void_type;
             }
             let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(ty.elems().len());
-            for i in 0usize..ty.elems().len() {
-                let elem_ty = self.llvm_type(ty.elems()[i]);
+            for (i, elem) in ty.elems().iter().enumerate() {
+                let elem_ty = self.llvm_type(elem);
                 // LLVM doesn't allow void as a tuple member. Use a true
                 // zero-sized type so the tuple's LLVM layout matches
                 // compute_type_size (an i8 placeholder added size+padding,
@@ -365,8 +357,8 @@ impl CodegenCtx {
 
     fn struct_cache_key(self: &CodegenCtx, s: &IrStructRef) -> usize {
         let h: usize = s.id._value;
-        for i in 0usize..s.type_args.len() {
-            h = h * 31 + s.type_args[i] as &void as usize;
+        for type_arg in s.type_args.iter() {
+            h = h * 31 + type_arg as &void as usize;
         }
         h
     }
@@ -408,8 +400,8 @@ impl CodegenCtx {
             // because LLVM may return 0 for named struct types whose bodies haven't been
             // set yet during recursive type construction.
             let max_size: usize = 0;
-            for i in 0usize..s.fields.len() {
-                let size = compute_type_size(s.fields[i].ty, 8usize);
+            for field in s.fields.iter() {
+                let size = compute_type_size(field.ty, 8usize);
                 if size > max_size {
                     max_size = size;
                 }
@@ -417,8 +409,8 @@ impl CodegenCtx {
             let n_i64s = (max_size as u64 + 7u64) / 8u64;
             // Still need to trigger LLVM type creation for all variants
             // so they exist when used in bitcasts later
-            for i in 0usize..s.fields.len() {
-                self.llvm_type(s.fields[i].ty);
+            for field in s.fields.iter() {
+                self.llvm_type(field.ty);
             }
             let elems = self.arena.alloc_slice::<LLVMTypeRef>(1);
             elems[0] = LLVMArrayType(self.i64_type, n_i64s as u32);
@@ -426,8 +418,8 @@ impl CodegenCtx {
         } else {
             // Normal struct
             let llvm_fields = self.arena.alloc_slice::<LLVMTypeRef>(s.fields.len());
-            for i in 0usize..s.fields.len() {
-                let field_ty = self.llvm_type(s.fields[i].ty);
+            for (i, field) in s.fields.iter().enumerate() {
+                let field_ty = self.llvm_type(field.ty);
                 // LLVM doesn't allow void as a struct member. Use a true
                 // zero-sized type (not an i8 placeholder) so the struct's
                 // LLVM layout matches compute_type_size and the offsets of
@@ -539,8 +531,8 @@ impl CodegenCtx {
         if use_sret {
             param_types[0] = LLVMPointerType(ret_type, 0u32);
         }
-        for i in 0usize..ir_fn.params.len() {
-            let pty = self.llvm_type(ir_fn.params[i].ty);
+        for (i, param) in ir_fn.params.iter().enumerate() {
+            let pty = self.llvm_type(param.ty);
             // LLVM doesn't allow void as a param type
             if LLVMGetTypeKind(pty) == LLVMTypeKind::Void {
                 param_types[i + extra] = self.i8_type;
@@ -620,8 +612,8 @@ impl CodegenCtx {
         // Split path into directory and filename
         let last_slash: usize = 0;
         let found_slash = false;
-        for i in 0usize..path.len() {
-            if path[i] == '/' {
+        for (i, ch) in path.iter().enumerate() {
+            if ch == '/' {
                 last_slash = i;
                 found_slash = true;
             }
@@ -751,8 +743,8 @@ impl CodegenCtx {
 
     fn name_hash(self: &CodegenCtx, name: &[u8]) -> u64 {
         let h: u64 = 5381;
-        for i in 0usize..name.len() {
-            h = h * 33 + name[i] as u64;
+        for byte in name.iter() {
+            h = h * 33 + byte as u64;
         }
         h
     }
@@ -824,8 +816,8 @@ impl CodegenCtx {
 
             if self.uses_byval_attr() {
                 let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
-                for i in 0usize..ir_fn.params.len() {
-                    let orig_ty = self.llvm_type(ir_fn.params[i].ty);
+                for (i, param) in ir_fn.params.iter().enumerate() {
+                    let orig_ty = self.llvm_type(param.ty);
                     if self.needs_byval(orig_ty) {
                         let byval_attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
                         LLVMAddAttributeAtIndex(llvm_fn, (i as u32) + 1u32 + extra, byval_attr);
@@ -840,8 +832,7 @@ impl CodegenCtx {
         } else {
             let is_export = false;
             let is_main = false;
-            for i in 0usize..ir_fn.attributes.len() {
-                let linkage_attr = &ir_fn.attributes[i];
+            for linkage_attr in ir_fn.attributes.iter_ref() {
                 if linkage_attr.tag == AttrTag::Export {
                     is_export = true;
                 } else if linkage_attr.tag == AttrTag::Main {
@@ -861,8 +852,7 @@ impl CodegenCtx {
         }
 
         // Set attributes
-        for i in 0usize..ir_fn.attributes.len() {
-            let attr = &ir_fn.attributes[i];
+        for attr in ir_fn.attributes.iter_ref() {
             if attr.tag == AttrTag::NoReturn {
                 self.add_fn_attribute(llvm_fn, "noreturn");
             } else if attr.tag == AttrTag::Inline {
@@ -881,10 +871,10 @@ impl CodegenCtx {
         }
 
         // Name parameters
-        for i in 0usize..ir_fn.params.len() {
+        for (i, ir_param) in ir_fn.params.iter().enumerate() {
             let param = LLVMGetParam(llvm_fn, i as u32);
-            let pname = self.null_terminate(ir_fn.params[i].name);
-            LLVMSetValueName2(param, &pname[0] as &libc::c_char, ir_fn.params[i].name.len());
+            let pname = self.null_terminate(ir_param.name);
+            LLVMSetValueName2(param, &pname[0] as &libc::c_char, ir_param.name.len());
         }
 
         self.fn_decls.insert(hash, llvm_fn);
@@ -924,8 +914,7 @@ impl CodegenCtx {
         }
 
         // Thread local and export attributes
-        for i in 0usize..ir_global.attributes.len() {
-            let attr = &ir_global.attributes[i];
+        for attr in ir_global.attributes.iter_ref() {
             if attr.tag == AttrTag::ThreadLocal {
                 LLVMSetThreadLocal(global, 1i32);
             } else if attr.tag == AttrTag::Export {
@@ -1047,8 +1036,8 @@ impl CodegenCtx {
                 return LLVMConstNull(self.llvm_type(expr.ty));
             }
             let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
-            for i in 0usize..expr.items().len() {
-                fields[i] = self.gen_const_init(expr.items()[i]);
+            for (i, item) in expr.items().iter().enumerate() {
+                fields[i] = self.gen_const_init(item);
                 if (fields[i] as usize) == 0 {
                     return std::mem::zeroed::<LLVMValueRef>();
                 }
@@ -1058,8 +1047,8 @@ impl CodegenCtx {
         IrTag::ArrayLit => {
             let elem_ty = self.llvm_type(expr.ty.inner());
             let elems = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
-            for i in 0usize..expr.items().len() {
-                elems[i] = self.gen_const_init(expr.items()[i]);
+            for (i, item) in expr.items().iter().enumerate() {
+                elems[i] = self.gen_const_init(item);
                 if (elems[i] as usize) == 0 {
                     return std::mem::zeroed::<LLVMValueRef>();
                 }
@@ -1075,12 +1064,12 @@ impl CodegenCtx {
             // Skip ZST (void-typed) elements — they have no LLVM representation
             let all_fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
             let count = 0usize;
-            for i in 0usize..expr.items().len() {
-                let elem_ty = self.llvm_type(expr.items()[i].ty);
+            for item in expr.items().iter() {
+                let elem_ty = self.llvm_type(item.ty);
                 if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
                     continue;
                 }
-                all_fields[count] = self.gen_const_init(expr.items()[i]);
+                all_fields[count] = self.gen_const_init(item);
                 if (all_fields[count] as usize) == 0 {
                     return std::mem::zeroed::<LLVMValueRef>();
                 }
@@ -1303,8 +1292,8 @@ impl CodegenCtx {
 
         // Build the user main's function type from IR params
         let user_param_types = self.arena.alloc_slice::<LLVMTypeRef>(ir_fn.params.len());
-        for i in 0usize..ir_fn.params.len() {
-            user_param_types[i] = self.llvm_type(ir_fn.params[i].ty);
+        for (i, param) in ir_fn.params.iter().enumerate() {
+            user_param_types[i] = self.llvm_type(param.ty);
         }
         let user_ret_ty = self.llvm_type(ir_fn.return_type);
         let user_fn_ty = if ir_fn.params.len() > 0 {
@@ -1474,40 +1463,40 @@ fn generate(
 
 
     // Phase 1: Declare all struct types (forward declarations)
-    for i in 0usize..unit.structs.len() {
-        ctx.llvm_struct_type(&unit.structs[i]);
+    for struct_ref in unit.structs.iter_ref() {
+        ctx.llvm_struct_type(struct_ref);
     }
 
     // Phase 1 done
 
     // Phase 2: Declare all functions (skip intrinsics)
-    for i in 0usize..unit.functions.len() {
-        if unit.functions[i].abi.is_some() {
-            let abi_val = unit.functions[i].abi.unwrap();
+    for fn_decl in unit.functions.iter_ref() {
+        if fn_decl.abi.is_some() {
+            let abi_val = fn_decl.abi.unwrap();
             if abi_val == "intrinsic" {
                 // Skip intrinsic functions - they are handled inline
                 continue;
             }
         }
-        ctx.declare_function(&unit.functions[i]);
+        ctx.declare_function(fn_decl);
     }
 
 
     // Phase 3: Declare all globals
-    for i in 0usize..unit.globals.len() {
-        ctx.declare_global(&unit.globals[i]);
+    for global_decl in unit.globals.iter_ref() {
+        ctx.declare_global(global_decl);
     }
 
     // Phase 4: Generate function bodies
-    for i in 0usize..unit.functions.len() {
-        if unit.functions[i].body.is_some() {
+    for ir_fn in unit.functions.iter_ref() {
+        if ir_fn.body.is_some() {
             let llvm_fn = {
-                let hash = ctx.name_hash(unit.functions[i].mangled_name);
+                let hash = ctx.name_hash(ir_fn.mangled_name);
                 let decl = ctx.fn_decls.get(&hash);
                 if decl.is_some() { decl.unwrap() }
                 else { continue; }
             };
-            let fn_cg = FnCodegen::new(&ctx, llvm_fn, &unit.functions[i]);
+            let fn_cg = FnCodegen::new(&ctx, llvm_fn, ir_fn);
             fn_cg.emit();
             fn_cg.free();
         }
@@ -1519,12 +1508,12 @@ fn generate(
     }
 
     // Phase 5: Initialize globals with constant values
-    for i in 0usize..unit.globals.len() {
-        if unit.globals[i].init.is_some() && !unit.globals[i].is_extern {
-            let init_expr = unit.globals[i].init.unwrap();
+    for global_def in unit.globals.iter_ref() {
+        if global_def.init.is_some() && !global_def.is_extern {
+            let init_expr = global_def.init.unwrap();
             let const_val = ctx.gen_const_init(init_expr);
             if (const_val as usize) != 0 {
-                let hash = ctx.name_hash(unit.globals[i].mangled_name);
+                let hash = ctx.name_hash(global_def.mangled_name);
                 let global = ctx.global_decls.get(&hash);
                 if global.is_some() {
                     LLVMSetInitializer(global.unwrap(), const_val);
@@ -1538,10 +1527,10 @@ fn generate(
         let ctor_fns: std::collections::Vector<LLVMValueRef> = std::collections::Vector::new();
         defer ctor_fns.free();
 
-        for i in 0usize..unit.functions.len() {
-            for j in 0usize..unit.functions[i].attributes.len() {
-                if unit.functions[i].attributes[j].tag == AttrTag::StaticCtor {
-                    let hash = ctx.name_hash(unit.functions[i].mangled_name);
+        for fn_def in unit.functions.iter_ref() {
+            for attr in fn_def.attributes.iter() {
+                if attr.tag == AttrTag::StaticCtor {
+                    let hash = ctx.name_hash(fn_def.mangled_name);
                     let decl = ctx.fn_decls.get(&hash);
                     if decl.is_some() {
                         ctor_fns.push(decl.unwrap());
@@ -1564,10 +1553,10 @@ fn generate(
             let ctor_struct_ty = LLVMStructTypeInContext(ctx.context, &ctor_elem_types[0], 3, 0i32);
 
             let ctor_entries = ctx.arena.alloc_slice::<LLVMValueRef>(ctor_fns.len());
-            for i in 0usize..ctor_fns.len() {
+            for (i, ctor_fn) in ctor_fns.iter().enumerate() {
                 let entry_vals = ctx.arena.alloc_slice::<LLVMValueRef>(3);
                 entry_vals[0] = LLVMConstInt(i32_ty, 65535u64, 0i32); // priority
-                entry_vals[1] = LLVMConstBitCast(ctor_fns[i], void_fn_ptr_ty);
+                entry_vals[1] = LLVMConstBitCast(ctor_fn, void_fn_ptr_ty);
                 entry_vals[2] = LLVMConstNull(i8_ptr_ty);
                 ctor_entries[i] = LLVMConstStructInContext(ctx.context, &entry_vals[0], 3, 0i32);
             }
@@ -1583,22 +1572,22 @@ fn generate(
     // Phase 7: Generate main wrapper
     if test_mode {
         // In test mode, use the #[test_main] function from test.alu as main
-        for i in 0usize..unit.functions.len() {
+        for fn_def in unit.functions.iter_ref() {
             let is_test_main = false;
-            for attr in unit.functions[i].attributes {
+            for attr in fn_def.attributes {
                 if attr.tag == AttrTag::TestMain {
                     is_test_main = true;
                 }
             }
-            if is_test_main && unit.functions[i].body.is_some() {
-                ctx.emit_main_wrapper(&unit.functions[i]);
+            if is_test_main && fn_def.body.is_some() {
+                ctx.emit_main_wrapper(fn_def);
             }
         }
     } else {
         // Normal mode: generate C-compatible main wrapper
-        for i in 0usize..unit.functions.len() {
-            if unit.functions[i].name == "main" && unit.functions[i].body.is_some() {
-                ctx.emit_main_wrapper(&unit.functions[i]);
+        for fn_def in unit.functions.iter_ref() {
+            if fn_def.name == "main" && fn_def.body.is_some() {
+                ctx.emit_main_wrapper(fn_def);
             }
         }
     }
