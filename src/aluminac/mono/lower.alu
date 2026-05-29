@@ -822,12 +822,7 @@ impl Mono {
         // Forward-declare: register the struct with empty fields BEFORE resolving field types.
         // This prevents infinite recursion for self-referential structs (e.g. Node { next: &mut Node }).
         let placeholder_fields = self.ctx.arena.alloc_slice::<IrField>(0);
-        let is_packed = false;
-        for attr in def.attributes.iter() {
-            if attr.tag == AttrTag::Packed {
-                is_packed = true;
-            }
-        }
+        let is_packed = def.attributes.iter().any(|e: Attribute| -> bool { e.tag == AttrTag::Packed });
         let ir_struct = IrStructRef {
             id: def.id,
             name: def.name,
@@ -2329,12 +2324,7 @@ impl Mono {
         // If any type args are void (unresolved from type alias generic params
         // or from padding above), use argument type inference to fill them in.
         if def.generic_params.len() > 0 {
-            let has_unresolved = false;
-            for ty_arg in method_type_args.iter() {
-                if ty_arg.is_void() {
-                    has_unresolved = true;
-                }
-            }
+            let has_unresolved = method_type_args.iter().any(|e: &IrTy| -> bool { e.is_void() });
             if has_unresolved {
                 // First try expected return-type shape — this beats arg
                 // inference for cases like `Option::some('\n')` matched to
@@ -2369,12 +2359,7 @@ impl Mono {
                                 }
                             }
                             method_type_args = merged0;
-                            has_unresolved = false;
-                            for ty_arg in method_type_args.iter() {
-                                if ty_arg.is_void() {
-                                    has_unresolved = true;
-                                }
-                            }
+                            has_unresolved = method_type_args.iter().any(|e: &IrTy| -> bool { e.is_void() });
                         }
                     }
                 }

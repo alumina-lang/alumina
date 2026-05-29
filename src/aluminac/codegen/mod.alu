@@ -1573,12 +1573,7 @@ fn generate(
     if test_mode {
         // In test mode, use the #[test_main] function from test.alu as main
         for fn_def in unit.functions.iter_ref() {
-            let is_test_main = false;
-            for attr in fn_def.attributes {
-                if attr.tag == AttrTag::TestMain {
-                    is_test_main = true;
-                }
-            }
+            let is_test_main = fn_def.attributes.iter().any(|attr: Attribute| -> bool { attr.tag == AttrTag::TestMain });
             if is_test_main && fn_def.body.is_some() {
                 ctx.emit_main_wrapper(fn_def);
             }

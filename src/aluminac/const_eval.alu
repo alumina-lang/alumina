@@ -1199,13 +1199,9 @@ impl ConstEvaluator {
         }
 
         // Find function body in already-monomorphized IR
-        let func: Option<&IrFunction> = Option::none();
-        for i in 0usize..self.ir_functions.len() {
-            if self.ir_functions[i].mangled_name == target_name {
-                func = Option::some(&self.ir_functions[i]);
-                break;
-            }
-        }
+        let func = self.ir_functions.iter_ref().find(|=target_name, e: &IrFunction| -> bool {
+            e.mangled_name == target_name
+        });
         if func.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }
         let f = func.unwrap();
         if f.body.is_none() { return ConstResult::fail(ConstEvalError::unsupported()); }

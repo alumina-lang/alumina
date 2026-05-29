@@ -910,12 +910,7 @@ impl FnCodegen {
             } else {
                 for i in 0usize..items.len() {
                     let ty = arg_types[i];
-                    let found = false;
-                    for j in 0usize..overload_count {
-                        if overload_types[j] == ty {
-                            found = true;
-                        }
-                    }
+                    let found = overload_types[0usize..overload_count].iter().any(|=ty, e: LLVMTypeRef| -> bool { e == ty });
                     if !found {
                         overload_types[overload_count] = ty;
                         overload_count = overload_count + 1;
@@ -2111,13 +2106,7 @@ impl FnCodegen {
         let default_bb = LLVMAppendBasicBlockInContext(
             self.ctx.context, self.llvm_fn, &"switch.default\0"[0] as &libc::c_char
         );
-        let has_user_default = false;
-        for arm in arms.iter_ref() {
-            if arm.is_default {
-                has_user_default = true;
-                break;
-            }
-        }
+        let has_user_default = arms.iter_ref().any(|e: &IrSwitchArm| -> bool { e.is_default });
 
         // Count total cases
         let num_cases: u32 = 0;
@@ -2205,12 +2194,7 @@ impl FnCodegen {
                 let arm_kind = LLVMGetTypeKind(arm_ty);
                 if arm_kind != LLVMTypeKind::Void && arm_ty != llvm_result_ty {
                     // Check if all arms have the same type
-                    let all_same = true;
-                    for i in 1usize..phi_count as usize {
-                        if LLVMTypeOf(phi_vals[i]) != arm_ty {
-                            all_same = false;
-                        }
-                    }
+                    let all_same = phi_vals[1usize..phi_count as usize].iter().all(|=arm_ty, e: LLVMValueRef| -> bool { LLVMTypeOf(e) == arm_ty });
                     if all_same {
                         llvm_result_ty = arm_ty;
                     }

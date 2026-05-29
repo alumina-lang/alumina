@@ -712,13 +712,7 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             // `--test` implies `--cfg test` so source-level
             // `#[cfg(all(test, ...))]` gates evaluate correctly.
             // Mirrors alumina-boot which auto-adds the same flag.
-            let has_test = false;
-            for i in 0usize..options.cfg_flags.len() {
-                if options.cfg_flags[i] == "test" {
-                    has_test = true;
-                    break;
-                }
-            }
+            let has_test = options.cfg_flags.iter().any(|e: &[u8]| -> bool { e == "test" });
             if !has_test {
                 options.cfg_flags.push("test");
             }
@@ -727,19 +721,12 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
             exit(0i32);
         } else if !arg.is_empty() && arg[0] != '-' {
             // Check for module::path=file.alu format
-            let eq_pos: usize = 0;
-            let found_eq = false;
-            while eq_pos < arg.len() {
-                if arg[eq_pos] == '=' {
-                    found_eq = true;
-                    break;
-                }
-                eq_pos += 1;
-            }
-            if found_eq {
+            let eq_pos = arg.iter().find_index(|e: u8| -> bool { e == '=' });
+            if eq_pos.is_some() {
+                let idx = eq_pos.unwrap();
                 files.push(SourceArg {
-                    module_path: arg[0..eq_pos],
-                    file_path: arg[eq_pos + 1..arg.len()],
+                    module_path: arg[0..idx],
+                    file_path: arg[idx + 1..arg.len()],
                 });
             } else {
                 files.push(SourceArg {

@@ -148,18 +148,12 @@ impl ExprParser {
                 // When pre-parsing a macro body, produce ExprTag::MacroParam
                 if self.ctx.in_macro_body {
                     // Find param index
-                    let param_idx: i32 = -1i32;
-                    for pi in 0usize..self.ctx.macro_param_names.len() {
-                        if self.ctx.macro_param_names[pi] == name {
-                            param_idx = pi as i32;
-                            break;
-                        }
-                    }
-                    if param_idx >= 0i32 {
+                    let param_idx = self.ctx.macro_param_names.iter().find_index(|=name, e: &[u8]| -> bool { e == name });
+                    if param_idx.is_some() {
                         let e = self.make_expr(ExprTag::MacroParam, span);
                         e._data.id_ref.str_val = name;
-                        e._data.id_ref.int_val = param_idx as u64;
-                        e._data.id_ref.flag = (param_idx == self.ctx.macro_variadic_param_idx);
+                        e._data.id_ref.int_val = param_idx.unwrap() as u64;
+                        e._data.id_ref.flag = ((param_idx.unwrap() as i32) == self.ctx.macro_variadic_param_idx);
                         return self.ctx.alloc_expr(e);
                     }
                     return self.alloc_void(span);
@@ -1834,17 +1828,12 @@ impl ExprParser {
         // $m!(...) inside a macro body — the macro name itself is a macro
         // parameter. Record the param idx so expand_macro_expr can substitute
         // the actual macro reference at expansion time.
-        let name_param_idx: i32 = -1i32;
+        let name_param_idx: Option<usize> = Option::none();
         if self.ctx.in_macro_body && macro_node_kind == NodeKind::MacroIdentifier {
             let raw = self.ctx.node_text(macro_node);
             let stripped = if !raw.is_empty() && raw[0] == '$' { raw[1..] } else { raw };
             let pname = self.ctx.intern_str(stripped);
-            for pi in 0usize..self.ctx.macro_param_names.len() {
-                if self.ctx.macro_param_names[pi] == pname {
-                    name_param_idx = pi as i32;
-                    break;
-                }
-            }
+            name_param_idx = self.ctx.macro_param_names.iter().find_index(|=pname, e: &[u8]| -> bool { e == pname });
         }
 
         // For scoped identifiers (e.g. std::io::errno_try), resolve through scope system
@@ -1874,9 +1863,9 @@ impl ExprParser {
             e._data.macro_expr.str_val = name;
             e._data.macro_expr.args = args;
             e._data.macro_expr.flag = true;  // Mark as actual invocation (not bare macro reference)
-            if name_param_idx >= 0i32 {
+            if name_param_idx.is_some() {
                 e._data.macro_expr.is_param_subst = true;
-                e._data.macro_expr.param_idx = name_param_idx;
+                e._data.macro_expr.param_idx = name_param_idx.unwrap() as i32;
             }
             return self.ctx.alloc_expr(e);
         }

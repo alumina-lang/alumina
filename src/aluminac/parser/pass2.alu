@@ -902,14 +902,9 @@ impl Pass2 {
 
                 // When pre-parsing macro body, create TyTag::Typeof(ExprTag::MacroParam)
                 if self.ctx.in_macro_body {
-                    let param_idx: i32 = -1i32;
-                    for (pi, param_name) in self.ctx.macro_param_names.iter().enumerate() {
-                        if param_name == name {
-                            param_idx = pi as i32;
-                            break;
-                        }
-                    }
-                    if param_idx >= 0i32 {
+                    let param_idx_opt = self.ctx.macro_param_names.iter().find_index(|=name, param_name: &[u8]| -> bool { param_name == name });
+                    if param_idx_opt.is_some() {
+                        let param_idx = param_idx_opt.unwrap() as i32;
                         let param_expr = Expr::void_expr();
                         param_expr.tag = ExprTag::MacroParam;
                         param_expr._data.id_ref.str_val = name;
@@ -1247,11 +1242,10 @@ impl Pass2 {
                 // Parameters are registered in the function scope (child of protocol scope),
                 // so we must use it for parsing params and body.
                 let fn_scope_idx = pending.scope_idx;
-                for pf in self.ctx.pending_functions.iter() {
-                    if pf.id._value == fn_id._value {
-                        fn_scope_idx = pf.scope_idx;
-                        break;
-                    }
+                let pf_found = self.ctx.pending_functions.iter()
+                    .find(|=fn_id, pf: PendingFunction| -> bool { pf.id._value == fn_id._value });
+                if pf_found.is_some() {
+                    fn_scope_idx = pf_found.unwrap().scope_idx;
                 }
 
                 let fn_generic_params = self.parse_generic_params(child, fn_scope_idx);

@@ -984,12 +984,7 @@ impl Pass1 {
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
 
         // Check for #[builtin] attribute
-        let is_builtin = false;
-        for i in 0usize..attrs.len() {
-            if attrs[i].tag == AttrTag::Builtin {
-                is_builtin = true;
-            }
-        }
+        let is_builtin = attrs.iter().any(|attr: Attribute| -> bool { attr.tag == AttrTag::Builtin });
 
         self.ctx.scopes.add_item(self.current_scope, NamedItem {
             name: name,
