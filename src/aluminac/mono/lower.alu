@@ -2039,21 +2039,15 @@ impl Mono {
         } else if ty.tag == IrTyTag::Enum {
             scope_idx = ty.enum_ref().scope_idx;
         } else if ty.tag == IrTyTag::Slice {
-            let lang_id = self.ctx.get_lang_item("slice");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("slice")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
         } else if ty.tag == IrTyTag::Tuple {
-            let lang_id = self.ctx.get_lang_item("builtin_tuple");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("builtin_tuple")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
         } else if ty.tag == IrTyTag::Builtin {
             // `T::method()` where T resolves to a builtin (i32 / u32 / …) —
             // look up the `#[lang(builtin_X)]` struct's scope so its methods
@@ -2062,13 +2056,10 @@ impl Mono {
             // `T::max_value()`.
             let lang_name = Mono::builtin_lang_name(ty.builtin());
             if lang_name.len() > 0 {
-                let lang_id = self.ctx.get_lang_item(lang_name);
-                if lang_id.is_some() {
-                    let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                    if sd.is_some() {
-                        scope_idx = sd.unwrap().scope_idx;
-                    }
-                }
+                scope_idx = self.ctx.get_lang_item(lang_name)
+                    .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                    .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                    .unwrap_or(scope_idx);
             }
         }
         if scope_idx == 0u32 {
@@ -2097,21 +2088,15 @@ impl Mono {
         } else if ty.tag == IrTyTag::Enum {
             scope_idx = ty.enum_ref().scope_idx;
         } else if ty.tag == IrTyTag::Slice {
-            let lang_id = self.ctx.get_lang_item("slice");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("slice")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
         } else if ty.tag == IrTyTag::Tuple {
-            let lang_id = self.ctx.get_lang_item("builtin_tuple");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("builtin_tuple")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
         }
 
         // Mixin'd protocol methods (e.g. Equatable's `not_equals` reached via
@@ -2391,13 +2376,10 @@ impl Mono {
             } else if concrete_ty.tag == IrTyTag::Builtin {
                 let lang_name = Mono::builtin_lang_name(concrete_ty.builtin());
                 if lang_name.len() > 0 {
-                    let lang_id = self.ctx.get_lang_item(lang_name);
-                    if lang_id.is_some() {
-                        let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                        if sd.is_some() {
-                            receiver_scope_idx = sd.unwrap().scope_idx;
-                        }
-                    }
+                    receiver_scope_idx = self.ctx.get_lang_item(lang_name)
+                        .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                        .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                        .unwrap_or(receiver_scope_idx);
                 }
             }
             if receiver_scope_idx != 0u32 {
@@ -3581,13 +3563,10 @@ impl Mono {
             // Hashable, etc.) recognise the builtin's fmt/hash/equals methods.
             let lang_name = Mono::builtin_lang_name(ty.builtin());
             if lang_name.len() > 0 {
-                let lang_id = self.ctx.get_lang_item(lang_name);
-                if lang_id.is_some() {
-                    let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                    if sd.is_some() {
-                        scope_idx = sd.unwrap().scope_idx;
-                    }
-                }
+                scope_idx = self.ctx.get_lang_item(lang_name)
+                    .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                    .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                    .unwrap_or(scope_idx);
             }
         }
         if scope_idx == 0u32 {
@@ -4065,14 +4044,10 @@ impl Mono {
 
     // Resolve a method call on a known IR type, returning the call result
     fn resolve_lang_scope(self: &mut Mono, lang_name: &[u8]) -> u32 {
-        let lang_id = self.ctx.get_lang_item(lang_name);
-        if lang_id.is_some() {
-            let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-            if sd.is_some() {
-                return sd.unwrap().scope_idx;
-            }
-        }
-        0u32
+        self.ctx.get_lang_item(lang_name)
+            .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+            .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+            .unwrap_or(0u32)
     }
 
     fn resolve_method_call_on_type(self: &mut Mono, ty: &IrTy, method_name: &[u8], self_arg: &IrExpr, args: &[&IrExpr]) -> Option<&IrExpr> {
@@ -4740,13 +4715,10 @@ impl Mono {
         } else if impl_ty.tag == IrTyTag::Builtin {
             let lang_name = Mono::builtin_lang_name(impl_ty.builtin());
             if lang_name.len() > 0 {
-                let lid = self.ctx.get_lang_item(lang_name);
-                if lid.is_some() {
-                    let sd = self.ctx.struct_defs.get(&lid.unwrap());
-                    if sd.is_some() {
-                        impl_scope_idx = sd.unwrap().scope_idx;
-                    }
-                }
+                impl_scope_idx = self.ctx.get_lang_item(lang_name)
+                    .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                    .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                    .unwrap_or(impl_scope_idx);
             }
         }
         if impl_scope_idx == 0u32 {
@@ -5980,13 +5952,10 @@ impl Mono {
                 return Option::none();
             }
         } else if resolved_ty.tag == IrTyTag::Array {
-            let lang_id = self.ctx.get_lang_item("builtin_array");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("builtin_array")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
             if scope_idx == 0 {
                 if field_expr.id2()._value != 0 {
                     return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
@@ -5994,13 +5963,10 @@ impl Mono {
                 return Option::none();
             }
         } else if resolved_ty.tag == IrTyTag::Tuple {
-            let lang_id = self.ctx.get_lang_item("builtin_tuple");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("builtin_tuple")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
             if scope_idx == 0 {
                 if field_expr.id2()._value != 0 {
                     return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
@@ -6008,13 +5974,10 @@ impl Mono {
                 return Option::none();
             }
         } else if resolved_ty.tag == IrTyTag::Fn || resolved_ty.tag == IrTyTag::FnPointer || resolved_ty.tag == IrTyTag::Closure {
-            let lang_id = self.ctx.get_lang_item("builtin_callable");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("builtin_callable")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
             if scope_idx == 0 {
                 if field_expr.id2()._value != 0 {
                     return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
@@ -6025,13 +5988,10 @@ impl Mono {
             // Look up #[lang(builtin_X)] struct to find methods on builtin types
             let lang_name = Mono::builtin_lang_name(resolved_ty.builtin());
             if lang_name.len() > 0 {
-                let lang_id = self.ctx.get_lang_item(lang_name);
-                if lang_id.is_some() {
-                    let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                    if sd.is_some() {
-                        scope_idx = sd.unwrap().scope_idx;
-                    }
-                }
+                scope_idx = self.ctx.get_lang_item(lang_name)
+                    .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                    .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                    .unwrap_or(scope_idx);
             }
             if scope_idx == 0 {
                 if field_expr.id2()._value != 0 {
@@ -6043,13 +6003,10 @@ impl Mono {
             // The unit type `()` collapses to void_ty in `make_tuple_ty`.
             // Treat it as a zero-tuple for method-dispatch so e.g. `().len()`
             // routes to builtin_tuple's impl.
-            let lang_id = self.ctx.get_lang_item("builtin_tuple");
-            if lang_id.is_some() {
-                let sd = self.ctx.struct_defs.get(&lang_id.unwrap());
-                if sd.is_some() {
-                    scope_idx = sd.unwrap().scope_idx;
-                }
-            }
+            scope_idx = self.ctx.get_lang_item("builtin_tuple")
+                .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+                .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+                .unwrap_or(scope_idx);
             if scope_idx == 0 {
                 if field_expr.id2()._value != 0 {
                     return self.try_ufcs_call(expr, ir_obj, Id { _value: field_expr.id2()._value - 1usize });
