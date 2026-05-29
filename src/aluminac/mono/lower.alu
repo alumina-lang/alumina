@@ -3918,7 +3918,7 @@ impl Mono {
             self.ctx.pointer_size,
         );
         let init_result = evaluator.eval(init_block);
-        if !init_result.ok {
+        if init_result.is_err() {
             return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         }
 
@@ -3928,10 +3928,10 @@ impl Mono {
 
         loop {
             let next_result = evaluator.eval(ir_next_call);
-            if !next_result.ok { break; }
+            if next_result.is_err() { break; }
 
             // Result is Option<T> struct: { _is_some: bool, _inner: T }
-            let opt_val = next_result.value;
+            let opt_val = next_result.unwrap();
             if opt_val.tag != CValTag::Struct { break; }
 
             // Check _is_some (field index 0)

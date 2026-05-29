@@ -6,6 +6,7 @@
 
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet};
+use std::fmt::write;
 
 // Unique identifier for AST/IR items
 struct Id {
@@ -1509,6 +1510,12 @@ impl ConstValue {
 
     fn make_void() -> ConstValue {
         ConstValue { tag: CValTag::Void, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
+    }
+
+    // Lets Result<ConstValue, _>::unwrap_err format the ok value on its (cold)
+    // panic path via the Formattable branch, avoiding the generic DebugAdapter.
+    fn fmt<F: std::fmt::Formatter<F>>(self: &ConstValue, f: &mut F) -> std::fmt::Result {
+        write!(f, "ConstValue(tag={})", self.tag as i32)
     }
 
     fn make_bool(v: bool) -> ConstValue {
