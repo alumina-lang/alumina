@@ -314,10 +314,7 @@ impl Compiler {
         let _ = parser.set_language(tree_sitter_alumina());
 
         // Build cfg flags slice from options
-        let cfg_flags = self.arena.alloc_slice::<&[u8]>(self.options.cfg_flags.len());
-        for i in 0usize..self.options.cfg_flags.len() {
-            cfg_flags[i] = self.options.cfg_flags[i];
-        }
+        let cfg_flags = self.arena.alloc_slice_copy::<&[u8]>(self.options.cfg_flags.as_slice());
 
         // Two-phase parsing: first register all names across all files (Pass 1),
         // then parse all function bodies (Pass 2). This ensures cross-module
@@ -404,10 +401,7 @@ impl Compiler {
         }
 
         // Convert items to a slice for mono
-        let items_slice = self.arena.alloc_slice::<Item>(self.all_items.len());
-        for i in 0usize..self.all_items.len() {
-            items_slice[i] = self.all_items[i];
-        }
+        let items_slice = self.arena.alloc_slice_copy::<Item>(self.all_items.as_slice());
         // Monomorphize
         let unit = aluminac::mono::monomorphize(
             &self.arena,
