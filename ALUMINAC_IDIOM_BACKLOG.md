@@ -240,3 +240,24 @@ Both change control-flow/temporary structure on the IR-emission path — highest
 - UFCS on stdlib free fns (`slice.starts_with`) needs `use std::string::{...}`.
 - Closures are non-capturing nested fns; capture explicitly `|=x,..|`(by value)/`|&x,..|`(by ref). `unwrap_or` is eager.
 - `.iter()`/`.iter_ref()` snapshot the backing pointer — never convert loops over collections that grow during iteration.
+
+### Continued execution log
+
+- **Batch 6 ✅** search/accumulator loops → `.any`/`.all`/`.find`/`.find_index` (20 sites). First-match equivalence verified.
+- **Batch 7 ✅** `?` try-operator on Option-returning fns (15 sites) — aluminac's first use of `?`.
+- **Batch 8a ✅** repeated-`.unwrap()` CSE (28 sites). **8b ✅** `and_then`/`map` chains de-duplicating the 14 lang-item→struct_def lookups in lower.alu.
+- **Batch 9 ✅ (minimal)** `arena.alloc_slice_copy` at 3 call sites. Direct `copy_to_nonoverlapping(&dst[OFF])` conversions dropped (empty-slice panic risk; see memory).
+- **Batch 10 ✅** `compute_line_starts` via iterators. (fmt-adapter / StreamFormatter swap skipped: output-correctness risk, weak test coverage.)
+- **Batch 11 ✅ (partial)** `local_fn_ids` HashMap<usize,bool> → HashSet<usize>. Remaining 11 items: `register_lang_attrs`×5 was the lang-item lookup duplication, already handled by Batch 8b; if-elif→`switch` consolidation deferred (medium-risk arm-exhaustiveness verification for marginal gain).
+- **Batch 12 ✅** `ConstResult` → stdlib `Result<ConstValue, ConstEvalError>` (190 sites). Needed `fn fmt` on ConstEvalError+ConstValue (Result::unwrap's panic path needs Formattable payloads, else the broken generic DebugAdapter). No `?` introduced (error channel carries break/continue/return signals).
+
+### Deferred (with reasons)
+- **Batch 13 (both sub-parts)** — DEFERRED. (1) The null-sentinel cleanup is mostly AST-accessor-level (`expr.lhs()`/`expr.ty()` return nullable pointers) — Option-ifying needs an AST-layer rewrite, far out of scope; only the narrow build_dyn_vtable_ref return is IR-level. (2) `lower_switch_as_if_else` is already reasonably idiomatic after batches 1–12; the O(N²)→O(N) reverse-build restructure is high-risk on the IR-emission path (reordering → s2≠s3) for marginal perf gain. Both are the backlog's explicitly highest-risk items; not worth the bootstrap risk.
+- **Batch 10 fmt-adapter swap, Batch 11 if-elif→switch** — deferred (see above).
+
+### Discovered Alumina/aluminac pitfalls (saved to agent memory)
+1. UFCS on stdlib free fns (`slice.starts_with`) needs a `use std::string::{...}` import.
+2. Closures are non-capturing; capture explicitly `|=x,..|`/`|&x,..|`. `unwrap_or` is eager.
+3. `.iter()`/`.iter_ref()` snapshot the backing pointer → segfault if the collection grows during iteration (worklist loops must stay index-based). Caught only at the bootstrap gate (s1 crashes building s2).
+4. `copy_to_nonoverlapping(&dst[0])` panics on empty slices (`&dst[OFF]` is bounds-checked).
+5. stdlib `Result`/`Option` `unwrap` formats its payload on the panic path; non-Formattable structs hit the broken generic DebugAdapter — add a minimal `fn fmt`.
