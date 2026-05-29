@@ -117,7 +117,7 @@ struct MonoCtx {
     // Function ids that were declared inside another function's body. Their
     // mono cache is keyed against the outer mono's cache_key so that each
     // outer instantiation produces its own copy — see `mono_function`.
-    local_fn_ids: HashMap<usize, bool>,
+    local_fn_ids: HashSet<usize>,
 }
 
 impl MonoCtx {
@@ -196,7 +196,7 @@ impl MonoCtx {
             proto_method_proto_gp_ids: HashMap::new(),
             mono_stack: Vector::new(),
             dyn_vtable_cache: HashMap::new(),
-            local_fn_ids: HashMap::new(),
+            local_fn_ids: HashSet::new(),
         };
 
         // Build lookup tables
@@ -310,9 +310,9 @@ impl MonoCtx {
             for pair in self.scopes.scopes[sidx].items {
                 let kind = pair.1.kind;
                 if kind.tag == NamedItemTag::Function {
-                    self.local_fn_ids.insert(kind.id()._value, true);
+                    self.local_fn_ids.insert(kind.id()._value);
                 } else if kind.tag == NamedItemTag::Method {
-                    self.local_fn_ids.insert(kind.id2()._value, true);
+                    self.local_fn_ids.insert(kind.id2()._value);
                 }
             }
         }
