@@ -1986,20 +1986,9 @@ impl ExprParser {
             let value: &[u8] = "";
             if !args.is_empty() && args[0].tag == ExprTag::StringLit {
                 let var_name = args[0].str_val();
-                let buf = self.ctx.arena.alloc_slice::<u8>(var_name.len() + 1);
-                var_name.copy_to_nonoverlapping(&buf[0]);
-                buf[var_name.len()] = 0u8;
-                let result = libc::getenv(&buf[0] as &libc::c_char);
-                if result as usize != 0usize {
-                    let len: usize = 0;
-                    while *((result as usize + len) as &u8) != 0u8 {
-                        len += 1;
-                    }
-                    let val_buf = self.ctx.arena.alloc_slice::<u8>(len);
-                    for i in 0usize..len {
-                        val_buf[i] = *((result as usize + i) as &u8);
-                    }
-                    value = val_buf;
+                let result = std::process::env().get(var_name);
+                if result.is_some() {
+                    value = self.ctx.arena.alloc_slice_copy::<u8>(result.unwrap());
                 }
             }
             let e = self.make_expr(ExprTag::StringLit, span);

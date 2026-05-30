@@ -3,6 +3,7 @@
 use ast::Span;
 use std::collections::Vector;
 use std::fmt::write;
+use std::io::StdioStream;
 
 struct _StderrFmt {}
 
@@ -11,13 +12,16 @@ impl _StderrFmt {
 
     fn write_str(self: &mut _StderrFmt, buf: &[u8]) -> std::fmt::Result {
         if buf.len() > 0usize {
-            libc::write(2i32, &buf[0] as &libc::c_void, buf.len());
+            let stderr = StdioStream::stderr();
+            let _ = stderr.write(buf);
         }
         std::result::Result::ok(())
     }
 
     fn write_byte(self: &mut _StderrFmt, byte: u8) -> std::fmt::Result {
-        libc::write(2i32, &byte as &libc::c_void, 1usize);
+        let one = [byte];
+        let stderr = StdioStream::stderr();
+        let _ = stderr.write(one[..]);
         std::result::Result::ok(())
     }
 }

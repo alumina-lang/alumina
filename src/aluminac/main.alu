@@ -547,10 +547,7 @@ impl Compiler {
         let result = libc::system(&cmd[0] as &libc::c_char);
 
         // Clean up temp file
-        let obj_nt = self.arena.alloc_slice::<u8>(obj_file.len() + 1);
-        obj_file.copy_to_nonoverlapping(&obj_nt[0]);
-        obj_nt[obj_file.len()] = 0u8;
-        libc::unlink(&obj_nt[0] as &libc::c_char);
+        let _ = std::fs::remove_file(Path::new(obj_file));
 
         result == 0i32
     }
