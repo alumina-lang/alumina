@@ -1042,7 +1042,11 @@ impl CodegenCtx {
                     return std::mem::zeroed::<LLVMValueRef>();
                 }
             }
-            LLVMConstStructInContext(self.context, &fields[0], expr.items().len() as u32, 0i32)
+            // Named struct: build a constant of the *named* LLVM struct type, not
+            // an anonymous literal struct. Otherwise the constant's type is
+            // `{...}` rather than `%Foo`, and the LLVM verifier rejects it as a
+            // global initializer (the type does not match the global's `%Foo`).
+            LLVMConstNamedStruct(self.llvm_type(expr.ty), &fields[0], expr.items().len() as u32)
         }
         IrTag::ArrayLit => {
             let elem_ty = self.llvm_type(expr.ty.inner());
