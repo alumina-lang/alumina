@@ -1128,12 +1128,10 @@ impl CodegenCtx {
 
         // Create a global variable for the string
         self.string_counter = self.string_counter + 1;
-        let name_prefix = ".str.";
-        let counter = mono::format_usize(self.string_counter, self.arena);
-        let gname = self.arena.alloc_slice::<u8>(name_prefix.len() + counter.len() + 1);
-        name_prefix.copy_to_nonoverlapping(&gname[0]);
-        counter.copy_to_nonoverlapping(&gname[name_prefix.len()]);
-        gname[name_prefix.len() + counter.len()] = 0u8;
+        // ".str.<counter>\0" — counter up to 20 digits, null-terminated for the LLVM C API.
+        let gname = self.arena.alloc_slice::<u8>(5usize + 20usize + 1usize);
+        let gname_str = std::fmt::format_in!(gname, ".str.{}", self.string_counter).unwrap();
+        gname[gname_str.len()] = 0u8;
 
         let str_type = LLVMArrayType(self.i8_type, (text.len() + 1) as u32);
         let global = LLVMAddGlobal(self.module, str_type, &gname[0] as &libc::c_char);

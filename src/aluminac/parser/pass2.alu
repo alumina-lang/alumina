@@ -827,11 +827,9 @@ impl Pass2 {
                 // fall through to void_ty — see the underlying_type_of
                 // regression in PORTING_STATUS.md item #6.
                 let text = self.ctx.node_text(node);
-                let msg_prefix: &[u8] = "unresolved type path: ";
-                let buf = self.ctx.arena.alloc_slice::<u8>(msg_prefix.len() + text.len());
-                msg_prefix.copy_to_nonoverlapping(&buf[0]);
-                text.copy_to_nonoverlapping(&buf[msg_prefix.len()]);
-                self.ctx.error(node, buf as &[u8]);
+                let buf = self.ctx.arena.alloc_slice::<u8>("unresolved type path: ".len() + text.len());
+                let msg = std::fmt::format_in!(buf, "unresolved type path: {}", text).unwrap();
+                self.ctx.error(node, msg);
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             NodeKind::GenericTypeWithTurbofish => {
