@@ -23,15 +23,8 @@ struct FloatInfo {
     bias: i32,
 }
 
-// NB: returned by functions rather than module-level `const` values — aluminac
-// currently miscompiles a global `const` of struct type (LLVM IR verification
-// failure), while alumina-boot accepts it.
-fn f64_info() -> FloatInfo {
-    FloatInfo { mantbits: 52, expbits: 11, bias: -1023 }
-}
-fn f32_info() -> FloatInfo {
-    FloatInfo { mantbits: 23, expbits: 8, bias: -127 }
-}
+const F64_INFO: FloatInfo = FloatInfo { mantbits: 52, expbits: 11, bias: -1023 };
+const F32_INFO: FloatInfo = FloatInfo { mantbits: 23, expbits: 8, bias: -127 };
 
 // Maximum digits retained. A double's value is determined by far fewer, but we
 // keep enough that no rounding-relevant digit is dropped before the shifts run.
@@ -391,7 +384,7 @@ fn parse_f64(s: &[u8]) -> Option<f64> {
     if !dec.set(s) {
         return Option::none();
     }
-    Option::some(f64::from_bits(dec.float_bits(f64_info())))
+    Option::some(f64::from_bits(dec.float_bits(F64_INFO)))
 }
 
 /// Parse a decimal string as a correctly-rounded `f32`. Returns `none` for
@@ -401,7 +394,7 @@ fn parse_f32(s: &[u8]) -> Option<f32> {
     if !dec.set(s) {
         return Option::none();
     }
-    Option::some(f32::from_bits(dec.float_bits(f32_info()) as u32))
+    Option::some(f32::from_bits(dec.float_bits(F32_INFO) as u32))
 }
 
 #[cfg(all(test, test_std))]
