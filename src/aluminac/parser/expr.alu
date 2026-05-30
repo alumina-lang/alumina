@@ -2020,19 +2020,12 @@ impl ExprParser {
         "include_bytes" => {
             if !args.is_empty() && args[0].tag == ExprTag::StringLit {
                 let path = args[0].str_val();
-                let path_buf = self.ctx.arena.alloc_slice::<u8>(path.len() + 1);
-                path.copy_to_nonoverlapping(&path_buf[0]);
-                path_buf[path.len()] = 0u8;
-                let fp = libc::fopen(&path_buf[0] as &libc::c_char, &"rb\0"[0] as &libc::c_char);
-                if fp as usize != 0usize {
-                    libc::fseek(fp, 0i64, 2i32); // SEEK_END
-                    let size = libc::ftell(fp) as usize;
-                    libc::fseek(fp, 0i64, 0i32); // SEEK_SET
-                    let data = self.ctx.arena.alloc_slice::<u8>(size);
-                    libc::fread(&data[0] as &mut libc::c_void, 1usize, size, fp);
-                    libc::fclose(fp);
+                let result = std::fs::File::read_to_string(std::fs::Path::new(path));
+                if result.is_ok() {
+                    let data = result.unwrap();
+                    defer data.free();
                     let e = self.make_expr(ExprTag::StringLit, span);
-                    e._data.lit.str_val = data;
+                    e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(data.as_slice());
                     return self.ctx.alloc_expr(e);
                 }
             }

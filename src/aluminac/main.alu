@@ -107,37 +107,21 @@ impl Compiler {
     }
 
     fn add_source_file(self: &mut Compiler, path: &[u8], module_path: &[u8]) -> bool {
-        // Need null-terminated path for libc
-        let path_nt = self.arena.alloc_slice::<u8>(path.len() + 1);
-        path.copy_to_nonoverlapping(&path_nt[0]);
-        path_nt[path.len()] = 0u8;
-
-        // Read file from disk
-        let fd = libc::open(&path_nt[0] as &libc::c_char, 0i32 /* O_RDONLY */);
-        if fd < 0i32 {
+        let result = std::fs::File::read_to_string(Path::new(path));
+        if result.is_err() {
             eprintln!("error: cannot open file");
             return false;
         }
+        let source = result.unwrap();
+        defer source.free();
 
-        // Get file size using lseek
-        let size = libc::lseek(fd, 0i64, 2i32) as usize; // SEEK_END = 2
-        libc::lseek(fd, 0i64, 0i32); // SEEK_SET = 0
-
-        if size == 0 {
-            libc::close(fd);
+        // Empty files register no items; skip them (preserves prior behavior).
+        if source.as_slice().is_empty() {
             return true;
         }
 
-        let buf = self.arena.alloc_slice::<u8>(size);
-        let read_bytes = libc::read(fd, &buf[0] as &mut libc::c_void, size);
-        libc::close(fd);
-
-        if read_bytes < 0isize {
-            eprintln!("error: cannot read file");
-            return false;
-        }
-
-        let contents = buf[0..(read_bytes as usize)];
+        // Source text must outlive the StringBuf, so copy it into the arena.
+        let contents = self.arena.alloc_slice_copy::<u8>(source.as_slice());
         self.add_source(path, contents, module_path);
         true
     }
