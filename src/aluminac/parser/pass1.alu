@@ -332,10 +332,8 @@ impl Pass1 {
             // Look for a cfg flag of the form "key=value"
             // Build "key=value" string and check against has_cfg
             let match_buf = self.ctx.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
-            name.copy_to_nonoverlapping(&match_buf[0]);
-            match_buf[name.len()] = '=';
-            value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
-            return self.ctx.has_cfg(match_buf as &[u8]);
+            let key = std::fmt::format_in!(match_buf, "{}={}", name, value_text).unwrap();
+            return self.ctx.has_cfg(key);
         }
 
         // Compound forms: cfg(...), not(...), all(...), any(...)

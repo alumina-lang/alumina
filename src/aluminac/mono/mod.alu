@@ -663,24 +663,8 @@ fn hash_mono_key(id: Id, type_args: &[&IrTy]) -> u64 {
 }
 
 fn format_usize(n: usize, arena: &mut Arena) -> &[u8] {
-    if n == 0usize {
-        let buf = arena.alloc_slice::<u8>(1usize);
-        buf[0] = '0';
-        return buf;
-    }
-    let temp = n;
-    let digits: usize = 0;
-    while temp > 0usize {
-        digits = digits + 1usize;
-        temp = temp / 10usize;
-    }
-    let buf = arena.alloc_slice::<u8>(digits);
-    temp = n;
-    let i = digits;
-    while temp > 0usize {
-        i = i - 1usize;
-        buf[i] = ('0') + (temp % 10usize) as u8;
-        temp = temp / 10usize;
-    }
-    buf
+    // usize/u64 is at most 20 decimal digits; format into a fresh arena buffer
+    // and return the used prefix.
+    let buf = arena.alloc_slice::<u8>(20usize);
+    std::fmt::format_in!(buf, "{}", n).unwrap()
 }

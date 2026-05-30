@@ -3731,37 +3731,20 @@ impl Mono {
             let inner_name = self.ir_type_name(ty.inner());
             let is_const = ty.is_const();
             let prefix: &[u8] = if is_const { "&" } else { "&mut " };
-            let total = prefix.len() + inner_name.len();
-            let buf = self.ctx.arena.alloc_slice::<u8>(total);
-            prefix.copy_to_nonoverlapping(&buf[0]);
-            inner_name.copy_to_nonoverlapping(&buf[prefix.len()]);
-            buf as &[u8]
+            let buf = self.ctx.arena.alloc_slice::<u8>(prefix.len() + inner_name.len());
+            std::fmt::format_in!(buf, "{}{}", prefix, inner_name).unwrap()
         } else if ty.tag == IrTyTag::Slice {
             let elem_ty = if ty.elems().len() > 0 && ty.elems()[0].tag == IrTyTag::Pointer {
                 ty.elems()[0].inner()
             } else { self.ctx.void_ty };
             let inner_name = self.ir_type_name(elem_ty);
-            let prefix = "&[";
-            let suffix = "]";
-            let total = prefix.len() + inner_name.len() + suffix.len();
-            let buf = self.ctx.arena.alloc_slice::<u8>(total);
-            prefix.copy_to_nonoverlapping(&buf[0]);
-            inner_name.copy_to_nonoverlapping(&buf[prefix.len()]);
-            suffix.copy_to_nonoverlapping(&buf[prefix.len() + inner_name.len()]);
-            buf as &[u8]
+            let buf = self.ctx.arena.alloc_slice::<u8>(3usize + inner_name.len());
+            std::fmt::format_in!(buf, "&[{}]", inner_name).unwrap()
         } else if ty.tag == IrTyTag::Array {
             let inner_name = self.ir_type_name(ty.inner());
-            let size_str = format_usize(ty.array_size(), self.ctx.arena);
-            // "[T; N]"
-            let total = 1usize + inner_name.len() + 2usize + size_str.len() + 1usize;
-            let buf = self.ctx.arena.alloc_slice::<u8>(total);
-            buf[0] = '[';
-            inner_name.copy_to_nonoverlapping(&buf[1]);
-            buf[1 + inner_name.len()] = ';';
-            buf[2 + inner_name.len()] = ' ';
-            size_str.copy_to_nonoverlapping(&buf[3 + inner_name.len()]);
-            buf[3 + inner_name.len() + size_str.len()] = ']';
-            buf as &[u8]
+            // "[T; N]" — N is at most 20 decimal digits.
+            let buf = self.ctx.arena.alloc_slice::<u8>(inner_name.len() + 24usize);
+            std::fmt::format_in!(buf, "[{}; {}]", inner_name, ty.array_size()).unwrap()
         } else if ty.tag == IrTyTag::Struct {
             ty.struct_ref().name
         } else if ty.tag == IrTyTag::Enum {

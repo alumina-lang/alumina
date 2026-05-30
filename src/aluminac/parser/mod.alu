@@ -308,10 +308,8 @@ impl ParseContext {
                 value_text = value_text[1..value_text.len() - 1];
             }
             let match_buf = self.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
-            name.copy_to_nonoverlapping(&match_buf[0]);
-            match_buf[name.len()] = '=';
-            value_text.copy_to_nonoverlapping(&match_buf[name.len() + 1]);
-            return self.has_cfg(match_buf as &[u8]);
+            let key = std::fmt::format_in!(match_buf, "{}={}", name, value_text).unwrap();
+            return self.has_cfg(key);
         }
         if name == "cfg" {
             if args_node.is_none() { return false; }
