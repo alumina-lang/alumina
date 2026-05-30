@@ -1,0 +1,31 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+//
+// Regression test: a module-level `const` of struct type must compile.
+// aluminac used to emit an anonymous literal-struct constant ({...}) as the
+// global initializer, which mismatched the global's named struct type and
+// failed LLVM IR verification. Now fixed via LLVMConstNamedStruct.
+
+struct Point { x: i64, y: i64 }
+struct Layout { mantbits: u64, expbits: u32, bias: i32 }
+struct Nested { p: Point, tag: u8 }
+
+const ORIGIN: Point = Point { x: 0, y: 0 };
+const F64_LAYOUT: Layout = Layout { mantbits: 52, expbits: 11, bias: -1023 };
+const NESTED: Nested = Nested { p: Point { x: 3, y: -4 }, tag: 7 };
+
+fn main(args: &[&[u8]]) -> i32 {
+    if ORIGIN.x != 0 || ORIGIN.y != 0 {
+        eprintln!("FAIL: ORIGIN");
+        return 1i32;
+    }
+    if F64_LAYOUT.mantbits != 52 || F64_LAYOUT.expbits != 11 || F64_LAYOUT.bias != -1023 {
+        eprintln!("FAIL: F64_LAYOUT {} {} {}", F64_LAYOUT.mantbits, F64_LAYOUT.expbits, F64_LAYOUT.bias);
+        return 1i32;
+    }
+    if NESTED.p.x != 3 || NESTED.p.y != -4 || NESTED.tag != 7 {
+        eprintln!("FAIL: NESTED {} {} {}", NESTED.p.x, NESTED.p.y, NESTED.tag);
+        return 1i32;
+    }
+    eprintln!("PASS: const struct globals");
+    0i32
+}
