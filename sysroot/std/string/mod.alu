@@ -776,25 +776,26 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
 ///
 /// See also [f64::parse] and [f32::parse] associated methods
 fn parse_float<T: builtins::FloatingPoint>(s: &[u8]) -> Option<T> {
+    // Correctly-rounded, arbitrary-length decimal -> binary conversion.
+    // (The Ryu s2d/s2f port only accepts <=17 mantissa digits; dec2flt has no
+    // such limit, so this handles every well-formed literal.)
     let res = when typing::matches::<T, f64>() {
-        fmt::ryu::parse64(s)
+        fmt::dec2flt::parse_f64(s)
     } else {
-        fmt::ryu::parse32(s)
+        fmt::dec2flt::parse_f32(s)
     };
 
-    if res.is_ok() {
-        return Option::some(res.unwrap());
+    if res.is_some() {
+        return res;
     }
 
-    if res.unwrap_err() == fmt::ryu::Error::MalformedInput {
-        // Some special cases on the slow path
-        if s == "inf" || s == "Inf" || s == "INF" {
-            return Option::some(T::infinity());
-        } else if s == "-inf" || s == "-Inf" || s == "-INF" {
-            return Option::some(T::neg_infinity());
-        } else if s == "nan" || s == "NaN" || s == "NAN" {
-            return Option::some(T::nan());
-        }
+    // Non-numeric forms handled separately.
+    if s == "inf" || s == "Inf" || s == "INF" {
+        return Option::some(T::infinity());
+    } else if s == "-inf" || s == "-Inf" || s == "-INF" {
+        return Option::some(T::neg_infinity());
+    } else if s == "nan" || s == "NaN" || s == "NAN" {
+        return Option::some(T::nan());
     }
 
     Option::none()
