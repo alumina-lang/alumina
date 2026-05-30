@@ -526,14 +526,25 @@ impl Compiler {
             pos += extra.len();
         }
 
-        cmd[pos] = 0u8;
-
-        let result = libc::system(&cmd[0] as &libc::c_char);
+        // Run the link command through the shell. libc::system(cmd) is exactly
+        // `/bin/sh -c cmd`; Command uses execv (no PATH search), so invoke the
+        // shell explicitly to keep PATH resolution of `cc` and the existing
+        // space-separated argument handling.
+        let sh_args = ["-c", cmd[0..pos]];
+        let proc = std::process::Command::new(Path::new("/bin/sh"));
+        proc.args(sh_args[..]);
+        let spawn_res = proc.spawn();
+        let link_ok = if spawn_res.is_ok() {
+            let wait_res = spawn_res.unwrap().wait();
+            wait_res.is_ok() && wait_res.unwrap().success()
+        } else {
+            false
+        };
 
         // Clean up temp file
         let _ = std::fs::remove_file(Path::new(obj_file));
 
-        result == 0i32
+        link_ok
     }
 
     /// Given a module path like "aluminac::ast", resolve or create
