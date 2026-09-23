@@ -306,9 +306,14 @@ Also: `#[location("file", line)]`; **constants holding pointers into
 other constants were null** (`const B: &i32 = &A[2];`; codegen now folds
 them as addresses of the globals); references to zero-sized values are
 dangling pointers (the alignment as address), as in alumina-boot.
-Remaining lang failures (31 of 33 pass): `#[packed(N)]`'s alignment as
-seen by LLVM (a packed LLVM struct has alignment 1; aluminac's layout is
-right), and `test_pretty_print`: alumina-boot's `stringify!` pretty-prints
+`#[packed(N)]` (N > 1): a packed LLVM struct has alignment 1, so, as
+clang, aluminac gives variables of such types (locals, parameters,
+temporaries, globals) the layout's alignment explicitly
+(`CodegenCtx::alignment_of`), which `_Alignof` also reports; tuples place
+their elements as structs do (`place_members`: `(u8, S)` had `S` at
+offset 1 and 7 bytes where size_of said 8), and constant tuples and
+element-wise `==` go through the member index map.
+Remaining lang failure (32 of 33 pass): `test_pretty_print`: alumina-boot's `stringify!` pretty-prints
 the AST (`stringify!((a))` is `a`, `a + b + c` is `(a + b) + c`);
 aluminac's gives the source text. Matching it needs a pretty-printer over
 the syntax tree (aluminac's AST is partly desugared).

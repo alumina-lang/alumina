@@ -176,6 +176,7 @@ impl FnCodegen {
             let alloca_ty = if self.is_void_type(param_ty) { self.ctx.i8_type } else { param_ty };
             let pname = self.ctx.null_terminate(param.name);
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &pname[0] as &libc::c_char);
+            LLVMSetAlignment(alloca, self.ctx.alignment_of(param.ty));
             if !self.is_void_type(param_ty) {
                 let param_val = LLVMGetParam(self.llvm_fn, i as u32);
                 self.safe_store(param_val, alloca);
@@ -192,6 +193,7 @@ impl FnCodegen {
             //
             let lname = self.temp_name();
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &lname[0] as &libc::c_char);
+            LLVMSetAlignment(alloca, self.ctx.alignment_of(local.ty));
             // Zero-initialize all allocas to prevent issues with defer cleanup
             // running on uninitialized variables from untaken branches
             let zero = LLVMConstNull(alloca_ty);
@@ -763,10 +765,11 @@ impl FnCodegen {
                 let ev_ty = LLVMTypeOf(elem_val);
                 if !self.is_void_type(ev_ty) {
                     // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
-                    let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, i as u32);
+                    let member = self.ctx.llvm_field_index(expr.ty, i as u32);
+                    let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, member);
                     let coerced = self.coerce_value(elem_val, expected_ty);
                     let elem_ptr = LLVMBuildStructGEP2(
-                        self.ctx.builder, llvm_ty, alloca, i as u32,
+                        self.ctx.builder, llvm_ty, alloca, member,
                         self.temp_cname()
                     );
                     self.safe_store(coerced, elem_ptr);
@@ -872,7 +875,7 @@ impl FnCodegen {
             } else if data.query == "sizeof" {
                 LLVMABISizeOfType(self.ctx.target_data, of)
             } else {
-                LLVMABIAlignmentOfType(self.ctx.target_data, of) as u64
+                self.ctx.alignment_of(data.of) as u64
             };
             LLVMConstInt(self.ctx.llvm_type(expr.ty), value, 0i32)
         }
@@ -1250,6 +1253,7 @@ impl FnCodegen {
                 return LLVMGetUndef(self.ctx.ptr_type);
             }
             let alloca = LLVMBuildAlloca(self.ctx.builder, ty, self.temp_cname());
+            LLVMSetAlignment(alloca, self.ctx.alignment_of(expr.ty));
             LLVMBuildStore(self.ctx.builder, val, alloca);
             alloca
         }
@@ -1279,8 +1283,9 @@ impl FnCodegen {
                 for i in 0usize..n {
                     let elem_ty = if ty.tag == IrTyTag::Array { ty.inner() } else { fields[i] };
                     if elem_ty.is_zero_sized() { continue; }
-                    let a_i = LLVMBuildExtractValue(b_, a, i as u32, self.temp_cname());
-                    let b_i = LLVMBuildExtractValue(b_, b, i as u32, self.temp_cname());
+                    let member = if ty.tag == IrTyTag::Array { i as u32 } else { self.ctx.llvm_field_index(ty, i as u32) };
+                    let a_i = LLVMBuildExtractValue(b_, a, member, self.temp_cname());
+                    let b_i = LLVMBuildExtractValue(b_, b, member, self.temp_cname());
                     acc = LLVMBuildAnd(b_, acc, self.gen_elementwise_equal(a_i, b_i, elem_ty), self.temp_cname());
                 }
                 acc

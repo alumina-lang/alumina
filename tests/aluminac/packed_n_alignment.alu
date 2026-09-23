@@ -1,0 +1,41 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Values of a `#[packed(N)]` type are N-aligned in memory: LLVM gives a
+// packed struct alignment 1, so aluminac aligns its variables explicitly
+// (locals, globals and temporaries were 1-aligned), and places it in tuples
+// where the layout does (`(u8, S)` put `S` at offset 1: size_of said 8,
+// the LLVM type had 7 bytes).
+
+#[packed(2)] struct S { b: u8, a: i32 }
+#[packed(4)] struct Q { b: u8, a: i64 }
+
+static G1: u8 = 1;
+static GS: S = S { b: 1, a: 2 };
+static G2: u8 = 1;
+static GQ: Q = Q { b: 1, a: 2 };
+static GT: (u8, S, u8) = (7, S { b: 8, a: 9 }, 10);
+
+fn aligned<T>(p: &T, n: usize) -> bool { (p as usize) % n == 0 }
+fn make() -> S { S { b: 3, a: 4 } }
+
+fn main() -> i32 {
+    let c1: u8 = 1;
+    let s = S { b: 1, a: 2 };
+    let c2: u8 = 1;
+    let q = Q { b: 1, a: 2 };
+    let c3: u8 = 1;
+    let t: (u8, S) = (1, S { b: 1, a: 2 });
+    let arr: [S; 3] = [S { b: 1, a: 2 }, S { b: 1, a: 2 }, S { b: 1, a: 2 }];
+    if !aligned(&s, 2) || !aligned(&q, 4) || !aligned(&t.1, 2) || !aligned(&arr[1], 2) { return 1; }
+    if !aligned(&GS, 2) || !aligned(&GQ, 4) { return 2; }
+    if !aligned(&make(), 2) { return 3; }
+    if std::mem::align_of::<S>() != 2 || std::mem::size_of::<S>() != 6 { return 4; }
+    if std::mem::align_of::<(u8, S)>() != 2 || std::mem::size_of::<[S; 3]>() != 18 { return 5; }
+    let a = GT.1.a;
+    if GT.0 != 7 || GT.1.b != 8 || a != 9 || GT.2 != 10 || !aligned(&GT.1, 2) { return 6; }
+    let u: (u8, S, u8) = (7, S { b: 8, a: 9 }, 10);
+    let a = u.1.a;
+    if u.0 != 7 || u.1.b != 8 || a != 9 || u.2 != 10 || std::mem::size_of::<(u8, S, u8)>() != 10 { return 7; }
+    if (&u.2 as usize) - (&u as usize) != 8 { return 8; }
+    let _ = (c1, c2, c3, G1, G2);
+    0
+}
