@@ -7,6 +7,11 @@ use aluminac_common::arena::Arena;
 use std::collections::{HashMap, Vector};
 
 // What kind of thing a name refers to
+// Use aliases being followed (a chain longer than this is a cycle).
+const MAX_ALIAS_DEPTH: usize = 64;
+static ALIAS_DEPTH: usize = 0;
+static ALIAS_CYCLE: bool = false;
+
 enum NamedItemTag {
     Function = 0i32,
     Method = 1i32,
@@ -285,7 +290,7 @@ impl ScopeArena {
             let item = found.unwrap();
             // Follow use aliases
             if item.kind.tag == NamedItemTag::UseAlias {
-                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+                return self.follow_use_alias(item);
             }
             return found;
         }
@@ -336,7 +341,7 @@ impl ScopeArena {
                     return Option::some(item.kind.id());
                 }
                 if item.kind.tag == NamedItemTag::UseAlias {
-                    let target = self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+                    let target = self.follow_use_alias(item);
                     if target.is_some() {
                         let target_item = target.unwrap();
                         if target_item.kind.tag == NamedItemTag::Function {
@@ -406,7 +411,7 @@ impl ScopeArena {
             let item = found.unwrap();
             // Follow use aliases
             if item.kind.tag == NamedItemTag::UseAlias {
-                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+                return self.follow_use_alias(item);
             }
             return found;
         }
@@ -472,12 +477,54 @@ impl ScopeArena {
         }
     }
 
-    // Follow use aliases to their target
+    // Follow use aliases to their target (none if there is none, which is
+    // the case for aliases that lead back to themselves).
     fn follow_use_alias(self: &ScopeArena, item: NamedItem) -> Option<NamedItem> {
-        if item.kind.tag == NamedItemTag::UseAlias {
-            return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+        if item.kind.tag != NamedItemTag::UseAlias {
+            return Option::some(item);
         }
-        Option::some(item)
+        if ALIAS_DEPTH >= MAX_ALIAS_DEPTH {
+            ALIAS_CYCLE = true;
+            return Option::none();
+        }
+        ALIAS_DEPTH += 1;
+        let target = self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+        ALIAS_DEPTH -= 1;
+        target
+    }
+
+    /// Every `use` outside functions must name an item (as in
+    /// alumina-boot, which resolves them eagerly; aluminac otherwise
+    /// resolves them only when used).
+    fn check_use_aliases(self: &ScopeArena, diag: &mut diagnostics::DiagnosticContext) {
+        // (A cycle is reported once, not for each of its aliases.)
+        let cycle_reported = false;
+        for scope in self.scopes.iter_ref() {
+            // (Those in functions are resolved when used, as in alumina-boot.)
+            if scope.kind == ScopeKind::Function || scope.kind == ScopeKind::Block {
+                continue;
+            }
+            for pair in scope.items {
+                let item = pair.1;
+                if item.kind.tag != NamedItemTag::UseAlias || item.span.is_empty() {
+                    continue;
+                }
+                ALIAS_CYCLE = false;
+                let target = self.follow_use_alias(item);
+                if ALIAS_CYCLE {
+                    if !cycle_reported {
+                        diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span, "cycle detected while resolving aliases"));
+                        cycle_reported = true;
+                    }
+                } else if target.is_none() {
+                    let segments = item.kind.path_segments().iter();
+                    let path = std::string::join("::", &segments);
+                    defer path.free();
+                    diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span,
+                        std::fmt::format!("could not resolve the path `{}`", path).unwrap().as_slice()));
+                }
+            }
+        }
     }
 
     // Resolve a path within a specific module scope (no parent lookup)
@@ -497,7 +544,7 @@ impl ScopeArena {
                         // Follow use aliases before returning
                         let imp_item = imp_found.unwrap();
                         if imp_item.kind.tag == NamedItemTag::UseAlias {
-                            return self.resolve_path(imp_item.kind.scope_idx, imp_item.kind.path_segments());
+                            return self.follow_use_alias(imp_item);
                         }
                         return imp_found;
                     }
@@ -521,7 +568,7 @@ impl ScopeArena {
             // Follow use aliases before returning
             let item = found.unwrap();
             if item.kind.tag == NamedItemTag::UseAlias {
-                return self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+                return self.follow_use_alias(item);
             }
             return found;
         }

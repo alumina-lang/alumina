@@ -1388,14 +1388,13 @@ impl Pass2 {
                 mixin_ty_args = proto_ty.elems();  // e.g. [Counter, i32] from mixin IteratorExt<Counter, i32>
             }
 
-            if !has_proto_id {
-                continue;
-            }
-
             // Find the protocol's scope and copy its methods to the impl scope.
             // Uses the shared scope system so cross-file mixins work.
             let impl_scope_idx = pending.impl_scope_idx;
-            let proto_scope = self.ctx.scopes.find_protocol_scope_by_id(proto_id_val);
+            let proto_scope = if has_proto_id { self.ctx.scopes.find_protocol_scope_by_id(proto_id_val) } else { Option::none() };
+            if proto_scope.is_none() && proto_ty.tag != TyTag::Unresolved {
+                self.ctx.error(proto_node.unwrap(), "type is not a protocol");
+            }
             if proto_scope.is_some() {
                 let proto_scope_idx = proto_scope.unwrap();
                 for pair in self.ctx.scopes.get(proto_scope_idx).items {

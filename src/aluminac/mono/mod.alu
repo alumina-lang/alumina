@@ -61,6 +61,10 @@ struct MonoCtx {
     fn_cache: HashMap<MonoKey, usize>,
     // Index in `ir_functions` of each function, by mangled name.
     fn_indices: HashMap<&[u8], usize>,
+    // The statics (by global index) whose initializers are being lowered.
+    statics_in_progress: Vector<usize>,
+    // The functions whose signatures are being resolved.
+    signatures_in_progress: Vector<MonoKey>,
     struct_cache: HashMap<MonoKey, usize>,
     struct_ty_cache: HashMap<MonoKey, &IrTy>,
     enum_cache: HashMap<MonoKey, usize>,
@@ -179,6 +183,8 @@ impl MonoCtx {
             baked_globals: HashMap::new(),
             fn_cache: HashMap::new(),
             fn_indices: HashMap::new(),
+            statics_in_progress: Vector::new(),
+            signatures_in_progress: Vector::new(),
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
             enum_cache: HashMap::new(),
@@ -525,6 +531,8 @@ impl MonoCtx {
         self.static_inits.free();
         self.const_values.free();
         self.fn_indices.free();
+        self.statics_in_progress.free();
+        self.signatures_in_progress.free();
         self.baked_allocs.free();
         self.baked_globals.free();
         self.fn_cache.free();

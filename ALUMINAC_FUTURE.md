@@ -392,9 +392,14 @@ diagnostic's location, expansion or instantiation chain). Done so far:
   syntax errors. Constant evaluation of pointer comparisons and
   differences (same place, string bytes by value), `&*p`, function pointer
   equality.
-- Remaining (5 of 112): alias cycles (`use a::b as c` loops), cyclic
-  static initialization and `typeof` cycles (unpopulated items), and the
-  lints (`warnings.alu`, `not_a_protocol`'s unused variable).
+- Cycles: module-level `use`s are resolved eagerly, so unresolvable ones
+  are errors (aluminac ignored them unless used) and alias cycles are
+  reported (following one recursed forever); static initializers that
+  depend on each other; a function signature that depends on itself
+  through `typeof` (aluminac instantiated the function twice). Mixins of
+  non-protocols.
+- Remaining (2 of 112): the lints (`warnings.alu`, and an unused
+  variable in `not_a_protocol`).
 
 ### Cross-check status
 

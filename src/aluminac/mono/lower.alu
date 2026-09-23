@@ -1269,6 +1269,13 @@ impl Mono {
             return cached.unwrap();
         }
 
+        // Its signature cannot depend on itself (e.g. through `typeof` of a
+        // call that leads back to it), as in alumina-boot.
+        if self.ctx.signatures_in_progress.iter().any(|=cache_key, k: MonoKey| -> bool { k.equals(&cache_key) }) {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                "cyclic dependency during type resolution"));
+        }
+
         // Push mono stack frame and check depth
         self.ctx.push_mono_frame(def.name, def.span);
         if self.ctx.check_mono_depth(def.span) {
@@ -1276,6 +1283,7 @@ impl Mono {
             self.current_fn_name = prev_fn_name;
             return 0usize;
         }
+        self.ctx.signatures_in_progress.push(cache_key);
 
         // The callee's body is lowered from scratch: nothing about the call
         // site is visible in it (see FnState).
@@ -1439,6 +1447,7 @@ impl Mono {
         self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
         self.ctx.fn_cache.insert(cache_key.stored(self.ctx.arena), idx);
+        self.ctx.signatures_in_progress.pop();
 
         // Update the mono-context fingerprint so nested fns we encounter
         // while lowering the body key their cache against this mono.
@@ -8086,6 +8095,15 @@ impl Mono {
         } else {
             self.emit_static(def, type_args, cache_key)
         };
+        // An initializer cannot depend on one that depends on it (a static
+        // can refer to itself, e.g. to its own address).
+        let in_progress = self.ctx.statics_in_progress.as_slice();
+        if in_progress.len() > 0 && in_progress[in_progress.len() - 1] != global_idx
+            && in_progress.iter().any(|=global_idx, i: usize| -> bool { i == global_idx }) {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                "cyclic dependency during static initialization"));
+            return self.mk_error();
+        }
         let global = self.ctx.ir_globals[global_idx];
 
         let result = IrExpr::void_expr(global.ty);
@@ -8151,11 +8169,13 @@ impl Mono {
         let runtime_init: Option<&IrExpr> = Option::none();
         if def.init.is_some() {
             let init_expr = def.init.unwrap();
+            self.ctx.statics_in_progress.push(idx);
             let init_ir = if ty.is_void() {
                 self.lower_expr(init_expr)
             } else {
                 self.lower_expr_coerced(init_expr, ty)
             };
+            self.ctx.statics_in_progress.pop();
             // Without a declared type, the item's type is the initializer's.
             if ty.is_void() {
                 ty = init_ir.ty;
