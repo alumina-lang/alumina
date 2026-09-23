@@ -1439,56 +1439,62 @@ impl ExprParser {
             elements.push(child);
         }
 
-        if elements.is_empty() || value_node.is_none() {
+        if elements.is_empty() {
+            return self.alloc_void(span);
+        }
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty: Option<&Ty> = type_node.map(|&pass2, &self, n: Node| -> &Ty { pass2.parse_type(n, self.scope_idx) });
+        if value_node.is_none() && ty.is_none() {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "type hint required"));
             return self.alloc_void(span);
         }
 
-        // Desugar: let (a, b) = expr;
-        // Into: { let _tmp = expr; let a = _tmp.0; let b = _tmp.1; }
+        // Desugar `let (a, b): T = expr;` into
+        //     { let _tmp: T = expr; let a = _tmp.0; let b = _tmp.1; }
+        // and `let (a, b): T;` into `{ let a: T.0; let b: T.1; }`.
+        let stmts: Vector<&Expr> = Vector::new();
+        defer stmts.free();
         let tmp_id = self.ctx.next_id();
-        let init_expr = self.parse_expr(value_node.unwrap());
+        if value_node.is_some() {
+            let tmp_let = self.make_expr(ExprTag::Let, span);
+            tmp_let._data.let_expr.id = tmp_id;
+            tmp_let._data.let_expr.opt_ty = ty;
+            tmp_let._data.let_expr.opt_expr = Option::some(self.parse_expr(value_node.unwrap()));
+            stmts.push(self.ctx.alloc_expr(tmp_let));
+        }
 
-        // let _tmp = expr
-        let tmp_let = self.make_expr(ExprTag::Let, span);
-        tmp_let._data.let_expr.id = tmp_id;
-        tmp_let._data.let_expr.opt_expr = Option::some(init_expr);
-        let ir_tmp_let = self.ctx.alloc_expr(tmp_let);
-
-        // Build block: _tmp_let, then each element let
-        let stmts = self.ctx.arena.alloc_slice::<&Expr>(elements.len() + 1);
-        stmts[0] = ir_tmp_let;
-
-        for i in 0usize..elements.len() {
-            let elem_node = elements[i];
-            let elem_id = self.ctx.next_id();
+        for (i, elem_node) in elements.iter().enumerate() {
             let elem_name = self.ctx.intern_str(self.ctx.node_text(elem_node));
+            let elem_id = self.ctx.next_id();
+            let elem_let = self.make_expr(ExprTag::Let, span);
+            elem_let._data.let_expr.id = elem_id;
+            elem_let._data.let_expr.str_val = elem_name;
+            if value_node.is_some() {
+                // _tmp.i
+                let tmp_ref = self.make_expr(ExprTag::Local, span);
+                tmp_ref._data.id_ref.id = tmp_id;
+                let idx_expr = self.make_expr(ExprTag::TupleIndex, span);
+                idx_expr._data.index.lhs = self.ctx.alloc_expr(tmp_ref);
+                idx_expr._data.index.index_val = i;
+                elem_let._data.let_expr.opt_expr = Option::some(self.ctx.alloc_expr(idx_expr));
+            } else {
+                // T.i
+                let index = self.make_expr(ExprTag::IntLit, span);
+                index._data.lit.int_val = i as u64;
+                elem_let._data.let_expr.opt_ty = Option::some(
+                    self.ctx.alloc_ty(Ty::tuple_index_of_ty(ty.unwrap(), self.ctx.alloc_expr(index))));
+            }
+            stmts.push(self.ctx.alloc_expr(elem_let));
 
             self.ctx.scopes.add_item(self.scope_idx, NamedItem {
                 name: elem_name,
                 kind: NamedItemKind::local(elem_id),
                 span: self.ctx.make_span(elem_node),
             });
-
-            // _tmp reference
-            let tmp_ref = self.make_expr(ExprTag::Local, span);
-            tmp_ref._data.id_ref.id = tmp_id;
-            let ir_tmp_ref = self.ctx.alloc_expr(tmp_ref);
-
-            // _tmp.i (tuple index)
-            let idx_expr = self.make_expr(ExprTag::TupleIndex, span);
-            idx_expr._data.index.lhs = ir_tmp_ref;
-            idx_expr._data.index.index_val = i;
-            let ir_idx = self.ctx.alloc_expr(idx_expr);
-
-            // let elem = _tmp.i
-            let elem_let = self.make_expr(ExprTag::Let, span);
-            elem_let._data.let_expr.id = elem_id;
-            elem_let._data.let_expr.opt_expr = Option::some(ir_idx);
-            stmts[i + 1] = self.ctx.alloc_expr(elem_let);
         }
 
         let block = self.make_expr(ExprTag::Block, span);
-        block._data.list.args = stmts;
+        block._data.list.args = self.ctx.arena.alloc_slice_copy::<&Expr>(stmts.as_slice());
         self.ctx.alloc_expr(block)
     }
 
@@ -1724,6 +1730,23 @@ impl ExprParser {
         // Desugar expr? to try!(expr) macro invocation, matching alumina-boot.
         // Look up the "try" macro via scope resolution (respects use aliases and shadowing).
         let name = self.ctx.intern_str("try");
+        // In a macro body, record the invocation (resolved here, at the
+        // definition site) to be expanded with the macro.
+        if self.ctx.in_macro_body {
+            let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+            if resolved.is_none() || resolved.unwrap().kind.tag != scope::NamedItemTag::Macro {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "no `try` macro in scope for `?` operator (import std::result::try or std::option::try)"));
+                return self.alloc_void(span);
+            }
+            let try_args = self.ctx.arena.alloc_slice::<&Expr>(1usize);
+            try_args[0] = inner_expr;
+            let e = self.make_expr(ExprTag::MacroInvocation, span);
+            e._data.macro_expr.macro_id = resolved.unwrap().kind.id()._value;
+            e._data.macro_expr.str_val = name;
+            e._data.macro_expr.args = try_args;
+            e._data.macro_expr.flag = true;
+            return self.ctx.alloc_expr(e);
+        }
         let macro_entry = self.ctx.resolve_macro(self.scope_idx, name);
         if macro_entry.is_some() {
             let entry = macro_entry.unwrap();

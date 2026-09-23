@@ -4125,27 +4125,46 @@ impl Mono {
             }
         }
 
+        // `Ptr: PointerOf<T>` with Ptr known gives T.
+        for (i, gp) in m_def.generic_params.iter().enumerate() {
+            if !found[i] || inferred[i].tag != IrTyTag::Pointer { continue; }
+            for bound in gp.bounds {
+                if bound.tag == TyTag::Generic && bound.inner().tag == TyTag::Named
+                    && self.ctx.is_lang_item(bound.inner().id()._value, "proto_pointer_of")
+                    && bound.elems().len() == 1 {
+                    self.unify_type_for_inference(bound.elems()[0], inferred[i].inner(), inferred, found, m_def.generic_params);
+                }
+            }
+        }
+        for i in 0usize..n {
+            if found[i] {
+                self.type_map.insert(m_def.generic_params[i].id._value, inferred[i]);
+            }
+        }
+
+        // Check the bounds that can be decided: those of known parameters
+        // that mention no unknown one.
         let result = true;
         for i in 0usize..n {
             if !found[i] { continue; }
             let gp = &m_def.generic_params[i];
-            for bound_ty in gp.bounds.iter() {
-                let bound_ir = self.resolve_type(bound_ty);
-                // Only check Protocol bounds for now; non-Protocol bounds
-                // (e.g. concrete-type equality bounds) are out of scope here.
-                if bound_ir.tag == IrTyTag::Protocol {
-                    let proto_def = self.ctx.protocol_defs.get(&bound_ir.proto_id());
-                    if proto_def.is_some() {
-                        // Skip lang-item Any/None/etc. — those are handled in
-                        // the call-site `is`-check, not via methods.
-                        if !self.check_protocol_conformance(inferred[i], proto_def.unwrap()) {
-                            result = false;
-                            break;
-                        }
-                    }
-                }
+            let arg = inferred[i];
+            let positive = if gp.any_bounds && !gp.bounds.is_empty() {
+                gp.bounds.iter().any(|&self, =m_def, =found, =arg, b: &Ty| -> bool {
+                    self.bound_plausibly_holds(arg, b, m_def.generic_params, found)
+                })
+            } else {
+                gp.bounds.iter().all(|&self, =m_def, =found, =arg, b: &Ty| -> bool {
+                    self.bound_plausibly_holds(arg, b, m_def.generic_params, found)
+                })
+            };
+            let negative = gp.negative_bounds.iter().any(|&self, =m_def, =found, =arg, b: &Ty| -> bool {
+                !Mono::mentions_unknown_param(b, m_def.generic_params, found) && self.satisfies_bound(arg, b)
+            });
+            if !positive || negative {
+                result = false;
+                break;
             }
-            if !result { break; }
         }
 
         // Restore bindings.
@@ -5964,12 +5983,20 @@ impl Mono {
         // Protocol IrTy (carries proto_id).
         let proto_id_value: usize = 0usize;
         let has_proto_id = false;
+        // The protocol's arguments (`SameBaseAs<X>` -> [X]), however it is
+        // written.
+        let proto_args: &[&IrTy] = &[];
         if check_ty.tag == TyTag::Named {
             proto_id_value = check_ty.id()._value;
             has_proto_id = true;
         } else if check_ty.tag == TyTag::Generic && check_ty.inner().tag == TyTag::Named {
             proto_id_value = check_ty.inner().id()._value;
             has_proto_id = true;
+            let args = self.ctx.arena.alloc_slice::<&IrTy>(check_ty.elems().len());
+            for (i, arg) in check_ty.elems().iter().enumerate() {
+                args[i] = self.resolve_type(arg);
+            }
+            proto_args = args;
         } else if check_ty.tag == TyTag::Placeholder {
             // Generic-call-site substitution: the AST-level type-arg may have
             // been a protocol. resolve_named_type wraps protocols as
@@ -5980,6 +6007,7 @@ impl Mono {
                 if r.tag == IrTyTag::Protocol {
                     proto_id_value = r.proto_id();
                     has_proto_id = true;
+                    proto_args = r.proto_type_args();
                 }
             }
         }
@@ -6041,20 +6069,20 @@ impl Mono {
                     is_match = false;
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_array_of") {
                     // ArrayOf<T>: val_ty is an array whose element type is T.
-                    if val_ty.tag == IrTyTag::Array && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                        is_match = val_ty.inner() as &void == arg_ty as &void;
+                    if val_ty.tag == IrTyTag::Array && proto_args.len() >= 1 {
+                        let arg_ty = proto_args[0];
+                        is_match = val_ty.inner().same_as(arg_ty);
                     }
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer_of") {
                     // PointerOf<T>: val_ty is a pointer (any mutability) whose pointee is T.
-                    if val_ty.tag == IrTyTag::Pointer && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                        is_match = val_ty.inner() as &void == arg_ty as &void;
+                    if val_ty.tag == IrTyTag::Pointer && proto_args.len() >= 1 {
+                        let arg_ty = proto_args[0];
+                        is_match = val_ty.inner().same_as(arg_ty);
                     }
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_same_layout_as") {
                     // SameLayoutAs<T>: val_ty has the same size and alignment as T.
-                    if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                    if proto_args.len() >= 1 {
+                        let arg_ty = proto_args[0];
                         let val_size = layout::compute_type_size(val_ty, self.ctx.pointer_size);
                         let arg_size = layout::compute_type_size(arg_ty, self.ctx.pointer_size);
                         let val_align = layout::compute_type_align(val_ty, self.ctx.pointer_size);
@@ -6064,10 +6092,13 @@ impl Mono {
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_same_base_as") {
                     // SameBaseAs<T>: val_ty and T are both struct/enum monomorphizations
                     // of the same base generic def. Compare def-ids.
-                    if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                    if proto_args.len() >= 1 {
+                        let arg_ty = proto_args[0];
                         if val_ty.tag == IrTyTag::Struct && arg_ty.tag == IrTyTag::Struct {
                             is_match = val_ty.struct_ref().id._value == arg_ty.struct_ref().id._value;
+                        } else if val_ty.tag == IrTyTag::Slice && arg_ty.tag == IrTyTag::Slice {
+                            // Slices are all instances of the lang(slice) struct.
+                            is_match = true;
                         } else if val_ty.tag == IrTyTag::Enum && arg_ty.tag == IrTyTag::Enum {
                             is_match = val_ty.enum_ref().id._value == arg_ty.enum_ref().id._value;
                         }
@@ -6079,11 +6110,11 @@ impl Mono {
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_range_of") {
                     // RangeOf<T>: val_ty is a Range<T> / RangeInclusive<T> / etc.
                     // RangeFull has no type parameter and never matches.
-                    if self.is_range_ty(val_ty) && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                    if self.is_range_ty(val_ty) && proto_args.len() >= 1 {
+                        let arg_ty = proto_args[0];
                         let ta = val_ty.struct_ref().type_args;
                         if ta.len() >= 1 {
-                            is_match = ta[0] as &void == arg_ty as &void;
+                            is_match = ta[0].same_as(arg_ty);
                         }
                     }
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_const") {
@@ -6099,12 +6130,12 @@ impl Mono {
             } else {
                 // Not a protocol - concrete type comparison
                 let check_ir_ty = self.resolve_type(check_ty);
-                is_match = val_ty as &void == check_ir_ty as &void;
+                is_match = val_ty.same_as(check_ir_ty);
             }
         } else {
             // Non-named type: resolve and compare
             let check_ir_ty = self.resolve_type(check_ty);
-            is_match = val_ty as &void == check_ir_ty as &void;
+            is_match = val_ty.same_as(check_ir_ty);
         }
 
         is_match
@@ -6113,6 +6144,57 @@ impl Mono {
     /// Check a new instantiation's type arguments against its generic
     /// parameters' bounds (as alumina-boot does at every instantiation).
     /// Returns whether all bounds are satisfied.
+    /// Whether `arg` satisfies `bound` as far as can be told while some of
+    /// the method's generic parameters are unknown: fully if the bound
+    /// mentions none of them, and otherwise by the methods of its protocol.
+    fn bound_plausibly_holds(self: &mut Mono, arg: &IrTy, bound: &Ty, params: &[GenericParam], found: &[bool]) -> bool {
+        if !Mono::mentions_unknown_param(bound, params, found) {
+            return self.satisfies_bound(arg, bound);
+        }
+        let proto_id: usize = if bound.tag == TyTag::Generic && bound.inner().tag == TyTag::Named {
+            bound.inner().id()._value
+        } else if bound.tag == TyTag::Named {
+            bound.id()._value
+        } else {
+            return true;
+        };
+        let proto = self.ctx.protocol_defs.get(&proto_id);
+        proto.is_none() || self.check_protocol_conformance(arg, proto.unwrap())
+    }
+
+    /// Whether a type mentions one of `params` that is not `found`.
+    fn mentions_unknown_param(ty: &Ty, params: &[GenericParam], found: &[bool]) -> bool {
+        switch ty.tag {
+            TyTag::Placeholder => {
+                for (i, p) in params.iter().enumerate() {
+                    if p.id._value == ty.id()._value {
+                        return !found[i];
+                    }
+                }
+                false
+            }
+            TyTag::Pointer, TyTag::Slice, TyTag::Array, TyTag::EtCetera, TyTag::DerefOf =>
+                Mono::mentions_unknown_param(ty.inner(), params, found),
+            TyTag::Tuple => ty.elems().iter().any(|=params, =found, t: &Ty| -> bool { Mono::mentions_unknown_param(t, params, found) }),
+            TyTag::FnPointer => Mono::mentions_unknown_param(ty.ret_ty(), params, found)
+                || ty.elems().iter().any(|=params, =found, t: &Ty| -> bool { Mono::mentions_unknown_param(t, params, found) }),
+            TyTag::Generic => Mono::mentions_unknown_param(ty.inner(), params, found)
+                || ty.elems().iter().any(|=params, =found, t: &Ty| -> bool { Mono::mentions_unknown_param(t, params, found) }),
+            _ => false,
+        }
+    }
+
+    /// Whether `arg` satisfies `param`'s bounds (all of them, or any of them
+    /// with `any_bounds`) and none of its negative bounds.
+    fn bounds_hold(self: &mut Mono, param: &GenericParam, arg: &IrTy) -> bool {
+        let positive = if param.any_bounds && !param.bounds.is_empty() {
+            param.bounds.iter().any(|&self, =arg, b: &Ty| -> bool { self.satisfies_bound(arg, b) })
+        } else {
+            param.bounds.iter().all(|&self, =arg, b: &Ty| -> bool { self.satisfies_bound(arg, b) })
+        };
+        positive && !param.negative_bounds.iter().any(|&self, =arg, b: &Ty| -> bool { self.satisfies_bound(arg, b) })
+    }
+
     fn check_generic_bounds(self: &mut Mono, params: &[GenericParam], args: &[&IrTy], span: Span) -> bool {
         let ok = true;
         for i in 0usize..std::cmp::min(params.len(), args.len()) {
@@ -7002,6 +7084,23 @@ impl Mono {
             }
             self.infer_from_callable_bounds(def.generic_params, inferred, found);
 
+            // The rest from the return type and the hint (as alumina-boot),
+            // leaving the ones the receiver's type already gives.
+            if self.expected_type != self.ctx.no_hint && !self.inside_arg_inference {
+                let known = self.ctx.arena.alloc_slice::<bool>(num_generics);
+                for i in 0usize..num_generics {
+                    known[i] = found[i] || (i < combined_type_args.len() && !combined_type_args[i].is_void());
+                }
+                let from_hint = self.ctx.arena.alloc_slice_copy::<&IrTy>(inferred);
+                self.unify_type_for_inference(def.return_type, self.expected_type, from_hint, known, def.generic_params);
+                for i in 0usize..num_generics {
+                    if !found[i] && known[i] && !(i < combined_type_args.len() && !combined_type_args[i].is_void()) {
+                        inferred[i] = from_hint[i];
+                        found[i] = true;
+                    }
+                }
+            }
+
             // Fill remaining from combined_type_args where inference didn't produce a result
             for i in 0usize..num_generics {
                 if found[i] {
@@ -7210,6 +7309,14 @@ impl Mono {
                         found[g] = true;
                         found_count += 1usize;
                     }
+                }
+            }
+
+            // A generic parameter that nothing determines needs a type hint.
+            for (i, param) in def.generic_params.iter().enumerate() {
+                let known = found[i] || (i < combined_type_args.len() && !combined_type_args[i].is_void());
+                if !known && param.default_ty.is_none() {
+                    return Option::some(self.type_hint_required(expr.span));
                 }
             }
 

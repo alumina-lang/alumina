@@ -264,6 +264,19 @@ print (modulo randomness and thread interleaving). Fixed for them:
 - `&&[T]` was collapsed to `&[T]`; range literals take `T` from a
   `Range<T>` hint; type-level `T.(expr)` / `T.(a..b)`.
 
+### alumina-boot's library tests under aluminac
+
+`make test-libraries-aluminac` (new) builds `libraries/` (json, the
+tree-sitter bindings, aluminac-common) with aluminac: all 22 tests pass.
+Fixed for it: `?` inside macro bodies (it was expanded while pre-parsing,
+before `try!` was available), `let (a, b): T;` / typed tuple patterns,
+method generics inferred from the expected return type, `Type::is_slice`
+(`SameBaseAs` through a generic parameter, and for slices), protocol
+conformance decided by a method's bounds (e.g. `&[i32]` is not
+`Formattable`; lang-protocol bounds such as `PointerOf<u8>` were taken as
+always satisfied). A json bug that alumina-boot never instantiated
+(`Error::NumberNotRepresentableExactly` is an `ErrorKind`) is fixed.
+
 ### alumina-boot's lang tests under aluminac
 
 `tests/lang/lang.alu` (alumina-boot's language test suite) needs, beyond
