@@ -1,13 +1,11 @@
-// Verify the `proto_same_base_as` lang protocol: matches types that are
-// monomorphizations of the same generic base. Compares the underlying
-// struct/enum def-id rather than the resolved IrTy pointer (since two
-// different mono'd instantiations have different IrTy pointers but the
-// same source def).
-
-#[lang(proto_same_base_as)]
-protocol SameBaseAs<Self, T> {}
-
-extern "intrinsic" fn uninitialized<T>() -> T;
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Verify the `proto_same_base_as` lang protocol (`std::builtins::SameBaseAs`):
+// matches types that are monomorphizations of the same generic base.
+// Compares the underlying struct/enum def-id rather than the resolved IrTy
+// pointer (since two different mono'd instantiations have different IrTy
+// pointers but the same source def).
+use std::builtins::SameBaseAs;
+use std::mem::uninitialized;
 
 struct Box<T> { _data: T }
 struct OtherBox<T> { _data: T }

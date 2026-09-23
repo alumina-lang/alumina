@@ -374,19 +374,10 @@ impl Pass2 {
                     // Keep the per-impl id captured in pass1 (the parsed id
                     // also resolves to it post-rebind, but the captured one
                     // is authoritative for the multi-impl rebind machinery).
-                    combined[i] = GenericParam {
-                        id: pending.impl_generic_param_ids[i],
-                        name: impl_gps[i].name,
-                        bounds: impl_gps[i].bounds,
-                        default_ty: impl_gps[i].default_ty,
-                    };
+                    combined[i] = impl_gps[i];
+                    combined[i].id = pending.impl_generic_param_ids[i];
                 } else {
-                    combined[i] = GenericParam {
-                        id: pending.impl_generic_param_ids[i],
-                        name: "_impl_generic",
-                        bounds: &[],
-                        default_ty: Option::none(),
-                    };
+                    combined[i] = GenericParam::plain(pending.impl_generic_param_ids[i], "_impl_generic");
                 }
             }
             for i in 0usize..fn_generic_params.len() {
@@ -498,8 +489,7 @@ impl Pass2 {
                         self.ctx.next_id()
                     };
 
-                    // Parse bounds
-                    let bounds = self.parse_generic_bounds(arg, scope_idx);
+                    let (bounds, negative_bounds, any_bounds) = self.parse_generic_bounds(arg, scope_idx);
 
                     // Parse default
                     let default_node = child_by!(arg, FieldKind::Default);
@@ -513,6 +503,8 @@ impl Pass2 {
                         id: id,
                         name: name,
                         bounds: bounds,
+                        negative_bounds: negative_bounds,
+                        any_bounds: any_bounds,
                         default_ty: default_ty,
                     });
                 }
@@ -525,30 +517,30 @@ impl Pass2 {
         self.ctx.arena.alloc_slice_copy::<GenericParam>(params.as_slice())
     }
 
-    fn parse_generic_bounds(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
-        let bound_node = child_by!(node, FieldKind::Bound);
-        if bound_node.is_none() {
-            return &[];
-        }
+    /// The bounds of a generic parameter (`T: A + !B`, or `T: A | B`):
+    /// (positive bounds, negated bounds, whether any one bound suffices).
+    fn parse_generic_bounds(self: &mut Pass2, node: Node, scope_idx: u32) -> (&[&Ty], &[&Ty], bool) {
+        let positive: Vector<&Ty> = Vector::new();
+        let negative: Vector<&Ty> = Vector::new();
+        defer positive.free();
+        defer negative.free();
 
-        let bounds: Vector<&Ty> = Vector::new();
-        defer bounds.free();
-
-        // A bound can be a single protocol or multiple with +
-        let cursor = bound_node.unwrap().walk();
+        let cursor = node.walk();
         defer cursor.free();
-        for child in bound_node.unwrap().children(&cursor) {
-            if child.is_named() {
-                bounds.push(self.parse_type(child, scope_idx));
+        for bound in children_by!(node, FieldKind::Bound, &cursor) {
+            let ty = self.parse_type(child_by!(bound, FieldKind::Type).unwrap(), scope_idx);
+            if child_by!(bound, FieldKind::Negated).is_some() {
+                negative.push(ty);
+            } else {
+                positive.push(ty);
             }
         }
 
-        if bounds.len() == 0 {
-            // Single bound
-            bounds.push(self.parse_type(bound_node.unwrap(), scope_idx));
-        }
-
-        self.ctx.arena.alloc_slice_copy::<&Ty>(bounds.as_slice())
+        (
+            self.ctx.arena.alloc_slice_copy::<&Ty>(positive.as_slice()) as &[&Ty],
+            self.ctx.arena.alloc_slice_copy::<&Ty>(negative.as_slice()) as &[&Ty],
+            child_by!(node, FieldKind::AnyBounds).is_some(),
+        )
     }
 
     fn parse_fn_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[FnParam] {
@@ -661,19 +653,7 @@ impl Pass2 {
                         return self.ctx.alloc_ty(Ty::named(id));
                     }
                 }
-                // Unqualified-name failures fall through to Ty::unresolved
-                // silently. Adding a parse-time diagnostic here surfaces
-                // real-but-tolerated patterns we don't yet handle: `Self`
-                // outside protocol-method context (used in `&dyn Proto<Self>`
-                // signatures in plain fns), unqualified protocol references
-                // like `Pointer` / `Equatable` in bound positions even when
-                // imported via `use`, and unqualified struct refs like
-                // `RangeFull`. Each is a real resolver gap that needs its
-                // own slice — tracked as item #7 in "Highest-leverage
-                // remaining work". Diagnostic was added and reverted
-                // 2026-05-14 after surfacing >3 such cases in the test
-                // suite (dyn_dispatch_compiles, method_arg_slice_empty,
-                // mixin_self_via_operator, range_equatable).
+                self.ctx.error(node, std::fmt::format!("could not resolve the path `{}`", name).unwrap().as_slice());
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             NodeKind::PointerOf => {

@@ -1196,6 +1196,18 @@ impl Mono {
             }
         }
 
+        // The type arguments must satisfy the parameters' bounds. If they do
+        // not, the body is not lowered (it would only produce cascading
+        // errors).
+        let bounds_ok = true;
+        if def.generic_params.len() > 0 {
+            let bound_args = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
+            for i in 0usize..def.generic_params.len() {
+                bound_args[i] = self.type_map.get(&def.generic_params[i].id._value).unwrap_or(self.ctx.void_ty);
+            }
+            bounds_ok = self.check_generic_bounds(def.generic_params, bound_args, def.span);
+        }
+
         // Resolve parameter types
         let params = self.ctx.arena.alloc_slice::<IrParam>(def.params.len());
         for i in 0usize..def.params.len() {
@@ -1263,7 +1275,8 @@ impl Mono {
         self.current_fn_idx = idx + 1;
 
         // Lower body (may recursively call mono_function)
-        let body: Option<&IrExpr> = def.body.map(|=self, v: &Expr| -> &IrExpr {
+        let body_expr: Option<&Expr> = if bounds_ok { def.body } else { Option::none() };
+        let body: Option<&IrExpr> = body_expr.map(|=self, v: &Expr| -> &IrExpr {
             let body_ir = self.lower_expr_coerced(v, self.return_type);
             self.check_and_coerce(body_ir, self.return_type, v.span)
         });
@@ -1941,12 +1954,7 @@ impl Mono {
         // matches placeholder ids against `generic_params[i].id`).
         let synthetic = self.ctx.arena.alloc_slice::<GenericParam>(ids.len());
         for i in 0usize..ids.len() {
-            synthetic[i] = GenericParam {
-                id: Id { _value: ids[i] },
-                name: "_proto",
-                bounds: &[],
-                default_ty: Option::none(),
-            };
+            synthetic[i] = GenericParam::plain(Id { _value: ids[i] }, "_proto");
         }
         let inferred = self.ctx.arena.alloc_slice::<&IrTy>(ids.len());
         let found = self.ctx.arena.alloc_slice::<bool>(ids.len());
@@ -2386,7 +2394,30 @@ impl Mono {
     }
 
     fn try_operator_overload(self: &mut Mono, op: BinOp, ir_lhs: &IrExpr, ir_rhs: &IrExpr) -> Option<&IrExpr> {
-        // Try direct method lookup first (e.g. equals, compare on the type's scope)
+        // As in alumina-boot: a comparison of values that are not natively
+        // comparable is a call to the sysroot's `#[lang(operator_*)]` fn,
+        // e.g. `operator_eq<T: Equatable<T>>(&lhs, &rhs)` (whose bound is
+        // checked when it is instantiated).
+        let lang_name: &[u8] = switch op {
+            BinOp::Eq => "operator_eq",
+            BinOp::Ne => "operator_neq",
+            BinOp::Lt => "operator_lt",
+            BinOp::Le => "operator_lte",
+            BinOp::Gt => "operator_gt",
+            BinOp::Ge => "operator_gte",
+            _ => "",
+        };
+        if !lang_name.is_empty() && self.ctx.get_lang_item(lang_name).is_some() {
+            let rhs = self.coerce_to_type(ir_rhs, ir_lhs.ty);
+            return self.call_lang_fn(
+                lang_name,
+                &[ir_lhs.ty],
+                &[self.mk_ref(ir_lhs, true), self.mk_ref(rhs, true)],
+                ir_lhs.span,
+            );
+        }
+
+        // Without a sysroot: call the type's methods directly.
         let method_name = Mono::binop_method_name(op);
         if method_name.len() > 0 {
             let direct_def = self.find_method_in_scope(ir_lhs.ty, method_name);
@@ -3546,26 +3577,32 @@ impl Mono {
 
     // Check if a type conforms to a user-defined protocol.
     // A type conforms if it has all the required methods from the protocol.
-    fn check_protocol_conformance(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef) -> bool {
-        // Get the scope for the type (where its methods live)
-        let scope_idx: u32 = 0u32;
-        if ty.tag == IrTyTag::Struct {
-            scope_idx = ty.struct_ref().scope_idx;
-        } else if ty.tag == IrTyTag::Enum {
-            scope_idx = ty.enum_ref().scope_idx;
-        } else if ty.tag == IrTyTag::Builtin {
-            // Builtins (i32, u8, ...) declare their methods on the
-            // lang-item-tagged struct (e.g. `#[lang(builtin_i32)] struct i32 {}`).
-            // Look up that struct's scope so user-defined protocols (Formattable,
-            // Hashable, etc.) recognise the builtin's fmt/hash/equals methods.
-            let lang_name = Mono::builtin_lang_name(ty.builtin());
-            if lang_name.len() > 0 {
-                scope_idx = self.ctx.get_lang_item(lang_name)
-                    .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
-                    .map(|sd: &StructDef| -> u32 { sd.scope_idx })
-                    .unwrap_or(scope_idx);
-            }
+    /// The scope holding a type's methods: its own impl scope for a struct or
+    /// enum, otherwise the `#[lang(builtin_*)]` / `#[lang(slice)]` struct the
+    /// sysroot declares them on. 0 if the type has no methods.
+    fn method_scope(self: &mut Mono, ty: &IrTy) -> u32 {
+        let lang_name: &[u8] = switch ty.tag {
+            IrTyTag::Struct => return ty.struct_ref().scope_idx,
+            IrTyTag::Enum => return ty.enum_ref().scope_idx,
+            IrTyTag::Builtin => Mono::builtin_lang_name(ty.builtin()),
+            IrTyTag::Slice => "slice",
+            IrTyTag::Array => "builtin_array",
+            // `()` collapses to void; it is the zero-tuple.
+            IrTyTag::Tuple, IrTyTag::Void => "builtin_tuple",
+            IrTyTag::Fn, IrTyTag::FnPointer, IrTyTag::Closure => "builtin_callable",
+            _ => "",
+        };
+        if lang_name.is_empty() {
+            return 0;
         }
+        self.ctx.get_lang_item(lang_name)
+            .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
+            .map(|sd: &StructDef| -> u32 { sd.scope_idx })
+            .unwrap_or(0)
+    }
+
+    fn check_protocol_conformance(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef) -> bool {
+        let scope_idx = self.method_scope(ty);
         if scope_idx == 0u32 {
             // No scope means no methods - can't conform unless protocol has no methods
             return proto.methods.len() == 0;
@@ -3798,6 +3835,25 @@ impl Mono {
             }
         } else if ty.tag == IrTyTag::Void {
             "()"
+        } else if ty.tag == IrTyTag::Protocol {
+            let name = self.ctx.protocol_defs.get(&ty.proto_id())
+                .map(|p: &ProtocolDef| -> &[u8] { p.name })
+                .unwrap_or("<protocol>");
+            let args = ty.proto_type_args();
+            if args.is_empty() {
+                return name;
+            }
+            let buf = std::string::StringBuf::from_slice(name);
+            defer buf.free();
+            buf.push('<');
+            for i in 0usize..args.len() {
+                if i > 0 {
+                    buf.extend_from_slice(", ");
+                }
+                buf.extend_from_slice(self.ir_type_name(args[i]));
+            }
+            buf.push('>');
+            self.ctx.arena.alloc_slice_copy(buf.as_slice())
         } else {
             "<unknown>"
         }
@@ -4360,187 +4416,9 @@ impl Mono {
             }
             self.mk_cast(ir_inner, ir_ty)
         } else if expr.tag == ExprTag::TypeCheck {
-            // "expr is Protocol" - protocol conformance check
-            // Evaluate at compile time when possible
+            // `expr is Type` / `expr is Protocol`, decided at compile time.
             let ir_val = self.lower_expr(expr.lhs());
-            let val_ty = ir_val.ty;
-
-            // Check for ZeroSized protocol: type is ZST if it has no runtime representation
-            let check_ty = expr.ty(); // The protocol type (TyTag::Named)
-            let is_match = false;
-
-            // Follow non-generic TypeAlias indirections so that
-            // `type AnyOption = SameBaseAs<Option<()>>;` followed by
-            // `value is AnyOption` routes through the SameBaseAs branch
-            // below. Generic aliases (those with their own type-args) need
-            // substitution and are left to resolve_type.
-            let alias_steps: usize = 0;
-            loop {
-                if alias_steps >= 8 { break; }
-                let named: &Ty = if check_ty.tag == TyTag::Named {
-                    check_ty
-                } else {
-                    null as &Ty
-                };
-                if named as &void == null { break; }
-                let alias_opt = self.ctx.type_aliases.get(&named.id()._value);
-                if alias_opt.is_none() { break; }
-                let alias = alias_opt.unwrap();
-                if alias.generic_params.len() > 0 { break; }
-                check_ty = alias.target;
-                alias_steps += 1;
-            }
-
-            // Resolve the protocol name to check specific protocols.
-            // Extract protocol ID from TyTag::Named, TyTag::Generic(TyTag::Named),
-            // or TyTag::Placeholder when the placeholder substitutes to a
-            // Protocol IrTy (carries proto_id).
-            let proto_id_value: usize = 0usize;
-            let has_proto_id = false;
-            if check_ty.tag == TyTag::Named {
-                proto_id_value = check_ty.id()._value;
-                has_proto_id = true;
-            } else if check_ty.tag == TyTag::Generic && check_ty.inner().tag == TyTag::Named {
-                proto_id_value = check_ty.inner().id()._value;
-                has_proto_id = true;
-            } else if check_ty.tag == TyTag::Placeholder {
-                // Generic-call-site substitution: the AST-level type-arg may have
-                // been a protocol. resolve_named_type wraps protocols as
-                // IrTyTag::Protocol carrying the proto_id; recover it here.
-                let resolved = self.type_map.get(&check_ty.id()._value);
-                if resolved.is_some() {
-                    let r = resolved.unwrap();
-                    if r.tag == IrTyTag::Protocol {
-                        proto_id_value = r.proto_id();
-                        has_proto_id = true;
-                    }
-                }
-            }
-            if has_proto_id {
-                let protocol = self.ctx.protocol_defs.get(&proto_id_value);
-                if protocol.is_some() {
-                    let proto = protocol.unwrap();
-                    if self.ctx.is_lang_item(proto_id_value, "proto_zero_sized") {
-                        is_match = val_ty.is_zero_sized();
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer") {
-                        is_match = val_ty.tag == IrTyTag::Pointer;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_primitive") {
-                        is_match = val_ty.tag == IrTyTag::Builtin;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_numeric") {
-                        if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin() != BuiltinType::Bool && val_ty.builtin() != BuiltinType::Void;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_integer") {
-                        if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin() != BuiltinType::Bool && val_ty.builtin() != BuiltinType::Void && val_ty.builtin() != BuiltinType::F32 && val_ty.builtin() != BuiltinType::F64;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_floating_point") {
-                        if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin() == BuiltinType::F32 || val_ty.builtin() == BuiltinType::F64;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_signed") {
-                        if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin() == BuiltinType::I8 || val_ty.builtin() == BuiltinType::I16 || val_ty.builtin() == BuiltinType::I32 || val_ty.builtin() == BuiltinType::I64 || val_ty.builtin() == BuiltinType::I128 || val_ty.builtin() == BuiltinType::ISize;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_unsigned") {
-                        if val_ty.tag == IrTyTag::Builtin {
-                            is_match = val_ty.builtin() == BuiltinType::U8 || val_ty.builtin() == BuiltinType::U16 || val_ty.builtin() == BuiltinType::U32 || val_ty.builtin() == BuiltinType::U64 || val_ty.builtin() == BuiltinType::U128 || val_ty.builtin() == BuiltinType::USize;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_struct") {
-                        is_match = val_ty.tag == IrTyTag::Struct && !val_ty.struct_ref().is_union;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_union") {
-                        is_match = val_ty.tag == IrTyTag::Struct && val_ty.struct_ref().is_union;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_enum") {
-                        is_match = val_ty.tag == IrTyTag::Enum;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_array") {
-                        is_match = val_ty.tag == IrTyTag::Array;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_tuple") {
-                        // `()` collapses to void_ty in make_tuple_ty; treat
-                        // Void as the zero-tuple for protocol-conformance too.
-                        is_match = val_ty.tag == IrTyTag::Tuple || val_ty.tag == IrTyTag::Void;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_closure") {
-                        is_match = val_ty.tag == IrTyTag::Closure;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_function_pointer") {
-                        is_match = val_ty.tag == IrTyTag::FnPointer;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_named_function") {
-                        is_match = val_ty.tag == IrTyTag::Fn;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_callable") {
-                        is_match = val_ty.tag == IrTyTag::Fn || val_ty.tag == IrTyTag::FnPointer || val_ty.tag == IrTyTag::Closure;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_range") {
-                        is_match = self.is_range_ty(val_ty);
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_any") {
-                        is_match = true;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_none") {
-                        is_match = false;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_array_of") {
-                        // ArrayOf<T>: val_ty is an array whose element type is T.
-                        if val_ty.tag == IrTyTag::Array && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                            is_match = val_ty.inner() as &void == arg_ty as &void;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer_of") {
-                        // PointerOf<T>: val_ty is a pointer (any mutability) whose pointee is T.
-                        if val_ty.tag == IrTyTag::Pointer && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                            is_match = val_ty.inner() as &void == arg_ty as &void;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_same_layout_as") {
-                        // SameLayoutAs<T>: val_ty has the same size and alignment as T.
-                        if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                            let val_size = layout::compute_type_size(val_ty, self.ctx.pointer_size);
-                            let arg_size = layout::compute_type_size(arg_ty, self.ctx.pointer_size);
-                            let val_align = layout::compute_type_align(val_ty, self.ctx.pointer_size);
-                            let arg_align = layout::compute_type_align(arg_ty, self.ctx.pointer_size);
-                            is_match = val_size == arg_size && val_align == arg_align;
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_same_base_as") {
-                        // SameBaseAs<T>: val_ty and T are both struct/enum monomorphizations
-                        // of the same base generic def. Compare def-ids.
-                        if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                            if val_ty.tag == IrTyTag::Struct && arg_ty.tag == IrTyTag::Struct {
-                                is_match = val_ty.struct_ref().id._value == arg_ty.struct_ref().id._value;
-                            } else if val_ty.tag == IrTyTag::Enum && arg_ty.tag == IrTyTag::Enum {
-                                is_match = val_ty.enum_ref().id._value == arg_ty.enum_ref().id._value;
-                            }
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_meta") {
-                        // Meta: val_ty is itself a protocol (declared as such in source).
-                        // Aluminac wraps protocols as IrTyTag::Protocol so the check is direct.
-                        is_match = val_ty.tag == IrTyTag::Protocol;
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_range_of") {
-                        // RangeOf<T>: val_ty is a Range<T> / RangeInclusive<T> / etc.
-                        // RangeFull has no type parameter and never matches.
-                        if self.is_range_ty(val_ty) && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
-                            let arg_ty = self.resolve_type(check_ty.elems()[0]);
-                            let ta = val_ty.struct_ref().type_args;
-                            if ta.len() >= 1 {
-                                is_match = ta[0] as &void == arg_ty as &void;
-                            }
-                        }
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_const") {
-                        // Const: val_ty is an ItemRef whose underlying item is a const.
-                        is_match = val_ty.tag == IrTyTag::ItemRef && val_ty.item_ref_is_const();
-                    } else if self.ctx.is_lang_item(proto_id_value, "proto_static") {
-                        // Static: val_ty is an ItemRef whose underlying item is a static.
-                        is_match = val_ty.tag == IrTyTag::ItemRef && !val_ty.item_ref_is_const();
-                    } else {
-                        // User-defined protocol: check if type has all required methods
-                        is_match = self.check_protocol_conformance(val_ty, proto);
-                    }
-                } else {
-                    // Not a protocol - concrete type comparison
-                    let check_ir_ty = self.resolve_type(check_ty);
-                    is_match = val_ty as &void == check_ir_ty as &void;
-                }
-            } else {
-                // Non-named type: resolve and compare
-                let check_ir_ty = self.resolve_type(check_ty);
-                is_match = val_ty as &void == check_ir_ty as &void;
-            }
-
-            self.mk_bool_lit(is_match)
+            self.mk_bool_lit(self.type_matches(ir_val.ty, expr.ty()))
         } else {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(r)
@@ -5460,6 +5338,278 @@ impl Mono {
                     }
                 }
             }
+        }
+    }
+
+    /// Whether `val_ty` matches `check_ty` as in `x is check_ty` (and as a
+    /// generic bound): conforms to the protocol, or is the same type.
+    fn type_matches(self: &mut Mono, val_ty: &IrTy, check_ty: &Ty) -> bool {
+        let is_match = false;
+
+        // Follow non-generic TypeAlias indirections so that
+        // `type AnyOption = SameBaseAs<Option<()>>;` followed by
+        // `value is AnyOption` routes through the SameBaseAs branch
+        // below. Generic aliases (those with their own type-args) need
+        // substitution and are left to resolve_type.
+        let alias_steps: usize = 0;
+        loop {
+            if alias_steps >= 8 { break; }
+            let named: &Ty = if check_ty.tag == TyTag::Named {
+                check_ty
+            } else {
+                null as &Ty
+            };
+            if named as &void == null { break; }
+            let alias_opt = self.ctx.type_aliases.get(&named.id()._value);
+            if alias_opt.is_none() { break; }
+            let alias = alias_opt.unwrap();
+            if alias.generic_params.len() > 0 { break; }
+            check_ty = alias.target;
+            alias_steps += 1;
+        }
+
+        // Resolve the protocol name to check specific protocols.
+        // Extract protocol ID from TyTag::Named, TyTag::Generic(TyTag::Named),
+        // or TyTag::Placeholder when the placeholder substitutes to a
+        // Protocol IrTy (carries proto_id).
+        let proto_id_value: usize = 0usize;
+        let has_proto_id = false;
+        if check_ty.tag == TyTag::Named {
+            proto_id_value = check_ty.id()._value;
+            has_proto_id = true;
+        } else if check_ty.tag == TyTag::Generic && check_ty.inner().tag == TyTag::Named {
+            proto_id_value = check_ty.inner().id()._value;
+            has_proto_id = true;
+        } else if check_ty.tag == TyTag::Placeholder {
+            // Generic-call-site substitution: the AST-level type-arg may have
+            // been a protocol. resolve_named_type wraps protocols as
+            // IrTyTag::Protocol carrying the proto_id; recover it here.
+            let resolved = self.type_map.get(&check_ty.id()._value);
+            if resolved.is_some() {
+                let r = resolved.unwrap();
+                if r.tag == IrTyTag::Protocol {
+                    proto_id_value = r.proto_id();
+                    has_proto_id = true;
+                }
+            }
+        }
+        if has_proto_id {
+            let protocol = self.ctx.protocol_defs.get(&proto_id_value);
+            if protocol.is_some() {
+                let proto = protocol.unwrap();
+                if self.ctx.is_lang_item(proto_id_value, "proto_zero_sized") {
+                    is_match = val_ty.is_zero_sized();
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer") {
+                    is_match = val_ty.tag == IrTyTag::Pointer;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_primitive") {
+                    is_match = val_ty.tag == IrTyTag::Builtin;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_numeric") {
+                    if val_ty.tag == IrTyTag::Builtin {
+                        is_match = val_ty.builtin() != BuiltinType::Bool && val_ty.builtin() != BuiltinType::Void;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_integer") {
+                    if val_ty.tag == IrTyTag::Builtin {
+                        is_match = val_ty.builtin() != BuiltinType::Bool && val_ty.builtin() != BuiltinType::Void && val_ty.builtin() != BuiltinType::F32 && val_ty.builtin() != BuiltinType::F64;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_floating_point") {
+                    if val_ty.tag == IrTyTag::Builtin {
+                        is_match = val_ty.builtin() == BuiltinType::F32 || val_ty.builtin() == BuiltinType::F64;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_signed") {
+                    if val_ty.tag == IrTyTag::Builtin {
+                        is_match = val_ty.builtin() == BuiltinType::I8 || val_ty.builtin() == BuiltinType::I16 || val_ty.builtin() == BuiltinType::I32 || val_ty.builtin() == BuiltinType::I64 || val_ty.builtin() == BuiltinType::I128 || val_ty.builtin() == BuiltinType::ISize;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_unsigned") {
+                    if val_ty.tag == IrTyTag::Builtin {
+                        is_match = val_ty.builtin() == BuiltinType::U8 || val_ty.builtin() == BuiltinType::U16 || val_ty.builtin() == BuiltinType::U32 || val_ty.builtin() == BuiltinType::U64 || val_ty.builtin() == BuiltinType::U128 || val_ty.builtin() == BuiltinType::USize;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_struct") {
+                    is_match = val_ty.tag == IrTyTag::Struct && !val_ty.struct_ref().is_union;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_union") {
+                    is_match = val_ty.tag == IrTyTag::Struct && val_ty.struct_ref().is_union;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_enum") {
+                    is_match = val_ty.tag == IrTyTag::Enum;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_array") {
+                    is_match = val_ty.tag == IrTyTag::Array;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_tuple") {
+                    // `()` collapses to void_ty in make_tuple_ty; treat
+                    // Void as the zero-tuple for protocol-conformance too.
+                    is_match = val_ty.tag == IrTyTag::Tuple || val_ty.tag == IrTyTag::Void;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_closure") {
+                    is_match = val_ty.tag == IrTyTag::Closure;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_function_pointer") {
+                    is_match = val_ty.tag == IrTyTag::FnPointer;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_named_function") {
+                    is_match = val_ty.tag == IrTyTag::Fn;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_callable") {
+                    is_match = val_ty.tag == IrTyTag::Fn || val_ty.tag == IrTyTag::FnPointer || val_ty.tag == IrTyTag::Closure;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_range") {
+                    is_match = self.is_range_ty(val_ty);
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_any") {
+                    is_match = true;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_none") {
+                    is_match = false;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_array_of") {
+                    // ArrayOf<T>: val_ty is an array whose element type is T.
+                    if val_ty.tag == IrTyTag::Array && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                        is_match = val_ty.inner() as &void == arg_ty as &void;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_pointer_of") {
+                    // PointerOf<T>: val_ty is a pointer (any mutability) whose pointee is T.
+                    if val_ty.tag == IrTyTag::Pointer && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                        is_match = val_ty.inner() as &void == arg_ty as &void;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_same_layout_as") {
+                    // SameLayoutAs<T>: val_ty has the same size and alignment as T.
+                    if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                        let val_size = layout::compute_type_size(val_ty, self.ctx.pointer_size);
+                        let arg_size = layout::compute_type_size(arg_ty, self.ctx.pointer_size);
+                        let val_align = layout::compute_type_align(val_ty, self.ctx.pointer_size);
+                        let arg_align = layout::compute_type_align(arg_ty, self.ctx.pointer_size);
+                        is_match = val_size == arg_size && val_align == arg_align;
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_same_base_as") {
+                    // SameBaseAs<T>: val_ty and T are both struct/enum monomorphizations
+                    // of the same base generic def. Compare def-ids.
+                    if check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                        if val_ty.tag == IrTyTag::Struct && arg_ty.tag == IrTyTag::Struct {
+                            is_match = val_ty.struct_ref().id._value == arg_ty.struct_ref().id._value;
+                        } else if val_ty.tag == IrTyTag::Enum && arg_ty.tag == IrTyTag::Enum {
+                            is_match = val_ty.enum_ref().id._value == arg_ty.enum_ref().id._value;
+                        }
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_meta") {
+                    // Meta: val_ty is itself a protocol (declared as such in source).
+                    // Aluminac wraps protocols as IrTyTag::Protocol so the check is direct.
+                    is_match = val_ty.tag == IrTyTag::Protocol;
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_range_of") {
+                    // RangeOf<T>: val_ty is a Range<T> / RangeInclusive<T> / etc.
+                    // RangeFull has no type parameter and never matches.
+                    if self.is_range_ty(val_ty) && check_ty.tag == TyTag::Generic && check_ty.elems().len() >= 1 {
+                        let arg_ty = self.resolve_type(check_ty.elems()[0]);
+                        let ta = val_ty.struct_ref().type_args;
+                        if ta.len() >= 1 {
+                            is_match = ta[0] as &void == arg_ty as &void;
+                        }
+                    }
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_const") {
+                    // Const: val_ty is an ItemRef whose underlying item is a const.
+                    is_match = val_ty.tag == IrTyTag::ItemRef && val_ty.item_ref_is_const();
+                } else if self.ctx.is_lang_item(proto_id_value, "proto_static") {
+                    // Static: val_ty is an ItemRef whose underlying item is a static.
+                    is_match = val_ty.tag == IrTyTag::ItemRef && !val_ty.item_ref_is_const();
+                } else {
+                    // User-defined protocol: check if type has all required methods
+                    is_match = self.check_protocol_conformance(val_ty, proto);
+                }
+            } else {
+                // Not a protocol - concrete type comparison
+                let check_ir_ty = self.resolve_type(check_ty);
+                is_match = val_ty as &void == check_ir_ty as &void;
+            }
+        } else {
+            // Non-named type: resolve and compare
+            let check_ir_ty = self.resolve_type(check_ty);
+            is_match = val_ty as &void == check_ir_ty as &void;
+        }
+
+        is_match
+    }
+
+    /// Check a new instantiation's type arguments against its generic
+    /// parameters' bounds (as alumina-boot does at every instantiation).
+    /// Returns whether all bounds are satisfied.
+    fn check_generic_bounds(self: &mut Mono, params: &[GenericParam], args: &[&IrTy], span: Span) -> bool {
+        let ok = true;
+        for i in 0usize..std::cmp::min(params.len(), args.len()) {
+            let param = &params[i];
+            let arg = args[i];
+            // An argument that could not be inferred is reported elsewhere.
+            if arg.is_void() && !param.bounds.is_empty() {
+                continue;
+            }
+            let positive_ok = if param.any_bounds && param.bounds.len() > 0 {
+                param.bounds.iter().any(|&self, =arg, b: &Ty| -> bool { self.satisfies_bound(arg, b) })
+            } else {
+                let unsatisfied = param.bounds.iter().find(|&self, =arg, b: &Ty| -> bool { !self.satisfies_bound(arg, b) });
+                if unsatisfied.is_some() {
+                    self.report_unsatisfied_bound(arg, unsatisfied.unwrap(), false, span);
+                    ok = false;
+                    continue;
+                }
+                true
+            };
+            if !positive_ok {
+                self.report_unsatisfied_bound(arg, param.bounds[0], false, span);
+                ok = false;
+                continue;
+            }
+            let violated = param.negative_bounds.iter().find(|&self, =arg, b: &Ty| -> bool { self.satisfies_bound(arg, b) });
+            if violated.is_some() {
+                self.report_unsatisfied_bound(arg, violated.unwrap(), true, span);
+                ok = false;
+            }
+        }
+        ok
+    }
+
+    fn satisfies_bound(self: &mut Mono, ty: &IrTy, bound: &Ty) -> bool {
+        // `Fn(A) -> R` (directly or through an alias) is sugar for the
+        // Callable protocol.
+        if bound.tag == TyTag::FnPointer || self.resolve_type(bound).tag == IrTyTag::FnPointer {
+            return ty.tag == IrTyTag::Fn || ty.tag == IrTyTag::FnPointer || ty.tag == IrTyTag::Closure;
+        }
+        self.type_matches(ty, bound)
+    }
+
+    fn report_unsatisfied_bound(self: &mut Mono, ty: &IrTy, bound: &Ty, negated: bool, span: Span) {
+        let ty_name = self.ir_type_name(ty);
+        let bound_ir = self.resolve_type(bound);
+        let bound_name = self.ir_type_name(bound_ir);
+        // For a user protocol, name the method that is missing (as alumina-boot).
+        let missing = if !negated && bound_ir.tag == IrTyTag::Protocol {
+            self.ctx.protocol_defs.get(&bound_ir.proto_id())
+                .and_then(|&self, =ty, p: &ProtocolDef| -> Option<&[u8]> { self.missing_protocol_method(ty, p) })
+        } else {
+            Option::none()
+        };
+        let message = if negated {
+            std::fmt::format!("type `{}` matches `{}`, which it must not", ty_name, bound_name)
+        } else if missing.is_some() {
+            std::fmt::format!("type `{}` does not match `{}` (missing method `{}`)", ty_name, bound_name, missing.unwrap())
+        } else {
+            std::fmt::format!("type `{}` does not match `{}`", ty_name, bound_name)
+        };
+        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, message.unwrap().as_slice()));
+    }
+
+    /// The first method of `proto` that `ty` does not have, if any.
+    fn missing_protocol_method(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef) -> Option<&[u8]> {
+        let scope_idx = self.method_scope(ty);
+        for method in proto.methods.iter_ref() {
+            if scope_idx == 0 || self.ctx.scopes.get(scope_idx).items.get(&method.name).is_none() {
+                return Option::some(method.name);
+            }
+        }
+        Option::none()
+    }
+
+    /// Report explicit generic arguments whose number does not fit the item's
+    /// generic parameters (trailing defaulted ones may be omitted).
+    fn check_generic_arity(self: &mut Mono, params: &[GenericParam], given: usize, span: Span) {
+        let required = params.len();
+        while required > 0 && params[required - 1].default_ty.is_some() {
+            required -= 1;
+        }
+        if given < required || given > params.len() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                span,
+                std::fmt::format!("{} generic parameters expected, {} found", params.len(), given).unwrap().as_slice(),
+            ));
         }
     }
 
@@ -6933,6 +7083,10 @@ impl Mono {
                         result._data.block.items = items;
                         return self.ctx.arena.alloc(result);
                     }
+
+                    // Explicit generic arguments are all or nothing (as in
+                    // alumina-boot); only defaulted trailing ones may be left out.
+                    self.check_generic_arity(def.generic_params, resolved_type_args.len(), expr.span);
 
                     // If fewer explicit type args than generic params, infer the rest
                     let call_ta = resolved_type_args;

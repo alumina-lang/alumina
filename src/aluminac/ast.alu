@@ -699,8 +699,20 @@ struct FnParam {
 struct GenericParam {
     id: Id,
     name: &[u8],
+    /// Protocol bounds the argument must satisfy (`T: A + B`), or of which
+    /// it must satisfy at least one when `any_bounds` (`T: A | B`).
     bounds: &[&Ty],
+    /// Negated bounds (`T: !ZeroSized`), which the argument must not satisfy.
+    negative_bounds: &[&Ty],
+    any_bounds: bool,
     default_ty: Option<&Ty>,
+}
+
+impl GenericParam {
+    /// A parameter without bounds or default.
+    fn plain(id: Id, name: &[u8]) -> GenericParam {
+        GenericParam { id: id, name: name, bounds: &[], negative_bounds: &[], any_bounds: false, default_ty: Option::none() }
+    }
 }
 
 // Attribute tags

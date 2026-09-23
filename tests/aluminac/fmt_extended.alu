@@ -78,12 +78,12 @@ fn test_bool_format() -> i32 {
     // inlines the write_str call. Use the protocol method directly.
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
-    true.fmt::<SliceFormatter>(&f).unwrap();
+    true.fmt(&f).unwrap();
     if f.get() != "true" { return 40i32; }
 
     let buf2: [u8; 64];
     let f2 = SliceFormatter::new(&buf2);
-    false.fmt::<SliceFormatter>(&f2).unwrap();
+    false.fmt(&f2).unwrap();
     if f2.get() != "false" { return 41i32; }
 
     0i32
@@ -93,19 +93,19 @@ fn test_hex() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
     let h = hex(255u64);
-    h.fmt::<SliceFormatter>(&f).unwrap();
+    h.fmt(&f).unwrap();
     if f.get() != "ff" { return 50i32; }
 
     let buf2: [u8; 64];
     let f2 = SliceFormatter::new(&buf2);
     let h2 = hex(0u64);
-    h2.fmt::<SliceFormatter>(&f2).unwrap();
+    h2.fmt(&f2).unwrap();
     if f2.get() != "0" { return 51i32; }
 
     let buf3: [u8; 64];
     let f3 = SliceFormatter::new(&buf3);
     let h3 = hex(16u64);
-    h3.fmt::<SliceFormatter>(&f3).unwrap();
+    h3.fmt(&f3).unwrap();
     if f3.get() != "10" { return 52i32; }
 
     0i32
@@ -115,7 +115,7 @@ fn test_oct() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
     let o = oct(8u64);
-    o.fmt::<SliceFormatter>(&f).unwrap();
+    o.fmt(&f).unwrap();
     if f.get() != "10" { return 60i32; }
 
     0i32
@@ -125,7 +125,7 @@ fn test_bin() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
     let b = bin(10u64);
-    b.fmt::<SliceFormatter>(&f).unwrap();
+    b.fmt(&f).unwrap();
     if f.get() != "1010" { return 70i32; }
 
     0i32
@@ -135,7 +135,7 @@ fn test_repeat() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
     let r = repeat("ab", 3usize);
-    r.fmt::<SliceFormatter>(&f).unwrap();
+    r.fmt(&f).unwrap();
     if f.get() != "ababab" { return 80i32; }
 
     0i32
@@ -145,19 +145,19 @@ fn test_zero_pad() -> i32 {
     let buf: [u8; 64];
     let f = SliceFormatter::new(&buf);
     let zp = zero_pad(42i64, 5usize);
-    zp.fmt::<SliceFormatter>(&f).unwrap();
+    zp.fmt(&f).unwrap();
     if f.get() != "00042" { return 90i32; }
 
     let buf2: [u8; 64];
     let f2 = SliceFormatter::new(&buf2);
     let zp2 = zero_pad(-7i64, 4usize);
-    zp2.fmt::<SliceFormatter>(&f2).unwrap();
+    zp2.fmt(&f2).unwrap();
     if f2.get() != "-0007" { return 91i32; }
 
     let buf3: [u8; 64];
     let f3 = SliceFormatter::new(&buf3);
     let zp3 = zero_pad(12345i64, 3usize);
-    zp3.fmt::<SliceFormatter>(&f3).unwrap();
+    zp3.fmt(&f3).unwrap();
     if f3.get() != "12345" { return 92i32; }
 
     0i32
