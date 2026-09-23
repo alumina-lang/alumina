@@ -1116,3 +1116,27 @@ impl Item {
     fn protocol_def(self: &Item) -> &ProtocolDef { &self._data.protocol_def }
     fn static_def(self: &Item) -> &StaticDef { &self._data.static_def }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_builtin_lang_names() {
+        for (bt, name) in BUILTIN_LANG_ITEMS.as_slice().iter() {
+            assert_eq!(bt.lang_name(), name);
+            assert!(BuiltinType::from_lang_name(name).unwrap() == bt);
+        }
+        assert!(BuiltinType::from_lang_name("no_such_type").is_none());
+    }
+
+    #[test]
+    fn test_ty_mentions() {
+        let t = Ty::placeholder(Id { _value: 7 });
+        let u8_ = Ty::builtin_ty(BuiltinType::U8);
+        let ptr = Ty::pointer_ty(&t, true);
+        let tuple = Ty::tuple_ty(&[&u8_, &ptr]);
+        assert!(tuple.mentions(Id { _value: 7 }));
+        assert!(!tuple.mentions(Id { _value: 8 }));
+        assert!(!tuple.is_concrete());
+        assert!(Ty::tuple_ty(&[&u8_, &u8_]).is_concrete());
+    }
+}

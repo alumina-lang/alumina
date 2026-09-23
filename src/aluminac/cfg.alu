@@ -73,3 +73,23 @@ impl CfgSet {
         self._entries.free();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_specs() {
+        let cfg = CfgSet::new();
+        defer cfg.free();
+        cfg.add_spec("target_os=macos");
+        cfg.add_spec("debug");
+        assert!(cfg.matches("target_os", Option::some("macos")));
+        assert!(!cfg.matches("target_os", Option::some("linux")));
+        assert!(cfg.matches("target_os", Option::none()));
+        assert!(cfg.matches("debug", Option::none()));
+        assert!(!cfg.matches("debug", Option::some("1")));
+        assert!(!cfg.has("threading"));
+        // (A default does not override a value.)
+        cfg.add_default("target_os", "linux");
+        assert!(cfg.matches("target_os", Option::some("macos")));
+    }
+}

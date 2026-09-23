@@ -623,10 +623,13 @@ evaluates the place first (alumina-boot's lang tests expect it; its
 
 ## Test infrastructure backlog
 
-- `make test-lang-aluminac` — run `tests/lang/lang.alu` under
-  aluminac (`--cfg test --cfg test_std` already supported).
-- `make test-libraries-aluminac` — compile `libraries/` with
-  aluminac `--test` (may need closure/dyn coverage).
+- **Unit tests** of the compiler itself: `#[cfg(test)] mod tests` beside
+  the code (const_eval's integer arithmetic, layout, literal parsing and
+  unescaping, cfg specs, lint levels and notes, AST helpers, targets),
+  built with aluminac by `make test-aluminac-unit`. `porting-gates` (the
+  release gate) runs them, the diag parity check (`test-diag-aluminac`) and
+  the lang/library suites under aluminac, besides the rest.
+
 - `make test-docs` under aluminac — gated on full sysroot/doc parity.
 - `make test-diag` stays alumina-boot-only by design.
 

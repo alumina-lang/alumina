@@ -205,6 +205,7 @@ SYSROOT_ALUMINAC = sysroot/
 STDLIB_ALUMINAC_TESTS = $(BUILD_DIR)/stdlib-aluminac-tests
 LIBRARIES_ALUMINAC_TESTS = $(BUILD_DIR)/libraries-aluminac-tests
 LANG_ALUMINAC_TESTS = $(BUILD_DIR)/lang-aluminac-tests
+ALUMINAC_UNIT_TESTS = $(BUILD_DIR)/aluminac-unit-tests
 
 SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
 ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
@@ -257,6 +258,13 @@ $(LANG_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES) $(LANG_T
 	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) $(ALUMINAC_TEST_FLAGS) --test --sysroot $(SYSROOT_ALUMINAC) \
 		--link-args "$(ALUMINAC_LDFLAGS) $(ALUMINAC_TEST_LDFLAGS)" \
 		-o $@ $(call alumina_modules,$(LANG_TEST_FILES),tests/,)
+
+# aluminac's own unit tests (#[cfg(test)] modules in src/aluminac), compiled
+# with aluminac.
+$(ALUMINAC_UNIT_TESTS): $(BUILD_DIR)/aluminac $(BOOTSTRAP_DEPS)
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o $(ALUMINAC_LDFLAGS)" \
+		-o $@ $(ALUMINAC_INPUTS)
 
 # The bootstrap fixpoint: stage 2 and stage 3 must emit byte-identical LLVM IR
 # for the compiler itself. (Comparing the linked binaries is not meaningful on
@@ -362,19 +370,19 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac test-libraries-aluminac test-lang-aluminac porting-gates idiom-gate
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac test-libraries-aluminac test-lang-aluminac test-aluminac-unit test-diag-aluminac porting-gates idiom-gate
 
 # Per-commit quality gates for the aluminac → alumina-boot parity work.
 # Runs the suites listed under "Quality gates" in PORTING.md. test-diag is
 # alumina-boot only; the others are run under both compilers where
 # applicable. Fail-fast: the recipe stops on the first failing gate.
-porting-gates: test-aluminac test-std-aluminac bootstrap test-std test-libraries test-lang test-diag
+porting-gates: bootstrap test-aluminac-unit test-aluminac test-std-aluminac test-libraries-aluminac test-lang-aluminac test-diag-aluminac test-std test-libraries test-lang test-diag
 	@echo "All porting quality gates passed."
 
 # Fast inner-loop gate for the aluminac idiomatic-cleanup batches: re-bootstrap
 # (asserts stage 2 == stage 3 byte-identity) and run the self-hosted test
 # suites. Lighter than porting-gates; use it after each cleanup batch.
-idiom-gate: bootstrap test-aluminac test-std-aluminac test-libraries-aluminac
+idiom-gate: bootstrap test-aluminac-unit test-aluminac test-std-aluminac test-libraries-aluminac
 	@echo "idiom-gate passed: s2==s3 byte-identical and aluminac/std tests green."
 
 test-std: alumina-boot $(STDLIB_TESTS)
@@ -388,6 +396,13 @@ test-libraries-aluminac: $(LIBRARIES_ALUMINAC_TESTS)
 
 test-lang-aluminac: $(LANG_ALUMINAC_TESTS)
 	$(LANG_ALUMINAC_TESTS) $(TEST_FLAGS)
+
+test-aluminac-unit: $(ALUMINAC_UNIT_TESTS)
+	$(ALUMINAC_UNIT_TESTS) $(TEST_FLAGS)
+
+# aluminac reports the errors and warnings alumina-boot does for tests/diag.
+test-diag-aluminac: $(BUILD_DIR)/aluminac
+	python3 tests/aluminac/diag_check.py $(BUILD_DIR)/aluminac
 
 test-lang: alumina-boot $(LANG_TESTS)
 	$(LANG_TESTS) $(TEST_FLAGS)

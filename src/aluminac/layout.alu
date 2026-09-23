@@ -133,3 +133,56 @@ fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
 fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
     layout_of(ty, pointer_size).align
 }
+
+#[cfg(test)]
+mod tests {
+    use ir::IrTy;
+    use ast::BuiltinType;
+
+    fn builtin(bt: BuiltinType) -> Layout {
+        layout_of(&IrTy::mk_builtin(bt), 8)
+    }
+
+    /// The offsets of fields added to `aggregate`, and its layout.
+    fn place(aggregate: AggregateLayout, fields: &[Layout], offsets: &[usize]) -> Layout {
+        for (i, field) in fields.iter().enumerate() {
+            assert_eq!(aggregate.add(field), offsets[i]);
+        }
+        aggregate.finish()
+    }
+
+    fn same(a: Layout, size: usize, align: usize) -> bool {
+        a.size == size && a.align == align
+    }
+
+    #[test]
+    fn test_struct_layout() {
+        let (u8_, i32_) = (builtin(BuiltinType::U8), builtin(BuiltinType::I32));
+        assert!(same(place(AggregateLayout::new(false, false, 1), &[u8_, i32_], &[0, 4]), 8, 4));
+        // #[packed], #[packed(2)], #[packed(16)]
+        assert!(same(place(AggregateLayout::new(false, true, 1), &[i32_, u8_, u8_], &[0, 4, 5]), 6, 1));
+        assert!(same(place(AggregateLayout::new(false, true, 2), &[u8_, i32_], &[0, 2]), 6, 2));
+        assert!(same(place(AggregateLayout::new(false, true, 16), &[u8_, i32_], &[0, 4]), 8, 4));
+        // #[align(8)]
+        assert!(same(place(AggregateLayout::new(false, false, 8), &[u8_], &[0]), 8, 8));
+    }
+
+    #[test]
+    fn test_union_layout() {
+        let fields = [builtin(BuiltinType::I32), builtin(BuiltinType::F64), builtin(BuiltinType::U8)];
+        assert!(same(place(AggregateLayout::new(true, false, 1), &fields, &[0, 0, 0]), 8, 8));
+    }
+
+    #[test]
+    fn test_type_layout() {
+        let u8_ = IrTy::mk_builtin(BuiltinType::U8);
+        let i64_ = IrTy::mk_builtin(BuiltinType::I64);
+        let i16_ = IrTy::mk_builtin(BuiltinType::I16);
+        assert!(same(layout_of(&IrTy::mk_tuple(&[&u8_, &i64_]), 8), 16, 8));
+        assert!(same(layout_of(&IrTy::mk_array(&i16_, 3), 8), 6, 2));
+        assert!(same(layout_of(&IrTy::mk_pointer(&u8_, true), 8), 8, 8));
+        assert!(same(layout_of(&IrTy::mk_slice(&u8_, true), 8), 16, 8));
+        assert!(same(layout_of(&IrTy::mk_void(), 8), 0, 1));
+        assert!(same(builtin(BuiltinType::U128), 16, 16));
+    }
+}

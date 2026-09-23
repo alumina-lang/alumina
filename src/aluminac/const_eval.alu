@@ -447,7 +447,7 @@ impl ConstEvaluator {
         switch expr.tag {
         IrTag::IntLit => {
             let bt = self.irty_to_builtin(expr.ty);
-            Result::ok(ConstValue::make_bits(self.mask_to_width(expr.int_val_u128(), bt.bit_width()), bt))
+            Result::ok(ConstValue::make_bits(mask_to_width(expr.int_val_u128(), bt.bit_width()), bt))
         }
         IrTag::FloatLit => {
             let bt = self.irty_to_builtin(expr.ty);
@@ -630,7 +630,7 @@ impl ConstEvaluator {
 
         // Integer binary ops
         if lhs.tag == CValTag::Int && rhs.tag == CValTag::Int {
-            return self.int_bin_op(lhs, rhs, expr.bin_op());
+            return int_bin_op(lhs, rhs, expr.bin_op());
         }
         // Float binary ops
         if lhs.tag == CValTag::Float && rhs.tag == CValTag::Float {
@@ -662,7 +662,7 @@ impl ConstEvaluator {
                 let (i, j) = positions.unwrap();
                 return switch expr.bin_op() {
                     BinOp::Sub => Result::ok(ConstValue::make_int(i - j, BuiltinType::ISize)),
-                    _ => self.int_bin_op(ConstValue::make_int(i, BuiltinType::USize), ConstValue::make_int(j, BuiltinType::USize), expr.bin_op()),
+                    _ => int_bin_op(ConstValue::make_int(i, BuiltinType::USize), ConstValue::make_int(j, BuiltinType::USize), expr.bin_op()),
                 };
             }
             // (Pointers into different places differ, but are not ordered.)
@@ -683,111 +683,6 @@ impl ConstEvaluator {
         }
 
         Result::err(EvalError::Unsupported)
-    }
-
-    fn int_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
-        let bt = lhs.builtin_type();
-        let is_signed = bt.is_signed();
-        let width = bt.bit_width();
-        // The operands as of the type's width, and as signed values.
-        let (a, b) = (self.mask_to_width(lhs.bits(), width), self.mask_to_width(rhs.bits(), width));
-        let (sa, sb) = (self.sign_extend(a, width), self.sign_extend(b, width));
-
-        switch op {
-        BinOp::Eq => return Result::ok(ConstValue::make_bool(a == b)),
-        BinOp::Ne => return Result::ok(ConstValue::make_bool(a != b)),
-        BinOp::Lt => return Result::ok(ConstValue::make_bool(if is_signed { sa < sb } else { a < b })),
-        BinOp::Le => return Result::ok(ConstValue::make_bool(if is_signed { sa <= sb } else { a <= b })),
-        BinOp::Gt => return Result::ok(ConstValue::make_bool(if is_signed { sa > sb } else { a > b })),
-        BinOp::Ge => return Result::ok(ConstValue::make_bool(if is_signed { sa >= sb } else { a >= b })),
-        BinOp::And => return Result::ok(ConstValue::make_bool(a != 0 && b != 0)),
-        BinOp::Or => return Result::ok(ConstValue::make_bool(a != 0 || b != 0)),
-        _ => {}
-        }
-
-        // Arithmetic on the bits, masked to the width. Signed overflow is an
-        // error (it is undefined at run time), as in alumina-boot.
-        let result: u128 = switch op {
-        BinOp::Add, BinOp::Sub, BinOp::Mul => {
-            if is_signed && self.signed_overflows(sa, sb, op, width) {
-                return Result::err(EvalError::Overflow);
-            }
-            switch op {
-                BinOp::Add => a + b,
-                BinOp::Sub => a - b,
-                _ => a * b,
-            }
-        }
-        BinOp::Div, BinOp::Rem => {
-            if b == 0 {
-                return Result::err(EvalError::DivZero);
-            }
-            // (The minimum divided by -1 overflows.)
-            if is_signed && sb == -1i128 && a == 1u128 << (width - 1) {
-                return Result::err(EvalError::Overflow);
-            }
-            if op == BinOp::Div {
-                if is_signed { (sa / sb) as u128 } else { a / b }
-            } else {
-                if is_signed { (sa % sb) as u128 } else { a % b }
-            }
-        }
-        BinOp::BitAnd => a & b,
-        BinOp::BitOr => a | b,
-        BinOp::BitXor => a ^ b,
-        BinOp::Shl, BinOp::Shr => {
-            if b >= width as u128 {
-                return Result::err(EvalError::Overflow);
-            }
-            let shift = b as u32;
-            if op == BinOp::Shl {
-                a << shift
-            } else if is_signed {
-                (sa >> shift) as u128
-            } else {
-                a >> shift
-            }
-        }
-        _ => return Result::err(EvalError::Unsupported),
-        };
-        Result::ok(ConstValue::make_bits(self.mask_to_width(result, width), bt))
-    }
-
-    /// Whether `a op b` (addition, subtraction or multiplication) of signed
-    /// values of the given width overflows.
-    fn signed_overflows(self: &ConstEvaluator, a: i128, b: i128, op: BinOp, width: u32) -> bool {
-        if width < 128 {
-            // (Exact in 128 bits.)
-            let r = switch op {
-                BinOp::Add => a + b,
-                BinOp::Sub => a - b,
-                _ => a * b,
-            };
-            let max = ((1u128 << (width - 1)) - 1) as i128;
-            return r > max || r < -max - 1;
-        }
-        // (Wrapping, on the bits.)
-        let r = (switch op {
-            BinOp::Add => (a as u128) + (b as u128),
-            BinOp::Sub => (a as u128) - (b as u128),
-            _ => (a as u128) * (b as u128),
-        }) as i128;
-        switch op {
-            BinOp::Add => ((a ^ r) & (b ^ r)) < 0,
-            BinOp::Sub => ((a ^ b) & (a ^ r)) < 0,
-            _ => a != 0 && (if a == -1i128 { b == self.sign_extend(1u128 << 127, 128) } else { r / a != b }),
-        }
-    }
-
-    /// The low `width` bits of `val`.
-    fn mask_to_width(self: &ConstEvaluator, val: u128, width: u32) -> u128 {
-        if width >= 128 {
-            return val;
-        }
-        if width == 0 {
-            return 0;
-        }
-        val & ((1u128 << width) - 1)
     }
 
     fn float_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
@@ -847,7 +742,7 @@ impl ConstEvaluator {
             let (a, b) = (lhs.bytes_offset() as u64, rhs.bytes_offset() as u64);
             return switch op {
                 BinOp::Sub => Result::ok(ConstValue::make_int(a - b, BuiltinType::ISize)),
-                _ => self.int_bin_op(ConstValue::make_int(a, BuiltinType::USize), ConstValue::make_int(b, BuiltinType::USize), op),
+                _ => int_bin_op(ConstValue::make_int(a, BuiltinType::USize), ConstValue::make_int(b, BuiltinType::USize), op),
             };
         }
         Result::err(EvalError::Unsupported)
@@ -900,15 +795,15 @@ impl ConstEvaluator {
             CValTag::Int => {
                 let bt = inner.builtin_type();
                 let width = bt.bit_width();
-                let bits = self.mask_to_width(inner.bits(), width);
+                let bits = mask_to_width(inner.bits(), width);
                 if expr.un_op() == UnOp::Neg {
                     // (Negating the minimum overflows.)
                     if bt.is_signed() && bits == 1u128 << (width - 1) {
                         return Result::err(EvalError::Overflow);
                     }
-                    return Result::ok(ConstValue::make_bits(self.mask_to_width(0u128 - bits, width), bt));
+                    return Result::ok(ConstValue::make_bits(mask_to_width(0u128 - bits, width), bt));
                 } else if expr.un_op() == UnOp::BitNot {
-                    return Result::ok(ConstValue::make_bits(self.mask_to_width(~bits, width), bt));
+                    return Result::ok(ConstValue::make_bits(mask_to_width(~bits, width), bt));
                 } else if expr.un_op() == UnOp::Not {
                     return Result::ok(ConstValue::make_bool(bits == 0));
                 }
@@ -938,9 +833,9 @@ impl ConstEvaluator {
         if inner.tag == CValTag::Int && target_bt.is_integer() {
             // (Sign- or zero-extended, then truncated.)
             let width = inner.builtin_type().bit_width();
-            let bits = self.mask_to_width(inner.bits(), width);
-            let extended = if inner.builtin_type().is_signed() { self.sign_extend(bits, width) as u128 } else { bits };
-            return Result::ok(ConstValue::make_bits(self.mask_to_width(extended, target_bt.bit_width()), target_bt));
+            let bits = mask_to_width(inner.bits(), width);
+            let extended = if inner.builtin_type().is_signed() { sign_extend(bits, width) as u128 } else { bits };
+            return Result::ok(ConstValue::make_bits(mask_to_width(extended, target_bt.bit_width()), target_bt));
         }
 
         // Bool -> Int
@@ -956,11 +851,11 @@ impl ConstEvaluator {
         // Int -> Float
         if inner.tag == CValTag::Int && target_bt.is_float() {
             let width = inner.builtin_type().bit_width();
-            let bits = self.mask_to_width(inner.bits(), width);
+            let bits = mask_to_width(inner.bits(), width);
             let fval: f64 = if width > 64 {
-                if inner.builtin_type().is_signed() { self.sign_extend(bits, width) as f64 } else { bits as f64 }
+                if inner.builtin_type().is_signed() { sign_extend(bits, width) as f64 } else { bits as f64 }
             } else if inner.builtin_type().is_signed() {
-                self.sign_extend(bits, width) as i64 as f64
+                sign_extend(bits, width) as i64 as f64
             } else {
                 bits as u64 as f64
             };
@@ -980,7 +875,7 @@ impl ConstEvaluator {
             } else {
                 (f as u64) as u128
             };
-            return Result::ok(ConstValue::make_bits(self.mask_to_width(bits, target_bt.bit_width()), target_bt));
+            return Result::ok(ConstValue::make_bits(mask_to_width(bits, target_bt.bit_width()), target_bt));
         }
 
         // Float -> Float (f64 -> f32 or f32 -> f64)
@@ -1032,14 +927,6 @@ impl ConstEvaluator {
         }
 
         Result::err(EvalError::Unsupported)
-    }
-
-    /// The value of the low `width` bits of `val` as a signed integer.
-    fn sign_extend(self: &ConstEvaluator, val: u128, width: u32) -> i128 {
-        if width == 0 || width >= 128 {
-            return val as i128;
-        }
-        ((val << (128u32 - width)) as i128) >> (128u32 - width)
     }
 
     // ========== Block ==========
@@ -1534,7 +1421,7 @@ impl ConstEvaluator {
 
         // Int -> Int of same size: just reinterpret
         if inner.tag == CValTag::Int && target_bt.is_integer() {
-            let result = self.mask_to_width(inner.bits(), target_bt.bit_width());
+            let result = mask_to_width(inner.bits(), target_bt.bit_width());
             return Result::ok(ConstValue::make_bits(result, target_bt));
         }
 
@@ -1709,7 +1596,7 @@ impl ConstEvaluator {
         }
         let bt = arg_r.builtin_type();
         let width = bt.bit_width();
-        let val = self.mask_to_width(arg_r.bits(), width);
+        let val = mask_to_width(arg_r.bits(), width);
         if name == "llvm.ctpop" {
             let (count, v) = (0u128, val);
             while v != 0 {
@@ -1835,5 +1722,197 @@ impl ConstEvaluator {
             }
             _ => ConstValue::make_void(),
         }
+    }
+}
+
+// ========== Integer arithmetic ==========
+
+fn int_bin_op(lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
+    let bt = lhs.builtin_type();
+    let is_signed = bt.is_signed();
+    let width = bt.bit_width();
+    // The operands as of the type's width, and as signed values.
+    let (a, b) = (mask_to_width(lhs.bits(), width), mask_to_width(rhs.bits(), width));
+    let (sa, sb) = (sign_extend(a, width), sign_extend(b, width));
+
+    switch op {
+    BinOp::Eq => return Result::ok(ConstValue::make_bool(a == b)),
+    BinOp::Ne => return Result::ok(ConstValue::make_bool(a != b)),
+    BinOp::Lt => return Result::ok(ConstValue::make_bool(if is_signed { sa < sb } else { a < b })),
+    BinOp::Le => return Result::ok(ConstValue::make_bool(if is_signed { sa <= sb } else { a <= b })),
+    BinOp::Gt => return Result::ok(ConstValue::make_bool(if is_signed { sa > sb } else { a > b })),
+    BinOp::Ge => return Result::ok(ConstValue::make_bool(if is_signed { sa >= sb } else { a >= b })),
+    BinOp::And => return Result::ok(ConstValue::make_bool(a != 0 && b != 0)),
+    BinOp::Or => return Result::ok(ConstValue::make_bool(a != 0 || b != 0)),
+    _ => {}
+    }
+
+    // Arithmetic on the bits, masked to the width. Signed overflow is an
+    // error (it is undefined at run time), as in alumina-boot.
+    let result: u128 = switch op {
+    BinOp::Add, BinOp::Sub, BinOp::Mul => {
+        if is_signed && signed_overflows(sa, sb, op, width) {
+            return Result::err(EvalError::Overflow);
+        }
+        switch op {
+            BinOp::Add => a + b,
+            BinOp::Sub => a - b,
+            _ => a * b,
+        }
+    }
+    BinOp::Div, BinOp::Rem => {
+        if b == 0 {
+            return Result::err(EvalError::DivZero);
+        }
+        // (The minimum divided by -1 overflows.)
+        if is_signed && sb == -1i128 && a == 1u128 << (width - 1) {
+            return Result::err(EvalError::Overflow);
+        }
+        if op == BinOp::Div {
+            if is_signed { (sa / sb) as u128 } else { a / b }
+        } else {
+            if is_signed { (sa % sb) as u128 } else { a % b }
+        }
+    }
+    BinOp::BitAnd => a & b,
+    BinOp::BitOr => a | b,
+    BinOp::BitXor => a ^ b,
+    BinOp::Shl, BinOp::Shr => {
+        if b >= width as u128 {
+            return Result::err(EvalError::Overflow);
+        }
+        let shift = b as u32;
+        if op == BinOp::Shl {
+            a << shift
+        } else if is_signed {
+            (sa >> shift) as u128
+        } else {
+            a >> shift
+        }
+    }
+    _ => return Result::err(EvalError::Unsupported),
+    };
+    Result::ok(ConstValue::make_bits(mask_to_width(result, width), bt))
+}
+
+/// Whether `a op b` (addition, subtraction or multiplication) of signed
+/// values of the given width overflows.
+fn signed_overflows(a: i128, b: i128, op: BinOp, width: u32) -> bool {
+    if width < 128 {
+        // (Exact in 128 bits.)
+        let r = switch op {
+            BinOp::Add => a + b,
+            BinOp::Sub => a - b,
+            _ => a * b,
+        };
+        let max = ((1u128 << (width - 1)) - 1) as i128;
+        return r > max || r < -max - 1;
+    }
+    // (Wrapping, on the bits.)
+    let r = (switch op {
+        BinOp::Add => (a as u128) + (b as u128),
+        BinOp::Sub => (a as u128) - (b as u128),
+        _ => (a as u128) * (b as u128),
+    }) as i128;
+    switch op {
+        BinOp::Add => ((a ^ r) & (b ^ r)) < 0,
+        BinOp::Sub => ((a ^ b) & (a ^ r)) < 0,
+        _ => a != 0 && (if a == -1i128 { b == sign_extend(1u128 << 127, 128) } else { r / a != b }),
+    }
+}
+
+/// The low `width` bits of `val`.
+fn mask_to_width(val: u128, width: u32) -> u128 {
+    if width >= 128 {
+        return val;
+    }
+    if width == 0 {
+        return 0;
+    }
+    val & ((1u128 << width) - 1)
+}
+
+/// The value of the low `width` bits of `val` as a signed integer.
+fn sign_extend(val: u128, width: u32) -> i128 {
+    if width == 0 || width >= 128 {
+        return val as i128;
+    }
+    ((val << (128u32 - width)) as i128) >> (128u32 - width)
+}
+
+#[cfg(test)]
+mod tests {
+    use ast::{BinOp, BuiltinType};
+    use ir::ConstValue;
+
+    fn int(v: i128, bt: BuiltinType) -> ConstValue {
+        ConstValue::make_bits(mask_to_width(v as u128, bt.bit_width()), bt)
+    }
+
+    /// `a op b` of type `bt`, as a signed value (or the error).
+    fn eval(a: i128, op: BinOp, b: i128, bt: BuiltinType) -> Result<i128, EvalError> {
+        let r = int_bin_op(int(a, bt), int(b, bt), op)?;
+        Result::ok(if r.builtin_type() == BuiltinType::Bool { r.bits() as i128 } else { sign_extend(r.bits(), bt.bit_width()) })
+    }
+
+    fn fails(a: i128, op: BinOp, b: i128, bt: BuiltinType, error: EvalError) -> bool {
+        let r = eval(a, op, b, bt);
+        r.is_err() && r.unwrap_err() == error
+    }
+
+    #[test]
+    fn test_unsigned_wraps() {
+        assert_eq!(eval(250, BinOp::Add, 10, BuiltinType::U8).unwrap(), 4);
+        assert_eq!(eval(0, BinOp::Sub, 1, BuiltinType::U16).unwrap(), -1); // 0xffff
+        assert_eq!(int_bin_op(int(0, BuiltinType::U128), int(1, BuiltinType::U128), BinOp::Sub).unwrap().bits(), u128::max_value());
+    }
+
+    #[test]
+    fn test_signed_overflow() {
+        assert!(fails(127, BinOp::Add, 1, BuiltinType::I8, EvalError::Overflow));
+        assert!(fails(-128, BinOp::Sub, 1, BuiltinType::I8, EvalError::Overflow));
+        assert!(fails(65536, BinOp::Mul, 65536, BuiltinType::I32, EvalError::Overflow));
+        assert!(fails(i128::max_value(), BinOp::Add, 1, BuiltinType::I128, EvalError::Overflow));
+        assert!(fails(i128::min_value(), BinOp::Mul, -1, BuiltinType::I128, EvalError::Overflow));
+        assert!(fails(-1, BinOp::Mul, i128::min_value(), BuiltinType::I128, EvalError::Overflow));
+        assert!(fails(i64::min_value() as i128, BinOp::Div, -1, BuiltinType::I64, EvalError::Overflow));
+        // (Not overflows.)
+        assert_eq!(eval(-128, BinOp::Add, 127, BuiltinType::I8).unwrap(), -1);
+        assert_eq!(eval(i128::min_value(), BinOp::Add, 1, BuiltinType::I128).unwrap(), i128::min_value() + 1);
+        assert_eq!(eval(-3, BinOp::Mul, 7, BuiltinType::I128).unwrap(), -21);
+    }
+
+    #[test]
+    fn test_division() {
+        assert_eq!(eval(-7, BinOp::Div, 2, BuiltinType::I8).unwrap(), -3);
+        assert_eq!(eval(-7, BinOp::Rem, 2, BuiltinType::I8).unwrap(), -1);
+        assert_eq!(eval(250, BinOp::Div, 7, BuiltinType::U8).unwrap(), 35);
+        assert!(fails(1, BinOp::Div, 0, BuiltinType::U32, EvalError::DivZero));
+        assert!(fails(1, BinOp::Rem, 0, BuiltinType::I64, EvalError::DivZero));
+    }
+
+    #[test]
+    fn test_shifts() {
+        assert_eq!(eval(-8, BinOp::Shr, 1, BuiltinType::I32).unwrap(), -4);
+        assert_eq!(eval(-100, BinOp::Shr, 3, BuiltinType::I128).unwrap(), -13);
+        assert_eq!(eval(0x80000000, BinOp::Shr, 31, BuiltinType::U32).unwrap(), 1);
+        assert_eq!(eval(1, BinOp::Shl, 100, BuiltinType::U128).unwrap(), 1i128 << 100);
+        assert!(fails(1, BinOp::Shl, 8, BuiltinType::U8, EvalError::Overflow));
+    }
+
+    #[test]
+    fn test_comparisons() {
+        assert_eq!(eval(-1, BinOp::Lt, 1, BuiltinType::I8).unwrap(), 1);
+        assert_eq!(eval(-1, BinOp::Lt, 1, BuiltinType::U8).unwrap(), 0); // 255 < 1
+        assert_eq!(eval(i128::min_value(), BinOp::Lt, 0, BuiltinType::I128).unwrap(), 1);
+        assert_eq!(eval(-1, BinOp::Eq, 255, BuiltinType::U8).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_sign_extend() {
+        assert_eq!(sign_extend(0xff, 8), -1);
+        assert_eq!(sign_extend(0x7f, 8), 127);
+        assert_eq!(sign_extend(1u128 << 127, 128), i128::min_value());
+        assert_eq!(mask_to_width(u128::max_value(), 12), 0xfff);
     }
 }

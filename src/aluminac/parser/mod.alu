@@ -860,3 +860,55 @@ struct LocationOverride {
     line: usize,
     from_line: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use ast::BuiltinType;
+    use aluminac_common::arena::Arena;
+
+    fn is(suffix: Option<BuiltinType>, bt: BuiltinType) -> bool {
+        suffix.is_some() && suffix.unwrap() == bt
+    }
+
+    fn int(text: &[u8]) -> (u128, bool, Option<BuiltinType>) {
+        parse_int_with_suffix(text)
+    }
+
+    #[test]
+    fn test_int_literals() {
+        let (v, neg, suffix) = int("0xffu8");
+        assert!(v == 255 && !neg && is(suffix, BuiltinType::U8));
+        let (v, neg, suffix) = int("-3i32");
+        assert!(v == (-3i128) as u128 && neg && is(suffix, BuiltinType::I32));
+        let (v, _, suffix) = int("0b1010");
+        assert!(v == 10 && suffix.is_none());
+        assert_eq!(int("0o777").0, 511);
+        assert_eq!(int("0xabcdefi64").0, 0xabcdef);
+        // (The full 128 bits.)
+        assert_eq!(int("0xffffffffffffffffffffffffffffffffu128").0, u128::max_value());
+        let (v, neg, _) = int("-170141183460469231731687303715884105728i128");
+        assert!(v == 1u128 << 127 && neg);
+    }
+
+    #[test]
+    fn test_float_literals() {
+        let (v, suffix) = parse_float_with_suffix("3.25f32");
+        assert!(v == 3.25 && is(suffix, BuiltinType::F32));
+        let (v, suffix) = parse_float_with_suffix("1e3");
+        assert!(v == 1000.0 && suffix.is_none());
+        assert_eq!(parse_float_with_suffix("0.1").0, 0.1);
+    }
+
+    #[test]
+    fn test_unescape() {
+        let arena = Arena::new();
+        defer arena.free();
+        assert_eq!(unescape("a\\nb\\x41\\0\\\"", &arena).unwrap(), "a\nbA\0\"");
+        assert_eq!(unescape("\\u{1F44B}", &arena).unwrap(), "👋");
+        assert_eq!(unescape("\\u00e9", &arena).unwrap(), "é");
+        assert!(unescape("\\q", &arena).is_none());
+        assert!(unescape("\\x4", &arena).is_none());
+        assert!(unescape("\\u{d800}", &arena).is_none());
+        assert!(unescape("trailing\\", &arena).is_none());
+    }
+}

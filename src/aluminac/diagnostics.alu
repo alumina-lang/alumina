@@ -655,3 +655,48 @@ fn count_digits(n: u32) -> u32 {
     count
 }
 
+
+#[cfg(test)]
+mod tests {
+    fn span(start: u32, end: u32) -> Span {
+        Span { file_id: 0, start: start, end: end, expansion: 0 }
+    }
+
+    fn lint_at(start: u32, end: u32) -> CodeDiagnostic {
+        CodeDiagnostic::lint(span(start, end), "unused_variable", "unused variable")
+    }
+
+    #[test]
+    fn test_innermost_lint_level_wins() {
+        let diag = DiagnosticContext::new();
+        defer diag.free();
+        diag.add_override(LintOverride { span: span(0, 100), lint: "", action: LintAction::Deny });
+        diag.add_override(LintOverride { span: span(10, 50), lint: "unused_variable", action: LintAction::Allow });
+        diag.emit(lint_at(20, 30));
+        diag.emit(lint_at(60, 70));
+        diag.emit(CodeDiagnostic::lint(span(20, 30), "unused_parameter", "unused parameter"));
+        diag.apply_lint_overrides();
+        // allow(unused_variable) within deny(warnings); deny(warnings) alone;
+        // deny(warnings), which unused_parameter is one of.
+        assert!(diag.errors[0].level == DiagLevel::Allowed);
+        assert!(diag.errors[1].level == DiagLevel::Error);
+        assert!(diag.errors[2].level == DiagLevel::Error);
+        assert!(diag.has_errors);
+    }
+
+    #[test]
+    fn test_lint_given_once_per_place() {
+        let diag = DiagnosticContext::new();
+        defer diag.free();
+        diag.emit(lint_at(1, 2));
+        diag.attach(CodeDiagnostic::generic_note(span(3, 4), "in instantiation of ..."));
+        // (Another instance of the same generic code: dropped, with its note.)
+        diag.emit(lint_at(1, 2));
+        diag.attach(CodeDiagnostic::generic_note(span(5, 6), "in instantiation of ..."));
+        // (A note of its own is kept.)
+        diag.emit(CodeDiagnostic::generic_note(span(7, 8), "hello"));
+        assert_eq!(diag.errors.len(), 3);
+        assert!(diag.errors[1].attached && !diag.errors[2].attached);
+        assert!(diag.has_warnings && !diag.has_errors);
+    }
+}
