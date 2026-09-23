@@ -58,6 +58,27 @@ struct Mono {
     // the one context that dictates it (slice indexing) and consumed by the
     // range lowering itself.
     range_bound_hint: Option<&IrTy>,
+    // Set when a call's generic arguments could not all be inferred (the
+    // missing ones become void). Tentative argument lowering during
+    // inference checks it to ignore such an argument's type, as
+    // alumina-boot does with arguments that need a type hint.
+    inference_incomplete: bool,
+}
+
+/// The lowering state that belongs to the body of one function (or lambda,
+/// or static initializer) being lowered. Lowering another body in the
+/// middle (an instantiation, a lambda) swaps in a fresh one, so that
+/// nothing about the enclosing body (its locals, return type, expected-type
+/// hint, loops, `for const` bindings) leaks into it, or back out of it.
+struct FnState {
+    local_types: HashMap<usize, &IrTy>,
+    local_defs: Vector<IrLocalDef>,
+    return_type: &IrTy,
+    expected_type: &IrTy,
+    inside_arg_inference: bool,
+    loop_contexts: Vector<LoopContext>,
+    const_replacements: HashMap<usize, ConstValue>,
+    inference_incomplete: bool,
 }
 
 struct LoopContext {
@@ -90,7 +111,51 @@ impl Mono {
             loop_contexts: Vector::new(),
             inside_arg_inference: false,
             range_bound_hint: Option::none(),
+            inference_incomplete: false,
         }
+    }
+
+    /// Start lowering a new function body with the given return type,
+    /// returning the enclosing body's state for `leave_fn`.
+    fn enter_fn(self: &mut Mono, return_type: &IrTy) -> FnState {
+        let saved = FnState {
+            local_types: self.local_types,
+            local_defs: self.local_defs,
+            return_type: self.return_type,
+            expected_type: self.expected_type,
+            inside_arg_inference: self.inside_arg_inference,
+            loop_contexts: self.loop_contexts,
+            const_replacements: self.const_replacements,
+            inference_incomplete: self.inference_incomplete,
+        };
+        self.local_types = HashMap::new();
+        self.local_defs = Vector::new();
+        self.return_type = return_type;
+        self.expected_type = self.ctx.void_ty;
+        self.inside_arg_inference = false;
+        self.loop_contexts = Vector::new();
+        self.const_replacements = HashMap::new();
+        self.inference_incomplete = false;
+        saved
+    }
+
+    /// Finish lowering a function body: return its local definitions and
+    /// restore the enclosing body's state.
+    fn leave_fn(self: &mut Mono, saved: FnState) -> &[IrLocalDef] {
+        let local_defs = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice()) as &[IrLocalDef];
+        self.local_types.free();
+        self.local_defs.free();
+        self.loop_contexts.free();
+        self.const_replacements.free();
+        self.local_types = saved.local_types;
+        self.local_defs = saved.local_defs;
+        self.return_type = saved.return_type;
+        self.expected_type = saved.expected_type;
+        self.inside_arg_inference = saved.inside_arg_inference;
+        self.loop_contexts = saved.loop_contexts;
+        self.const_replacements = saved.const_replacements;
+        self.inference_incomplete = saved.inference_incomplete;
+        local_defs
     }
 
     // ---- IR node construction helpers ----
@@ -902,9 +967,17 @@ impl Mono {
             return self.ctx.arena.alloc(IrTy::mk_enum(self.ctx.ir_enums[idx]));
         }
 
-        // Determine underlying type
+        // The underlying type is the type of the first variant's value (as
+        // in alumina-boot), i32 if it has none.
         let underlying = if def.underlying_type.is_some() {
             self.resolve_type(def.underlying_type.unwrap())
+        } else if def.variants.len() > 0 && def.variants[0].value.is_some() {
+            let first = self.lower_expr(def.variants[0].value.unwrap());
+            if first.ty.tag == IrTyTag::Builtin && first.ty.builtin().is_integer() {
+                first.ty
+            } else {
+                self.ctx.intern_builtin_ty(BuiltinType::I32)
+            }
         } else {
             self.ctx.intern_builtin_ty(BuiltinType::I32)
         };
@@ -919,7 +992,7 @@ impl Mono {
         for i in 0usize..def.variants.len() {
             if def.variants[i].value.is_some() {
                 let val_expr = def.variants[i].value.unwrap();
-                let ir_expr = self.lower_expr(val_expr);
+                let ir_expr = self.lower_expr_coerced(val_expr, underlying);
                 let const_val = self.try_const_eval_u64(ir_expr);
                 if const_val.is_some() {
                     let v = const_val.unwrap();
@@ -929,7 +1002,10 @@ impl Mono {
                         value: v,
                     };
                 } else {
-                    // Fallback: treat as 0 if const eval fails
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        val_expr.span,
+                        "enum variant value must be a constant integer",
+                    ));
                     variants[i] = IrEnumVariant {
                         name: def.variants[i].name,
                         value: 0u64,
@@ -1055,26 +1131,9 @@ impl Mono {
             return 0usize;
         }
 
-        // Save the caller's per-function lowering state. The callee's body is
-        // lowered from scratch: nothing about the call site (in particular
-        // its expected-type hint, which would otherwise steer inference in
-        // the callee's first expression, or its enclosing loops) is visible.
-        let prev_return_type = self.return_type;
-        let prev_local_types = self.local_types;
-        let prev_local_defs = self.local_defs;
-        let prev_expected_type = self.expected_type;
-        let prev_inside_arg_inference = self.inside_arg_inference;
-        let prev_loop_contexts = self.loop_contexts;
-        let prev_const_replacements = self.const_replacements;
-        self.local_types = HashMap::new();
-        self.local_defs = Vector::new();
-        self.expected_type = self.ctx.void_ty;
-        self.inside_arg_inference = false;
-        self.loop_contexts = Vector::new();
-        // `for const` loop variables of the caller are not in scope (and a
-        // recursive instantiation running the same loop must not clobber
-        // the caller's binding of it).
-        self.const_replacements = HashMap::new();
+        // The callee's body is lowered from scratch: nothing about the call
+        // site is visible in it (see FnState).
+        let saved_fn_state = self.enter_fn(self.ctx.void_ty);
 
         // Each instantiation is lowered in its own generic context: a fresh
         // type_map holding only the bindings that are lexically visible in
@@ -1215,23 +1274,10 @@ impl Mono {
         self.type_map.free();
         self.type_map = outer_type_map;
 
-        // Collect local defs
-        let local_defs_slice = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice());
-
         // Update the placeholder with the actual body and local defs
         self.ctx.ir_functions[idx].body = body;
-        self.ctx.ir_functions[idx].local_defs = local_defs_slice;
+        self.ctx.ir_functions[idx].local_defs = self.leave_fn(saved_fn_state);
 
-        // Restore saved state
-        self.loop_contexts.free();
-        self.const_replacements.free();
-        self.const_replacements = prev_const_replacements;
-        self.return_type = prev_return_type;
-        self.local_types = prev_local_types;
-        self.local_defs = prev_local_defs;
-        self.expected_type = prev_expected_type;
-        self.inside_arg_inference = prev_inside_arg_inference;
-        self.loop_contexts = prev_loop_contexts;
         self.current_fn_name = prev_fn_name;
         self.ctx.pop_mono_frame();
         idx
@@ -5498,11 +5544,19 @@ impl Mono {
         self.expected_type = self.ctx.void_ty;
         self.return_type = self.ctx.void_ty;
         self.inside_arg_inference = true;
+        let saved_incomplete = self.inference_incomplete;
         for p in 0usize..num_params {
             if p >= args.len() { break; }
             let param_ty = def.params[p].ty;
             let arg_expr = args[p];
+            self.inference_incomplete = false;
             let arg_ty = self.lower_expr(arg_expr).ty;
+            // The argument's own inference was incomplete (e.g. a bare
+            // `Result::err(e)`, whose T needs a type hint): its type says
+            // nothing about ours; the hint comes from our context instead.
+            if self.inference_incomplete {
+                continue;
+            }
             // When the arg comes back as Void from a Call-like expression,
             // skip unification: aluminac eagerly mono's the inner call
             // with any-unresolved-slot=void during tentative inference,
@@ -5526,6 +5580,7 @@ impl Mono {
         self.expected_type = saved_expected;
         self.return_type = saved_return;
         self.inside_arg_inference = saved_in_arg_inf;
+        self.inference_incomplete = saved_incomplete;
 
         // Try to infer remaining generics from Fn bounds.
         // For F: Fn(A) -> R, if the actual argument for F is a lambda or function,
@@ -5553,9 +5608,14 @@ impl Mono {
 
                         // Check if ret_ty is a placeholder matching our target generic
                         if bound.ret_ty().tag == TyTag::Placeholder && bound.ret_ty().id()._value == def.generic_params[g].id._value {
-                            // Extract return type from the lambda/fn's AST return type
-                            if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty().is_some() {
-                                let ret_ty = self.resolve_type(arg_expr.opt_ty().unwrap());
+                            // Extract return type from the lambda/fn's AST return
+                            // type (a lambda without one returns `()`).
+                            if arg_expr.tag == ExprTag::Lambda {
+                                let ret_ty = if arg_expr.opt_ty().is_some() {
+                                    self.resolve_type(arg_expr.opt_ty().unwrap())
+                                } else {
+                                    self.ctx.void_ty
+                                };
                                 inferred[g] = ret_ty;
                                 found[g] = true;
                             } else if arg_expr.tag == ExprTag::FnRef {
@@ -5804,6 +5864,8 @@ impl Mono {
         for i in 0usize..num_generics {
             if found[i] {
                 any_found = true;
+            } else if def.generic_params[i].default_ty.is_none() {
+                self.inference_incomplete = true;
             }
         }
 
@@ -6487,12 +6549,8 @@ impl Mono {
         let params = self.ctx.arena.alloc_slice::<IrParam>(total_params);
         let param_types = self.ctx.arena.alloc_slice::<&IrTy>(expr.lambda_params().len());
 
-        // Save current mono state
-        let saved_local_types = self.local_types;
-        let saved_local_defs = self.local_defs;
-        let saved_return_type = self.return_type;
-        self.local_types = HashMap::new();
-        self.local_defs = Vector::new();
+        // The lambda's body is lowered as a function of its own (see FnState).
+        let saved_fn_state = self.enter_fn(self.ctx.void_ty);
 
         let closure_ty: &IrTy = self.ctx.void_ty;
         if has_captures {
@@ -6554,18 +6612,8 @@ impl Mono {
         // Lower body
         let body = self.lower_expr(expr.lhs());
 
-        // Collect local defs
-        let local_defs_slice = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice());
-
         self.ctx.ir_functions[idx].body = Option::some(body);
-        self.ctx.ir_functions[idx].local_defs = local_defs_slice;
-
-        // Restore mono state
-        self.local_types.free();
-        self.local_defs.free();
-        self.local_types = saved_local_types;
-        self.local_defs = saved_local_defs;
-        self.return_type = saved_return_type;
+        self.ctx.ir_functions[idx].local_defs = self.leave_fn(saved_fn_state);
 
         if has_captures {
             // Build a struct literal with the captured values
@@ -6711,14 +6759,8 @@ impl Mono {
         // the item's generic params bound, and none of the referencing
         // function's state (locals, return type, type hints) visible.
         let outer_type_map = self.type_map;
-        let prev_local_types = self.local_types;
-        let prev_local_defs = self.local_defs;
-        let prev_return_type = self.return_type;
-        let prev_expected_type = self.expected_type;
+        let saved_fn_state = self.enter_fn(self.ctx.void_ty);
         self.type_map = outer_type_map.clone();
-        self.local_types = HashMap::new();
-        self.local_defs = Vector::new();
-        self.expected_type = self.ctx.void_ty;
         for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
             self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
         }
@@ -6788,13 +6830,8 @@ impl Mono {
         }
 
         self.type_map.free();
-        self.local_types.free();
-        self.local_defs.free();
         self.type_map = outer_type_map;
-        self.local_types = prev_local_types;
-        self.local_defs = prev_local_defs;
-        self.return_type = prev_return_type;
-        self.expected_type = prev_expected_type;
+        self.leave_fn(saved_fn_state);
         idx
     }
 

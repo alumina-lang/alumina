@@ -135,6 +135,29 @@ boot misreads the language (record such cases here).
   (`let b = undefined_thing;` compiled; `libc::libc::X` in the sysroot
   became `undef` and broke `RwLock` on macOS).
 
+- **Layout agrees with alumina-boot** (`layout.alu` rewritten around
+  `Layout`/`AggregateLayout`): enums take their underlying type's layout
+  (the underlying type is the first variant value's type, not always
+  i32), `#[align(N)]` and `#[packed(N)]` are honoured, unions are their
+  largest field rounded to their alignment. Codegen's LLVM types are built
+  from it (unions as bytes + a zero-length aligned member; `#[align]`
+  structs get a trailing one). A union typed `[N x i64]` had alignment 8
+  instead of 4, which shifted `SocketAddr` and corrupted
+  `Result<SocketAddr>` — the macOS `std::net` failures.
+- Per-function lowering state is one `FnState`, swapped by
+  `enter_fn`/`leave_fn` for instantiations, lambdas and static
+  initializers (lambdas used to see the caller's hints, loops and `for
+  const` bindings).
+- Inference skips an argument whose own generic arguments could not be
+  inferred (`inference_incomplete`, cf. alumina-boot's "type hint
+  required" skip), so `Option::some(Result::err(e))` takes `T` from the
+  expected type instead of `Result<void, E>`; a lambda without a return
+  type returns `()`.
+- Codegen inconsistencies (missing function/global/local, field index out
+  of range, unhandled node) are internal compiler errors, not warnings
+  with an `undef` value.
+- All 557 stdlib tests pass under aluminac on macOS (with threading).
+
 ### alumina-boot bugs found (aluminac deliberately differs)
 
 - `Ty::gcd` joins `&mut T` and `&T` to `&mut T` (its own `assignable_from`
@@ -183,8 +206,6 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
   between *any* builtin types (incl. float→int); `resolve_type` maps an
   unbound placeholder to `void` silently; an undefined variable reported
   nothing and an undefined function "expression is not callable".
-- Codegen turns a missing function/global into a warning + `undef`; these
-  are internal errors.
 - Const-eval gaps (now reported, not silent): array-to-slice casts, slices
   of slices, pointer arithmetic into arrays.
 - Mono lowers call arguments twice (once for inference without hints, once
@@ -195,8 +216,6 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
 - Duplicate `#[lang]` items are not rejected (a later one silently wins).
 - One unresolved path yields several cascading errors in mono ("expression
   is not callable" ×N, "could not resolve field on ()").
-- macOS: 13 `std::net` tests fail (aluminac-compiled only);
-  `warning: codegen: field index out of bounds` at `std/fmt/mod.alu:525`.
 - Cross-compilation: `--target` exists, but ABI lowering only knows
   x86_64 SysV / AAPCS64 (Apple arm64 variadics differ), there is no
   per-target sysroot/linker story, and only x86_64/aarch64 parse.

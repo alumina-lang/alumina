@@ -5,7 +5,7 @@
 
 use llvm::*;
 use ast::*;
-use layout::compute_type_size;
+use layout::{compute_type_size, layout_of};
 use aluminac_common::arena::Arena;
 use diagnostics::DiagnosticContext;
 use std::collections::HashMap;
@@ -392,32 +392,25 @@ impl CodegenCtx {
         let struct_ty = LLVMStructCreateNamed(self.context, &name_buf[0] as &libc::c_char);
         self.struct_type_cache.insert(key, struct_ty);
 
+        // The LLVM type must agree with layout.alu (which size_of, field
+        // offsets and aggregates containing this type rely on).
+        let layout = layout_of(&IrTy::mk_struct(*s), self.pointer_size as usize);
         if s.is_union {
-            // Union: represent as [N x i64] to avoid LLVM optimizing away
-            // "padding" bytes that are meaningful for other variants.
-            // Using i64 array ensures 8-byte alignment and no internal padding holes.
-            // Note: we use compute_type_size from layout.alu instead of LLVMABISizeOfType
-            // because LLVM may return 0 for named struct types whose bodies haven't been
-            // set yet during recursive type construction.
-            let max_size: usize = 0;
-            for field in s.fields.iter() {
-                let size = compute_type_size(field.ty, 8usize);
-                if size > max_size {
-                    max_size = size;
-                }
-            }
-            let n_i64s = (max_size as u64 + 7u64) / 8u64;
-            // Still need to trigger LLVM type creation for all variants
-            // so they exist when used in bitcasts later
-            for field in s.fields.iter() {
+            // The union's bytes, as an opaque array (no padding holes LLVM
+            // could treat as dead), with the union's alignment.
+            let elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
+            elems[0] = LLVMArrayType(self.i8_type, layout.size as u32);
+            elems[1] = self.alignment_member(layout.align);
+            LLVMStructSetBody(struct_ty, &elems[0], 2, 0i32);
+            // Materialize the variants' types for the casts that access them.
+            for field in s.fields {
                 self.llvm_type(field.ty);
             }
-            let elems = self.arena.alloc_slice::<LLVMTypeRef>(1);
-            elems[0] = LLVMArrayType(self.i64_type, n_i64s as u32);
-            LLVMStructSetBody(struct_ty, &elems[0], 1, 0i32);
         } else {
-            // Normal struct
-            let llvm_fields = self.arena.alloc_slice::<LLVMTypeRef>(s.fields.len());
+            // With `#[align(N)]`, a trailing zero-sized member raises the
+            // alignment to N, without moving any field.
+            let extra = if CodegenCtx::has_alignment_member(s) { 1usize } else { 0usize };
+            let llvm_fields = self.arena.alloc_slice::<LLVMTypeRef>(s.fields.len() + extra);
             for (i, field) in s.fields.iter().enumerate() {
                 let field_ty = self.llvm_type(field.ty);
                 // LLVM doesn't allow void as a struct member. Use a true
@@ -431,11 +424,30 @@ impl CodegenCtx {
                     llvm_fields[i] = field_ty;
                 }
             }
+            if extra > 0 {
+                llvm_fields[s.fields.len()] = self.alignment_member(layout.align);
+            }
             let packed_flag = if s.is_packed { 1i32 } else { 0i32 };
-            LLVMStructSetBody(struct_ty, &llvm_fields[0], s.fields.len() as u32, packed_flag);
+            if llvm_fields.len() > 0 {
+                LLVMStructSetBody(struct_ty, &llvm_fields[0], llvm_fields.len() as u32, packed_flag);
+            } else {
+                LLVMStructSetBody(struct_ty, null, 0, packed_flag);
+            }
         }
 
         struct_ty
+    }
+
+    /// Whether a (non-union) struct's LLVM type carries a trailing
+    /// alignment member, for `#[align(N)]`.
+    fn has_alignment_member(s: &IrStructRef) -> bool {
+        !s.is_union && !s.is_packed && s.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Align && a.int_val() > 1 })
+    }
+
+    /// A zero-sized aggregate member with the given alignment:
+    /// `[0 x <align x i8>]` (a vector's alignment is its size).
+    fn alignment_member(self: &mut CodegenCtx, align: usize) -> LLVMTypeRef {
+        LLVMArrayType(LLVMVectorType(self.i8_type, align as u32), 0u32)
     }
 
     fn builtin_to_llvm(self: &CodegenCtx, bt: BuiltinType) -> LLVMTypeRef {
@@ -1059,7 +1071,16 @@ impl CodegenCtx {
             // an anonymous literal struct. Otherwise the constant's type is
             // `{...}` rather than `%Foo`, and the LLVM verifier rejects it as a
             // global initializer (the type does not match the global's `%Foo`).
-            LLVMConstNamedStruct(self.llvm_type(expr.ty), &fields[0], expr.items().len() as u32)
+            let llvm_ty = self.llvm_type(expr.ty);
+            if expr.ty.tag == IrTyTag::Struct && CodegenCtx::has_alignment_member(&expr.ty.struct_ref()) {
+                let with_align = self.arena.alloc_slice::<LLVMValueRef>(fields.len() + 1);
+                for i in 0usize..fields.len() {
+                    with_align[i] = fields[i];
+                }
+                with_align[fields.len()] = LLVMConstNull(self.alignment_member(layout_of(expr.ty, self.pointer_size as usize).align));
+                return LLVMConstNamedStruct(llvm_ty, &with_align[0], with_align.len() as u32);
+            }
+            LLVMConstNamedStruct(llvm_ty, &fields[0], expr.items().len() as u32)
         }
         IrTag::ArrayLit => {
             let elem_ty = self.llvm_type(expr.ty.inner());

@@ -804,30 +804,12 @@ fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     let elem_tys = m.ctx.arena.alloc_slice::<&IrTy>(n_fields);
     let usize_ty = m.ctx.usize_ty;
     let u8_slice_ty = m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true);
-    let is_union = struct_ref.is_union;
-    let is_packed = struct_ref.is_packed;
     let pointer_size = m.ctx.pointer_size;
-
-    let running_offset: usize = 0;
+    let aggregate = layout::AggregateLayout::of_struct(&struct_ref);
 
     for i in 0usize..n_fields {
         let field = &struct_ref.fields[i];
-        let field_align = compute_type_align(field.ty, pointer_size);
-        let field_size = compute_type_size(field.ty, pointer_size);
-
-        let field_offset: usize = if is_union {
-            0usize
-        } else {
-            let padding = if is_packed || field_align == 0usize {
-                0usize
-            } else {
-                (field_align - (running_offset % field_align)) % field_align
-            };
-            running_offset + padding
-        };
-        if !is_union {
-            running_offset = field_offset + field_size;
-        }
+        let field_offset = aggregate.add(layout::layout_of(field.ty, pointer_size));
 
         // Mono field_descriptor_new<StructT, FieldT> for this (struct, field) pair.
         let type_args_buf = m.ctx.arena.alloc_slice::<&IrTy>(2);

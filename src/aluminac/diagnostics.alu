@@ -212,27 +212,29 @@ impl CodeDiagnostic {
         CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::GenericError, msg)
     }
 
-    // --- Warning constructors ---
+    // --- Internal compiler errors (codegen found the IR inconsistent) ---
 
     fn codegen_missing_local(span: Span) -> CodeDiagnostic {
-        CodeDiagnostic::_new(DiagLevel::Warning, span, CodeDiagKind::CodegenMissingLocal)
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::CodegenMissingLocal)
     }
 
     fn codegen_missing_function(span: Span, name: &[u8]) -> CodeDiagnostic {
-        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::CodegenMissingFunction, name)
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::CodegenMissingFunction, name)
     }
 
     fn codegen_missing_global(span: Span, name: &[u8]) -> CodeDiagnostic {
-        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::CodegenMissingGlobal, name)
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::CodegenMissingGlobal, name)
     }
 
     fn codegen_field_oob(span: Span) -> CodeDiagnostic {
-        CodeDiagnostic::_new(DiagLevel::Warning, span, CodeDiagKind::CodegenFieldOOB)
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::CodegenFieldOOB)
     }
 
     fn codegen_unhandled_node(span: Span, tag_name: &[u8]) -> CodeDiagnostic {
-        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::CodegenUnhandledNode, tag_name)
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::CodegenUnhandledNode, tag_name)
     }
+
+    // --- Warning constructors ---
 
     fn generic_warning(span: Span, msg: &[u8]) -> CodeDiagnostic {
         CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::GenericError, msg)
@@ -273,16 +275,16 @@ impl CodeDiagnostic {
                 write!(f, "LLVM intrinsic '{}' return type does not match Alumina type", self._data.name.name),
             CodeDiagKind::DepthOverflow =>
                 f.write_str("monomorphization depth limit exceeded (possible infinite recursion)"),
-            CodeDiagKind::CodegenMissingLocal => f.write_str("codegen: local variable not found"),
+            CodeDiagKind::CodegenMissingLocal => f.write_str("internal compiler error: codegen: local variable not found"),
             CodeDiagKind::CodegenMissingFunction =>
-                write!(f, "codegen: function '{}' not found", self._data.name.name),
+                write!(f, "internal compiler error: codegen: function '{}' not found", self._data.name.name),
             CodeDiagKind::CodegenMissingGlobal =>
-                write!(f, "codegen: global '{}' not found", self._data.name.name),
+                write!(f, "internal compiler error: codegen: global '{}' not found", self._data.name.name),
             CodeDiagKind::TypeMismatch =>
                 write!(f, "type mismatch: expected '{}', got '{}'", self._data.pair.name, self._data.pair.type_name),
-            CodeDiagKind::CodegenFieldOOB => f.write_str("codegen: field index out of bounds"),
+            CodeDiagKind::CodegenFieldOOB => f.write_str("internal compiler error: codegen: field index out of bounds"),
             CodeDiagKind::CodegenUnhandledNode =>
-                write!(f, "codegen: unhandled IR node '{}'", self._data.name.name),
+                write!(f, "internal compiler error: codegen: unhandled IR node '{}'", self._data.name.name),
             CodeDiagKind::SyntaxError =>
                 write!(f, "syntax error: unexpected `{}`", self._data.name.name),
             CodeDiagKind::SyntaxMissing =>
