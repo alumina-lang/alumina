@@ -2303,24 +2303,16 @@ impl Mono {
                     // alumina-boot), e.g. `say` passed as a `fn(&[u8])`.
                     let type_args: &[&IrTy] = &[];
                     if !def.generic_params.is_empty() {
-                        let n = def.generic_params.len();
-                        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
-                        let found = self.ctx.arena.alloc_slice::<bool>(n);
-                        for i in 0usize..n {
-                            inferred[i] = self.ctx.void_ty;
-                            found[i] = false;
-                        }
+                        let inf = mono::infer::Inference::new(self, def.generic_params);
                         let sig = self.callable_signature(self.expected_type);
                         if sig.is_some() && sig.unwrap().0.len() == def.params.len() {
                             let (param_tys, ret_ty) = sig.unwrap();
-                            for (i, param) in def.params.iter().enumerate() {
-                                self.unify_type_for_inference(param.ty, param_tys[i], inferred, found, def.generic_params);
-                            }
-                            self.unify_type_for_inference(def.return_type, ret_ty, inferred, found, def.generic_params);
+                            inf.unify(self, def.return_type, ret_ty);
+                            mono::infer::infer_from_types(self, &inf, def.params, param_tys, &[]);
                         }
-                        type_args = self.default_missing_type_args(def.generic_params, inferred, found);
+                        type_args = self.default_missing_type_args(def.generic_params, inf.types, inf.found);
                         for (i, param) in def.generic_params.iter().enumerate() {
-                            if !found[i] && param.default_ty.is_none() {
+                            if !inf.found[i] && param.default_ty.is_none() {
                                 return self.type_hint_required(expr.span);
                             }
                         }
@@ -2456,14 +2448,8 @@ impl Mono {
         for i in 0usize..ids.len() {
             synthetic[i] = GenericParam::plain(Id { _value: ids[i] }, "_proto");
         }
-        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(ids.len());
-        let found = self.ctx.arena.alloc_slice::<bool>(ids.len());
-        for i in 0usize..ids.len() {
-            inferred[i] = self.ctx.void_ty;
-            found[i] = false;
-        }
-
-        // Infer from receiver vs self param type.
+        let inf = mono::infer::Inference::new(self, synthetic);
+        // The receiver (one pointer off each side), then the rest of the call.
         if def.params.len() > 0 {
             let self_param_ty = def.params[0].ty;
             let self_arg_ty = receiver_ty;
@@ -2473,24 +2459,16 @@ impl Mono {
                     self_arg_ty = self_arg_ty.inner();
                 }
             }
-            self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, synthetic);
+            inf.unify(self, self_param_ty, self_arg_ty);
         }
+        let params = if def.params.len() > 0 { def.params[1..] } else { def.params };
+        mono::infer::infer_call(self, &inf, params, args, def.return_type, false, &[]);
 
-        // Infer from explicit args (skipping self).
-        let num_explicit = if def.params.len() > 0 { def.params.len() - 1 } else { 0usize };
-        for p in 0usize..num_explicit {
-            if p >= args.len() { break; }
-            let param_ty = def.params[p + 1].ty;
-            let arg_ty = self.lower_expr_tentative(args[p]).ty;
-            self.unify_type_for_inference(param_ty, arg_ty, inferred, found, synthetic);
-        }
-
-        // Bind successful, non-void inferences. Skip void or unfound slots so
-        // bindings the caller (e.g. `bind_proto_generics` from a mixin path)
-        // may have already established are preserved.
+        // (Those not found, or found void, leave what the caller bound, e.g.
+        // from a mixin, as it is.)
         for i in 0usize..ids.len() {
-            if found[i] && !inferred[i].is_void() {
-                self.type_map.insert(ids[i], inferred[i]);
+            if inf.found[i] && !inf.types[i].is_void() {
+                self.type_map.insert(ids[i], inf.types[i]);
             }
         }
     }
@@ -2806,75 +2784,23 @@ impl Mono {
             method_type_args = padded as &[&IrTy];
         }
 
-        // If any type args are void (unresolved from type alias generic params
-        // or from padding above), use argument type inference to fill them in.
-        if def.generic_params.len() > 0 {
-            // Which type args are known (a `()` from the hint is known too).
-            let known = self.ctx.arena.alloc_slice::<bool>(method_type_args.len());
+        // The rest are inferred from the call (those the type implies and
+        // those given explicitly bound first).
+        if method_type_args.iter().any(|e: &IrTy| -> bool { e.is_void() }) {
+            let inf = mono::infer::Inference::new(self, def.generic_params);
             for (i, ty) in method_type_args.iter().enumerate() {
-                known[i] = !ty.is_void();
-            }
-            let has_unresolved = method_type_args.iter().any(|e: &IrTy| -> bool { e.is_void() });
-            if has_unresolved {
-                // First try expected return-type shape — this beats arg
-                // inference for cases like `Option::some('\n')` matched to
-                // `Option<u8>`, where the bare char literal naively infers
-                // T=u32 and shadows the correct T=u8 from the expected type.
-                // Mirrors the FnRef-call branch in lower_call (~line 5934)
-                // which does the same lookup; without it, `lower_expr_coerced`
-                // on a CharLit can't propagate the expected type through.
-                if self.expected_type != self.ctx.void_ty {
-                    let exp = self.expected_type;
-                    if exp.tag == IrTyTag::Struct && exp.struct_ref().type_args.len() == def.generic_params.len() {
-                        // Map declared return type's placeholders to exp's
-                        // concrete args. Only fills generic_params that
-                        // appear directly in the return type as
-                        // Placeholder(gp.id) — the common case for
-                        // Option::some / Result::ok / etc.
-                        let ret = def.return_type;
-                        if ret.tag == TyTag::Generic && ret.elems().len() == def.generic_params.len() {
-                            let merged0 = self.ctx.arena.alloc_slice::<&IrTy>(method_type_args.len());
-                            for i in 0usize..method_type_args.len() {
-                                merged0[i] = method_type_args[i];
-                            }
-                            for ri in 0usize..ret.elems().len() {
-                                if ret.elems()[ri].tag == TyTag::Placeholder {
-                                    let target_gp = ret.elems()[ri].id()._value;
-                                    for gi in 0usize..def.generic_params.len() {
-                                        if def.generic_params[gi].id._value == target_gp
-                                            && merged0[gi].is_void() {
-                                            merged0[gi] = exp.struct_ref().type_args[ri];
-                                            known[gi] = true;
-                                        }
-                                    }
-                                }
-                            }
-                            method_type_args = merged0;
-                            has_unresolved = known.iter().any(|k: bool| -> bool { !k });
-                        }
-                    }
+                if !ty.is_void() {
+                    inf.bind(i, ty);
                 }
             }
-            if has_unresolved {
-                let inferred = self.infer_type_args(def, expr.args());
-                if inferred.len() == method_type_args.len() {
-                    let merged = self.ctx.arena.alloc_slice::<&IrTy>(method_type_args.len());
-                    for i in 0usize..method_type_args.len() {
-                        if !known[i] && self.inferred_found[i] {
-                            merged[i] = inferred[i];
-                            known[i] = true;
-                        } else {
-                            merged[i] = method_type_args[i];
-                        }
-                    }
-                    method_type_args = merged;
-                }
-                for (i, param) in def.generic_params.iter().enumerate() {
-                    if !known[i] && param.default_ty.is_none() {
-                        return Option::some(self.type_hint_required(expr.span));
-                    }
+            let tuple_args = def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::TupleArgs });
+            mono::infer::infer_call(self, &inf, def.params, expr.args(), def.return_type, tuple_args, &[]);
+            for (i, param) in def.generic_params.iter().enumerate() {
+                if !inf.found[i] && param.default_ty.is_none() {
+                    return Option::some(self.type_hint_required(expr.span));
                 }
             }
+            method_type_args = inf.types;
         }
 
         // For mixin'd protocol methods on a known receiver type (e.g.
@@ -5030,13 +4956,7 @@ impl Mono {
         // Infer type args from self parameter if the method has its own generics
         let all_type_args = method_type_args;
         if def.generic_params.len() > 0 {
-            let num_generics = def.generic_params.len();
-            let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
-            let found = self.ctx.arena.alloc_slice::<bool>(num_generics);
-            for i in 0usize..num_generics {
-                inferred[i] = self.ctx.void_ty;
-                found[i] = false;
-            }
+            let inf = mono::infer::Inference::new(self, def.generic_params);
             // Infer from self parameter
             if def.params.len() > 0 {
                 let self_param_ty = def.params[0].ty;
@@ -5050,20 +4970,15 @@ impl Mono {
                 while self_param_ty.tag != TyTag::Pointer && self_arg_ty.tag == IrTyTag::Pointer {
                     self_arg_ty = self_arg_ty.inner();
                 }
-                self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, def.generic_params);
+                inf.unify(self, self_param_ty, self_arg_ty);
             }
-            // Infer from explicit args
-            for p in 0usize..args.len() {
-                if (p + 1) >= def.params.len() { break; }
-                self.unify_type_for_inference(def.params[p + 1].ty, args[p].ty, inferred, found, def.generic_params);
+            let arg_tys = self.ctx.arena.alloc_slice::<&IrTy>(args.len());
+            for (i, arg) in args.iter().enumerate() {
+                arg_tys[i] = arg.ty;
             }
-            // Fill remaining from method_type_args
-            for i in 0usize..num_generics {
-                if !found[i] && i < method_type_args.len() {
-                    inferred[i] = method_type_args[i];
-                }
-            }
-            all_type_args = inferred;
+            let params = if def.params.len() > 0 { def.params[1..] } else { def.params };
+            mono::infer::infer_from_types(self, &inf, params, arg_tys, method_type_args);
+            all_type_args = inf.types;
         }
 
         let fn_idx = self.mono_function(def, all_type_args);
@@ -6711,22 +6626,9 @@ impl Mono {
     /// (already lowered) argument types. Generics that appear in no parameter
     /// fall back positionally to `fallback`, and otherwise stay unbound (void).
     fn infer_type_args_from_ir(self: &mut Mono, def: &FnDef, arg_tys: &[&IrTy], fallback: &[&IrTy]) -> &[&IrTy] {
-        let n = def.generic_params.len();
-        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
-        let found = self.ctx.arena.alloc_slice::<bool>(n);
-        for i in 0usize..n {
-            inferred[i] = self.ctx.void_ty;
-            found[i] = false;
-        }
-        for i in 0usize..std::cmp::min(def.params.len(), arg_tys.len()) {
-            self.unify_type_for_inference(def.params[i].ty, arg_tys[i], inferred, found, def.generic_params);
-        }
-        for i in 0usize..std::cmp::min(n, fallback.len()) {
-            if !found[i] {
-                inferred[i] = fallback[i];
-            }
-        }
-        inferred
+        let inf = mono::infer::Inference::new(self, def.generic_params);
+        mono::infer::infer_from_types(self, &inf, def.params, arg_tys, fallback);
+        inf.types
     }
 
     // Infer type arguments for a generic function call from the argument types.
@@ -7812,41 +7714,8 @@ impl Mono {
                     }
 
                     // Infer type args from argument types
-                    let inferred = self.infer_type_args(def, expr.args());
-                    let call_ta: &[&IrTy] = inferred;
-                    if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
-                        // Try to extract type args from expected_type (e.g. Option<usize>)
-                        if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref().type_args.len() == def.generic_params.len() {
-                            call_ta = self.expected_type.struct_ref().type_args;
-                        } else if self.expected_type.tag == IrTyTag::Struct && def.generic_params.len() == 1usize {
-                            // For single-generic functions returning a wrapper struct,
-                            // the expected type's first type arg is probably the generic param
-                            if self.expected_type.struct_ref().type_args.len() > 0usize {
-                                let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
-                                ctx_ta[0] = self.expected_type.struct_ref().type_args[0];
-                                call_ta = ctx_ta;
-                            }
-                        } else if self.expected_type.tag == IrTyTag::Slice && def.generic_params.len() == 1usize {
-                            // Single-generic fns returning a slice. The placeholder
-                            // can appear either as the *element* type (declared
-                            // `-> &[T]` / `-> &mut [T]`, AST `TyTag::Slice` over a
-                            // Placeholder) or as the *pointer* type-arg (declared
-                            // `-> slice<Ptr>`, AST `TyTag::Generic` over the
-                            // lang(slice) struct with Ptr as the single arg). Pick
-                            // the right substitution by inspecting `def.return_type`.
-                            let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
-                            if def.return_type.tag == TyTag::Slice
-                                && def.return_type.inner().tag == TyTag::Placeholder
-                                && def.return_type.inner().id()._value == def.generic_params[0].id._value {
-                                // Declared `-> &[T]`: T is the element type.
-                                ctx_ta[0] = self.expected_type.inner();
-                            } else {
-                                // Declared `-> slice<Ptr>`: Ptr = `&{const?}elem`.
-                                ctx_ta[0] = self.ctx.make_ptr_ty(self.expected_type.inner(), self.expected_type.is_const());
-                            }
-                            call_ta = ctx_ta;
-                        }
-                    }
+                    // (The expected type is part of the evidence.)
+                    let call_ta = self.infer_type_args(def, expr.args());
                     if self.has_uninferred_generics(def, call_ta, 0) {
                         return self.type_hint_required(expr.span);
                     }

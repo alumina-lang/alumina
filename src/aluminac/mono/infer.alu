@@ -135,6 +135,20 @@ fn infer_call(
     from_bounds(m, inf, params, args);
 }
 
+/// Infer from arguments already lowered (`params[i]` taking one of type
+/// `arg_tys[i]`), e.g. an operator's operands, then from the bounds.
+fn infer_from_types(m: &mut Mono, inf: &mut Inference, params: &[FnParam], arg_tys: &[&IrTy], implied: &[&IrTy]) {
+    for i in 0usize..std::cmp::min(params.len(), arg_tys.len()) {
+        inf.unify(m, params[i].ty, arg_tys[i]);
+    }
+    for (i, ty) in implied.iter().enumerate() {
+        if !ty.is_void() {
+            inf.bind(i, ty);
+        }
+    }
+    from_bounds(m, inf, params, &[]);
+}
+
 /// The type the call's context expects of its result `ret`.
 fn from_hint(m: &mut Mono, inf: &mut Inference, ret: &Ty) {
     let hint = m.expected_type;
