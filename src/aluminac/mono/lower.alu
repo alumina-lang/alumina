@@ -3582,6 +3582,9 @@ impl Mono {
             result._data.if_data.cond = ir_cond;
             result._data.if_data.lhs = ir_then;
             result._data.if_data.opt_expr = ir_else;
+            // (Only the branch taken at run time is compiled, if known.)
+            let at_run_time: Option<bool> = if self.tentative { Option::none() } else { self.try_bool_at_run_time(ir_cond) };
+            result._data.if_data.run_time_cond = if at_run_time.is_none() { 0u8 } else if at_run_time.unwrap() { 2u8 } else { 1u8 };
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::While {
             let ir_cond = self.lower_expr(expr.cond());
@@ -4046,6 +4049,39 @@ impl Mono {
             self.ctx.pointer_size,
             expr,
         )
+    }
+
+    fn try_bool_at_run_time(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
+        // (Most conditions are not constant; this saves trying.)
+        if !Mono::may_be_constant(expr) {
+            return Option::none();
+        }
+        const_eval::try_eval_bool_at_run_time(
+            self.ctx.arena,
+            self.ctx.id_gen,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.ir_globals.as_slice(),
+            &self.ctx.const_values,
+            self.ctx.pointer_size,
+            expr,
+        )
+    }
+
+    /// Whether an expression may be constant (it reads no variables).
+    fn may_be_constant(e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::InConstContext, IrTag::TypeLayout, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void,
+            IrTag::Zeroed => true,
+            IrTag::Call => e.call_target().tag == CallKind::Direct
+                && e.items().iter().all(|a: &IrExpr| -> bool { Mono::may_be_constant(a) }),
+            IrTag::Binary, IrTag::Index => Mono::may_be_constant(e.lhs()) && Mono::may_be_constant(e.rhs()),
+            IrTag::Unary, IrTag::Cast, IrTag::Transmute, IrTag::FieldAccess, IrTag::Ref =>
+                Mono::may_be_constant(e.lhs()),
+            IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block =>
+                e.items().iter().all(|a: &IrExpr| -> bool { Mono::may_be_constant(a) }),
+            _ => false,
+        }
     }
 
     fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {

@@ -19,6 +19,12 @@ struct MonoFrame {
 }
 
 // Context shared across all monomorphization
+/// A type in `MonoCtx::ty_cache`, and the next with the same hash.
+struct TyChain {
+    ty: &IrTy,
+    next: Option<&TyChain>,
+}
+
 struct MonoCtx {
     arena: &mut Arena,
     scopes: &ScopeArena,
@@ -70,9 +76,9 @@ struct MonoCtx {
     enum_cache: HashMap<MonoKey, usize>,
 
     // Type caching for pointer stability
-    ptr_ty_cache: HashMap<usize, &IrTy>,
-    array_ty_cache: HashMap<usize, &IrTy>,
-    tuple_ty_cache: HashMap<usize, &IrTy>,
+    // Composite types by a hash of their parts (the same parts give the
+    // same type; types with the same hash are chained, see `cached_ty`).
+    ty_cache: HashMap<usize, &TyChain>,
 
     // Name mangling counter
     mangle_counter: usize,
@@ -188,9 +194,7 @@ impl MonoCtx {
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
             enum_cache: HashMap::new(),
-            ptr_ty_cache: HashMap::new(),
-            array_ty_cache: HashMap::new(),
-            tuple_ty_cache: HashMap::new(),
+            ty_cache: HashMap::new(),
             mangle_counter: 0,
             void_ty: void_ty,
             no_hint: arena.alloc(IrTy::mk_void()),
@@ -388,84 +392,93 @@ impl MonoCtx {
         }
     }
 
+    /// The cached type with hash `key` that `same` accepts.
+    fn cached_ty<F: Fn(&IrTy) -> bool>(self: &MonoCtx, key: usize, same: F) -> Option<&IrTy> {
+        let link = self.ty_cache.get(&key);
+        while link.is_some() {
+            if same(link.unwrap().ty) {
+                return Option::some(link.unwrap().ty);
+            }
+            link = link.unwrap().next;
+        }
+        Option::none()
+    }
+
+    fn cache_ty(self: &mut MonoCtx, key: usize, ty: &IrTy) -> &IrTy {
+        let next = self.ty_cache.get(&key);
+        self.ty_cache.insert(key, self.arena.alloc(TyChain { ty: ty, next: next }));
+        ty
+    }
+
+    /// Whether two lists of (interned) types are the same ones.
+    fn same_refs(a: &[&IrTy], b: &[&IrTy]) -> bool {
+        a.len() == b.len() && (0usize..a.len()).all(|=a, =b, i: usize| -> bool { a[i] as &void == b[i] as &void })
+    }
+
     fn make_ptr_ty(self: &mut MonoCtx, pointee: &IrTy, is_const: bool) -> &IrTy {
-        // Cache pointer types for stability
-        let key = (pointee as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
-        let cached = self.ptr_ty_cache.get(&key);
+        let key = (pointee as &void as usize) * 8 + (if is_const { 1usize } else { 0usize });
+        let cached = self.cached_ty(key, |=pointee, =is_const, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Pointer && t.inner() as &void == pointee as &void && t.is_const() == is_const
+        });
         if cached.is_some() { return cached.unwrap(); }
-        let result = self.arena.alloc(IrTy::mk_pointer(pointee, is_const));
-        self.ptr_ty_cache.insert(key, result);
-        result
+        self.cache_ty(key, self.arena.alloc(IrTy::mk_pointer(pointee, is_const)))
     }
 
     fn make_array_ty(self: &mut MonoCtx, elem: &IrTy, size: usize) -> &IrTy {
         let key = (elem as &void as usize) * 65537 + size;
-        let cached = self.array_ty_cache.get(&key);
+        let cached = self.cached_ty(key, |=elem, =size, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Array && t.inner() as &void == elem as &void && t.array_size() == size
+        });
         if cached.is_some() { return cached.unwrap(); }
-        let result = self.arena.alloc(IrTy::mk_array(elem, size));
-        self.array_ty_cache.insert(key, result);
-        result
+        self.cache_ty(key, self.arena.alloc(IrTy::mk_array(elem, size)))
     }
 
     fn make_tuple_ty(self: &mut MonoCtx, elems: &[&IrTy]) -> &IrTy {
         if elems.len() == 0 {
             return self.void_ty;
         }
-        // Cache tuple types for pointer stability
-        // Hash based on element count and element type pointers
         let key: usize = elems.len() * 31;
         for i in 0usize..elems.len() {
             key = key * 31 + (elems[i] as &void as usize);
         }
-        let cached = self.tuple_ty_cache.get(&key);
+        let cached = self.cached_ty(key, |=elems, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Tuple && MonoCtx::same_refs(t.elems(), elems)
+        });
         if cached.is_some() { return cached.unwrap(); }
-        let result = self.arena.alloc(IrTy::mk_tuple(elems));
-        self.tuple_ty_cache.insert(key, result);
-        result
+        self.cache_ty(key, self.arena.alloc(IrTy::mk_tuple(elems)))
     }
 
     fn make_fn_ptr_ty(self: &mut MonoCtx, params: &[&IrTy], ret: &IrTy) -> &IrTy {
-        // Cache function pointer types for pointer stability
         let key: usize = (ret as &void as usize) * 31 + params.len();
         for i in 0usize..params.len() {
             key = key * 31 + (params[i] as &void as usize);
         }
-        // Different hash space from tuples
-        key = key + 0x20000000usize;
-        let cached = self.tuple_ty_cache.get(&key);
+        let cached = self.cached_ty(key, |=params, =ret, t: &IrTy| -> bool {
+            t.tag == IrTyTag::FnPointer && t.ret_ty() as &void == ret as &void && MonoCtx::same_refs(t.elems(), params)
+        });
         if cached.is_some() { return cached.unwrap(); }
-        let result = self.arena.alloc(IrTy::mk_fn_pointer(params, ret));
-        self.tuple_ty_cache.insert(key, result);
-        result
+        self.cache_ty(key, self.arena.alloc(IrTy::mk_fn_pointer(params, ret)))
     }
 
     fn make_fn_ty(self: &mut MonoCtx, fn_ref: IrFnRef) -> &IrTy {
-        // Key by (id, mangled_name). Caching by id alone collapses distinct
-        // monomorphizations of the same source function onto the FIRST mono's
-        // fn_ref, so a turbofish value like `Result::unwrap::<u32, Error>` that
-        // creates a SECOND mono of `unwrap` would silently get the FIRST mono's
-        // IrTy back — and any downstream lookup that uses the embedded
-        // mangled_name (or even just iterates `ir_functions` for id matches)
-        // would resolve to the wrong return type. Mix the mangled_name bytes
-        // into the cache key so each mono gets its own IrTy.
-        let key: usize = fn_ref.id._value + 0x40000000usize;
+        // (By mangled name: every instantiation of a function has its own
+        // type.)
+        let key: usize = fn_ref.id._value;
         for i in 0usize..fn_ref.mangled_name.len() {
             key = key * 31usize + (fn_ref.mangled_name[i] as usize);
         }
-        let cached = self.tuple_ty_cache.get(&key);
+        let cached = self.cached_ty(key, |=fn_ref, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Fn && t.fn_item_ref().mangled_name == fn_ref.mangled_name
+        });
         if cached.is_some() { return cached.unwrap(); }
-        let result = self.arena.alloc(IrTy::mk_fn(fn_ref));
-        self.tuple_ty_cache.insert(key, result);
-        result
+        self.cache_ty(key, self.arena.alloc(IrTy::mk_fn(fn_ref)))
     }
 
     fn make_slice_ty(self: &mut MonoCtx, elem: &IrTy, is_const: bool) -> &IrTy {
-        // Slice types are structurally just tuples (ptr, len), but we cache the
-        // IrTy::mk_slice wrapper too for pointer stability
-        let key = (elem as &void as usize) * 2 + (if is_const { 1usize } else { 0usize });
-        // Use a different hash space from ptr_ty_cache by adding a large offset
-        key = key + 0x10000000usize;
-        let cached = self.tuple_ty_cache.get(&key);
+        let key = (elem as &void as usize) * 8 + 2 + (if is_const { 1usize } else { 0usize });
+        let cached = self.cached_ty(key, |=elem, =is_const, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Slice && t.inner() as &void == elem as &void && t.is_const() == is_const
+        });
         if cached.is_some() { return cached.unwrap(); }
         // Build elems = {ptr_ty, usize_ty} so code that assumes tuple representation works
         let ptr_ty = self.make_ptr_ty(elem, is_const);
@@ -475,8 +488,7 @@ impl MonoCtx {
         elems[1] = usize_ty;
         let result = self.arena.alloc(IrTy::mk_slice(elem, is_const));
         result._data.slice.elems = elems;
-        self.tuple_ty_cache.insert(key, result);
-        result
+        self.cache_ty(key, result)
     }
 
     fn push_mono_frame(self: &mut MonoCtx, fn_name: &[u8], span: Span) {
@@ -539,9 +551,7 @@ impl MonoCtx {
         self.struct_cache.free();
         self.struct_ty_cache.free();
         self.enum_cache.free();
-        self.ptr_ty_cache.free();
-        self.array_ty_cache.free();
-        self.tuple_ty_cache.free();
+        self.ty_cache.free();
         self.mono_stack.free();
         self.dyn_vtable_cache.free();
     }

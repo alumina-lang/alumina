@@ -191,6 +191,10 @@ struct ConstEvaluator {
     current_fn: &[u8],
     // The heap (shared across call frames).
     heap: &mut HashMap<usize, HeapAlloc>,
+    // Whether values are as at run time (`in_const_context()` is false),
+    // for code that is decided when compiling (as alumina-boot's
+    // `ConstEvaluator::for_codegen`).
+    run_time: bool,
 }
 
 impl ConstEvaluator {
@@ -222,6 +226,7 @@ impl ConstEvaluator {
             failure: Option::none(),
             current_fn: "",
             heap: arena.alloc(HashMap::new::<usize, HeapAlloc>()),
+            run_time: false,
         }
     }
 
@@ -236,12 +241,6 @@ impl ConstEvaluator {
     fn var_id(self: &ConstEvaluator, id: Id) -> usize {
         let remapped = self.remapped.get(&id._value);
         remapped.unwrap_or(id._value)
-    }
-
-    fn load_var(self: &ConstEvaluator, id: Id) -> ConstValue {
-        let vid = self.var_id(id);
-        let v = self.variables.get(&vid);
-        v.unwrap_or(ConstValue::make_uninitialized())
     }
 
     fn store_var(self: &mut ConstEvaluator, id: Id, val: ConstValue) {
@@ -274,7 +273,11 @@ impl ConstEvaluator {
 
     fn materialize_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue) -> Result<ConstValue, ConstEvalError> {
         if lv.tag == CLVTag::Variable {
-            Result::ok(self.load_var(Id { _value: lv.id()._value }))
+            // (A variable of the code around the evaluation has no value to
+            // compute with, but can be passed on, e.g. to a method that
+            // only needs its type.)
+            let v = self.variables.get(&self.var_id(Id { _value: lv.id()._value }));
+            Result::ok(v.unwrap_or(ConstValue::make_uninitialized()))
         } else if lv.tag == CLVTag::Alloc {
             self.live_alloc(lv.id()).map(|a: HeapAlloc| -> ConstValue { a.value })
         } else if lv.tag == CLVTag::Field {
@@ -472,6 +475,10 @@ impl ConstEvaluator {
         switch expr.tag {
         IrTag::IntLit => {
             let bt = self.irty_to_builtin(expr.ty);
+            // (Values are 64 bits wide: 128-bit arithmetic is not supported.)
+            if bt.bit_width() > 64 {
+                return Result::err(ConstEvalError::unsupported());
+            }
             Result::ok(ConstValue::make_int(expr.int_val(), bt))
         }
         IrTag::FloatLit => {
@@ -579,10 +586,7 @@ impl ConstEvaluator {
             if value.is_ok() { self.bake(value.unwrap()); }
             value
         }
-        IrTag::InConstContext => {
-            // We're const-evaluating right now, so the answer is `true`.
-            Result::ok(ConstValue::make_bool(true))
-        }
+        IrTag::InConstContext => Result::ok(ConstValue::make_bool(!self.run_time)),
         IrTag::Undef => Result::ok(ConstValue::make_uninitialized()),
         IrTag::Zeroed => Result::ok(self.make_zeroed(expr.ty)),
         IrTag::FnRef => Result::ok(ConstValue::make_fn_ptr(*expr.fn_ref())),
@@ -730,25 +734,21 @@ impl ConstEvaluator {
         let is_signed = bt.is_signed();
         let width = bt.bit_width();
 
-        // For comparisons, handle signed/unsigned properly
+        // For comparisons, handle signed/unsigned properly (on the values
+        // as of the type's width: a negative value may be stored
+        // sign-extended to 64 bits or not).
         switch op {
-        BinOp::Eq => return Result::ok(ConstValue::make_bool(a == b)),
-        BinOp::Ne => return Result::ok(ConstValue::make_bool(a != b)),
-        BinOp::Lt => {
-            return Result::ok(ConstValue::make_bool(
-                if is_signed { (a as i64) < (b as i64) } else { a < b }));
-        }
-        BinOp::Le => {
-            return Result::ok(ConstValue::make_bool(
-                if is_signed { (a as i64) <= (b as i64) } else { a <= b }));
-        }
-        BinOp::Gt => {
-            return Result::ok(ConstValue::make_bool(
-                if is_signed { (a as i64) > (b as i64) } else { a > b }));
-        }
-        BinOp::Ge => {
-            return Result::ok(ConstValue::make_bool(
-                if is_signed { (a as i64) >= (b as i64) } else { a >= b }));
+        BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge => {
+            let (x, y) = (self.mask_to_width(a, width), self.mask_to_width(b, width));
+            let (sx, sy) = (self.sign_extend(x, width), self.sign_extend(y, width));
+            return Result::ok(ConstValue::make_bool(switch op {
+                BinOp::Eq => x == y,
+                BinOp::Ne => x != y,
+                BinOp::Lt => if is_signed { sx < sy } else { x < y },
+                BinOp::Le => if is_signed { sx <= sy } else { x <= y },
+                BinOp::Gt => if is_signed { sx > sy } else { x > y },
+                _ => if is_signed { sx >= sy } else { x >= y },
+            }));
         }
         _ => {}
         }
@@ -1028,6 +1028,9 @@ impl ConstEvaluator {
         if inner_r.is_err() { return inner_r; }
         let inner = inner_r.unwrap();
         let target_bt = self.irty_to_builtin(expr.ir_ty());
+        if target_bt.bit_width() > 64 {
+            return Result::err(ConstEvalError::unsupported());  // (see IntLit)
+        }
 
         // Same type - no-op
         if inner.tag == CValTag::Int && target_bt == inner.builtin_type() {
@@ -1618,6 +1621,7 @@ impl ConstEvaluator {
             failure: Option::none(),
             current_fn: f.name,
             heap: self.heap,
+            run_time: self.run_time,
         };
 
         // Evaluate function body
@@ -1666,6 +1670,10 @@ impl ConstEvaluator {
         let inner_r = self.eval(expr.lhs());
         if inner_r.is_err() { return inner_r; }
         let inner = inner_r.unwrap();
+        if inner.tag == CValTag::Uninitialized {
+            // (No value, e.g. a variable of the code around the evaluation.)
+            return Result::err(ConstEvalError::unsupported());
+        }
         let target_bt = self.irty_to_builtin(expr.ir_ty());
 
         // Int -> Float (reinterpret bits via pointer cast)
@@ -2042,6 +2050,29 @@ fn try_eval_bool(
 ) -> Option<bool> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
+    let result = evaluator.eval_top(expr);
+    if result.is_ok() {
+        result.unwrap().as_bool()
+    } else {
+        Option::none()
+    }
+}
+
+/// The value of a condition at run time, if it can be known when compiling
+/// (with a small budget: this is tried for every condition).
+fn try_eval_bool_at_run_time(
+    arena: &mut Arena,
+    id_gen: &mut IdGen,
+    ir_functions: &[IrFunction],
+    ir_globals: &[IrGlobal],
+    const_values: &HashMap<usize, ConstValue>,
+    pointer_size: usize,
+    expr: &IrExpr,
+) -> Option<bool> {
+    let vars: HashMap<usize, ConstValue> = HashMap::new();
+    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
+    evaluator.run_time = true;
+    evaluator.steps_remaining = 10000;
     let result = evaluator.eval_top(expr);
     if result.is_ok() {
         result.unwrap().as_bool()

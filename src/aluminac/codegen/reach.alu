@@ -1,0 +1,151 @@
+// The functions a program uses, as alumina-boot's dead code elimination:
+// those reachable from its roots (exported functions, entry points, tests,
+// static constructors, globals) through calls and references in code that
+// runs at all (not branches decided away when compiling). Only those are
+// compiled; const-only code among them is reported, since it cannot run.
+
+use ast::*;
+use std::collections::{HashMap, HashSet, Vector};
+use std::option::Option;
+
+struct Reachability {
+    functions: &[IrFunction],
+    /// `functions` by mangled name.
+    indices: HashMap<&[u8], usize>,
+    reachable: HashSet<&[u8]>,
+    /// Functions reached whose bodies are yet to be walked.
+    pending: Vector<usize>,
+    diag: &mut diagnostics::DiagnosticContext,
+}
+
+impl Reachability {
+    /// Walk the program from its roots (see the module comment).
+    fn of(unit: &CompilationUnit, diag: &mut diagnostics::DiagnosticContext) -> Reachability {
+        let r = Reachability {
+            functions: unit.functions,
+            indices: HashMap::new(),
+            reachable: HashSet::new(),
+            pending: Vector::new(),
+            diag: diag,
+        };
+        for (i, f) in unit.functions.iter_ref().enumerate() {
+            r.indices.insert(f.mangled_name, i);
+        }
+        for f in unit.functions.iter_ref() {
+            if Reachability::is_root(f) {
+                r.reach(f.mangled_name);
+            }
+        }
+        for g in unit.globals.iter_ref() {
+            if g.init.is_some() {
+                r.visit(g.init.unwrap());
+            }
+        }
+        while !r.pending.is_empty() {
+            let f = &r.functions[r.pending.pop().unwrap()];
+            if f.body.is_some() {
+                r.visit(f.body.unwrap());
+            }
+        }
+        r
+    }
+
+    fn free(self: &mut Reachability) {
+        self.indices.free();
+        self.reachable.free();
+        self.pending.free();
+    }
+
+    fn contains(self: &Reachability, f: &IrFunction) -> bool {
+        self.reachable.contains(&f.mangled_name)
+    }
+
+    fn is_root(f: &IrFunction) -> bool {
+        f.name == "main" || f.attributes.iter().any(|a: Attribute| -> bool {
+            switch a.tag {
+                AttrTag::Export, AttrTag::Main, AttrTag::Test, AttrTag::TestMain, AttrTag::StaticCtor,
+                AttrTag::NoMangle => true,
+                AttrTag::Lang => a.str_val() == "entrypoint_glue",
+                _ => false,
+            }
+        })
+    }
+
+    fn reach(self: &mut Reachability, name: &[u8]) {
+        if self.reachable.insert(name) {
+            let idx = self.indices.get(&name);
+            if idx.is_some() {
+                self.pending.push(idx.unwrap());
+            }
+        }
+    }
+
+    /// Const-only code where it would run (as alumina-boot's lint).
+    fn const_only(self: &mut Reachability, e: &IrExpr) {
+        self.diag.emit(diagnostics::CodeDiagnostic::lint(self.diag.written_span(e.span), "const_only",
+            "const-only functions should not be used at runtime (guard with `std::runtime::in_const_context()`)"));
+    }
+
+    fn visit(self: &mut Reachability, e: &IrExpr) {
+        switch e.tag {
+            IrTag::Call => {
+                let target = e.call_target();
+                if target.tag == CallKind::Direct {
+                    self.reach(target.fn_ref.mangled_name);
+                    let idx = self.indices.get(&target.fn_ref.mangled_name);
+                    if idx.is_some() && self.functions[idx.unwrap()].attributes.iter()
+                        .any(|a: Attribute| -> bool { a.tag == AttrTag::ConstOnly }) {
+                        self.const_only(e);
+                    }
+                } else {
+                    self.visit(target.callee);
+                }
+                self.visit_all(e.items());
+            }
+            IrTag::FnRef => self.reach(e.fn_ref().mangled_name),
+            IrTag::ConstAlloc, IrTag::ConstFree, IrTag::ConstBake => {
+                self.const_only(e);
+                self.visit_all(e.items());
+            }
+            IrTag::If => switch e._data.if_data.run_time_cond {
+                2u8 => self.visit(e.lhs()),
+                1u8 => if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); },
+                _ => {
+                    self.visit(e.cond());
+                    self.visit(e.lhs());
+                    if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); }
+                }
+            },
+            IrTag::While => {
+                self.visit(e.cond());
+                self.visit(e.lhs());
+                if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); }
+            }
+            IrTag::Binary, IrTag::Assign, IrTag::Index => {
+                self.visit(e.lhs());
+                self.visit(e.rhs());
+            }
+            IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Transmute, IrTag::Switch => {
+                self.visit(e.lhs());
+                if e.tag == IrTag::Switch {
+                    for arm in e.switch_arms() {
+                        self.visit(arm.body);
+                    }
+                }
+            }
+            IrTag::Ref, IrTag::Deref, IrTag::Defer, IrTag::Loop, IrTag::StackAlloc =>
+                self.visit(e._data.single.lhs),
+            IrTag::Let, IrTag::Return, IrTag::Break => if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); },
+            IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::LlvmIntrinsic,
+            IrTag::AtomicOp, IrTag::ConstPanic, IrTag::ConstWarning, IrTag::ConstNote => self.visit_all(e.items()),
+            // Literals, locals, globals (all compiled), and the like.
+            _ => {}
+        }
+    }
+
+    fn visit_all(self: &mut Reachability, items: &[&IrExpr]) {
+        for item in items {
+            self.visit(item);
+        }
+    }
+}

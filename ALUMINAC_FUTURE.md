@@ -417,10 +417,20 @@ diagnostic's location, expansion or instantiation chain). Done so far:
   Found along the way: a struct literal missing a field crashed the
   compiler; the constant evaluator took a static's initial value for its
   value.
-- Remaining: `const_only` (alumina-boot warns in codegen for const-only
-  code that survives dead-code elimination; aluminac codegens every
-  instantiated function and both branches of `if in_const_context()`, so
-  it needs a reachability pass first), unused macro parameters.
+- **All 112 diagnostics tests match.** For `const_only`, as in
+  alumina-boot: an `if` whose condition is known at run time when
+  compiling (evaluated with `in_const_context()` false) compiles only the
+  branch taken, and codegen compiles only the functions reachable from
+  the program's roots (`codegen/reach.alu`), reporting const-only code
+  among them. aluminac compiling itself now emits 4252 functions instead
+  of 6603. Found along the way: the type caches (tuples, function
+  pointers, slices, arrays) were keyed by hashes of pointers and ids and
+  returned whatever type had the same hash; the constant evaluator
+  compared integers by their 64-bit storage (a negative `i32` stored
+  sign-extended or not), computed 128-bit values in 64 bits, and
+  transmuted variables it had no value for into zeros; a call to a
+  function codegen had not declared silently became `undef`.
+- Remaining: unused macro parameters (alumina-boot warns).
 
 ### Cross-check status
 

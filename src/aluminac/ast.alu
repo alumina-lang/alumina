@@ -1438,7 +1438,15 @@ struct _IrCallData { call_target: IrCallTarget, items: &[&IrExpr] }
 struct _IrFieldAccessData { lhs: &IrExpr, field_idx: u32 }
 struct _IrSingleData { lhs: &IrExpr }
 struct _IrCastData { lhs: &IrExpr, ir_ty: &IrTy }
-struct _IrIfData { cond: &IrExpr, lhs: &IrExpr, opt_expr: Option<&IrExpr> }
+struct _IrIfData {
+    cond: &IrExpr,
+    lhs: &IrExpr,
+    opt_expr: Option<&IrExpr>,
+    /// For an `if`, its condition's value at run time if it is known when
+    /// compiling (0 if not, 1 for false, 2 for true): only that branch is
+    /// compiled.
+    run_time_cond: u8,
+}
 struct _IrSwitchData { lhs: &IrExpr, switch_arms: &[IrSwitchArm] }
 struct _IrRetData { opt_expr: Option<&IrExpr> }
 struct _IrBlockData { items: &[&IrExpr] }

@@ -1634,8 +1634,15 @@ fn generate(
 
     // Phase 1 done
 
+    // Only the functions the program uses are compiled.
+    let reachable = codegen::reach::Reachability::of(unit, diag);
+    defer reachable.free();
+
     // Phase 2: Declare all functions (skip intrinsics)
     for fn_decl in unit.functions.iter_ref() {
+        if fn_decl.body.is_some() && !reachable.contains(fn_decl) {
+            continue;
+        }
         if fn_decl.abi.is_some() {
             let abi_val = fn_decl.abi.unwrap();
             if abi_val == "intrinsic" {

@@ -649,7 +649,16 @@ impl FnCodegen {
             self.gen_cast(expr.lhs(), expr.ir_ty(), expr.ty)
         }
         IrTag::If => {
-            self.gen_if(expr)
+            // (A condition decided when compiling: only the branch taken.)
+            switch expr._data.if_data.run_time_cond {
+                2u8 => self.gen_expr(expr.lhs()),
+                1u8 => if expr.opt_expr().is_some() {
+                    self.gen_expr(expr.opt_expr().unwrap())
+                } else {
+                    LLVMGetUndef(self.ctx.void_type)
+                },
+                _ => self.gen_if(expr),
+            }
         }
         IrTag::While => {
             self.gen_while(expr.cond(), expr.lhs(), expr.opt_expr())
@@ -1607,6 +1616,9 @@ impl FnCodegen {
                 if (fn_val as usize) != 0usize {
                     fn_val
                 } else {
+                    // (Every function called is declared: this is a bug.)
+                    self.internal_error(diagnostics::CodeDiagnostic::codegen_missing_function(
+                        Span::empty(), FnCodegen::call_target_name(target)));
                     return LLVMGetUndef(self.ctx.llvm_type(result_ty));
                 }
             }
