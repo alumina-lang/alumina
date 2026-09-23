@@ -477,10 +477,25 @@ instances.
   non-pointer/non-tuple, capturing closures as `fn` pointers
   (`invalid_code_compile_fail.alu`); closures are `{{anonymous}}` in type
   names, as in alumina-boot.
-- Mono still lowers call arguments twice (tentatively for inference, then
-  for real) and has several ad-hoc inference paths (`Fn`-bound return
-  types, method vs function calls); one unification-based inference
-  driven by hints, as alumina-boot's `infer`, would replace them.
+- ~~Ad-hoc inference paths~~: done. `mono/infer.alu` is the one engine
+  (`Inference`, `infer_call`, `infer_from_types`) every call path feeds:
+  functions, methods, deferred `T::f` calls, protocol generics of mixed-in
+  methods, operators, `for` loops and generic functions taken as values.
+  Evidence in order (first binding wins): explicit type arguments and the
+  receiver, arguments typed on their own, the expected type (unified with
+  the result type), what the receiver's type implies, untyped literals,
+  then protocol bounds to a fixpoint. It replaced ~900 lines (two copies
+  of an `Fn`-bound scan, four shape-specific uses of the hint, three
+  positional guesses of slice methods' type arguments) and fixed the
+  method path's bugs (inferences it never recorded, arguments whose own
+  inference had failed). Beyond alumina-boot (the user allows inferring
+  more where unambiguous): untyped literals are the weakest evidence
+  (`let x: u8 = id(5)`, `same(1, 2u8)`; `inference_literals.alu`), and a
+  generic function passed where an `Fn` bound is known (`call(id)`).
+  Arguments are still lowered twice (tentatively, then with their
+  parameter types), as in alumina-boot.
+  Candidate next step: a local's type from later statements
+  (`let v = Vector::new(); v.push(1u8);`), which neither compiler infers.
 - `make test-std-aluminac` still lacks `--cfg libbacktrace` and
   coroutines (aluminac has no stackful coroutines).
 - ~~Cascading errors~~: done. What fails to lower is an error value of
