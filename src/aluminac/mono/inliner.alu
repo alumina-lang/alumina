@@ -80,14 +80,6 @@ impl Inliner {
                 c._data.if_data.lhs = self.copy(e._data.if_data.lhs);
                 c._data.if_data.opt_expr = e._data.if_data.opt_expr.map(|&self, x: &IrExpr| -> &IrExpr { self.copy(x) });
             }
-            IrTag::Switch => {
-                c._data.switch_data.lhs = self.copy(e._data.switch_data.lhs);
-                let arms = self.arena.alloc_slice_copy::<IrSwitchArm>(e._data.switch_data.switch_arms);
-                for arm in arms.iter_mut() {
-                    arm.body = self.copy(arm.body);
-                }
-                c._data.switch_data.switch_arms = arms;
-            }
             IrTag::Call => {
                 c._data.call.items = self.copy_all(e._data.call.items);
                 if e._data.call.call_target.tag == CallKind::Indirect {

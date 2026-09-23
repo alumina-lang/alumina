@@ -558,7 +558,6 @@ impl ConstEvaluator {
         IrTag::Loop => self.eval_loop(expr),
         IrTag::Break => Result::err(EvalError::Break),
         IrTag::Continue => Result::err(EvalError::Continue),
-        IrTag::Switch => self.eval_switch(expr),
         IrTag::Transmute => self.eval_transmute(expr),
         IrTag::LlvmIntrinsic => self.eval_llvm_intrinsic(expr),
         _ => Result::err(EvalError::Unsupported),
@@ -1377,36 +1376,6 @@ impl ConstEvaluator {
                 return body_r;
             }
         }
-        Result::ok(ConstValue::make_void())
-    }
-
-    // ========== Switch ==========
-
-    fn eval_switch(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
-        let disc_r = self.eval(expr.lhs())?;
-        let disc_val = disc_r.as_u64();
-        if disc_val.is_none() { return Result::err(EvalError::Unsupported); }
-        let disc = disc_val.unwrap();
-
-        let default_body: Option<&IrExpr> = Option::none();
-
-        for i in 0usize..expr.switch_arms().len() {
-            let arm = expr.switch_arms()[i];
-            if arm.is_default {
-                default_body = Option::some(arm.body);
-                continue;
-            }
-            for j in 0usize..arm.values.len() {
-                if arm.values[j] == disc {
-                    return self.eval(arm.body);
-                }
-            }
-        }
-
-        if default_body.is_some() {
-            return self.eval(default_body.unwrap());
-        }
-
         Result::ok(ConstValue::make_void())
     }
 

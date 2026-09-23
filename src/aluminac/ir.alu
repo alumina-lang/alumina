@@ -357,7 +357,6 @@ enum IrTag {
     Deref = 17i32,
     Cast = 18i32,
     If = 19i32,
-    Switch = 20i32,
     While = 21i32,
     Loop = 22i32,
     Break = 23i32,
@@ -400,12 +399,6 @@ struct IrCallTarget {
     callee: &IrExpr,        // for CallKind::Indirect
 }
 
-struct IrSwitchArm {
-    values: &[u64],
-    body: &IrExpr,
-    is_default: bool,
-}
-
 // IrExpr sub-structs for union variants
 struct _IrLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8] }
 struct _IrVarData { id: Id, param_idx: u32 }
@@ -425,7 +418,6 @@ struct _IrIfData {
     /// compiled.
     run_time_cond: u8,
 }
-struct _IrSwitchData { lhs: &IrExpr, switch_arms: &[IrSwitchArm] }
 struct _IrRetData { opt_expr: Option<&IrExpr> }
 struct _IrBlockData { items: &[&IrExpr] }
 struct _IrLetData { id: Id, ir_ty: &IrTy, opt_expr: Option<&IrExpr> }
@@ -446,7 +438,6 @@ union _IrExprData {
     single: _IrSingleData,
     cast: _IrCastData,
     if_data: _IrIfData,
-    switch_data: _IrSwitchData,
     ret: _IrRetData,
     block: _IrBlockData,
     let_data: _IrLetData,
@@ -528,7 +519,6 @@ impl IrExpr {
     fn un_op(self: &IrExpr) -> UnOp { self._data.un.un_op }
     fn call_target(self: &IrExpr) -> &IrCallTarget { &self._data.call.call_target }
     fn field_idx(self: &IrExpr) -> u32 { self._data.field.field_idx }
-    fn switch_arms(self: &IrExpr) -> &[IrSwitchArm] { self._data.switch_data.switch_arms }
     fn param_idx(self: &IrExpr) -> u32 { self._data.var.param_idx }
     fn fn_ref(self: &IrExpr) -> &IrFnRef { &self._data.fn_ref }
     fn global_ref(self: &IrExpr) -> &IrGlobalRef { &self._data.global_ref }
@@ -542,7 +532,6 @@ impl IrExpr {
         else if self.tag == IrTag::Index { self._data.idx.lhs }
         else if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.lhs }
         else if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.lhs }
-        else if self.tag == IrTag::Switch { self._data.switch_data.lhs }
         else { self._data.single.lhs }  // Ref, Deref, Defer, Loop
     }
 
@@ -616,13 +605,6 @@ impl IrExpr {
                 1 => Option::some(self.lhs()),
                 2 => self.opt_expr(),
                 _ => Option::none(),
-            },
-            IrTag::Switch => if index == 0 {
-                Option::some(self.lhs())
-            } else if index <= self.switch_arms().len() {
-                Option::some(self.switch_arms()[index - 1].body)
-            } else {
-                Option::none()
             },
             IrTag::Call => if self.call_target().tag == CallKind::Indirect {
                 if index == 0 { Option::some(self.call_target().callee) } else { in_list(self.items(), index - 1) }
