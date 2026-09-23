@@ -458,9 +458,10 @@ different mechanism and both paths are fully implemented:
   *Style nit only:* could be inline `if in_const_context() … else
   when cfg!("boot") … else …` — but see the `when cfg!`
   name-resolution constraint under item 6.
-- `std/mem.alu` `stack_alloc` fn pair + `test_stack_alloc` /
-  `test_const_stack_alloc` (boot-only codegen_func; aluminac has its
-  own `intrinsics::stack_alloc` tested elsewhere).
+- `std/mem.alu` `stack_alloc` fn pair (boot-only codegen_func; aluminac
+  has its own `intrinsics::stack_alloc`); both compilers run
+  `test_stack_alloc` and `test_const_stack_alloc` now that aluminac
+  inlines `#[inline(ir)]`.
 - `std/sync/mod.alu` `test_ordering_values_match` (boot-only
   `codegen_const` C-constant check; aluminac coverage is
   `tests/aluminac/atomic_intrinsics.alu`).
