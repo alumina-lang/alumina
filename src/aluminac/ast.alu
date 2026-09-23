@@ -478,6 +478,7 @@ enum ExprTag {
     Defered = 49i32,        // T::method() where T is a generic type param - deferred until mono
                             // id = generic param id, str_val = method name
     Yield = 50i32,          // `yield value` in a coroutine (opt_expr)
+    MacroEtCetera = 51i32,  // `expr$...` in a macro body: `expr` once per `...` argument (lhs)
 }
 
 // Expression sub-structs for union variants
@@ -641,7 +642,7 @@ impl Expr {
         else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.lhs }
         else if self.tag == ExprTag::Lambda { self._data.lambda.lhs }
         else if self.tag == ExprTag::Range { self._data.range.lhs }
-        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs }
+        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera || self.tag == ExprTag::MacroEtCetera { self._data.defer.lhs }
         else { null }
     }
 
@@ -728,7 +729,7 @@ impl Expr {
         else if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor { self._data.for_expr.lhs = val; }
         else if self.tag == ExprTag::Lambda { self._data.lambda.lhs = val; }
         else if self.tag == ExprTag::Range { self._data.range.lhs = val; }
-        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera { self._data.defer.lhs = val; }
+        else if self.tag == ExprTag::Defer || self.tag == ExprTag::EtCetera || self.tag == ExprTag::MacroEtCetera { self._data.defer.lhs = val; }
     }
 
     fn set_rhs(self: &mut Expr, val: &Expr) {
@@ -952,6 +953,7 @@ struct EnumVariant {
     id: Id,
     name: &[u8],
     value: Option<&Expr>,
+    span: Span,
 }
 
 struct EnumDef {
@@ -968,7 +970,10 @@ struct TypeAlias {
     name: &[u8],
     generic_params: &[GenericParam],
     target: &Ty,
+    /// Declared without a target (`type Foo;`), as the type operators are.
+    opaque: bool,
     attributes: &[Attribute],
+    span: Span,
 }
 
 struct ProtocolDef {

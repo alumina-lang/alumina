@@ -351,6 +351,31 @@ diagnostic's location, expansion or instantiation chain). Done so far:
   expected" for `concat!`/`format_args!`/`include_bytes!`, and
   `include_bytes!` of an unreadable file is an error (it gave `""`).
 
+- **Declarations** (as in alumina-boot): duplicate names in a scope
+  (functions of different `impl` blocks shadow with a warning), duplicate
+  and invalid attributes, `#[align]` with `#[packed]` (and `#[align(1)]`
+  warns), unknown lang items and builtin macros, `#[transparent]` with
+  other than one field, `extern`/protocol/coroutine/varargs function
+  combinations, functions without bodies, extern statics, aliases without
+  targets and misapplied type operators (which resolved to `()`), too many
+  enum variants, `std::builtins::array`/`tuple` as types, struct literals
+  of non-struct types, duplicate field initializers, a default `switch`
+  arm that is not last.
+- **Macros**: argument counts, `$...` outside macros / without `...`
+  parameters / nested, `...` outside tuples, items and lambdas in macro
+  bodies, recursive macros (also indirect ones, which overflowed the
+  stack), invalid escapes (and `\u` escapes, which aluminac kept
+  verbatim), format strings (aluminac ignored errors, e.g. dropping
+  arguments).
+- Found along the way: **an `impl` before its type lost its methods**
+  (pass 1 now visits `impl` blocks last); a tuple spread `t...` in a macro
+  body was taken for the macro's `$...` (now `ExprTag::MacroEtCetera`);
+  branches that disagree coerce to the expected type when they all can
+  (`let s: &[T] = if c { &[a] } else { &[a, b] }`); `#[lang("x")]` was
+  silently ignored; erroneous expressions lower to `!` (`mk_error`) so the
+  error does not cascade; types have no spans, so errors in them point at
+  the enclosing expression (`Mono::type_span`).
+
 ### Cross-check status
 
 `tests/aluminac/cross_check.sh`: every aluminac test behaves the same

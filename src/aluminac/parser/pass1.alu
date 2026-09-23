@@ -16,6 +16,32 @@ use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 use std::collections::{HashMap, Vector};
 use std::option::{Option, try};
 
+/// The lang items there are (as in alumina-boot).
+const LANG_ITEMS: [&[u8]; 99] = [
+    "builtin_array", "builtin_bool", "builtin_callable", "builtin_f32", "builtin_f64",
+    "builtin_i128", "builtin_i16", "builtin_i32", "builtin_i64", "builtin_i8", "builtin_isize",
+    "builtin_never", "builtin_tuple", "builtin_u128", "builtin_u16", "builtin_u32",
+    "builtin_u64", "builtin_u8", "builtin_usize", "coroutine", "coroutine_new",
+    "coroutine_yield", "dyn", "dyn_const_cast", "dyn_const_coerce", "dyn_data", "dyn_new",
+    "dyn_self", "dyn_vtable_index", "entrypoint_glue", "enum_variant_new",
+    "field_descriptor_new", "field_descriptor_new_unnamed", "format_arg", "operator_eq",
+    "operator_gt", "operator_gte", "operator_lt", "operator_lte", "operator_neq", "proto_any",
+    "proto_array", "proto_array_of", "proto_callable", "proto_closure", "proto_const",
+    "proto_enum", "proto_floating_point", "proto_function_pointer", "proto_integer",
+    "proto_meta", "proto_named_function", "proto_none", "proto_numeric", "proto_pointer",
+    "proto_pointer_of", "proto_primitive", "proto_range", "proto_range_of",
+    "proto_same_base_as", "proto_same_layout_as", "proto_signed", "proto_static",
+    "proto_struct", "proto_tuple", "proto_union", "proto_unsigned", "proto_zero_sized", "range",
+    "range_from", "range_from_new", "range_full", "range_full_new", "range_inclusive",
+    "range_inclusive_new", "range_new", "range_to", "range_to_inclusive",
+    "range_to_inclusive_new", "range_to_new", "slice", "slice_const_cast", "slice_const_coerce",
+    "slice_index", "slice_new", "slice_range_index", "slice_slicify", "static_for_iter",
+    "static_for_next", "type_descriptor_new", "typeop_arguments_of",
+    "typeop_array_with_length_of", "typeop_function_pointer_of", "typeop_generic_args_of",
+    "typeop_pointer_with_mut_of", "typeop_replace_generic_args_of", "typeop_return_type_of",
+    "typeop_underlying_function_of", "typeop_underlying_type_of"
+];
+
 struct Pass1 {
     ctx: &mut ParseContext,
     current_scope: u32,
@@ -30,6 +56,13 @@ struct Pass1 {
     impl_decl_start: u32,
     impl_decl_end: u32,
     skip_item: bool,      // set by parse_attributes when #[cfg] evaluates to false
+    // The functions of the `impl` block being visited (one of a type's
+    // blocks may shadow a function of another, with a warning).
+    impl_fn_names: std::collections::HashSet<&[u8]>,
+    // `impl` blocks (and their scopes), visited once all the items they may
+    // be of are declared (an `impl` may come before its type).
+    deferred_impls: Vector<(Node, u32)>,
+    visiting_deferred: bool,
 }
 
 impl Pass1 {
@@ -44,11 +77,47 @@ impl Pass1 {
             impl_decl_start: 0,
             impl_decl_end: 0,
             skip_item: false,
+            impl_fn_names: std::collections::HashSet::new(),
+            deferred_impls: Vector::new(),
+            visiting_deferred: false,
         }
+    }
+
+    /// Declare an item in the current scope, whose names must be unique
+    /// (as in alumina-boot).
+    fn declare(self: &mut Pass1, item: NamedItem) {
+        let existing = self.ctx.scopes.get(self.current_scope).items.get(&item.name);
+        if existing.is_some() && !item.name.is_empty() {
+            let previous = existing.unwrap();
+            if item.kind.tag == NamedItemTag::GenericParam && previous.kind.tag == NamedItemTag::GenericParam {
+                // (The generic parameters of a type's `impl` blocks share
+                // its scope.)
+            } else if item.kind.tag == NamedItemTag::Method && previous.kind.tag == NamedItemTag::Method
+                && !self.impl_fn_names.contains(&item.name) {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_warning(item.span,
+                    std::fmt::format!("duplicate function name \"{}\" (this function will shadow a previous one)", item.name).unwrap().as_slice()));
+            } else if self.ctx.scopes.get(self.current_scope).kind != ScopeKind::Block {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span,
+                    std::fmt::format!("duplicate name `{}`", item.name).unwrap().as_slice()));
+            }
+        }
+        if item.kind.tag == NamedItemTag::Method {
+            self.impl_fn_names.insert(item.name);
+        }
+        self.ctx.scopes.add_item(self.current_scope, item);
     }
 
     fn run(self: &mut Pass1, root: Node) {
         self.visit_node(root);
+        self.visiting_deferred = true;
+        let prev = self.current_scope;
+        for (node, scope_idx) in self.deferred_impls.iter() {
+            self.current_scope = scope_idx;
+            self.visit_impl_p1(node);
+        }
+        self.current_scope = prev;
+        self.visiting_deferred = false;
+        self.deferred_impls.free();
     }
 
     fn visit_node(self: &mut Pass1, node: Node) {
@@ -153,6 +222,20 @@ impl Pass1 {
         Option::some(self.ctx.node_text(child_by!(args[0], FieldKind::Name)?))
     }
 
+    /// The single unsigned integer argument of an attribute, e.g. `8` in
+    /// `#[align(8)]`.
+    fn integer_arg(self: &mut Pass1, meta: Node) -> Option<usize> {
+        let args = self.ctx.meta_args(meta)?;
+        if args.len() != 1 || NODE_KINDS[args[0].symbol() as usize] != NodeKind::IntegerLiteral {
+            return Option::none();
+        }
+        let text = self.ctx.node_text(args[0]);
+        if text.is_empty() || !text.iter().all(|c: u8| -> bool { c >= '0' && c <= '9' }) {
+            return Option::none();
+        }
+        Option::some(parse_usize(text))
+    }
+
     /// The single literal argument of an attribute, e.g. `"strlen"` in
     /// `#[link_name("strlen")]` (unescaped) or `8` in `#[align(8)]`.
     fn literal_arg(self: &mut Pass1, meta: Node) -> Option<&[u8]> {
@@ -176,6 +259,26 @@ impl Pass1 {
             return;
         }
         let name = self.ctx.node_text(name_node.unwrap());
+        // Most attributes can be given once (as in alumina-boot).
+        let tags: &[AttrTag] = switch name {
+            "align" => &[AttrTag::Align],
+            "packed" => &[AttrTag::Packed],
+            "cold" => &[AttrTag::Cold],
+            "tuple_args" => &[AttrTag::TupleArgs],
+            "transparent" => &[AttrTag::Transparent],
+            "inline" => &[AttrTag::Inline, AttrTag::AlwaysInline, AttrTag::NeverInline, AttrTag::InlineIr],
+            "builtin" => &[AttrTag::Builtin],
+            "export" => &[AttrTag::Export],
+            "returns_twice" => &[AttrTag::ReturnsTwice],
+            "thread_local" => &[AttrTag::ThreadLocal],
+            "link_name" => &[AttrTag::LinkName],
+            "const" => &[AttrTag::ConstOnly, AttrTag::NoConst],
+            _ => &[],
+        };
+        if attrs.iter().any(|=tags, a: Attribute| -> bool { tags.iter().any(|=a, t: AttrTag| -> bool { t == a.tag }) }) {
+            self.ctx.error(meta, std::fmt::format!("duplicate attribute `{}`", name).unwrap().as_slice());
+            return;
+        }
         switch name {
             "cfg" => {
                 if !self.ctx.eval_cfg_attribute(meta) {
@@ -203,13 +306,16 @@ impl Pass1 {
             "inline" => {
                 // #[inline] is a hint; #[inline(always)] / #[inline(never)] /
                 // #[inline(ir)] select the kind explicitly.
-                let mode = self.word_arg(meta);
-                attrs.push(switch mode.unwrap_or("") {
-                    "always" => Attribute::always_inline(),
-                    "never" => Attribute::never_inline(),
-                    "ir" => Attribute::inline_ir(),
-                    _ => Attribute::inline_attr(),
-                });
+                if self.ctx.meta_args(meta).is_none() {
+                    attrs.push(Attribute::inline_attr());
+                    return;
+                }
+                switch self.word_arg(meta).unwrap_or("") {
+                    "always" => attrs.push(Attribute::always_inline()),
+                    "never" => attrs.push(Attribute::never_inline()),
+                    "ir" => attrs.push(Attribute::inline_ir()),
+                    _ => self.ctx.error(meta, "invalid attribute"),
+                }
             }
             "cold" => attrs.push(Attribute::cold()),
             "export" => attrs.push(Attribute::export()),
@@ -233,27 +339,48 @@ impl Pass1 {
                 // alumina-boot syntax: `#[const(always)]` maps to
                 // `const_only`, `#[const(never)]` to `no_const`. Anything
                 // else is stored as Custom("const") for `has_attribute`.
-                attrs.push(switch self.word_arg(meta).unwrap_or("") {
-                    "always" => Attribute::const_only(),
-                    "never" => Attribute::no_const(),
-                    _ => Attribute::custom(self.ctx.intern_str("const")),
-                });
+                switch self.word_arg(meta).unwrap_or("") {
+                    "always" => attrs.push(Attribute::const_only()),
+                    "never" => attrs.push(Attribute::no_const()),
+                    _ => self.ctx.error(meta, "invalid attribute"),
+                }
             }
             "tuple_args" => attrs.push(Attribute::tuple_args()),
             "packed" => {
                 // #[packed] defaults to alignment 1; #[packed(N)] sets it to N.
-                let val = self.literal_arg(meta).map(parse_usize).unwrap_or(1);
-                attrs.push(Attribute::packed(if val == 0 { 1 } else { val }));
+                let val: usize = 1;
+                if self.ctx.meta_args(meta).is_some() {
+                    let arg = self.integer_arg(meta);
+                    if arg.is_none() {
+                        self.ctx.error(meta, "invalid attribute");
+                        return;
+                    }
+                    val = arg.unwrap();
+                }
+                if val == 0 || (val & (val - 1)) != 0 {
+                    self.ctx.error(meta, "invalid attribute (packed alignment must be a power of two)");
+                } else if attrs.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Align }) {
+                    self.ctx.error(meta, "`#[align(...)]` cannot be used together with `#[packed]`");
+                } else {
+                    attrs.push(Attribute::packed(val));
+                }
             }
             "builtin" => attrs.push(Attribute::builtin()),
             "returns_twice" => attrs.push(Attribute::returns_twice()),
             "test_main" => attrs.push(Attribute::test_main()),
             "align" => {
-                let val = self.literal_arg(meta);
-                if val.is_some() {
-                    attrs.push(Attribute::align(parse_usize(val.unwrap())));
+                let val = self.integer_arg(meta);
+                if val.is_none() {
+                    self.ctx.error(meta, "invalid attribute");
+                } else if val.unwrap() == 1 {
+                    self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_warning(self.ctx.make_span(meta),
+                        "`#[align(1)]` has no effect, did you mean to use `#[packed]`?"));
+                } else if val.unwrap() == 0 || (val.unwrap() & (val.unwrap() - 1)) != 0 {
+                    self.ctx.error(meta, "invalid attribute (alignment must be a power of two)");
+                } else if attrs.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Packed }) {
+                    self.ctx.error(meta, "`#[align(...)]` cannot be used together with `#[packed]`");
                 } else {
-                    self.ctx.error(meta, "`align` expects an integer argument");
+                    attrs.push(Attribute::align(val.unwrap()));
                 }
             }
             "link_name" => {
@@ -266,7 +393,11 @@ impl Pass1 {
             }
             "lang" => {
                 let lang_name = self.word_arg(meta);
-                if lang_name.is_some() {
+                if lang_name.is_none() {
+                    self.ctx.error(meta, "invalid attribute");
+                } else if !LANG_ITEMS.as_slice().iter().any(|=lang_name, l: &[u8]| -> bool { l == lang_name.unwrap() }) {
+                    self.ctx.error(meta, std::fmt::format!("unknown lang item {}", lang_name.unwrap()).unwrap().as_slice());
+                } else {
                     attrs.push(Attribute::lang(self.ctx.intern_str(lang_name.unwrap())));
                 }
             }
@@ -314,7 +445,7 @@ impl Pass1 {
         let name = self.get_name(node);
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::module(child_scope),
             span: self.ctx.make_span(node),
@@ -339,7 +470,7 @@ impl Pass1 {
             NamedItemKind::function(id)
         };
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: item_kind,
             span: self.ctx.make_span(node),
@@ -384,7 +515,7 @@ impl Pass1 {
 
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::struct_kind_with_scope(id, child_scope),
             span: self.ctx.make_span(node),
@@ -420,7 +551,7 @@ impl Pass1 {
 
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::enum_kind_with_scope(id, child_scope),
             span: self.ctx.make_span(node),
@@ -449,7 +580,7 @@ impl Pass1 {
         let variant_id = self.ctx.next_id();
 
         if self.current_enum_id.is_some() {
-            self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            self.declare(NamedItem {
                 name: name,
                 kind: NamedItemKind::enum_variant(self.current_enum_id.unwrap(), variant_id),
                 span: self.ctx.make_span(node),
@@ -468,7 +599,7 @@ impl Pass1 {
         if self.skip_item { self.skip_item = false; return; }
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Protocol, Option::some(self.current_scope));
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::protocol_with_scope(id, child_scope),
             span: self.ctx.make_span(node),
@@ -499,9 +630,36 @@ impl Pass1 {
     }
 
     fn visit_impl_p1(self: &mut Pass1, node: Node) {
+        if !self.visiting_deferred {
+            self.deferred_impls.push((node, self.current_scope));
+            return;
+        }
         let _ = self.parse_attributes(node);
         if self.skip_item { self.skip_item = false; return; }
         let name = self.get_name(node);
+
+        // The type must be declared in the same scope (as in alumina-boot;
+        // the linear scopes of a block's items count as one).
+        let scope_idx = self.current_scope;
+        let declared = self.ctx.scopes.get(scope_idx).items.get(&name);
+        while declared.is_none() && self.ctx.scopes.get(scope_idx).kind == ScopeKind::Block
+            && self.ctx.scopes.get(scope_idx).parent.is_some() {
+            scope_idx = self.ctx.scopes.get(scope_idx).parent.unwrap();
+            declared = self.ctx.scopes.get(scope_idx).items.get(&name);
+        }
+        if declared.is_none() {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.ctx.make_span(node),
+                "cannot have an `impl` block without a corresponding type"));
+        } else if declared.unwrap().kind.tag != scope::NamedItemTag::Struct && declared.unwrap().kind.tag != scope::NamedItemTag::Enum {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.ctx.make_span(node),
+                std::fmt::format!("duplicate name `{}`", name).unwrap().as_slice()));
+        }
+        let prev_fn_names = self.impl_fn_names;
+        self.impl_fn_names = std::collections::HashSet::new();
+        defer {
+            self.impl_fn_names.free();
+            self.impl_fn_names = prev_fn_names;
+        };
 
         // Try to resolve the type to find its scope
         let resolved = self.ctx.scopes.resolve(self.current_scope, name);
@@ -575,7 +733,7 @@ impl Pass1 {
         let id = self.ctx.next_id();
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::type_alias(id),
             span: self.ctx.make_span(node),
@@ -632,7 +790,7 @@ impl Pass1 {
                     } else {
                         own_segments
                     };
-                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                    self.declare(NamedItem {
                         name: name,
                         kind: NamedItemKind::use_alias(self.current_scope, segments),
                         span: self.ctx.make_span(node),
@@ -646,7 +804,7 @@ impl Pass1 {
                     full_path[i] = prefix[i];
                 }
                 full_path[prefix.len()] = name;
-                self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                self.declare(NamedItem {
                     name: name,
                     kind: NamedItemKind::use_alias(self.current_scope, full_path),
                     span: self.ctx.make_span(node),
@@ -678,7 +836,7 @@ impl Pass1 {
                     prefix.copy_to_nonoverlapping(&segments[0]);
                     relative.copy_to_nonoverlapping(&segments[prefix.len()]);
                     let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
-                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                    self.declare(NamedItem {
                         name: alias,
                         kind: NamedItemKind::use_alias(self.current_scope, segments),
                         span: self.ctx.make_span(node),
@@ -800,7 +958,7 @@ impl Pass1 {
             self.current_scope
         };
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::static_kind(id),
             span: self.ctx.make_span(node),
@@ -839,7 +997,7 @@ impl Pass1 {
             self.current_scope
         };
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::const_kind(id),
             span: self.ctx.make_span(node),
@@ -874,7 +1032,7 @@ impl Pass1 {
         // Check for #[builtin] attribute
         let is_builtin = attrs.iter().any(|attr: Attribute| -> bool { attr.tag == AttrTag::Builtin });
 
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::macro_kind(id),
             span: self.ctx.make_span(node),
@@ -905,7 +1063,7 @@ impl Pass1 {
                 if placeholder.is_some() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
                     let id = self.ctx.next_id();
-                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                    self.declare(NamedItem {
                         name: name,
                         kind: NamedItemKind::generic_param(id),
                         span: self.ctx.make_span(child),
@@ -981,7 +1139,7 @@ impl Pass1 {
     fn visit_parameter_p1(self: &mut Pass1, node: Node) {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::param(id),
             span: self.ctx.make_span(node),
@@ -999,7 +1157,7 @@ impl Pass1 {
     fn visit_macro_param_p1(self: &mut Pass1, node: Node) {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
-        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+        self.declare(NamedItem {
             name: name,
             kind: NamedItemKind::param(id),
             span: self.ctx.make_span(node),

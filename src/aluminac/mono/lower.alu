@@ -25,6 +25,9 @@ struct Mono {
     current_fn_name: &[u8],
     // Expected type hint for return type inference (e.g. from if-else sibling branch)
     expected_type: &IrTy,
+    // The span of the expression (or item) being lowered, for errors in the
+    // types it names (which have no spans of their own).
+    type_span: Span,
     // Suppress field errors when lowering call target (method error takes priority)
     suppress_field_error: bool,
     // Compile-time constant replacements for static for loop variables.
@@ -132,6 +135,7 @@ impl Mono {
             return_type: ctx.void_ty,
             current_fn_name: "",
             expected_type: ctx.no_hint,
+            type_span: Span::empty(),
             suppress_field_error: false,
             const_replacements: HashMap::new(),
             current_fn_idx: 0usize,
@@ -233,6 +237,14 @@ impl Mono {
         if first_error {
             self.ctx.emit_mono_stack_notes();
         }
+    }
+
+    /// What an expression that was reported as erroneous lowers to: `!`,
+    /// which fits any context, so that the error does not cascade.
+    fn mk_error(self: &mut Mono) -> &IrExpr {
+        let e = IrExpr::void_expr(self.ctx.never_ty);
+        e.tag = IrTag::Unreachable;
+        self.ctx.arena.alloc(e) as &IrExpr
     }
 
     fn mk_int_lit(self: &mut Mono, ty: &IrTy, val: u64) -> &IrExpr {
@@ -640,6 +652,11 @@ impl Mono {
                     if bt != BuiltinType::Void {
                         return self.ctx.intern_builtin_ty(bt);
                     }
+                    if lang == "builtin_array" || lang == "builtin_tuple" {
+                        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                            "this is not a type you can actually use, sorry"));
+                        return self.ctx.void_ty;
+                    }
                     // #[lang(slice)] with type arg Ptr: slice<&T> → IrTyTag::Slice
                     if lang == "slice" && type_args.len() == 1 {
                         let ptr_ty = type_args[0];
@@ -771,6 +788,16 @@ impl Mono {
                         }
                     }
                 }
+            }
+
+            if alias.opaque {
+                // (A type operator that does not apply to its arguments, or an
+                // alias without a target.)
+                let is_typeop = alias.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Lang });
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    if is_typeop { self.type_span } else { alias.span },
+                    if is_typeop { "invalid type operator" } else { "type alias must have a target" }));
+                return self.ctx.void_ty;
             }
 
             // The alias's generic params are bound only while resolving its
@@ -1023,10 +1050,17 @@ impl Mono {
             }
         }
 
-        // Pass 2: assign auto-increment values to non-valued variants
+        // Pass 2: assign auto-increment values to non-valued variants (all
+        // the values of the underlying type may be taken)
+        let bits = if underlying.tag == IrTyTag::Builtin { underlying.builtin().bit_width() } else { 64u32 };
         let counter: u64 = 0;
         for i in 0usize..def.variants.len() {
             if def.variants[i].value.is_none() {
+                if bits < 64 && taken_values.len() as u64 >= (1u64 << bits) {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.variants[i].span,
+                        std::fmt::format!("too many enum variants for underlying type `{}`", self.ir_type_name(underlying)).unwrap().as_slice()));
+                    break;
+                }
                 // Find next value not already taken
                 while taken_values.contains(&counter) {
                     counter += 1;
@@ -1463,7 +1497,7 @@ impl Mono {
     /// (e.g. `&[T; 0]` to `&[T]`, or `&mut T` to `&T`), in which case it is
     /// coerced in place, so that all of them produce the same representation.
     /// `unit_note` explains where an implicit `()` branch comes from.
-    fn unify_branches(self: &mut Mono, branches: &mut [&IrExpr], span: Span, unit_note: &[u8]) -> &IrTy {
+    fn unify_branches(self: &mut Mono, branches: &mut [&IrExpr], hint: &IrTy, span: Span, unit_note: &[u8]) -> &IrTy {
         let result_ty = self.ctx.never_ty;
         for (i, branch) in branches.iter().enumerate() {
             if branch.ty.is_never() || branch.ty == result_ty {
@@ -1493,6 +1527,20 @@ impl Mono {
                     }
                 }
                 continue;
+            }
+            // Otherwise they may all coerce to the type the context expects
+            // (as in alumina-boot, e.g. arrays of different lengths to a
+            // slice, or pointers to different types to a `dyn`).
+            if hint != self.ctx.no_hint && !hint.is_void()
+                && branches.iter().all(|=self, =hint, b: &IrExpr| -> bool {
+                    b.ty.is_never() || self.try_coerce(b, hint) as &void != null
+                }) {
+                for j in 0usize..branches.len() {
+                    if !branches[j].ty.is_never() {
+                        branches[j] = self.try_coerce(branches[j], hint);
+                    }
+                }
+                return hint;
             }
             self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
                 span,
@@ -1575,9 +1623,14 @@ impl Mono {
     /// hints it passes on to them.
     fn lower_expr_hinted(self: &mut Mono, expr: &Expr, hint: &IrTy) -> &IrExpr {
         let saved_hint = self.expected_type;
+        let saved_span = self.type_span;
         self.expected_type = hint;
+        if !expr.span.is_empty() {
+            self.type_span = expr.span;
+        }
         let result = self.lower_expr_inner(expr);
         self.expected_type = saved_hint;
+        self.type_span = saved_span;
         // Stamp the AST span onto the IR expression
         if expr.span.start != 0u32 || expr.span.end != 0u32 {
             let m = result as &void as &mut IrExpr;
@@ -1610,6 +1663,10 @@ impl Mono {
             ExprTag::Block, ExprTag::Let, ExprTag::Defer =>
                 self.lower_block(expr),
             ExprTag::TupleLit => self.lower_tuple_lit(expr),
+            ExprTag::EtCetera, ExprTag::MacroEtCetera => {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "... can only be used inside a tuple"));
+                self.mk_error()
+            }
             ExprTag::ArrayLit => {
                 // Propagate the expected element type into per-element
                 // lowering so call inference can solve generics from the
@@ -2862,7 +2919,7 @@ impl Mono {
             bodies.push(self.mk_void());
         }
         let has_default = default_idx.unwrap() < arms.len();
-        let result_ty = self.unify_branches(bodies.as_slice_mut(), span, if has_default {
+        let result_ty = self.unify_branches(bodies.as_slice_mut(), outer_expected, span, if has_default {
             ""
         } else {
             "a `switch` without a default arm (`_ =>`) has type `()`"
@@ -3357,7 +3414,7 @@ impl Mono {
             };
             // The branches must agree on a type; a missing else is `()`.
             let branches: [&IrExpr; 2] = [ir_then, ir_else.unwrap_or(self.mk_void())];
-            let result_ty = self.unify_branches(&branches, expr.span, if ir_else.is_some() {
+            let result_ty = self.unify_branches(&branches, outer_expected, expr.span, if ir_else.is_some() {
                 ""
             } else {
                 "an `if` without `else` has type `()`"
@@ -8481,6 +8538,10 @@ impl Mono {
                     self.suppress_field_error = true;
                     let recv = self.lower_expr(expr.lhs().lhs());
                     self.suppress_field_error = prev_suppress;
+                    if recv.ty.is_never() {
+                        // (The receiver diverges, so the call is never made.)
+                        return recv;
+                    }
                     let recv_ty = recv.ty;
                     while recv_ty.tag == IrTyTag::Pointer {
                         recv_ty = recv_ty.inner();
@@ -8495,6 +8556,10 @@ impl Mono {
             }
         } else if expr.tag == ExprTag::StructLit {
             let ir_ty = self.resolve_struct_lit_type(expr);
+            if ir_ty.tag != IrTyTag::Struct && ir_ty.tag != IrTyTag::Slice {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "expected a struct-like type here"));
+                return self.mk_error();
+            }
 
             if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref().is_union {
                 // Union: only lower the single initialized field

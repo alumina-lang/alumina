@@ -17,6 +17,12 @@ use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 use std::collections::{HashMap, Vector};
 use std::option::Option;
 
+/// The builtin macros there are (as in alumina-boot).
+const BUILTIN_MACROS: [&[u8]; 11] = [
+    "env", "cfg", "include_bytes", "concat", "line", "column", "file", "format_args", "bind", "reduce",
+    "stringify",
+];
+
 struct Pass2 {
     ctx: &mut ParseContext,
 }
@@ -224,6 +230,9 @@ impl Pass2 {
                         // Check if this param is variadic (has EtCetera child)
                         let etc = child_by!(param, FieldKind::EtCetera);
                         if !etc.is_none() {
+                            if variadic_idx != NO_VARIADIC {
+                                self.ctx.error(node, "macro can have at most one `...` parameter");
+                            }
                             variadic_idx = param_idx;
                         }
                         param_idx = param_idx + 1i32;
@@ -237,18 +246,25 @@ impl Pass2 {
                 let body = body_node.unwrap();
                 let params_slice = self.ctx.arena.alloc_slice_copy::<&[u8]>(param_names.as_slice());
 
+                if pending.is_builtin && !BUILTIN_MACROS.as_slice().iter().any(|=pending, m: &[u8]| -> bool { m == pending.name }) {
+                    self.ctx.error(node, std::fmt::format!("unknown builtin macro `{}`", pending.name).unwrap().as_slice());
+                }
+
                 // Pre-parse the macro body in definition-site scope
                 let body_expr: &Expr = if !pending.is_builtin {
                     // Set up macro body pre-parsing state
                     let prev_in_macro_body = self.ctx.in_macro_body;
                     let prev_param_names = self.ctx.macro_param_names;
                     let prev_variadic_idx = self.ctx.macro_variadic_param_idx;
+                    let prev_defining = self.ctx.defining_macro;
                     self.ctx.in_macro_body = true;
                     self.ctx.macro_param_names = params_slice;
                     self.ctx.macro_variadic_param_idx = variadic_idx;
+                    self.ctx.defining_macro = Option::some((pending.id._value, self.ctx.make_span(node)));
 
                     let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
                     let parsed = expr_parser.parse_expr(body);
+                    self.ctx.defining_macro = prev_defining;
 
                     // Restore state
                     self.ctx.in_macro_body = prev_in_macro_body;
@@ -309,6 +325,30 @@ impl Pass2 {
             let node = self.find_node_at(root, pending.node_start, pending.node_end);
             self.build_function(root, node, &pending);
             i = i + 1usize;
+        }
+    }
+
+    /// The checks alumina-boot makes on a function's declaration.
+    fn check_fn_declaration(self: &mut Pass2, node: Node, is_protocol_fn: bool, has_generic_params: bool) {
+        let is_extern = child_by!(node, FieldKind::Extern).is_some();
+        let is_coroutine = child_by!(node, FieldKind::Coroutine).is_some();
+        let params_node = child_by!(node, FieldKind::Parameters);
+        let is_variadic = params_node.is_some() && child_by!(params_node.unwrap(), FieldKind::EtCetera).is_some();
+        let abi = child_by!(node, FieldKind::Abi).map(|=self, n: Node| -> &[u8] { self.ctx.node_text(n) });
+        if is_variadic && !is_extern {
+            self.ctx.error(node, "varargs functions can only be extern");
+        } else if is_coroutine && is_extern {
+            self.ctx.error(node, "coroutines cannot be extern");
+        } else if is_protocol_fn && is_coroutine {
+            self.ctx.error(node, "coroutines cannot be protocol functions");
+        } else if is_protocol_fn && is_extern {
+            self.ctx.error(node, "protocol functions cannot be extern");
+        } else if abi.is_some() && abi.unwrap() != "\"C\"" && abi.unwrap() != "\"intrinsic\"" {
+            self.ctx.error(node, std::fmt::format!("unsupported ABI {}", abi.unwrap()).unwrap().as_slice());
+        } else if is_extern && abi.unwrap_or("\"C\"") == "\"C\"" && has_generic_params {
+            self.ctx.error(node, "extern \"C\" functions cannot have generic parameters");
+        } else if child_by!(node, FieldKind::Body).is_none() && !is_extern && !is_protocol_fn {
+            self.ctx.error(node, "function must have a body");
         }
     }
 
@@ -388,6 +428,12 @@ impl Pass2 {
         } else {
             fn_generic_params
         };
+
+        let parent = self.ctx.scopes.get(pending.scope_idx).parent;
+        let is_protocol_fn = parent.is_some() && self.ctx.scopes.get(parent.unwrap()).kind == ScopeKind::Protocol;
+        if !is_protocol_fn {  // (see build_protocol)
+            self.check_fn_declaration(node, false, fn_generic_params.len() > 0);
+        }
 
         // Parse parameters
         let params = self.parse_fn_params(node, pending.scope_idx);
@@ -1105,6 +1151,9 @@ impl Pass2 {
                     continue;
                 }
                 let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
+                if fields.iter().any(|=name, f: StructField| -> bool { f.name == name }) {
+                    self.ctx.error(child, std::fmt::format!("duplicate name `{}`", name).unwrap().as_slice());
+                }
                 let type_node = child_by!(child, FieldKind::Type);
                 let ty = if !type_node.is_none() {
                     self.parse_type(type_node.unwrap(), pending.scope_idx)
@@ -1120,6 +1169,9 @@ impl Pass2 {
         }
 
         let fields_slice = self.ctx.arena.alloc_slice_copy::<StructField>(fields.as_slice());
+        if fields.len() != 1 && pending.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Transparent }) {
+            self.ctx.error(node, "transparent structs and unions must have exactly one field");
+        }
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Struct;
@@ -1183,6 +1235,7 @@ impl Pass2 {
                     id: variant_id,
                     name: name,
                     value: value,
+                    span: self.ctx.make_span(child),
                 });
             }
         }
@@ -1250,6 +1303,7 @@ impl Pass2 {
                 }
 
                 let fn_generic_params = self.parse_generic_params(child, fn_scope_idx);
+                self.check_fn_declaration(child, true, fn_generic_params.len() > 0);
                 let fn_params = self.parse_fn_params(child, fn_scope_idx);
                 let fn_ret = self.parse_return_type(child, fn_scope_idx);
 
@@ -1405,7 +1459,9 @@ impl Pass2 {
             name: pending.name,
             generic_params: generic_params,
             target: target,
+            opaque: inner_node.is_none(),
             attributes: pending.attributes,
+            span: Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end, expansion: 0 },
         };
 
         let item = std::mem::zeroed::<Item>();
@@ -1441,6 +1497,15 @@ impl Pass2 {
         };
 
         let value_node = child_by!(node, FieldKind::Init);
+        if child_by!(node, FieldKind::Extern).is_some() {
+            if generic_params.len() > 0 {
+                self.ctx.error(node, "extern statics cannot be generic");
+            } else if type_node.is_none() || value_node.is_some() {
+                self.ctx.error(node, "extern statics cannot have initializers");
+            }
+        } else if type_node.is_none() && value_node.is_none() {
+            self.ctx.error(node, "type hint required");
+        }
         let init: Option<&Expr> = if !value_node.is_none() {
             let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
             Option::some(expr_parser.parse_expr(value_node.unwrap()))

@@ -236,11 +236,20 @@ impl ExprParser {
                 }
                 let inner = inner_opt.unwrap();
                 let inner_kind = NODE_KINDS[inner.symbol() as usize];
+                if self.ctx.in_macro_body && switch inner_kind {
+                    NodeKind::ImplBlock, NodeKind::StructDefinition, NodeKind::EnumDefinition,
+                    NodeKind::ProtocolDefinition, NodeKind::TypeDefinition, NodeKind::FunctionDefinition,
+                    NodeKind::StaticDeclaration, NodeKind::ConstDeclaration, NodeKind::MacroDefinition => true,
+                    _ => false,
+                } {
+                    // (`use` is fine.)
+                    self.ctx.error(inner, "cannot define new items in a macro body (yet)");
+                }
                 switch inner_kind {
                     // An impl block goes with the type declared before it.
                     NodeKind::ImplBlock => {
                         let pass1 = Pass1::new(self.ctx, segment_scope);
-                        pass1.visit_node(inner);
+                        pass1.run(inner);
                     },
                     // Items are visible from their declaration on and shadow
                     // earlier items of the same name (as in alumina-boot's
@@ -258,7 +267,7 @@ impl ExprParser {
                         segment_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(segment_scope));
                         segments.push((stmt.start_byte(), segment_scope));
                         let pass1 = Pass1::new(self.ctx, segment_scope);
-                        pass1.visit_node(inner);
+                        pass1.run(inner);
                     },
                     _ => {},
                 }
@@ -442,11 +451,10 @@ impl ExprParser {
     fn parse_string_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
         // Strip quotes and handle escape sequences
-        let content = if text.len() >= 2 {
-            unescape_string(text[1..text.len()-1], self.ctx.arena)
-        } else {
+        let content = unescape(text[1..text.len() - 1], self.ctx.arena).unwrap_or_else(|=self, =node| -> &[u8] {
+            self.ctx.error(node, "invalid escape sequence");
             ""
-        };
+        });
         let e = self.make_expr(ExprTag::StringLit, span);
         e._data.lit.str_val = content;
         self.ctx.alloc_expr(e)
@@ -456,7 +464,11 @@ impl ExprParser {
     /// denote exactly one byte.
     fn parse_char_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
-        let bytes = unescape_string(text[1..text.len() - 1], self.ctx.arena);
+        let unescaped = unescape(text[1..text.len() - 1], self.ctx.arena);
+        if unescaped.is_none() {
+            self.ctx.error(node, "invalid escape sequence");
+        }
+        let bytes = unescaped.unwrap_or("x");
         if bytes.len() != 1 {
             self.ctx.error(node, "invalid character literal (must be a single byte)");
         }
@@ -1009,23 +1021,7 @@ impl ExprParser {
         for child in node.children(&cursor) {
             if child.is_named() {
                 let kind = NODE_KINDS[child.symbol() as usize];
-                if kind == NodeKind::EtCeteraExpression {
-                    if self.ctx.in_macro_body {
-                        // During pre-parse, store as ExprTag::EtCetera
-                        args.push(self.parse_expr(child));
-                    } else {
-                        // Expand et cetera: re-parse inner expression for each variadic arg
-                        let inner = child_by!(child, FieldKind::Inner);
-                        if inner.is_some() && !self.ctx.macro_variadic_args.is_empty() {
-                            let inner_node = inner.unwrap();
-                            for vi in 0usize..self.ctx.macro_variadic_args.len() {
-                                self.ctx.macro_et_cetera_idx = vi as i32;
-                                args.push(self.parse_expr(inner_node));
-                            }
-                            self.ctx.macro_et_cetera_idx = NO_VARIADIC;
-                        }
-                    }
-                } else if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
+                if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
                     args.push(self.parse_expr(child));
                 }
             }
@@ -1245,9 +1241,13 @@ impl ExprParser {
             let body_node = body.unwrap();
             let cursor = body_node.walk();
             defer cursor.free();
+            let has_default = false;
             for child in children_by!(body_node, FieldKind::Arm, &cursor) {
                 let kind = NODE_KINDS[child.symbol() as usize];
                 if kind == NodeKind::SwitchArm {
+                    if has_default {
+                        self.ctx.error(child, "default case must be last in a switch expression");
+                    }
                     let pattern_node = child_by!(child, FieldKind::Pattern);
                     let body_node = child_by!(child, FieldKind::Value);
 
@@ -1260,6 +1260,7 @@ impl ExprParser {
                         // Check for wildcard/default pattern "_"
                         let pat_text = self.ctx.node_text(pat_node);
                         let is_wildcard = pat_text.len() == 1 && pat_text[0] == '_';
+                        has_default = has_default || is_wildcard;
                         if !is_wildcard {
                             // Parse pattern values
                             let cursor2 = pat_node.walk();
@@ -1557,8 +1558,12 @@ impl ExprParser {
                     let name_node = child_by!(child, FieldKind::Field);
                     let value_node = child_by!(child, FieldKind::Value);
                     if name_node.is_some() && value_node.is_some() {
+                        let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+                        if fields.iter().any(|=name, f: FieldInit| -> bool { f.name == name }) {
+                            self.ctx.error(child, std::fmt::format!("duplicate field `{}` in struct initializer", name).unwrap().as_slice());
+                        }
                         fields.push(FieldInit {
-                            name: self.ctx.intern_str(self.ctx.node_text(name_node.unwrap())),
+                            name: name,
                             value: self.parse_expr(value_node.unwrap()),
                         });
                     }
@@ -1603,6 +1608,11 @@ impl ExprParser {
     }
 
     fn parse_lambda(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        if self.ctx.in_macro_body {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span,
+                "anonymous functions are not supported in a macro body (yet)"));
+            return self.alloc_void(span);
+        }
         let params_node = child_by!(node, FieldKind::Parameters);
         let body_node = child_by!(node, FieldKind::Body);
 
@@ -1915,6 +1925,12 @@ impl ExprParser {
                     macro_item_id = resolved.unwrap().kind.id()._value;
                 }
             }
+            let defining = self.ctx.defining_macro;
+            if defining.is_some() && macro_item_id != 0 && macro_item_id == defining.unwrap().0 {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(defining.unwrap().1,
+                    "recursive macro calls are not allowed"));
+                return self.alloc_void(span);
+            }
             let e = self.make_expr(ExprTag::MacroInvocation, span);
             e._data.macro_expr.macro_id = macro_item_id;
             e._data.macro_expr.str_val = name;
@@ -2188,70 +2204,80 @@ impl ExprParser {
         // We need to figure out the wrapper macro name and any bound args.
         // For now, collect interleaved pieces.
 
+        // (As alumina-boot: `{}` is the next argument, `{N}` argument N,
+        // `{{` and `}}` are braces; every argument must be used.)
         let num_format_args = args.len() - 2;
+        let used: Vector<bool> = Vector::from_slice(self.ctx.arena.alloc_slice::<bool>(num_format_args));
+        defer used.free();
+        for j in 0usize..num_format_args { used[j] = false; }
         let string_part: Vector<u8> = Vector::new();
         defer string_part.free();
         let next_arg_idx: usize = 0;
+        let error: Option<&[u8]> = Option::none();
 
         let i: usize = 0;
-        while i < fmt_str.len() {
-            if fmt_str[i] == '{' {
-                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '{' {
-                    // Escaped brace: {{ -> {
-                    string_part.push('{');
-                    i += 2;
-                } else {
-                    // Start of format placeholder
-                    // Flush current string part
-                    if !string_part.is_empty() {
-                        let e = self.make_expr(ExprTag::StringLit, span);
-                        e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
-                        pieces.push(self.ctx.alloc_expr(e));
-                        string_part.clear();
-                    }
-
-                    // Parse the placeholder: {}, {0}, {1}, etc.
-                    i += 1;
-                    let arg_idx = next_arg_idx;
-                    let has_explicit_idx = false;
-                    let explicit_idx: usize = 0;
-
-                    while i < fmt_str.len() && fmt_str[i] != '}' {
-                        if fmt_str[i] >= '0' && fmt_str[i] <= '9' {
-                            has_explicit_idx = true;
-                            explicit_idx = explicit_idx * 10 + (fmt_str[i] - '0') as usize;
-                        }
-                        i += 1;
-                    }
-
-                    if has_explicit_idx {
-                        arg_idx = explicit_idx;
-                    } else {
-                        next_arg_idx += 1;
-                    }
-
-                    // Add the argument reference
-                    if arg_idx < num_format_args {
-                        pieces.push(args[arg_idx + 2]);
-                    }
-
-                    if i < fmt_str.len() {
-                        i += 1; // skip closing }
-                    }
-                }
-            } else if fmt_str[i] == '}' {
-                if i + 1 < fmt_str.len() && fmt_str[i + 1] == '}' {
-                    // Escaped brace: }} -> }
+        while i < fmt_str.len() && error.is_none() {
+            let ch = fmt_str[i];
+            i += 1;
+            if ch == '}' {
+                if i < fmt_str.len() && fmt_str[i] == '}' {
                     string_part.push('}');
-                    i += 2;
-                } else {
-                    // Stray }
                     i += 1;
+                } else {
+                    error = Option::some(if i < fmt_str.len() { "unexpected character" } else { "unexpected end of format string" });
                 }
-            } else {
-                string_part.push(fmt_str[i]);
+                continue;
+            }
+            if ch != '{' {
+                string_part.push(ch);
+                continue;
+            }
+            if i < fmt_str.len() && fmt_str[i] == '{' {
+                string_part.push('{');
+                i += 1;
+                continue;
+            }
+            // `{}` or `{N}`
+            let has_index = false;
+            let index: usize = 0;
+            while i < fmt_str.len() && fmt_str[i] >= '0' && fmt_str[i] <= '9' {
+                has_index = true;
+                index = index * 10 + (fmt_str[i] - '0') as usize;
                 i += 1;
             }
+            if i >= fmt_str.len() {
+                error = Option::some("unexpected end of format string");
+                continue;
+            }
+            if fmt_str[i] != '}' {
+                error = Option::some("unexpected character");
+                continue;
+            }
+            i += 1;
+            if !has_index {
+                index = next_arg_idx;
+                next_arg_idx += 1;
+            }
+            if index >= num_format_args {
+                error = Option::some("not enough arguments");
+                continue;
+            }
+            if !string_part.is_empty() {
+                let e = self.make_expr(ExprTag::StringLit, span);
+                e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(string_part.as_slice());
+                pieces.push(self.ctx.alloc_expr(e));
+                string_part.clear();
+            }
+            used[index] = true;
+            pieces.push(args[index + 2]);
+        }
+        if error.is_none() && used.iter().any(|u: bool| -> bool { !u }) {
+            error = Option::some("unused arguments");
+        }
+        if error.is_some() {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span,
+                std::fmt::format!("invalid format string ({})", error.unwrap()).unwrap().as_slice()));
+            return self.alloc_void(span);
         }
 
         // Flush remaining string part
@@ -2374,14 +2400,35 @@ impl ExprParser {
         self.ctx.alloc_expr(e)
     }
 
+    /// `expr...` (a tuple's elements spliced into a tuple) or, in a macro
+    /// body, `expr$...` (`expr` for each of the macro's `...` arguments).
     fn parse_et_cetera(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let inner = child_by!(node, FieldKind::Inner);
         if inner.is_none() {
             return self.alloc_void(span);
         }
+        let is_macro = child_by!(node, FieldKind::Macro).is_some();
+        if is_macro {
+            let message: &[u8] = if !self.ctx.in_macro_body {
+                "`$...` expressions can only be used in macros"
+            } else if self.ctx.macro_variadic_param_idx == NO_VARIADIC {
+                "this macro does not have any `...` arguments"
+            } else if self.ctx.in_macro_et_cetera {
+                "nested `$...` expansions are not supported (yet)"
+            } else {
+                ""
+            };
+            if !message.is_empty() {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, message));
+                return self.alloc_void(span);
+            }
+        }
 
-        let e = self.make_expr(ExprTag::EtCetera, span);
+        let e = self.make_expr(if is_macro { ExprTag::MacroEtCetera } else { ExprTag::EtCetera }, span);
+        let prev = self.ctx.in_macro_et_cetera;
+        self.ctx.in_macro_et_cetera = is_macro;
         e._data.defer.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.in_macro_et_cetera = prev;
         self.ctx.alloc_expr(e)
     }
 
@@ -2407,7 +2454,18 @@ impl ExprParser {
         }
         let prev_expansion = self.ctx.current_expansion;
         self.ctx.current_expansion = self.ctx.diag.add_expansion(call_site, entry.name);
-        let result = self.do_expand_macro_inner(entry, call_args, span);
+        let result = if self.ctx.expansion_depth >= 128 {
+            // (Macros calling each other.)
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "recursive macro calls are not allowed"));
+            self.alloc_void(span)
+        } else if !self.check_macro_args(entry, call_args, span) {
+            self.alloc_void(span)
+        } else {
+            self.ctx.expansion_depth += 1;
+            let expanded = self.do_expand_macro_inner(entry, call_args, span);
+            self.ctx.expansion_depth -= 1;
+            expanded
+        };
         self.ctx.current_expansion = prev_expansion;
         self.ctx.macro_outer_span = prev_outer;
         result
@@ -2417,6 +2475,22 @@ impl ExprParser {
     fn constant_string_expected(self: &ExprParser, span: Span) -> &Expr {
         self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "constant string expected"));
         self.alloc_void(span)
+    }
+
+    /// Whether a macro is given as many arguments as it takes (as in
+    /// alumina-boot); reported if not.
+    fn check_macro_args(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> bool {
+        let params = entry.params.len();
+        let message = if entry.variadic_param_idx != NO_VARIADIC {
+            if call_args.len() + 1 >= params { return true; }
+            std::fmt::format!("not enough macro arguments, at least {} expected", params - 1).unwrap()
+        } else {
+            if call_args.len() == params { return true; }
+            std::fmt::format!("expected {} arguments, found {}", params, call_args.len()).unwrap()
+        };
+        defer message.free();
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, self.ctx.intern_str(message.as_slice())));
+        false
     }
 
     /// `expr` (of the body being expanded) as code of the current expansion.
@@ -2762,7 +2836,7 @@ impl ExprParser {
             if e._data.range.rhs as &void as usize != 0usize {
                 e._data.range.rhs = self.expand_macro_expr(e._data.range.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-        } else if e.tag == ExprTag::Defer || e.tag == ExprTag::EtCetera {
+        } else if e.tag == ExprTag::Defer || e.tag == ExprTag::EtCetera || e.tag == ExprTag::MacroEtCetera {
             e._data.defer.lhs = self.expand_macro_expr(e._data.defer.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
         }
 
@@ -2786,7 +2860,7 @@ impl ExprParser {
         defer result.free();
 
         for arg in args.iter() {
-            if arg.tag == ExprTag::EtCetera {
+            if arg.tag == ExprTag::MacroEtCetera {
                 // Expand inner expression for each variadic arg
                 let inner = arg.lhs();
                 for vi in 0usize..variadic_args.len() {

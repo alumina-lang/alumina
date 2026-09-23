@@ -1,0 +1,13 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `t...` in a macro body splices a tuple (it is not the macro's `$...`,
+// which repeats an expression for each of the macro's `...` arguments).
+macro join($t, $rest...) {
+    ($t..., $rest$...)
+}
+
+fn main() -> i32 {
+    let t = (1, 2);
+    let j = join!(t, 3, 4);
+    if j.0 + j.1 + j.2 + j.3 != 10 { return 1; }
+    0
+}

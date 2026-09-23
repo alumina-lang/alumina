@@ -73,6 +73,11 @@ struct ParseContext {
     in_macro_body: bool,              // true when pre-parsing a macro body
     macro_param_names: &[&[u8]],      // param names for current macro being pre-parsed
     macro_variadic_param_idx: i32,    // variadic param index during pre-parse
+    in_macro_et_cetera: bool,         // inside `...$...` during pre-parse
+    // The macro whose body is being pre-parsed (its id and span), if any.
+    defining_macro: Option<(usize, Span)>,
+    // How deep macro expansions are nested (a recursion guard).
+    expansion_depth: usize,
 
     // Outermost macro call site span — propagated through nested macro
     // expansions so that `file!()` / `line!()` / `column!()` / `stringify!()`
@@ -224,6 +229,9 @@ impl ParseContext {
             macro_param_names: &[],
             macro_variadic_param_idx: NO_VARIADIC,
             macro_outer_span: Option::none(),
+            in_macro_et_cetera: false,
+            defining_macro: Option::none(),
+            expansion_depth: 0,
             current_expansion: 0,
             location_override: Option::none(),
             items: Vector::new(),
@@ -581,54 +589,98 @@ fn parse_assign_op(text: &[u8]) -> AssignOp {
     }
 }
 
-fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
-    // Count output length first
-    let out_len: usize = 0;
+/// The contents of a string literal (without the quotes), with escape
+/// sequences replaced (as in alumina-boot: `\n`, `\r`, `\t`, `\\`, `\'`, `\"`,
+/// `\0`, `\xNN` and `\uNNNN` / `\u{N...}` as UTF-8), or none if one is invalid.
+fn unescape(text: &[u8], arena: &mut Arena) -> Option<&[u8]> {
+    let buf: Vector<u8> = Vector::with_capacity(text.len());
+    defer buf.free();
     let i: usize = 0;
     while i < text.len() {
-        if text[i] == '\\' && i + 1 < text.len() {
-            i += 2;
-            if text[i - 1] == 'x' && i + 1 < text.len() {
-                i += 2;  // \xNN
-            }
-        } else {
+        if text[i] != '\\' {
+            buf.push(text[i]);
             i += 1;
+            continue;
         }
-        out_len += 1;
-    }
-
-    let buf = arena.alloc_slice::<u8>(out_len);
-    let j: usize = 0;
-    i = 0;
-    while i < text.len() {
-        if text[i] == '\\' && i + 1 < text.len() {
-            switch text[i + 1] {
-                'n' => { buf[j] = '\n'; },
-                'r' => { buf[j] = '\r'; },
-                't' => { buf[j] = '\t'; },
-                '\\' => { buf[j] = '\\'; },
-                '"' => { buf[j] = '"'; },
-                '\'' => { buf[j] = '\''; },
-                '0' => { buf[j] = 0u8; },
-                'x' => {
-                    if i + 3 < text.len() {
-                        let hi = hex_digit(text[i + 2]);
-                        let lo = hex_digit(text[i + 3]);
-                        buf[j] = (hi << 4) | lo;
-                        i += 2;
+        if i + 1 >= text.len() {
+            return Option::none();
+        }
+        let escape = text[i + 1];
+        i += 2;
+        switch escape {
+            'n' => buf.push('\n'),
+            'r' => buf.push('\r'),
+            't' => buf.push('\t'),
+            '\\' => buf.push('\\'),
+            '"' => buf.push('"'),
+            '\'' => buf.push('\''),
+            '0' => buf.push(0u8),
+            'x' => {
+                if i + 2 > text.len() || !is_hex_digit(text[i]) || !is_hex_digit(text[i + 1]) {
+                    return Option::none();
+                }
+                buf.push((hex_digit(text[i]) << 4) | hex_digit(text[i + 1]));
+                i += 2;
+            }
+            'u' => {
+                // \uNNNN or \u{N...}
+                let (digits, next) = if i < text.len() && text[i] == '{' {
+                    let close = i + 1;
+                    while close < text.len() && text[close] != '}' {
+                        close += 1;
                     }
-                },
-                _ => { buf[j] = text[i + 1]; },
+                    if close >= text.len() { return Option::none(); }
+                    (text[i + 1..close], close + 1)
+                } else {
+                    if i + 4 > text.len() { return Option::none(); }
+                    (text[i..i + 4], i + 4)
+                };
+                if digits.is_empty() || digits.len() > 6 { return Option::none(); }
+                let code: u32 = 0;
+                for d in digits {
+                    if !is_hex_digit(d) { return Option::none(); }
+                    code = (code << 4) | hex_digit(d) as u32;
+                }
+                if !push_utf8(&buf, code) { return Option::none(); }
+                i = next;
             }
-            i += 2;
-        } else {
-            buf[j] = text[i];
-            i += 1;
+            _ => return Option::none(),
         }
-        j += 1;
     }
+    Option::some(arena.alloc_slice_copy::<u8>(buf.as_slice()) as &[u8])
+}
 
-    buf[0..j]
+/// Append the UTF-8 encoding of a Unicode scalar value, if it is one.
+fn push_utf8(buf: &mut Vector<u8>, code: u32) -> bool {
+    if code >= 0xd800 && code <= 0xdfff || code > 0x10ffff {
+        return false;
+    }
+    if code < 0x80 {
+        buf.push(code as u8);
+    } else if code < 0x800 {
+        buf.push((0xc0u32 | (code >> 6)) as u8);
+        buf.push((0x80u32 | (code & 0x3f)) as u8);
+    } else if code < 0x10000 {
+        buf.push((0xe0u32 | (code >> 12)) as u8);
+        buf.push((0x80u32 | ((code >> 6) & 0x3f)) as u8);
+        buf.push((0x80u32 | (code & 0x3f)) as u8);
+    } else {
+        buf.push((0xf0u32 | (code >> 18)) as u8);
+        buf.push((0x80u32 | ((code >> 12) & 0x3f)) as u8);
+        buf.push((0x80u32 | ((code >> 6) & 0x3f)) as u8);
+        buf.push((0x80u32 | (code & 0x3f)) as u8);
+    }
+    true
+}
+
+/// Like `unescape`, for literals already reported if invalid (the text as
+/// written).
+fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
+    unescape(text, arena).unwrap_or(text)
+}
+
+fn is_hex_digit(c: u8) -> bool {
+    c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
 fn hex_digit(c: u8) -> u8 {

@@ -1,0 +1,14 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// String escapes as in alumina-boot, including `\u` (aluminac kept the
+// escape's text) and `\x`.
+fn main() -> i32 {
+    let s = "aé\u{1F600}\x41\t\0";
+    let expected: [u8; 10] = [0x61, 0xc3, 0xa9, 0xf0, 0x9f, 0x98, 0x80, 0x41, 0x09, 0x00];
+    if s.len() != expected.len() { return 1; }
+    for i in 0usize..s.len() {
+        if s[i] != expected[i] { return 2; }
+    }
+    let c = '\x7f';
+    if c != 127u8 { return 3; }
+    0
+}

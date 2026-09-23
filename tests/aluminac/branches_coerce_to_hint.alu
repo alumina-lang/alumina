@@ -1,0 +1,20 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Branches of different types that all coerce to the type the context
+// expects have that type (as in alumina-boot): here arrays of different
+// lengths to a slice.
+fn tags(n: i32) -> usize {
+    let t: &[i32] = switch n {
+        1 => &[1],
+        2 => &[1, 2],
+        _ => &[1, 2, 3, 4],
+    };
+    let u: &[i32] = if n > 1 { &[1, 2] } else { &[1] };
+    t.len() + u.len()
+}
+
+fn main() -> i32 {
+    if tags(1) != 2 { return 1; }
+    if tags(2) != 4 { return 2; }
+    if tags(7) != 6 { return 3; }
+    0
+}
