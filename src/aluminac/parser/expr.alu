@@ -2059,6 +2059,8 @@ impl ExprParser {
             for arg in args.iter() {
                 if arg.tag == ExprTag::StringLit {
                     total_len += arg.str_val().len();
+                } else {
+                    return self.constant_string_expected(span);
                 }
             }
             let buf = self.ctx.arena.alloc_slice::<u8>(total_len);
@@ -2087,10 +2089,11 @@ impl ExprParser {
                     e._data.lit.str_val = self.ctx.arena.alloc_slice_copy::<u8>(data.as_slice());
                     return self.ctx.alloc_expr(e);
                 }
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
+                    span, std::fmt::format!("cannot read file `{}`", path).unwrap().as_slice()));
+                return self.alloc_void(span);
             }
-            let e = self.make_expr(ExprTag::StringLit, span);
-            e._data.lit.str_val = "";
-            self.ctx.alloc_expr(e)
+            self.constant_string_expected(span)
         }
         "format_args" => self.expand_format_args(args, span),
         "bind" => {
@@ -2172,7 +2175,7 @@ impl ExprParser {
 
         // Format string must be a string literal
         if fmt_str_expr.tag != ExprTag::StringLit {
-            return self.alloc_void(span);
+            return self.constant_string_expected(span);
         }
         let fmt_str = fmt_str_expr.str_val();
 
@@ -2396,9 +2399,34 @@ impl ExprParser {
         if prev_outer.is_none() {
             self.ctx.macro_outer_span = Option::some(span);
         }
+        // The code the macro's body gives comes from this expansion (for
+        // diagnostics' backtraces).
+        let call_site = span;
+        if call_site.expansion == 0 {
+            call_site.expansion = self.ctx.current_expansion;
+        }
+        let prev_expansion = self.ctx.current_expansion;
+        self.ctx.current_expansion = self.ctx.diag.add_expansion(call_site, entry.name);
         let result = self.do_expand_macro_inner(entry, call_args, span);
+        self.ctx.current_expansion = prev_expansion;
         self.ctx.macro_outer_span = prev_outer;
         result
+    }
+
+    /// A builtin macro's argument that must be a string literal is not.
+    fn constant_string_expected(self: &ExprParser, span: Span) -> &Expr {
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "constant string expected"));
+        self.alloc_void(span)
+    }
+
+    /// `expr` (of the body being expanded) as code of the current expansion.
+    fn in_expansion(self: &ExprParser, expr: &Expr) -> &Expr {
+        if expr.span.expansion != 0 || self.ctx.current_expansion == 0 {
+            return expr;
+        }
+        let e = *expr;
+        e.span.expansion = self.ctx.current_expansion;
+        self.ctx.alloc_expr(e)
     }
 
     fn do_expand_macro_inner(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
@@ -2495,6 +2523,10 @@ impl ExprParser {
 
         // Expand nested macro invocation (only actual invocations, not bare references)
         if expr.tag == ExprTag::MacroInvocation && expr.flag() {
+            let call_span = expr.span;
+            if call_span.expansion == 0 {
+                call_span.expansion = self.ctx.current_expansion;
+            }
             // First expand the args
             let expanded_args = self.expand_macro_args_list(
                 expr.args(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map
@@ -2523,9 +2555,9 @@ impl ExprParser {
                         if macro_entry.is_some() {
                             let entry = macro_entry.unwrap();
                             if entry.is_builtin {
-                                return self.expand_builtin_macro(real_name, combined, expr.span);
+                                return self.expand_builtin_macro(real_name, combined, call_span);
                             }
-                            return self.do_expand_macro(entry, combined, expr.span);
+                            return self.do_expand_macro(entry, combined, call_span);
                         }
                         // Unresolved underlying macro — keep as MacroInvocation with the resolved name
                         let e = *expr;
@@ -2546,9 +2578,9 @@ impl ExprParser {
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
                 if entry.is_builtin {
-                    return self.expand_builtin_macro(expr.str_val(), expanded_args, expr.span);
+                    return self.expand_builtin_macro(expr.str_val(), expanded_args, call_span);
                 }
-                return self.do_expand_macro(entry, expanded_args, expr.span);
+                return self.do_expand_macro(entry, expanded_args, call_span);
             }
             // Unresolved macro - keep with expanded args
             let e = *expr;
@@ -2561,7 +2593,7 @@ impl ExprParser {
            expr.tag == ExprTag::BoolLit || expr.tag == ExprTag::StringLit ||
            expr.tag == ExprTag::NullLit ||
            expr.tag == ExprTag::Void || expr.tag == ExprTag::Zeroed {
-            return expr;
+            return self.in_expansion(expr);
         }
 
         // For non-macro identifiers (resolved at pre-parse time), just return as-is
@@ -2607,14 +2639,17 @@ impl ExprParser {
                 if mapped.is_some() {
                     let e = *expr;
                     e.set_id(mapped.unwrap());
-                    return self.ctx.alloc_expr(e);
+                    return self.in_expansion(self.ctx.alloc_expr(e));
                 }
             }
-            return expr;
+            return self.in_expansion(expr);
         }
 
         // Clone the expression and recursively expand children
         let e = *expr;
+        if e.span.expansion == 0 {
+            e.span.expansion = self.ctx.current_expansion;
+        }
 
         // Generate fresh ID for let bindings (hygiene)
         if e.tag == ExprTag::Let {

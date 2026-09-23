@@ -798,11 +798,14 @@ struct Span {
     file_id: u32,
     start: u32,
     end: u32,
+    /// The macro expansion the code comes from (1-based, in the diagnostic
+    /// context's `expansions`), or 0 for code as written.
+    expansion: u32,
 }
 
 impl Span {
     fn empty() -> Span {
-        Span { file_id: 0, start: 0, end: 0 }
+        Span { file_id: 0, start: 0, end: 0, expansion: 0 }
     }
 
     /// Whether this is the placeholder span of synthesized code.
@@ -1396,6 +1399,9 @@ enum IrTag {
     InConstContext = 50i32, // in_const_context intrinsic — const_eval returns true, codegen emits false
     AtomicOp = 51i32,     // atomic intrinsic; str_val = op ("load"/"store"/"rmw"/"cmpxchg"/"fence"), items = args, ty = return type
     TypeLayout = 52i32,   // codegen_type_func("sizeof" / "_Alignof"): the size or alignment of a type per LLVM's data layout
+    ConstAlloc = 53i32,   // const_alloc::<T>(len) -> &mut T: an allocation of the constant evaluator (items = [len]); unreachable at run time
+    ConstFree = 54i32,    // const_free(ptr) (items = [ptr]); unreachable at run time
+    ConstBake = 55i32,    // const_bake(value): the value, with the allocations it reaches kept as constants (items = [value]); unreachable at run time
 }
 
 // Call target tags
@@ -1522,7 +1528,9 @@ impl IrExpr {
     fn items(self: &IrExpr) -> &[&IrExpr] {
         if self.tag == IrTag::Call { self._data.call.items }
         else if self.tag == IrTag::StructLit { self._data.struct_lit.items }
-        else if self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::AtomicOp { self._data.codegen.items }
+        else if self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::AtomicOp
+            || self.tag == IrTag::ConstPanic || self.tag == IrTag::ConstWarning || self.tag == IrTag::ConstNote
+            || self.tag == IrTag::ConstAlloc || self.tag == IrTag::ConstFree || self.tag == IrTag::ConstBake { self._data.codegen.items }
         else { self._data.block.items }  // Block, TupleLit, ArrayLit
     }
 
@@ -1673,6 +1681,17 @@ impl ConstLValue {
 
     fn variable(id: Id) -> ConstLValue {
         ConstLValue { tag: CLVTag::Variable, _data: _ConstLValueData { id: id } }
+    }
+    /// An allocation of the constant evaluator's heap.
+    fn alloc(id: Id) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Alloc, _data: _ConstLValueData { id: id } }
+    }
+    /// The variable or allocation the place is in.
+    fn root(self: &ConstLValue) -> &ConstLValue {
+        switch self.tag {
+            CLVTag::Field, CLVTag::Index, CLVTag::TupleIndex => self.inner().root(),
+            _ => self,
+        }
     }
     fn mk_field(inner: &ConstLValue, field_idx: u32) -> ConstLValue {
         ConstLValue { tag: CLVTag::Field, _data: _ConstLValueData { field: _CLVFieldData { inner: inner, field_idx: field_idx } } }

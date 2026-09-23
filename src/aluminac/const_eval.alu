@@ -29,6 +29,9 @@ enum CECode {
     StopIter = 10i32,       // stop_iteration signal
     ConstPanic = 11i32,
     Unreachable = 12i32,
+    UseAfterFree = 13i32,
+    InvalidFree = 14i32,
+    HeapInResult = 15i32,
 }
 
 struct ConstEvalError {
@@ -40,6 +43,14 @@ impl ConstEvalError {
     fn unsupported() -> ConstEvalError {
         ConstEvalError { code: CECode::Unsupported, jump_id: Id { _value: 0 } }
     }
+    /// Whether this is a failure (not control flow such as `break`).
+    fn is_failure(self: &ConstEvalError) -> bool {
+        switch self.code {
+            CECode::Break, CECode::Continue, CECode::Return, CECode::StopIter, CECode::Ok => false,
+            _ => true,
+        }
+    }
+
     fn overflow() -> ConstEvalError {
         ConstEvalError { code: CECode::Overflow, jump_id: Id { _value: 0 } }
     }
@@ -73,6 +84,9 @@ impl ConstEvalError {
     fn unreachable_err() -> ConstEvalError {
         ConstEvalError { code: CECode::Unreachable, jump_id: Id { _value: 0 } }
     }
+    fn of(code: CECode) -> ConstEvalError {
+        ConstEvalError { code: code, jump_id: Id { _value: 0 } }
+    }
 
     // Lets Result<ConstValue, ConstEvalError>::unwrap format the error on its
     // (cold) panic path via the Formattable branch, avoiding the generic
@@ -84,18 +98,60 @@ impl ConstEvalError {
 
 /// Where the evaluator first gave up on an expression it cannot evaluate,
 /// so that "cannot evaluate at compile time" can point at the culprit.
+impl CECode {
+    /// Why an evaluation failed, in alumina-boot's words.
+    fn reason(self: &CECode) -> &[u8] {
+        switch *self {
+            CECode::Overflow => "arithmetic overflow",
+            CECode::DivZero => "division by zero",
+            CECode::IndexOob => "index out of bounds",
+            CECode::TooDeep => "max recursion depth exceeded",
+            CECode::TooManyIters => "max iterations exceeded",
+            CECode::Unreachable => "reached unreachable code",
+            CECode::ConstPanic => "panic during constant evaluation",
+            CECode::UseAfterFree => "dynamically allocated memory used after being freed",
+            CECode::InvalidFree => "invalid pointer used to free memory",
+            CECode::HeapInResult => "contains dynamically allocated memory during constant evaluation (hint: use std::runtime::bake to bake the value into rodata)",
+            _ => "not constant or unsupported expression",
+        }
+    }
+}
+
 struct ConstEvalFailure {
+    /// Why the evaluation failed.
+    code: CECode,
     /// The innermost enclosing source span (synthesized IR has none).
     span: Span,
     /// The kind of IR node that could not be evaluated.
     what: &[u8],
     /// The function being evaluated when it happened ("" at the top level).
     function: &[u8],
+    /// The calls it happened in, innermost first.
+    calls: &[ConstEvalCall],
+}
+
+/// A call made during a constant evaluation.
+struct ConstEvalCall {
+    /// The call (its span is empty in synthesized code).
+    span: Span,
+    function: &[u8],
+}
+
+/// An allocation of the evaluator's heap (`const_alloc`).
+struct HeapAlloc {
+    /// The elements (an array).
+    value: ConstValue,
+    elem_ty: &IrTy,
+    live: bool,
+    /// Whether it is to be kept as a constant (`const_bake`).
+    baked: bool,
 }
 
 /// Everything a constant evaluation produced.
 struct ConstEvalOutcome {
     value: Option<ConstValue>,
+    /// The allocations the value may point to.
+    heap: &HashMap<usize, HeapAlloc>,
     panic_msg: &[u8],
     warning_msg: &[u8],
     note_msg: &[u8],
@@ -133,6 +189,8 @@ struct ConstEvaluator {
     note_msg: &[u8],
     failure: Option<ConstEvalFailure>,
     current_fn: &[u8],
+    // The heap (shared across call frames).
+    heap: &mut HashMap<usize, HeapAlloc>,
 }
 
 impl ConstEvaluator {
@@ -163,6 +221,7 @@ impl ConstEvaluator {
             note_msg: "",
             failure: Option::none(),
             current_fn: "",
+            heap: arena.alloc(HashMap::new::<usize, HeapAlloc>()),
         }
     }
 
@@ -196,14 +255,28 @@ impl ConstEvaluator {
         if r.is_err() { return r; }
         // Materialize lvalues
         if r.unwrap().tag == CValTag::Lvalue {
-            return self.materialize_lvalue(r.unwrap().lvalue());
+            let loaded = self.materialize_lvalue(r.unwrap().lvalue());
+            if loaded.is_err() && loaded.unwrap_err().is_failure() {
+                self.note_failure(expr, loaded.unwrap_err().code);
+            }
+            return loaded;
         }
         r
+    }
+
+    /// The live allocation `id`.
+    fn live_alloc(self: &ConstEvaluator, id: Id) -> Result<HeapAlloc, ConstEvalError> {
+        let alloc = self.heap.get(&id._value);
+        if alloc.is_none() { return Result::err(ConstEvalError::unsupported()); }
+        if !alloc.unwrap().live { return Result::err(ConstEvalError::of(CECode::UseAfterFree)); }
+        Result::ok(alloc.unwrap())
     }
 
     fn materialize_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue) -> Result<ConstValue, ConstEvalError> {
         if lv.tag == CLVTag::Variable {
             Result::ok(self.load_var(Id { _value: lv.id()._value }))
+        } else if lv.tag == CLVTag::Alloc {
+            self.live_alloc(lv.id()).map(|a: HeapAlloc| -> ConstValue { a.value })
         } else if lv.tag == CLVTag::Field {
             let base = self.materialize_lvalue(lv.inner());
             if base.is_err() { return base; }
@@ -268,6 +341,91 @@ impl ConstEvaluator {
         }
     }
 
+    /// Keep the live allocations the value reaches as constants.
+    fn bake(self: &mut ConstEvaluator, val: ConstValue) {
+        switch val.tag {
+            CValTag::Pointer => {
+                let root = val.lvalue().root();
+                if root.tag == CLVTag::Alloc {
+                    let alloc = self.heap.get(&root.id()._value);
+                    if alloc.is_some() && alloc.unwrap().live && !alloc.unwrap().baked {
+                        let baked = alloc.unwrap();
+                        baked.baked = true;
+                        self.heap.insert(root.id()._value, baked);
+                        self.bake(baked.value);
+                    }
+                }
+            }
+            CValTag::Tuple, CValTag::Array => for elem in val.elems() { self.bake(elem); },
+            CValTag::Struct => for field in val.fields() { self.bake(field.value); },
+            _ => {}
+        }
+    }
+
+    /// Whether the value reaches an allocation that is not baked.
+    fn reaches_unbaked(self: &ConstEvaluator, val: ConstValue) -> bool {
+        switch val.tag {
+            CValTag::Pointer => {
+                let root = val.lvalue().root();
+                if root.tag != CLVTag::Alloc { return false; }
+                let alloc = self.heap.get(&root.id()._value);
+                alloc.is_none() || !alloc.unwrap().baked
+            }
+            CValTag::Tuple, CValTag::Array => val.elems().iter().any(|=self, e: ConstValue| -> bool { self.reaches_unbaked(e) }),
+            CValTag::Struct => val.fields().iter().any(|=self, f: ConstField| -> bool { self.reaches_unbaked(f.value) }),
+            _ => false,
+        }
+    }
+
+    /// The result of evaluating `expr` at the top level: it must not point
+    /// into the heap other than into baked allocations.
+    fn eval_top(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, ConstEvalError> {
+        let result = self.eval(expr);
+        if result.is_ok() && self.reaches_unbaked(result.unwrap()) {
+            if self.failure.is_none() {
+                self.failure = Option::some(ConstEvalFailure {
+                    code: CECode::HeapInResult, span: expr.span, what: "expression", function: "", calls: &[],
+                });
+            }
+            return Result::err(ConstEvalError::of(CECode::HeapInResult));
+        }
+        result
+    }
+
+    /// The bytes of a constant string (a `&[u8]` value).
+    fn extract_string(self: &mut ConstEvaluator, val: ConstValue) -> Option<&[u8]> {
+        if val.tag == CValTag::Bytes {
+            return Option::some(val.bytes()[val.bytes_offset()..]);
+        }
+        if val.tag != CValTag::Tuple || val.elems().len() != 2 {
+            return Option::none();
+        }
+        let len = val.elems()[1].as_usize();
+        if len.is_none() { return Option::none(); }
+        let ptr = val.elems()[0];
+        if ptr.tag == CValTag::Bytes {
+            let start = ptr.bytes_offset();
+            if start + len.unwrap() > ptr.bytes().len() { return Option::none(); }
+            return Option::some(ptr.bytes()[start..start + len.unwrap()]);
+        }
+        if ptr.tag != CValTag::Pointer { return Option::none(); }
+        let text = self.arena.alloc_slice::<u8>(len.unwrap());
+        for i in 0usize..len.unwrap() {
+            let lv = ptr.lvalue();
+            let elem = if lv.tag == CLVTag::Index {
+                self.arena.alloc(ConstLValue::mk_index(lv.inner(), lv.index() + i)) as &ConstLValue
+            } else if i == 0 {
+                lv
+            } else {
+                return Option::none();
+            };
+            let byte = self.materialize_lvalue(elem);
+            if byte.is_err() || byte.unwrap().tag != CValTag::Int { return Option::none(); }
+            text[i] = byte.unwrap().int_val() as u8;
+        }
+        Option::some(text as &[u8])
+    }
+
     fn access_tuple_index(self: &ConstEvaluator, val: ConstValue, idx: usize) -> Result<ConstValue, ConstEvalError> {
         if val.tag == CValTag::Tuple {
             if idx < val.elems().len() {
@@ -282,20 +440,22 @@ impl ConstEvaluator {
 
     fn eval_inner(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, ConstEvalError> {
         let result = self.eval_node(expr);
-        if result.is_err() && result.unwrap_err().code == CECode::Unsupported {
-            self.note_unsupported(expr);
+        if result.is_err() && result.unwrap_err().is_failure() {
+            self.note_failure(expr, result.unwrap_err().code);
         }
         result
     }
 
-    /// Record the innermost expression that could not be evaluated, and
-    /// the innermost source span around it.
-    fn note_unsupported(self: &mut ConstEvaluator, expr: &IrExpr) {
+    /// Record the innermost expression whose evaluation failed, and the
+    /// innermost source span around it.
+    fn note_failure(self: &mut ConstEvaluator, expr: &IrExpr, code: CECode) {
         if self.failure.is_none() {
             self.failure = Option::some(ConstEvalFailure {
+                code: code,
                 span: expr.span,
                 what: std::typing::Type::new::<IrTag>().variant_name(expr.tag).unwrap_or("expression"),
                 function: self.current_fn,
+                calls: &[],
             });
         } else if self.failure.unwrap().span.is_empty() && !expr.span.is_empty() {
             let failure = self.failure.unwrap();
@@ -354,23 +514,70 @@ impl ConstEvaluator {
         IrTag::Ref => self.eval_ref(expr),
         IrTag::Deref => self.eval_deref(expr),
         IrTag::Unreachable, IrTag::Trap => Result::err(ConstEvalError::unreachable_err()),
-        IrTag::ConstPanic => {
-            self.panic_msg = expr.str_val();
-            Result::err(ConstEvalError::const_panic())
-        }
-        IrTag::ConstWarning => {
-            // Capture only the first warning so the single-slot field has
-            // deterministic content; subsequent warnings drop silently.
-            if self.warning_msg.is_empty() {
-                self.warning_msg = expr.str_val();
+        IrTag::ConstPanic, IrTag::ConstWarning, IrTag::ConstNote => {
+            let msg = expr.str_val();
+            if !expr.items().is_empty() {
+                let value = self.eval(expr.items()[0]);
+                if value.is_err() { return value; }
+                let text = self.extract_string(value.unwrap());
+                if text.is_none() { return Result::err(ConstEvalError::unsupported()); }
+                msg = text.unwrap();
+            }
+            // (Only the first warning and note are kept.)
+            switch expr.tag {
+                IrTag::ConstPanic => {
+                    self.panic_msg = msg;
+                    return Result::err(ConstEvalError::const_panic());
+                }
+                IrTag::ConstWarning => if self.warning_msg.is_empty() { self.warning_msg = msg; },
+                _ => if self.note_msg.is_empty() { self.note_msg = msg; },
             }
             Result::ok(ConstValue::make_void())
         }
-        IrTag::ConstNote => {
-            if self.note_msg.is_empty() {
-                self.note_msg = expr.str_val();
+        IrTag::ConstAlloc => {
+            let len_r = self.eval(expr.items()[0]);
+            if len_r.is_err() { return len_r; }
+            let len = len_r.unwrap().as_usize();
+            if len.is_none() { return Result::err(ConstEvalError::unsupported()); }
+            let elem_ty = expr.ty.inner();
+            let elems = self.arena.alloc_slice::<ConstValue>(len.unwrap());
+            let elem = self.make_uninitialized(elem_ty);
+            for i in 0usize..len.unwrap() {
+                elems[i] = elem;
             }
+            let id = self.id_gen.next_id();
+            self.heap.insert(id._value, HeapAlloc {
+                value: ConstValue::make_array(elems), elem_ty: elem_ty, live: true, baked: false,
+            });
+            let first = self.arena.alloc(ConstLValue::mk_index(self.arena.alloc(ConstLValue::alloc(id)), 0));
+            Result::ok(ConstValue::make_pointer(first, elem_ty))
+        }
+        IrTag::ConstFree => {
+            let ptr_r = self.eval(expr.items()[0]);
+            if ptr_r.is_err() { return ptr_r; }
+            let ptr = ptr_r.unwrap();
+            if ptr.tag == CValTag::Int && ptr.int_val() == 0 {
+                return Result::ok(ConstValue::make_void());  // (null)
+            }
+            // A pointer to the start of a live allocation.
+            if ptr.tag != CValTag::Pointer || ptr.lvalue().tag != CLVTag::Index || ptr.lvalue().index() != 0
+                || ptr.lvalue().inner().tag != CLVTag::Alloc {
+                return Result::err(ConstEvalError::of(CECode::InvalidFree));
+            }
+            let id = ptr.lvalue().inner().id();
+            let alloc = self.heap.get(&id._value);
+            if alloc.is_none() || !alloc.unwrap().live {
+                return Result::err(ConstEvalError::of(CECode::InvalidFree));
+            }
+            let freed = alloc.unwrap();
+            freed.live = false;
+            self.heap.insert(id._value, freed);
             Result::ok(ConstValue::make_void())
+        }
+        IrTag::ConstBake => {
+            let value = self.eval(expr.items()[0]);
+            if value.is_ok() { self.bake(value.unwrap()); }
+            value
         }
         IrTag::InConstContext => {
             // We're const-evaluating right now, so the answer is `true`.
@@ -886,6 +1093,14 @@ impl ConstEvaluator {
         if inner.tag == CValTag::FnPtr {
             return Result::ok(inner);
         }
+        // (An uninitialized value stays one.)
+        if inner.tag == CValTag::Uninitialized {
+            return Result::ok(inner);
+        }
+        // Slice to slice (`&mut [T]` to `&[T]`) only changes the type.
+        if expr.ir_ty().tag == IrTyTag::Slice && (inner.tag == CValTag::Tuple || inner.tag == CValTag::Bytes) {
+            return Result::ok(inner);
+        }
 
         // Int -> Pointer (e.g. dangling pointer from align value)
         if inner.tag == CValTag::Int && (expr.ty.tag == IrTyTag::Pointer || expr.ty.tag == IrTyTag::FnPointer) {
@@ -954,8 +1169,8 @@ impl ConstEvaluator {
             if init_r.is_err() { return init_r; }
             self.store_var(expr.id(), init_r.unwrap());
         } else {
-            // Zero-initialize based on the declared type
-            self.store_var(expr.id(), self.make_zeroed(expr.ir_ty()));
+            // (As alumina-boot, reading it before it is assigned fails.)
+            self.store_var(expr.id(), self.make_uninitialized(expr.ir_ty()));
         }
         Result::ok(ConstValue::make_void())
     }
@@ -980,6 +1195,13 @@ impl ConstEvaluator {
     fn assign_to_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue, val: ConstValue) -> Result<ConstValue, ConstEvalError> {
         if lv.tag == CLVTag::Variable {
             self.variables.insert(lv.id()._value, val);
+            return Result::ok(ConstValue::make_void());
+        } else if lv.tag == CLVTag::Alloc {
+            let live = self.live_alloc(lv.id());
+            if live.is_err() { return Result::err(live.unwrap_err()); }
+            let alloc = live.unwrap();
+            alloc.value = val;
+            self.heap.insert(lv.id()._value, alloc);
             return Result::ok(ConstValue::make_void());
         } else if lv.tag == CLVTag::Field {
             // Read base, update field, write back
@@ -1008,6 +1230,25 @@ impl ConstEvaluator {
                     return self.assign_to_lvalue(lv.inner(), ConstValue::make_struct(grown));
                 }
                 return self.assign_to_lvalue(lv.inner(), ConstValue::make_struct(new_fields));
+            }
+            // A field of a tuple or a slice (a (pointer, length) pair; the
+            // pair of a string's bytes becomes a tuple once its fields
+            // change separately).
+            let elems: Option<&[ConstValue]> = if base.tag == CValTag::Tuple {
+                Option::some(base.elems())
+            } else if base.tag == CValTag::Bytes {
+                let pair = self.arena.alloc_slice::<ConstValue>(2);
+                pair[0] = base;
+                pair[1] = ConstValue::make_int((base.bytes().len() - base.bytes_offset()) as u64, BuiltinType::USize);
+                Option::some(pair as &[ConstValue])
+            } else {
+                Option::none()
+            };
+            if elems.is_some() && (lv.field_idx() as usize) < elems.unwrap().len() {
+                let new_elems = self.arena.alloc_slice::<ConstValue>(elems.unwrap().len());
+                elems.unwrap().copy_to(&new_elems[0]);
+                new_elems[lv.field_idx() as usize] = val;
+                return self.assign_to_lvalue(lv.inner(), ConstValue::make_tuple(new_elems));
             }
             return Result::err(ConstEvalError::unsupported());
         } else if lv.tag == CLVTag::Index {
@@ -1074,7 +1315,8 @@ impl ConstEvaluator {
     // ========== Index ==========
 
     fn eval_index(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, ConstEvalError> {
-        let base_r = self.eval_inner(expr.lhs());
+        // (A pointer is indexed through its value, an array in place.)
+        let base_r = if expr.lhs().ty.tag == IrTyTag::Pointer { self.eval(expr.lhs()) } else { self.eval_inner(expr.lhs()) };
         if base_r.is_err() { return base_r; }
         let idx_r = self.eval(expr.rhs());
         if idx_r.is_err() { return idx_r; }
@@ -1090,6 +1332,17 @@ impl ConstEvaluator {
         }
         if base.tag == CValTag::Array || base.tag == CValTag::Bytes {
             return self.access_index(base, idx_val);
+        }
+        if base.tag == CValTag::Pointer {
+            // `ptr[i]`: the element `i` places after the one `ptr` points to.
+            let lv = base.lvalue();
+            if lv.tag == CLVTag::Index {
+                let new_lv = self.arena.alloc(ConstLValue::mk_index(lv.inner(), lv.index() + idx_val));
+                return Result::ok(ConstValue::make_lvalue(new_lv));
+            }
+            if idx_val == 0 {
+                return Result::ok(ConstValue::make_lvalue(lv));
+            }
         }
         Result::err(ConstEvalError::unsupported())
     }
@@ -1126,6 +1379,13 @@ impl ConstEvaluator {
                 field_idx: i as u32,
                 value: r.unwrap(),
             };
+        }
+        if expr.ty.tag == IrTyTag::Slice && fields.len() == 2 {
+            // A slice is a (pointer, length) pair.
+            let elems = self.arena.alloc_slice::<ConstValue>(2);
+            elems[0] = fields[0].value;
+            elems[1] = fields[1].value;
+            return Result::ok(ConstValue::make_tuple(elems));
         }
         Result::ok(ConstValue::make_struct(fields))
     }
@@ -1324,12 +1584,19 @@ impl ConstEvaluator {
             note_msg: "",
             failure: Option::none(),
             current_fn: f.name,
+            heap: self.heap,
         };
 
         // Evaluate function body
         let result = child.eval(f.body.unwrap());
-        if self.failure.is_none() {
-            self.failure = child.failure;
+        if self.failure.is_none() && child.failure.is_some() {
+            // (In this call.)
+            let failure = child.failure.unwrap();
+            let calls = self.arena.alloc_slice::<ConstEvalCall>(failure.calls.len() + 1);
+            failure.calls.copy_to(&calls[0]);
+            calls[failure.calls.len()] = ConstEvalCall { span: expr.span, function: f.name };
+            failure.calls = calls;
+            self.failure = Option::some(failure);
         }
 
         // Propagate remaining steps back
@@ -1623,6 +1890,36 @@ impl ConstEvaluator {
 
     // ========== Zeroed value construction ==========
 
+    /// An uninitialized value of type `ty` (an aggregate of uninitialized
+    /// elements, so that they can be assigned one by one).
+    fn make_uninitialized(self: &mut ConstEvaluator, ty: &IrTy) -> ConstValue {
+        switch ty.tag {
+            IrTyTag::Array => {
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size());
+                let elem = self.make_uninitialized(ty.inner());
+                for i in 0usize..ty.array_size() {
+                    elems[i] = elem;
+                }
+                ConstValue::make_array(elems)
+            }
+            IrTyTag::Tuple => {
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.elems().len());
+                for (i, elem) in ty.elems().iter().enumerate() {
+                    elems[i] = self.make_uninitialized(elem);
+                }
+                ConstValue::make_tuple(elems)
+            }
+            IrTyTag::Struct, IrTyTag::Closure => {
+                let fields = self.arena.alloc_slice::<ConstField>(ty.struct_ref().fields.len());
+                for (i, field) in ty.struct_ref().fields.iter().enumerate() {
+                    fields[i] = ConstField { field_idx: i as u32, value: self.make_uninitialized(field.ty) };
+                }
+                ConstValue::make_struct(fields)
+            }
+            _ => if ty.is_zero_sized() { self.make_zeroed(ty) } else { ConstValue::make_uninitialized() },
+        }
+    }
+
     fn make_zeroed(self: &mut ConstEvaluator, ty: &IrTy) -> ConstValue {
         if ty.tag == IrTyTag::Builtin {
             if ty.builtin() == BuiltinType::Bool {
@@ -1636,6 +1933,12 @@ impl ConstEvaluator {
             }
         } else if ty.tag == IrTyTag::Pointer || ty.tag == IrTyTag::FnPointer {
             ConstValue::make_int(0u64, BuiltinType::USize)
+        } else if ty.tag == IrTyTag::Slice {
+            // (pointer, length)
+            let elems = self.arena.alloc_slice::<ConstValue>(2);
+            elems[0] = ConstValue::make_int(0u64, BuiltinType::USize);
+            elems[1] = ConstValue::make_int(0u64, BuiltinType::USize);
+            ConstValue::make_tuple(elems)
         } else if ty.tag == IrTyTag::Array {
             let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size());
             let zero = self.make_zeroed(ty.inner());
@@ -1686,7 +1989,7 @@ fn try_eval_u64(
 ) -> Option<u64> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval(expr);
+    let result = evaluator.eval_top(expr);
     if result.is_ok() {
         result.unwrap().as_u64()
     } else {
@@ -1706,7 +2009,7 @@ fn try_eval_bool(
 ) -> Option<bool> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval(expr);
+    let result = evaluator.eval_top(expr);
     if result.is_ok() {
         result.unwrap().as_bool()
     } else {
@@ -1726,7 +2029,7 @@ fn try_eval(
 ) -> Option<ConstValue> {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval(expr);
+    let result = evaluator.eval_top(expr);
     if result.is_ok() {
         Option::some(result.unwrap())
     } else {
@@ -1748,9 +2051,10 @@ fn try_eval_with_diags(
 ) -> ConstEvalOutcome {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval(expr);
+    let result = evaluator.eval_top(expr);
     ConstEvalOutcome {
         value: result.get(),
+        heap: evaluator.heap,
         panic_msg: evaluator.panic_msg,
         warning_msg: evaluator.warning_msg,
         note_msg: evaluator.note_msg,

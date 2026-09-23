@@ -41,10 +41,9 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "atomic_cmpxchg" => lower_atomic(m, ir_type_args, expr, "cmpxchg"),
         "atomic_fence" => lower_atomic(m, ir_type_args, expr, "fence"),
         "const_panic" => lower_const_panic(m, expr),
-        "const_warning" => lower_const_diag_tag(m, expr, IrTag::ConstWarning),
-        "const_note" => lower_const_diag_tag(m, expr, IrTag::ConstNote),
-        "const_alloc", "const_free", "const_bake" =>
-            lower_const_runtime_noop(m, ir_type_args, name),
+        "const_warning" => lower_const_diag_tag(m, expr, IrTag::ConstWarning, m.ctx.void_ty),
+        "const_note" => lower_const_diag_tag(m, expr, IrTag::ConstNote, m.ctx.void_ty),
+        "const_alloc", "const_free", "const_bake" => lower_const_heap(m, ir_type_args, name, expr),
         "compile_fail", "compile_warn", "compile_note" =>
             lower_compile_diag(m, name, expr),
         "volatile" => lower_volatile(m, ir_type_args, expr),
@@ -73,24 +72,36 @@ fn lower_const_eval(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrEx
     // const_eval<T>(expr) -> T: evaluate expression at compile time
     if !expr.args().is_empty() {
         let ir_expr = m.lower_expr(expr.args()[0]);
-        let val = const_eval::try_eval(
-            m.ctx.arena,
-            m.ctx.id_gen,
-            m.ctx.ir_functions.as_slice(),
-            m.ctx.ir_globals.as_slice(),
-            &m.ctx.const_values,
-            m.ctx.pointer_size,
-            ir_expr,
-        );
-        if val.is_some() {
+        let outcome = m.try_const_eval_with_diags(ir_expr);
+        if !outcome.warning_msg.is_empty() {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_warning(expr.span, outcome.warning_msg));
+        }
+        if !outcome.note_msg.is_empty() {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_note(expr.span, outcome.note_msg));
+        }
+        if outcome.value.is_some() && lower::Mono::contains_pointer(outcome.value.unwrap()) {
+            m.adopt_baked(outcome.heap);
+            if m.only_baked_pointers(outcome.value.unwrap()) {
+                return m.constvalue_to_ir(outcome.value.unwrap(), ir_expr.ty);
+            }
+        }
+        if outcome.value.is_some() {
             let materialized = const_eval::materialize_to_ir(
-                m.ctx.arena, val.unwrap(), ir_expr.ty, m.ctx.void_ty,
+                m.ctx.arena, outcome.value.unwrap(), ir_expr.ty, m.ctx.void_ty,
             );
             if materialized.is_some() {
                 return materialized.unwrap();
             }
+            // (A value the IR cannot hold, e.g. a pointer into the
+            // evaluator's memory: evaluated again at run time.)
+            return ir_expr;
         }
-        // If const eval fails, emit the expression as-is (runtime fallback)
+        // `const_eval` must be evaluable (as alumina-boot).
+        if !outcome.panic_msg.is_empty() {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, outcome.panic_msg));
+        } else {
+            m.report_const_failure(outcome.failure, expr.span);
+        }
         return ir_expr;
     }
     let result = IrExpr::void_expr(m.ctx.void_ty);
@@ -318,60 +329,64 @@ fn lower_atomic(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr, op: &[u8]) ->
 }
 
 fn lower_const_panic(m: &mut Mono, expr: &Expr) -> &IrExpr {
-    // const_panic(msg) -> !: triggers a compile error if reached during const
-    // evaluation, traps if reached at runtime. The message argument must be a
-    // string literal; non-literal forms (e.g. format!(...) results) are
-    // captured as the empty string — the const evaluator only stores the
-    // emitted text on a successful pre-runtime fold, which doesn't (yet)
-    // support const-time string building.
-    let msg: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
-        expr.args()[0].str_val()
-    } else {
-        ""
-    };
-    let result = IrExpr::void_expr(m.ctx.never_ty);
-    result.tag = IrTag::ConstPanic;
-    result._data.codegen.str_val = msg;
-    m.ctx.arena.alloc(result)
+    // const_panic(msg) -> !: a compile error if reached during constant
+    // evaluation (with the message, which must evaluate to a constant
+    // string), unreachable at run time.
+    lower_const_diag_tag(m, expr, IrTag::ConstPanic, m.ctx.never_ty)
 }
 
-fn lower_const_diag_tag(m: &mut Mono, expr: &Expr, tag: IrTag) -> &IrExpr {
-    // const_warning / const_note: capture a literal-string message and emit
-    // an IR node that const_eval recognises. Non-literal messages drop to
-    // empty (matches const_panic's literal-only constraint).
+/// `const_panic` / `const_warning` / `const_note`: the message expression
+/// (as an item, for the evaluator), plus the text of a literal one.
+fn lower_const_diag_tag(m: &mut Mono, expr: &Expr, tag: IrTag, ty: &IrTy) -> &IrExpr {
     let msg: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
         expr.args()[0].str_val()
     } else {
         ""
     };
-    let result = IrExpr::void_expr(m.ctx.void_ty);
+    let items: &[&IrExpr] = if !expr.args().is_empty() && expr.args()[0].tag != ExprTag::StringLit {
+        let slice_ty = m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true);
+        let arg = m.lower_expr_coerced(expr.args()[0], slice_ty);
+        let items = m.ctx.arena.alloc_slice::<&IrExpr>(1);
+        items[0] = m.check_and_coerce(arg, slice_ty, expr.args()[0].span);
+        items
+    } else {
+        &[]
+    };
+    let result = IrExpr::void_expr(ty);
     result.tag = tag;
     result._data.codegen.str_val = msg;
+    result._data.codegen.items = items;
     m.ctx.arena.alloc(result)
 }
 
-fn lower_const_runtime_noop(m: &mut Mono, ir_type_args: &[&IrTy], name: &[u8]) -> &IrExpr {
-    // const_alloc, const_free, const_panic, const_note, const_warning, const_bake.
-    // These should only be reached in const context. At runtime, emit unreachable.
-    //
-    // Even though the runtime path is dead, aluminac's eager monomorphization
-    // walks the body, so the typed-result matters: e.g. const_alloc::<T>(len)
-    // returning Unreachable with void_ty makes any subsequent `*(ptr + i)`
-    // fail with "cannot dereference non-pointer type". So we shape the
-    // Unreachable's type after the intrinsic's declared return type.
-    let result_ty = if name == "const_alloc" && ir_type_args.len() >= 1 {
-        // const_alloc<T>(usize) -> &mut T
-        m.ctx.make_ptr_ty(ir_type_args[0], false)
-    } else if name == "const_bake" && ir_type_args.len() >= 1 {
-        // const_bake<T>(T) -> T
+/// const_alloc::<T>(len) -> &mut T, const_free::<T>(ptr), const_bake::<T>(value) -> T:
+/// the constant evaluator's heap (unreachable at run time).
+fn lower_const_heap(m: &mut Mono, ir_type_args: &[&IrTy], name: &[u8], expr: &Expr) -> &IrExpr {
+    let items = m.ctx.arena.alloc_slice::<&IrExpr>(1);
+    items[0] = m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+    // (`T` is that of the argument unless given.)
+    let lowered = false;
+    let elem_ty = if ir_type_args.len() >= 1 && !ir_type_args[0].is_void() {
         ir_type_args[0]
+    } else if expr.args().len() == 1 && name != "const_alloc" {
+        items[0] = m.lower_expr(expr.args()[0]);
+        lowered = true;
+        if name == "const_free" && items[0].ty.tag == IrTyTag::Pointer { items[0].ty.inner() } else { items[0].ty }
     } else {
-        // const_free, const_panic, const_note, const_warning return void / never
-        // and don't drive subsequent pointer arithmetic.
         m.ctx.void_ty
     };
+    let (tag, result_ty, arg_ty) = switch name {
+        "const_alloc" => (IrTag::ConstAlloc, m.ctx.make_ptr_ty(elem_ty, false), m.ctx.usize_ty),
+        "const_free" => (IrTag::ConstFree, m.ctx.void_ty, m.ctx.make_ptr_ty(elem_ty, false)),
+        _ => (IrTag::ConstBake, elem_ty, elem_ty),
+    };
+    if expr.args().len() == 1 {
+        let arg = if lowered { items[0] } else { m.lower_expr_coerced(expr.args()[0], arg_ty) };
+        items[0] = m.check_and_coerce(arg, arg_ty, expr.args()[0].span);
+    }
     let result = IrExpr::void_expr(result_ty);
-    result.tag = IrTag::Unreachable;
+    result.tag = tag;
+    result._data.codegen.items = items;
     m.ctx.arena.alloc(result)
 }
 

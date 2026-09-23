@@ -323,6 +323,34 @@ LLVM's data layout, so it checks aluminac's layout), prelude module paths,
 and a crash (`transmute` lowered without its target type, which the const
 evaluator dereferenced).
 
+### Diagnostics parity (tests/diag)
+
+`tests/aluminac/diag_check.py` runs alumina-boot's diagnostics tests
+(`tests/diag/*.alu`) under aluminac and compares where errors and
+warnings are reported (the first line in the test file of each
+diagnostic's location, expansion or instantiation chain). Done so far:
+
+- **Macro expansion backtraces**: spans carry the macro expansion they come
+  from (`Span::expansion`, into `DiagnosticContext::expansions`), and a
+  diagnostic in expanded code ends with "in this expansion of `m!`" notes
+  up to the call as written, which alumina-boot also reports (as backtrace
+  frames).
+- **Constant evaluation** (all 16 `const*` tests match): failures use
+  alumina-boot's reasons, located at the expression that failed, with "in
+  this call to `f`, evaluated at compile time" notes for the calls it
+  happened in. `const_eval!` must be evaluable (it used to fall back to
+  run time silently, so the stdlib's `const_eval!` tests passed without
+  evaluating anything); `const_panic`/`const_warning`/`const_note` take
+  computed messages (the stdlib's `assert_eq!` builds one in a buffer);
+  reading an uninitialized local is an error; **the evaluator has a heap**
+  (`const_alloc`/`const_free`, with use-after-free and invalid-free errors,
+  and `const_bake`: baked allocations become constant globals, so
+  `const H: HashMap<..> = { ...; m.const_bake!() }` works). Also:
+  indexing through pointers (dyn calls through vtables, sub-slices of
+  arrays), assigning a slice's fields, slice casts; "constant string
+  expected" for `concat!`/`format_args!`/`include_bytes!`, and
+  `include_bytes!` of an unreadable file is an error (it gave `""`).
+
 ### Cross-check status
 
 `tests/aluminac/cross_check.sh`: every aluminac test behaves the same
@@ -344,8 +372,6 @@ instances.
   protocol bounds are not fully checked (`unified_sysroot_basic`'s `Point`
   lacked `not_equals`); `use std::io::ErrorKind` resolved although
   `ErrorKind` lives in `std::io::unix`.
-- Const-eval gaps (now reported, not silent): array-to-slice casts, slices
-  of slices, pointer arithmetic into arrays.
 - Mono still lowers call arguments twice (tentatively for inference, then
   for real) and has several ad-hoc inference paths (`Fn`-bound return
   types, method vs function calls); one unification-based inference

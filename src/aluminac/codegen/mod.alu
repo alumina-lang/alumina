@@ -1689,19 +1689,24 @@ fn generate(
                 // Neither the const evaluator nor the constant folder could
                 // produce a value. Leaving the zero initializer in place would
                 // silently miscompile every use of the constant.
+                // (As alumina-boot, at the expression that could not be
+                // evaluated.)
+                let failure = global_def.const_failure;
+                let span = if failure.is_some() && !failure.unwrap().span.is_empty() { failure.unwrap().span } else { init_expr.span };
                 ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
-                    init_expr.span,
-                    std::fmt::format!("cannot evaluate constant `{}` at compile time", global_def.name).unwrap().as_slice(),
-                ));
-                if global_def.const_failure.is_some() {
-                    let failure = global_def.const_failure.unwrap();
-                    let message = if failure.function.is_empty() {
-                        std::fmt::format!("evaluation is not supported for this {} expression", failure.what)
-                    } else {
-                        std::fmt::format!("evaluation is not supported for this {} expression (in `{}`)", failure.what, failure.function)
-                    };
-                    ctx.diag.emit(diagnostics::CodeDiagnostic::generic_note(failure.span, message.unwrap().as_slice()));
+                    span, "this expression is not evaluable at compile time (not constant or unsupported expression)"));
+                if failure.is_some() {
+                    for call in failure.unwrap().calls {
+                        if !call.span.is_empty() {
+                            ctx.diag.emit(diagnostics::CodeDiagnostic::generic_note(call.span,
+                                std::fmt::format!("in this call to `{}`, evaluated at compile time", call.function).unwrap().as_slice()));
+                        }
+                    }
                 }
+                ctx.diag.emit(diagnostics::CodeDiagnostic::generic_note(
+                    init_expr.span,
+                    std::fmt::format!("while evaluating the constant `{}`", global_def.name).unwrap().as_slice(),
+                ));
             }
         }
     }

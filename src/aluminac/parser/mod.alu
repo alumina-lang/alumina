@@ -27,6 +27,7 @@ struct ParseError {
 const NO_VARIADIC: i32 = -1i32;
 
 struct MacroEntry {
+    name: &[u8],
     params: &[&[u8]],
     body: &Expr,              // Pre-parsed AST body (parsed in definition-site scope)
     source: &[u8],            // Source text for error reporting
@@ -80,6 +81,8 @@ struct ParseContext {
     // Set at the top-level do_expand_macro call (where prev was None) and
     // restored on exit; nested do_expand_macro calls do not overwrite it.
     macro_outer_span: Option<Span>,
+    // The macro expansion being expanded (see `Span::expansion`), or 0.
+    current_expansion: u32,
     // `#[location("file", line)]` on the item being parsed: what `file!`,
     // `line!` and `column!` report in it.
     location_override: Option<LocationOverride>,
@@ -221,6 +224,7 @@ impl ParseContext {
             macro_param_names: &[],
             macro_variadic_param_idx: NO_VARIADIC,
             macro_outer_span: Option::none(),
+            current_expansion: 0,
             location_override: Option::none(),
             items: Vector::new(),
         }
@@ -235,6 +239,7 @@ impl ParseContext {
             file_id: self.file_id,
             start: node.start_byte() as u32,
             end: node.end_byte() as u32,
+            expansion: 0,
         }
     }
 
@@ -723,10 +728,10 @@ fn check_syntax_errors(
         if node.is_error() {
             let text = node.text(source);
             let show = if text.len() > 40usize { text[0usize..40usize] } else { text };
-            let span = Span { file_id: file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+            let span = Span { file_id: file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
             diag.emit(diagnostics::CodeDiagnostic::syntax_error(span, show));
         } else if node.is_missing() {
-            let span = Span { file_id: file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+            let span = Span { file_id: file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
             diag.emit(diagnostics::CodeDiagnostic::syntax_missing(span, node.kind_name()));
         }
 

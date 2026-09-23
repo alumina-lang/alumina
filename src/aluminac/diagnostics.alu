@@ -297,8 +297,17 @@ impl CodeDiagnostic {
     }
 }
 
+/// A macro invocation code was expanded from.
+struct Expansion {
+    /// Where the macro was invoked (itself possibly in an expansion).
+    call_site: Span,
+    macro_name: &[u8],
+}
+
 struct DiagnosticContext {
     files: std::collections::Vector<SourceFile>,
+    /// The macro expansions spans refer to (`Span::expansion` - 1).
+    expansions: std::collections::Vector<Expansion>,
     errors: std::collections::Vector<CodeDiagnostic>,
     has_errors: bool,
     has_warnings: bool,
@@ -308,6 +317,7 @@ impl DiagnosticContext {
     fn new() -> DiagnosticContext {
         DiagnosticContext {
             files: std::collections::Vector::new(),
+            expansions: std::collections::Vector::new(),
             errors: std::collections::Vector::new(),
             has_errors: false,
             has_warnings: false,
@@ -323,6 +333,12 @@ impl DiagnosticContext {
             line_starts: line_starts,
         });
         id
+    }
+
+    /// Record a macro expansion, for the spans of the code it produces.
+    fn add_expansion(self: &mut DiagnosticContext, call_site: Span, macro_name: &[u8]) -> u32 {
+        self.expansions.push(Expansion { call_site: call_site, macro_name: macro_name });
+        self.expansions.len() as u32
     }
 
     fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
@@ -384,6 +400,19 @@ impl DiagnosticContext {
                 if render_snippet {
                     self.render_source_snippet(&f, file, diag.span, line, col);
                 }
+            }
+            // The macro invocations the code comes from, innermost first.
+            let expansion = diag.span.expansion;
+            let depth = 0;
+            while expansion != 0 && (expansion as usize) <= self.expansions.len() && depth < 32 {
+                let exp = self.expansions[expansion as usize - 1];
+                if exp.call_site.file_id < self.files.len() as u32 && !exp.call_site.is_empty() {
+                    let file = &self.files[exp.call_site.file_id as usize];
+                    let (line, col) = file.line_col(exp.call_site.start);
+                    let _ = write!(&f, "\nnote: in this expansion of `{}!`\n  --> {}:{}:{}", exp.macro_name, file.path, line, col);
+                }
+                expansion = exp.call_site.expansion;
+                depth += 1;
             }
             let _ = f.write_str("\n");
         }

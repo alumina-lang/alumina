@@ -167,7 +167,7 @@ impl Pass2 {
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
                                 kind: mk,
-                                span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                                span: Span { file_id: 0u32, start: 0u32, end: 0u32, expansion: 0 },
                             });
                             if mixin_ty_args.len() > 0 {
                                 self.ctx.scopes.set_mixin_info(impl_scope_idx, fn_id_val._value, proto_id_val, mixin_ty_args, pending.impl_generic_param_ids);
@@ -261,6 +261,7 @@ impl Pass2 {
                 };
 
                 let entry = MacroEntry {
+                    name: pending.name,
                     params: params_slice,
                     body: body_expr,
                     source: self.ctx.source,
@@ -335,7 +336,7 @@ impl Pass2 {
                     self.ctx.scopes.add_item(pending.scope_idx, NamedItem {
                         name: name,
                         kind: NamedItemKind::generic_param(pending.impl_generic_param_ids[ig]),
-                        span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                        span: Span { file_id: 0u32, start: 0u32, end: 0u32, expansion: 0 },
                     });
                 }
             }
@@ -464,12 +465,12 @@ impl Pass2 {
             attributes: attributes,
             is_variadic: is_variadic,
             abi: abi,
-            span: Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 },
+            span: Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 },
         };
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Function;
-        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
         item._data.fn_def = fn_def;
         self.ctx.items.push(item);
     }
@@ -1122,7 +1123,7 @@ impl Pass2 {
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Struct;
-        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
         item._data.struct_def = StructDef {
             id: pending.id,
             name: pending.name,
@@ -1190,7 +1191,7 @@ impl Pass2 {
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Enum;
-        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
         item._data.enum_def = EnumDef {
             id: pending.id,
             name: pending.name,
@@ -1279,7 +1280,7 @@ impl Pass2 {
                     attributes: &[],
                     is_variadic: false,
                     abi: Option::none(),
-                    span: Span { file_id: self.ctx.file_id, start: child.start_byte() as u32, end: child.end_byte() as u32 },
+                    span: Span { file_id: self.ctx.file_id, start: child.start_byte() as u32, end: child.end_byte() as u32, expansion: 0 },
                 });
             }
         }
@@ -1288,7 +1289,7 @@ impl Pass2 {
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Protocol;
-        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
         item._data.protocol_def = ProtocolDef {
             id: pending.id,
             name: pending.name,
@@ -1363,7 +1364,7 @@ impl Pass2 {
                             self.ctx.scopes.add_item(impl_scope_idx, NamedItem {
                                 name: item.name,
                                 kind: mk,
-                                span: Span { file_id: 0u32, start: 0u32, end: 0u32 },
+                                span: Span { file_id: 0u32, start: 0u32, end: 0u32, expansion: 0 },
                             });
                             // Store mixin type args so mono can substitute protocol generics
                             if mixin_ty_args.len() > 0 {
@@ -1409,7 +1410,7 @@ impl Pass2 {
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::TypeAlias;
-        item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end };
+        item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end, expansion: 0 };
         item._data.type_alias = alias;
         self.ctx.items.push(item);
     }
@@ -1449,7 +1450,7 @@ impl Pass2 {
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::Static;
-        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32, expansion: 0 };
         item._data.static_def = StaticDef {
             id: pending.id,
             name: pending.name,

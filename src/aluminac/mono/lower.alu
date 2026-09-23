@@ -216,11 +216,20 @@ impl Mono {
     // compilation so deep instantiation chains don't repeat on every
     // cascading error.
     fn emit_diag(self: &mut Mono, diag: diagnostics::CodeDiagnostic) {
+        self.emit_diag_with_notes(diag, &[]);
+    }
+
+    /// A diagnostic, with notes of its own (before those of the
+    /// instantiations it is in).
+    fn emit_diag_with_notes(self: &mut Mono, diag: diagnostics::CodeDiagnostic, notes: &[diagnostics::CodeDiagnostic]) {
         if self.tentative {
             return;
         }
         let first_error = !self.ctx.diag.has_errors;
         self.ctx.diag.emit(diag);
+        for note in notes {
+            self.ctx.diag.emit(note);
+        }
         if first_error {
             self.ctx.emit_mono_stack_notes();
         }
@@ -3895,6 +3904,22 @@ impl Mono {
             e.tag = IrTag::StringLit;
             e._data.lit.str_val = bytes.bytes()[start..start + (val.elems()[1].int_val() as usize)];
             self.ctx.arena.alloc(e) as &IrExpr
+        } else if val.tag == CValTag::Pointer {
+            let pointer = self.const_pointer(val, ty);
+            pointer.unwrap_or_else(|=self, =ty| -> &IrExpr {
+                let e = IrExpr::void_expr(ty);
+                e.tag = IrTag::Zeroed;
+                self.ctx.arena.alloc(e) as &IrExpr
+            })
+        } else if val.tag == CValTag::Tuple && ty.tag == IrTyTag::Slice && val.elems().len() == 2 {
+            // A slice: its (pointer, length).
+            let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+            items[0] = self.constvalue_to_ir(val.elems()[0], self.ctx.make_ptr_ty(ty.inner(), ty.is_const()));
+            items[1] = self.constvalue_to_ir(val.elems()[1], self.ctx.usize_ty);
+            let e = IrExpr::void_expr(ty);
+            e.tag = IrTag::TupleLit;
+            e._data.block.items = items;
+            self.ctx.arena.alloc(e) as &IrExpr
         } else if val.tag == CValTag::Array {
             let elem_ty = ty.inner();
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(val.elems().len());
@@ -3967,6 +3992,92 @@ impl Mono {
             let e = IrExpr::void_expr(ty);
             e.tag = IrTag::Zeroed;
             self.ctx.arena.alloc(e) as &IrExpr
+        }
+    }
+
+    /// A constant pointer into a baked allocation (see `const_place`), or
+    /// none for any other pointer.
+    fn const_pointer(self: &mut Mono, val: ConstValue, ty: &IrTy) -> Option<&IrExpr> {
+        let place = self.const_place(val.lvalue())?;
+        let ptr = self.mk_ref(place, ty.tag == IrTyTag::Pointer && ty.is_const());
+        Option::some(if ptr.ty.same_as(ty) { ptr } else { self.mk_cast(ptr, ty) })
+    }
+
+    /// The place of a baked allocation (`const_bake`) as that in a constant
+    /// global (the allocation's elements), or none for any other place.
+    fn const_place(self: &mut Mono, lv: &ConstLValue) -> Option<&IrExpr> {
+        switch lv.tag {
+            CLVTag::Alloc => {
+                let idx = self.ctx.baked_globals.get(&lv.id()._value);
+                if idx.is_none() {
+                    let alloc = self.ctx.baked_allocs.get(&lv.id()._value)?;
+                    let ty = self.ctx.make_array_ty(alloc.elem_ty, alloc.value.elems().len());
+                    let name: &[u8] = "__const_alloc";
+                    idx = Option::some(self.ctx.ir_globals.len());
+                    self.ctx.ir_globals.push(IrGlobal {
+                        id: self.ctx.id_gen.next_id(),
+                        name: name,
+                        mangled_name: self.ctx.mangle_name(name),
+                        ty: ty,
+                        init: Option::none(),
+                        is_const: true,
+                        is_extern: false,
+                        attributes: &[],
+                        const_failure: Option::none(),
+                    });
+                    // (Before the elements, which may point to it.)
+                    self.ctx.baked_globals.insert(lv.id()._value, idx.unwrap());
+                    let init = self.constvalue_to_ir(alloc.value, ty);
+                    self.ctx.ir_globals[idx.unwrap()].init = Option::some(init);
+                }
+                let global = self.ctx.ir_globals[idx.unwrap()];
+                let e = IrExpr::void_expr(global.ty);
+                e.tag = IrTag::GlobalRef;
+                e._data.global_ref = IrGlobalRef { id: global.id, mangled_name: global.mangled_name };
+                Option::some(self.ctx.arena.alloc(e) as &IrExpr)
+            }
+            CLVTag::Index => {
+                let base = self.const_place(lv.inner())?;
+                if base.ty.tag != IrTyTag::Array { return Option::none(); }
+                Option::some(self.mk_index(base, self.mk_int_lit(self.ctx.usize_ty, lv.index() as u64), base.ty.inner()))
+            }
+            CLVTag::Field, CLVTag::TupleIndex => {
+                let base = self.const_place(lv.inner())?;
+                let field = if lv.tag == CLVTag::Field { lv.field_idx() as usize } else { lv.index() };
+                let field_ty = if base.ty.tag == IrTyTag::Tuple && field < base.ty.elems().len() {
+                    base.ty.elems()[field]
+                } else if base.ty.tag == IrTyTag::Struct && field < base.ty.struct_ref().fields.len() {
+                    base.ty.struct_ref().fields[field].ty
+                } else {
+                    return Option::none();
+                };
+                Option::some(self.mk_field(base, field as u32, field_ty))
+            }
+            _ => Option::none(),
+        }
+    }
+
+    /// Whether every pointer in a constant value is into a baked allocation
+    /// (and so the value can be a constant).
+    fn only_baked_pointers(self: &Mono, val: ConstValue) -> bool {
+        switch val.tag {
+            CValTag::Pointer => {
+                let root = val.lvalue().root();
+                root.tag == CLVTag::Alloc && self.ctx.baked_allocs.contains(&root.id()._value)
+            }
+            CValTag::Lvalue => false,
+            CValTag::Tuple, CValTag::Array => val.elems().iter().all(|=self, e: ConstValue| -> bool { self.only_baked_pointers(e) }),
+            CValTag::Struct => val.fields().iter().all(|=self, f: ConstField| -> bool { self.only_baked_pointers(f.value) }),
+            _ => true,
+        }
+    }
+
+    /// Keep an evaluation's baked allocations, for its value to point to.
+    fn adopt_baked(self: &mut Mono, heap: &HashMap<usize, const_eval::HeapAlloc>) {
+        for (id, alloc) in heap.iter() {
+            if alloc.baked {
+                self.ctx.baked_allocs.insert(id, alloc);
+            }
         }
     }
 
@@ -7852,16 +7963,33 @@ impl Mono {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, outcome.panic_msg));
                 }
                 if outcome.value.is_some() && Mono::contains_pointer(outcome.value.unwrap()) {
-                    // Pointers point into the evaluator's memory; the
-                    // initializer is kept for codegen to fold (as addresses of
-                    // globals, e.g. `&A[2]`).
-                    init_ir
+                    self.adopt_baked(outcome.heap);
+                    if self.only_baked_pointers(outcome.value.unwrap()) {
+                        // Pointers into baked allocations, which become
+                        // constants of their own.
+                        self.constvalue_to_ir(outcome.value.unwrap(), ty)
+                    } else {
+                        // Other pointers point into the evaluator's memory;
+                        // the initializer is kept for codegen to fold (as
+                        // addresses of globals, e.g. `&A[2]`).
+                        init_ir
+                    }
                 } else if outcome.value.is_some() {
                     self.ctx.const_values.insert(id._value, outcome.value.unwrap());
                     self.constvalue_to_ir(outcome.value.unwrap(), ty)
-                } else {
+                } else if outcome.failure.is_some() && outcome.failure.unwrap().code == const_eval::CECode::Unsupported
+                    && !ty.is_zero_sized() {
+                    // Codegen may still fold it (e.g. addresses of globals);
+                    // if not, it reports the failure.
                     self.ctx.ir_globals[idx].const_failure = outcome.failure;
                     init_ir
+                } else {
+                    if outcome.panic_msg.is_empty() {
+                        self.report_const_failure(outcome.failure, span);
+                    }
+                    let zeroed = IrExpr::void_expr(ty);
+                    zeroed.tag = IrTag::Zeroed;
+                    self.ctx.arena.alloc(zeroed) as &IrExpr
                 }
             } else if is_extern || Mono::is_plain_constant(init_ir)
                 || def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::ThreadLocal }) {
@@ -7888,6 +8016,34 @@ impl Mono {
             self.ctx.static_inits.push(StaticInit { global: idx, init: runtime_init.unwrap(), locals: locals });
         }
         idx
+    }
+
+    /// A constant that could not be evaluated (as alumina-boot, at the
+    /// expression that could not be).
+    fn report_const_failure(self: &mut Mono, failure: Option<const_eval::ConstEvalFailure>, fallback: Span) {
+        let (span, reason) = if failure.is_some() && !failure.unwrap().span.is_empty() {
+            (failure.unwrap().span, failure.unwrap().code.reason())
+        } else {
+            (fallback, const_eval::CECode::Unsupported.reason())
+        };
+        // The calls it happened in, innermost first.
+        let notes: Vector<diagnostics::CodeDiagnostic> = Vector::new();
+        defer notes.free();
+        if failure.is_some() {
+            for call in failure.unwrap().calls {
+                if !call.span.is_empty() {
+                    notes.push(diagnostics::CodeDiagnostic::generic_note(call.span,
+                        std::fmt::format!("in this call to `{}`, evaluated at compile time", call.function).unwrap().as_slice()));
+                }
+            }
+        }
+        self.emit_diag_with_notes(
+            diagnostics::CodeDiagnostic::generic_error(
+                span,
+                std::fmt::format!("this expression is not evaluable at compile time ({})", reason).unwrap().as_slice(),
+            ),
+            notes.as_slice(),
+        );
     }
 
     /// Whether a constant value contains pointers (other than to string

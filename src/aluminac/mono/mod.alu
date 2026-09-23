@@ -52,6 +52,10 @@ struct MonoCtx {
 
     // Cached const-evaluated values for const globals
     const_values: HashMap<usize, ConstValue>,
+    // The allocations constants were baked from (`const_bake`), and the
+    // global each became, by allocation id.
+    baked_allocs: HashMap<usize, const_eval::HeapAlloc>,
+    baked_globals: HashMap<usize, usize>,
 
     // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
     fn_cache: HashMap<MonoKey, usize>,
@@ -169,6 +173,8 @@ impl MonoCtx {
             static_cache: HashMap::new(),
             static_inits: Vector::new(),
             const_values: HashMap::new(),
+            baked_allocs: HashMap::new(),
+            baked_globals: HashMap::new(),
             fn_cache: HashMap::new(),
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
@@ -515,6 +521,8 @@ impl MonoCtx {
         self.static_cache.free();
         self.static_inits.free();
         self.const_values.free();
+        self.baked_allocs.free();
+        self.baked_globals.free();
         self.fn_cache.free();
         self.struct_cache.free();
         self.struct_ty_cache.free();
