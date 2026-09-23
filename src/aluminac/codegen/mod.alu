@@ -28,23 +28,23 @@ struct CodegenCtx {
     // Named struct type cache (for forward declarations)
     struct_type_cache: HashMap<usize, LLVMTypeRef>,
 
-    // Function declarations: mangled_name hash -> LLVMValueRef
-    fn_decls: HashMap<u64, LLVMValueRef>,
+    // Function declarations: mangled_name key -> LLVMValueRef
+    fn_decls: HashMap<&[u8], LLVMValueRef>,
 
     // Set of extern C function hashes (for byval handling at call sites)
-    extern_c_fns: HashMap<u64, bool>,
+    extern_c_fns: HashMap<&[u8], bool>,
 
     // Extern C functions that use the sret return convention; maps the
-    // function name hash to its (original) struct return type so call sites
+    // function name key to its (original) struct return type so call sites
     // can alloca a buffer of the right type and reload the value after the
     // call. Populated when the function is declared (see `declare_function`).
-    extern_c_sret_fns: HashMap<u64, LLVMTypeRef>,
+    extern_c_sret_fns: HashMap<&[u8], LLVMTypeRef>,
 
     // Global declarations
-    global_decls: HashMap<u64, LLVMValueRef>,
+    global_decls: HashMap<&[u8], LLVMValueRef>,
 
     // String literal cache
-    string_cache: HashMap<u64, LLVMValueRef>,
+    string_cache: HashMap<&[u8], LLVMValueRef>,
     string_counter: usize,
 
     // Counter for deterministic struct type naming
@@ -741,16 +741,8 @@ impl CodegenCtx {
         )
     }
 
-    fn name_hash(self: &CodegenCtx, name: &[u8]) -> u64 {
-        let h: u64 = 5381;
-        for byte in name.iter() {
-            h = h * 33 + byte as u64;
-        }
-        h
-    }
-
     // Auto-declare common libc functions that may be referenced by built-in slice methods
-    fn auto_declare_libc(self: &mut CodegenCtx, name: &[u8], hash: u64) -> LLVMValueRef {
+    fn auto_declare_libc(self: &mut CodegenCtx, name: &[u8]) -> LLVMValueRef {
         // realloc(void*, size_t) -> void*
         if name == "realloc" {
             let param_types = self.arena.alloc_slice::<LLVMTypeRef>(2);
@@ -758,7 +750,7 @@ impl CodegenCtx {
             param_types[1] = self.i64_type;  // size_t
             let fn_type = LLVMFunctionType(self.ptr_type, &param_types[0], 2u32, 0i32);
             let fn_val = LLVMAddFunction(self.module, &"realloc\0"[0] as &libc::c_char, fn_type);
-            self.fn_decls.insert(hash, fn_val);
+            self.fn_decls.insert(name, fn_val);
             return fn_val;
         }
         // free(void*)
@@ -767,7 +759,7 @@ impl CodegenCtx {
             param_types[0] = self.ptr_type;  // void*
             let fn_type = LLVMFunctionType(self.void_type, &param_types[0], 1u32, 0i32);
             let fn_val = LLVMAddFunction(self.module, &"free\0"[0] as &libc::c_char, fn_type);
-            self.fn_decls.insert(hash, fn_val);
+            self.fn_decls.insert(name, fn_val);
             return fn_val;
         }
         // calloc(size_t, size_t) -> void*
@@ -777,15 +769,15 @@ impl CodegenCtx {
             param_types[1] = self.i64_type;
             let fn_type = LLVMFunctionType(self.ptr_type, &param_types[0], 2u32, 0i32);
             let fn_val = LLVMAddFunction(self.module, &"calloc\0"[0] as &libc::c_char, fn_type);
-            self.fn_decls.insert(hash, fn_val);
+            self.fn_decls.insert(name, fn_val);
             return fn_val;
         }
         std::mem::zeroed::<LLVMValueRef>()
     }
 
     fn declare_function(self: &mut CodegenCtx, ir_fn: &IrFunction) -> LLVMValueRef {
-        let hash = self.name_hash(ir_fn.mangled_name);
-        let existing = self.fn_decls.get(&hash);
+        let key = ir_fn.mangled_name;
+        let existing = self.fn_decls.get(&key);
         if existing.is_some() {
             return existing.unwrap();
         }
@@ -800,7 +792,7 @@ impl CodegenCtx {
         // parameter attribute that the SysV ABI lowering needs. On aarch64 the
         // pointer parameter alone gives the right indirect-arg ABI.
         if is_extern_c {
-            self.extern_c_fns.insert(hash, true);
+            self.extern_c_fns.insert(key, true);
 
             let ret_ty = self.llvm_type(ir_fn.return_type);
             let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
@@ -808,7 +800,7 @@ impl CodegenCtx {
             let extra = if use_sret { 1u32 } else { 0u32 };
 
             if use_sret {
-                self.extern_c_sret_fns.insert(hash, ret_ty);
+                self.extern_c_sret_fns.insert(key, ret_ty);
                 let sret_kind = LLVMGetEnumAttributeKindForName(&"sret\0"[0] as &libc::c_char, 4usize);
                 let sret_attr = LLVMCreateTypeAttribute(self.context, sret_kind, ret_ty);
                 LLVMAddAttributeAtIndex(llvm_fn, 1u32, sret_attr);
@@ -877,7 +869,7 @@ impl CodegenCtx {
             LLVMSetValueName2(param, &pname[0] as &libc::c_char, ir_param.name.len());
         }
 
-        self.fn_decls.insert(hash, llvm_fn);
+        self.fn_decls.insert(key, llvm_fn);
         llvm_fn
     }
 
@@ -891,8 +883,8 @@ impl CodegenCtx {
     }
 
     fn declare_global(self: &mut CodegenCtx, ir_global: &IrGlobal) -> LLVMValueRef {
-        let hash = self.name_hash(ir_global.mangled_name);
-        let existing = self.global_decls.get(&hash);
+        let key = ir_global.mangled_name;
+        let existing = self.global_decls.get(&key);
         if existing.is_some() {
             return existing.unwrap();
         }
@@ -929,7 +921,7 @@ impl CodegenCtx {
             }
         }
 
-        self.global_decls.insert(hash, global);
+        self.global_decls.insert(key, global);
         global
     }
 
@@ -1096,8 +1088,8 @@ impl CodegenCtx {
             }
         }
         IrTag::FnRef => {
-            let hash = self.name_hash(expr.fn_ref().mangled_name);
-            let existing = self.fn_decls.get(&hash);
+            let key = expr.fn_ref().mangled_name;
+            let existing = self.fn_decls.get(&key);
             if existing.is_some() {
                 let func = existing.unwrap();
                 // Function pointer as constant
@@ -1115,8 +1107,8 @@ impl CodegenCtx {
     }
 
     fn get_or_create_string(self: &mut CodegenCtx, text: &[u8]) -> LLVMValueRef {
-        let hash = self.name_hash(text);
-        let cached = self.string_cache.get(&hash);
+        let key = text;
+        let cached = self.string_cache.get(&key);
         if cached.is_some() {
             return cached.unwrap();
         }
@@ -1155,7 +1147,7 @@ impl CodegenCtx {
         indices[1] = LLVMConstInt(self.i64_type, 0u64, 0i32);
         let ptr = LLVMConstInBoundsGEP2(str_type, global, &indices[0], 2);
 
-        self.string_cache.insert(hash, ptr);
+        self.string_cache.insert(key, ptr);
         ptr
     }
 
@@ -1270,8 +1262,8 @@ impl CodegenCtx {
         }
 
         // Get the user's main function
-        let hash = self.name_hash(ir_fn.mangled_name);
-        let user_main = self.fn_decls.get(&hash);
+        let key = ir_fn.mangled_name;
+        let user_main = self.fn_decls.get(&key);
         if user_main.is_none() {
             return;
         }
@@ -1499,8 +1491,8 @@ fn generate(
     for ir_fn in unit.functions.iter_ref() {
         if ir_fn.body.is_some() {
             let llvm_fn = {
-                let hash = ctx.name_hash(ir_fn.mangled_name);
-                let decl = ctx.fn_decls.get(&hash);
+                let key = ir_fn.mangled_name;
+                let decl = ctx.fn_decls.get(&key);
                 if decl.is_some() { decl.unwrap() }
                 else { continue; }
             };
@@ -1523,8 +1515,8 @@ fn generate(
             let init_expr = global_def.init.unwrap();
             let const_val = ctx.gen_const_init(init_expr);
             if (const_val as usize) != 0 {
-                let hash = ctx.name_hash(global_def.mangled_name);
-                let global = ctx.global_decls.get(&hash);
+                let key = global_def.mangled_name;
+                let global = ctx.global_decls.get(&key);
                 if global.is_some() {
                     LLVMSetInitializer(global.unwrap(), const_val);
                 }
@@ -1557,8 +1549,8 @@ fn generate(
         for fn_def in unit.functions.iter_ref() {
             for attr in fn_def.attributes.iter() {
                 if attr.tag == AttrTag::StaticCtor {
-                    let hash = ctx.name_hash(fn_def.mangled_name);
-                    let decl = ctx.fn_decls.get(&hash);
+                    let key = fn_def.mangled_name;
+                    let decl = ctx.fn_decls.get(&key);
                     if decl.is_some() {
                         ctor_fns.push(decl.unwrap());
                     }

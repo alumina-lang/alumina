@@ -18,12 +18,6 @@ struct MonoFrame {
     span: Span,
 }
 
-// Key for memoizing monomorphized items
-struct MonoKey {
-    item_id: Id,
-    type_args: &[&IrTy],
-}
-
 // Context shared across all monomorphization
 struct MonoCtx {
     arena: &mut Arena,
@@ -50,16 +44,16 @@ struct MonoCtx {
 
     // Track emitted globals to avoid duplicates
     // (static item, type args) mono key -> index into ir_globals
-    static_cache: HashMap<u64, usize>,
+    static_cache: HashMap<MonoKey, usize>,
 
     // Cached const-evaluated values for const globals
     const_values: HashMap<usize, ConstValue>,
 
     // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
-    fn_cache: HashMap<u64, usize>,
-    struct_cache: HashMap<u64, usize>,
-    struct_ty_cache: HashMap<u64, &IrTy>,
-    enum_cache: HashMap<u64, usize>,
+    fn_cache: HashMap<MonoKey, usize>,
+    struct_cache: HashMap<MonoKey, usize>,
+    struct_ty_cache: HashMap<MonoKey, &IrTy>,
+    enum_cache: HashMap<MonoKey, usize>,
 
     // Type caching for pointer stability
     ptr_ty_cache: HashMap<usize, &IrTy>,
@@ -93,7 +87,7 @@ struct MonoCtx {
 
     // Lang item IDs for compiler intrinsics
     slice_new_fn_id: usize,      // #[lang(slice_new)] - constructs slice from ptr+len
-    lang_items: HashMap<usize, usize>,   // hash(lang_name) -> item_id
+    lang_items: HashMap<&[u8], usize>,   // lang item name -> item id
 
     // Protocol method Self substitution: maps method_fn_id -> protocol's Self generic param id
     proto_method_self_id: HashMap<usize, usize>,
@@ -113,7 +107,8 @@ struct MonoCtx {
     // Cached dyn vtable references: hash(impl_ty_ptr, proto_id) -> IrExpr representing
     // `&VTABLE[0]` (the vtable pointer) for that (impl, proto) pair. Reused across
     // multiple `&T as &dyn Proto` coercions for the same T/Proto.
-    dyn_vtable_cache: HashMap<u64, &IrExpr>,
+    // (protocols tuple, implementing type), by identity
+    dyn_vtable_cache: HashMap<(usize, usize), &IrExpr>,
 
     // Function ids that were declared inside another function's body. Their
     // mono cache is keyed against the outer mono's cache_key so that each
@@ -216,32 +211,28 @@ impl MonoCtx {
                 self.struct_defs.insert(self.items[i].struct_def().id._value, self.items[i].struct_def());
                 for attr in self.items[i].struct_def().attributes {
                     if attr.tag == AttrTag::Lang {
-                        let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].struct_def().id._value);
+                                                self.lang_items.insert(attr.str_val(), self.items[i].struct_def().id._value);
                     }
                 }
             } else if self.items[i].tag == ItemTag::Enum {
                 self.enum_defs.insert(self.items[i].enum_def().id._value, self.items[i].enum_def());
                 for attr in self.items[i].enum_def().attributes {
                     if attr.tag == AttrTag::Lang {
-                        let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].enum_def().id._value);
+                                                self.lang_items.insert(attr.str_val(), self.items[i].enum_def().id._value);
                     }
                 }
             } else if self.items[i].tag == ItemTag::TypeAlias {
                 self.type_aliases.insert(self.items[i].type_alias().id._value, self.items[i].type_alias());
                 for attr in self.items[i].type_alias().attributes {
                     if attr.tag == AttrTag::Lang {
-                        let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].type_alias().id._value);
+                                                self.lang_items.insert(attr.str_val(), self.items[i].type_alias().id._value);
                     }
                 }
             } else if self.items[i].tag == ItemTag::Protocol {
                 self.protocol_defs.insert(self.items[i].protocol_def().id._value, self.items[i].protocol_def());
                 for attr in self.items[i].protocol_def().attributes {
                     if attr.tag == AttrTag::Lang {
-                        let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, self.items[i].protocol_def().id._value);
+                                                self.lang_items.insert(attr.str_val(), self.items[i].protocol_def().id._value);
                     }
                 }
                 // Register protocol methods in fn_defs. As of the Self-uniformity
@@ -287,8 +278,7 @@ impl MonoCtx {
                 }
                 for attr in self.items[i].fn_def().attributes {
                     if attr.tag == AttrTag::Lang {
-                        let hash = self.hash_lang_name(attr.str_val());
-                        self.lang_items.insert(hash, fn_id);
+                                                self.lang_items.insert(attr.str_val(), fn_id);
                         if attr.str_val() == "slice_new" {
                             self.slice_new_fn_id = fn_id;
                         }
@@ -319,19 +309,10 @@ impl MonoCtx {
         }
     }
 
-    fn hash_lang_name(self: &MonoCtx, name: &[u8]) -> usize {
-        let h: usize = 5381usize;
-        for i in 0usize..name.len() {
-            h = h * 33usize + name[i] as usize;
-        }
-        h
-    }
-
     // Look up a lang item by name. Returns the item ID or 0 if not found.
     // Note: 0 can be a valid ID, so use has_lang_item() to check existence.
     fn get_lang_item(self: &MonoCtx, name: &[u8]) -> Option<usize> {
-        let hash = self.hash_lang_name(name);
-        self.lang_items.get(&hash)
+        self.lang_items.get(&name)
     }
 
     // Check if a given item ID matches a specific lang item name
@@ -597,20 +578,48 @@ fn monomorphize(
 // Helper functions
 // ============================================================
 
-fn hash_mono_key(id: Id, type_args: &[&IrTy]) -> u64 {
-    // FNV-1a hash for robust collision resistance.
-    // The old h*31+ptr hash had collisions when pointer differences
-    // happened to equal 31*(id_difference), causing wrong mono cache hits.
-    let h: u64 = 14695981039346656037u64; // FNV offset basis
-    h = h ^ (id._value as u64);
-    h = h * 1099511628211u64; // FNV prime
-    h = h ^ (type_args.len() as u64);
-    h = h * 1099511628211u64;
-    for arg in type_args {
-        h = h ^ ((arg as &void as usize) as u64);
-        h = h * 1099511628211u64;
+/// Identity of one instantiation of a generic item, keying the mono caches:
+/// the item, its type arguments (compared by identity, IR types being
+/// interned) and, for a function nested in another, the instantiation of the
+/// enclosing function (its index in `ir_functions` plus one; 0 if none).
+struct MonoKey {
+    id: usize,
+    args: &[&IrTy],
+    outer: usize,
+}
+
+impl MonoKey {
+    fn new(id: Id, args: &[&IrTy]) -> MonoKey {
+        MonoKey { id: id._value, args: args, outer: 0 }
     }
-    h
+
+    /// A copy of the key that owns its type args (in the arena), for storing
+    /// in a cache: callers may pass temporaries.
+    fn stored(self: &MonoKey, arena: &mut Arena) -> MonoKey {
+        MonoKey { id: self.id, args: arena.alloc_slice_copy(self.args), outer: self.outer }
+    }
+
+    fn equals(self: &MonoKey, other: &MonoKey) -> bool {
+        if self.id != other.id || self.outer != other.outer || self.args.len() != other.args.len() {
+            return false;
+        }
+        for i in 0usize..self.args.len() {
+            if self.args[i] as &void != other.args[i] as &void {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn hash<H: std::hash::Hasher<H>>(self: &MonoKey, hasher: &mut H) {
+        self.id.hash(hasher);
+        self.outer.hash(hasher);
+        for arg in self.args {
+            (arg as &void as usize).hash(hasher);
+        }
+    }
+
+    mixin std::cmp::Equatable<MonoKey>;
 }
 
 fn format_usize(n: usize, arena: &mut Arena) -> &[u8] {

@@ -1,7 +1,8 @@
 // ALUMINAC_FLAGS: --sysroot sysroot
 
-// Verify module_path<T>() returns the actual module path for types
-// declared in nested modules, and falls through to void otherwise.
+// module_path<T>() is the absolute path of the module declaring T, spelled
+// as alumina-boot spells paths (a file given without `module=` is a module
+// named after its stem), and void for types that are not items.
 
 extern "intrinsic" fn module_path<T>() -> &[u8];
 
@@ -11,32 +12,24 @@ mod inner {
     mod nested {
         struct Quux {}
     }
+
+    fn function() {}
 }
 
 struct TopLevel {}
 
 fn main(args: &[&[u8]]) -> i32 {
-    // Top-level struct: no enclosing module → void.
-    when module_path::<TopLevel>() is () {
-        // ok
-    } else {
-        return 1i32;
-    }
+    if module_path::<TopLevel>() != "::module_path_real" { return 1; }
+    if module_path::<inner::Bar>() != "::module_path_real::inner" { return 2; }
+    if module_path::<inner::nested::Quux>() != "::module_path_real::inner::nested" { return 3; }
+    if module_path::<inner::function>() != "::module_path_real::inner" { return 4; }
+    if module_path::<std::string::StringBuf>() != "::std::string" { return 5; }
 
-    // Struct in `inner` module: path = "inner".
-    let p1 = module_path::<inner::Bar>();
-    if !(p1 == "inner") { return 2i32; }
-
-    // Struct in `inner::nested`: path = "inner::nested".
-    let p2 = module_path::<inner::nested::Quux>();
-    if !(p2 == "inner::nested") { return 3i32; }
-
-    // Non-named type (i32): no scope_idx → void.
+    // Not an item: no module path.
     when module_path::<i32>() is () {
         // ok
     } else {
-        return 4i32;
+        return 6;
     }
-
-    0i32
+    0
 }

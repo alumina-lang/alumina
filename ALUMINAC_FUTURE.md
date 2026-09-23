@@ -105,6 +105,53 @@ boot misreads the language (record such cases here).
 - Stdlib: `HashMap::contains`, `Command::status`, `Type::variant_name`.
 - Test runner: compile-fail tests can require `// EXPECTED_ERROR: text`.
 
+- Codegen and mono caches are keyed by value, not by weak hashes: the
+  djb2 `name_hash` collided (`"gz"` and `"i8"` shared a string constant;
+  the same hash keyed function/global declarations), lang items were
+  looked up by djb2 hash, and the mono caches by an FNV hash of pointers
+  (`MonoKey` now compares id, type args and enclosing instantiation).
+- Module paths match alumina-boot: a file given without `module=` is a
+  module named after its stem, and `module_path` is absolute (`::a::b`).
+  Test names print correctly. Stdlib: `Path::{file_name, file_stem,
+  extension}`, `string::rfind_char`.
+- `tests/aluminac/cross_check.sh` runs every aluminac test through
+  alumina-boot. `// BOOT_DIVERGES: reason` marks justified divergences.
+
+### alumina-boot bugs found (aluminac deliberately differs)
+
+- `Ty::gcd` joins `&mut T` and `&T` to `&mut T` (its own `assignable_from`
+  treats `&T` as the supertype), so `if c { &x } else { &y as &T }` is
+  rejected. aluminac joins to `&T` (`if_branch_mut_const_pointer.alu`).
+
+### Cross-check divergences to resolve (2026-09-23 snapshot)
+
+aluminac-only by design: `atomic_intrinsics`, `llvm_intrinsics`,
+`lang_items`. The rest are aluminac leniencies (invalid tests to fix, and
+aluminac checks to add) or possible alumina-boot bugs to confirm:
+- generic arity unchecked ("N generic parameters expected"): `cmp_enhanced`,
+  `fmt_extended`, `fn_bounds_test`, `iter_sum`, `mem_extended`,
+  `proto_meta`, `proto_same_base_as`, `vector_iter`;
+- protocol conformance (bounds / mixins) unchecked:
+  `builtin_protocol_conformance`, `operator_overload`, `switch_nonint`,
+  `unified_sysroot_basic`, `mixin_own_generics`;
+- name resolution too permissive: `never_named` (`never` is not a name),
+  `range_equatable` (`RangeFull`), `tuple_return_infer` (`zeroed`),
+  `method_arg_slice_empty_inference` (`std::mem::Pointer`), and
+  `std::io::ErrorKind`;
+- integer literal range unchecked: `bit_twiddle` (171 as i8);
+- implicit coercions: `char_literal_expected_type` (`Option<u8>` as
+  `Option<u16>`), `collections_extended` (`i32` as `&mut i32`),
+  `default_type_arg` (`A` as `&A`), `closure_features` (distinct closure
+  types), `switch_arm_type_unify` (`()` arm vs tuple arm);
+- field vs method precedence: `iter_adapters`;
+- misc: `nested_items` (impl without type), `typing_extended`,
+  `typeop_args_return`, `dyn_fmt_byte_slice` (boot: cyclic dependency);
+- possible alumina-boot bugs: `mixin_features` / `mixin_self_subst`
+  (boot ICE "unbound placeholder"), `protocol_conformance` (boot-compiled
+  binary segfaults), `bit_twiddle_const` (boot cannot const-eval);
+- runtime disagreement: `fields_intrinsic` (exit 23),
+  `protocol_bound_strict` (exit 1), `link_name_attr` (C compile error).
+
 ### Backlog (found along the way)
 
 - **Strictness gaps vs alumina-boot** (aluminac accepts invalid code):
@@ -126,8 +173,6 @@ boot misreads the language (record such cases here).
   flags alumina-boot's `test-std` gets (threading, coroutines, ...).
 - macOS: 13 `std::net` tests fail (aluminac-compiled only);
   `warning: codegen: field index out of bounds` at `std/fmt/mod.alu:525`.
-- aluminac's test runner prints test names with the first two
-  characters cut (`d::net::…` for `std::net::…`).
 - Cross-compilation: `--target` exists, but ABI lowering only knows
   x86_64 SysV / AAPCS64 (Apple arm64 variadics differ), there is no
   per-target sysroot/linker story, and only x86_64/aarch64 parse.

@@ -605,50 +605,29 @@ impl ScopeArena {
         ""
     }
 
-    /// Build a `::`-joined module path from `scope_idx` upward, collecting
-    /// the names of Module ancestors only. Anonymous scopes (Function,
-    /// Block, Impl, Protocol, struct/enum scopes) are skipped — only modules
-    /// contribute. Returns an empty slice if no modules are found.
+    /// The absolute path of the module containing `scope_idx`, spelled as
+    /// alumina-boot spells paths: `::a::b`, and `::` for the root module.
     fn module_path_for_scope(self: &ScopeArena, arena: &mut Arena, scope_idx: u32) -> &[u8] {
         let segments: std::collections::Vector<&[u8]> = std::collections::Vector::new();
         defer segments.free();
-        let cur_opt: Option<u32> = Option::some(scope_idx);
-        while cur_opt.is_some() {
-            let cur = cur_opt.unwrap();
-            let s = self.get(cur);
-            if s.kind == ScopeKind::Module {
-                let name = self.scope_name(cur);
-                if name.len() > 0 {
-                    segments.push(name);
-                }
+        let cur: Option<u32> = Option::some(scope_idx);
+        while cur.is_some() {
+            let scope = self.get(cur.unwrap());
+            if scope.kind == ScopeKind::Module && !self.scope_name(cur.unwrap()).is_empty() {
+                segments.push(self.scope_name(cur.unwrap()));
             }
-            cur_opt = s.parent;
+            cur = scope.parent;
         }
-        if segments.len() == 0 {
-            return "";
-        }
-        // Reverse-collect into "a::b::c" form.
-        let total: usize = 0;
-        for seg_item in segments.iter() {
-            total = total + seg_item.len();
-        }
-        if segments.len() > 1 {
-            total = total + 2 * (segments.len() - 1);
-        }
-        let buf = arena.alloc_slice::<u8>(total);
-        let pos: usize = 0;
+
+        let path = std::string::StringBuf::new();
+        defer path.free();
         for i in 0usize..segments.len() {
-            let seg = segments[segments.len() - 1 - i];
-            if i > 0 {
-                buf[pos] = ':';
-                buf[pos + 1] = ':';
-                pos = pos + 2;
-            }
-            for j in 0usize..seg.len() {
-                buf[pos + j] = seg[j];
-            }
-            pos = pos + seg.len();
+            path.extend_from_slice("::");
+            path.extend_from_slice(segments[segments.len() - 1 - i]);
         }
-        buf as &[u8]
+        if path.is_empty() {
+            return "::";
+        }
+        arena.alloc_slice_copy(path.as_slice())
     }
 }

@@ -317,7 +317,7 @@ impl Compiler {
         defer file_scopes.free();
         for i in 0usize..self.source_files.len() {
             let entry = &self.source_files[i];
-            let file_scope = if entry.module_path.is_empty() || entry.module_path == "main" {
+            let file_scope = if entry.module_path.is_empty() || entry.module_path == "::" {
                 root_scope
             } else {
                 self.resolve_or_create_module_scope(root_scope, entry.module_path)
@@ -669,13 +669,14 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
                 if arg.is_empty() || arg[0] == '-' {
                     usage_error("unknown option", arg);
                 }
-                // `module::path=file.alu` or a bare file (root module).
+                // `module::path=file.alu`, or a bare file, which (as in
+                // alumina-boot) is a module named after the file's stem.
                 let eq_pos = arg.iter().find_index(|e: u8| -> bool { e == '=' });
                 files.push(if eq_pos.is_some() {
                     let idx = eq_pos.unwrap();
                     SourceArg { module_path: arg[..idx], file_path: arg[idx + 1..] }
                 } else {
-                    SourceArg { module_path: "", file_path: arg }
+                    SourceArg { module_path: Path::new(arg).file_stem().unwrap_or(arg), file_path: arg }
                 });
             },
         }

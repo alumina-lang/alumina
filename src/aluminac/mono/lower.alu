@@ -30,13 +30,14 @@ struct Mono {
     // Compile-time constant replacements for static for loop variables.
     // When a local ID is in this map, lower_variable produces a literal instead of a Local ref.
     const_replacements: HashMap<usize, ConstValue>,
-    // Mono cache_key of the function whose body we are currently lowering.
+    // Index (plus one) in ir_functions of the function whose body we are
+    // currently lowering, 0 if none.
     // Nested fns (`fn` declared inside another fn's body) mix this into their
     // own cache key so that each outer instantiation produces its own mono of
     // the nested fn — necessary because the nested fn's body resolves outer
     // placeholders through type_map, and a single shared mono would lock in
     // whichever outer's types arrived first.
-    current_mono_key: u64,
+    current_fn_idx: usize,
     // Recursion depth counter for `check_method_bounds_satisfied`. Capped to
     // prevent unbounded chains on pathologically nested types
     // (e.g. Option<Option<Option<...>>>).
@@ -84,7 +85,7 @@ impl Mono {
             expected_type: ctx.void_ty,
             suppress_field_error: false,
             const_replacements: HashMap::new(),
-            current_mono_key: 0u64,
+            current_fn_idx: 0usize,
             bound_check_depth: 0usize,
             loop_contexts: Vector::new(),
             inside_arg_inference: false,
@@ -102,7 +103,7 @@ impl Mono {
             current_fn_name: "",
             expected_type: ctx.void_ty,
             suppress_field_error: false,
-            current_mono_key: 0u64,
+            current_fn_idx: 0usize,
             bound_check_depth: 0usize,
             loop_contexts: Vector::new(),
             inside_arg_inference: false,
@@ -831,26 +832,16 @@ impl Mono {
         let type_args = self.complete_type_args(def.generic_params, type_args);
 
         // Check cache
-        let cache_key = hash_mono_key(def.id, type_args);
+        let cache_key = MonoKey::new(def.id, type_args);
         let cached = self.ctx.struct_ty_cache.get(&cache_key);
         if cached.is_some() {
             return cached.unwrap();
-        }
-        // Also check by id only for non-generic structs
-        if type_args.len() == 0 {
-            let id_cached = self.ctx.struct_ty_cache.get(&(def.id._value as u64));
-            if id_cached.is_some() {
-                return id_cached.unwrap();
-            }
         }
         let cached2 = self.ctx.struct_cache.get(&cache_key);
         if cached2.is_some() {
             let idx = cached2.unwrap();
             let result = self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]));
-            self.ctx.struct_ty_cache.insert(cache_key, result);
-            if type_args.len() == 0 {
-                self.ctx.struct_ty_cache.insert(def.id._value as u64, result);
-            }
+            self.ctx.struct_ty_cache.insert(cache_key.stored(self.ctx.arena), result);
             return result;
         }
 
@@ -884,16 +875,13 @@ impl Mono {
 
         let idx = self.ctx.ir_structs.len();
         self.ctx.ir_structs.push(ir_struct);
-        self.ctx.struct_cache.insert(cache_key, idx);
+        self.ctx.struct_cache.insert(cache_key.stored(self.ctx.arena), idx);
 
         // Create the IrTy NOW and cache it immediately. This ensures that recursive
         // references to this struct (e.g. Expr.lhs: &Expr) get the SAME IrTy instance.
         // We will update the fields in-place after resolving them.
         let result = self.ctx.arena.alloc(IrTy::mk_struct(ir_struct));
-        self.ctx.struct_ty_cache.insert(cache_key, result);
-        if type_args.len() == 0 {
-            self.ctx.struct_ty_cache.insert(def.id._value as u64, result);
-        }
+        self.ctx.struct_ty_cache.insert(cache_key.stored(self.ctx.arena), result);
 
         // Now resolve field types (may recurse back to this struct via pointer fields)
         let fields = self.ctx.arena.alloc_slice::<IrField>(def.fields.len());
@@ -925,7 +913,7 @@ impl Mono {
     }
 
     fn mono_enum(self: &mut Mono, def: &EnumDef, type_args: &[&IrTy]) -> &IrTy {
-        let cache_key = hash_mono_key(def.id, type_args);
+        let cache_key = MonoKey::new(def.id, type_args);
         let cached = self.ctx.enum_cache.get(&cache_key);
         if cached.is_some() {
             let idx = cached.unwrap();
@@ -999,7 +987,7 @@ impl Mono {
 
         let idx = self.ctx.ir_enums.len();
         self.ctx.ir_enums.push(ir_enum);
-        self.ctx.enum_cache.insert(cache_key, idx);
+        self.ctx.enum_cache.insert(cache_key.stored(self.ctx.arena), idx);
 
         self.ctx.arena.alloc(IrTy::mk_enum(self.ctx.ir_enums[idx]))
     }
@@ -1033,7 +1021,7 @@ impl Mono {
         // Skip intrinsic functions - they should be handled inline in lower_intrinsic
         if def.abi.is_some() && def.abi.unwrap() == "intrinsic" {
             // Return a dummy index - intrinsics should never actually be called
-            let cache_key = hash_mono_key(def.id, type_args);
+            let cache_key = MonoKey::new(def.id, type_args);
             let cached = self.ctx.fn_cache.get(&cache_key);
             if cached.is_some() {
                 return cached.unwrap();
@@ -1047,35 +1035,29 @@ impl Mono {
         self.current_fn_name = def.name;
 
 
-        let cache_key = hash_mono_key(def.id, type_args);
-        // Nested fns (declared inside another fn's body) inherit the outer
-        // fn's generic context lexically. Mix the outer mono's cache_key
-        // into the nested fn's so that each outer instantiation produces
-        // its own copy — otherwise the first mono of the nested fn locks
-        // in whichever placeholders the outer happened to bind first.
+        // The instantiation's identity. Beyond the item and its type args:
+        //  - a nested fn (declared inside another fn's body) inherits the
+        //    enclosing fn's generic context lexically, so each instantiation
+        //    of the enclosing fn has its own copy;
+        //  - a protocol-derived method's body depends on the protocol's
+        //    generics (Self, ...), which the caller binds and which are not
+        //    among `def.generic_params` (e.g. `sum<SliceIterator<i32>, i32>`
+        //    vs `sum<SliceIterator<usize>, usize>`), so they are part of it.
+        let cache_key = MonoKey::new(def.id, type_args);
         if self.ctx.local_fn_ids.contains(&def.id._value) {
-            cache_key = cache_key ^ self.current_mono_key;
-            cache_key = cache_key * 1099511628211u64;
+            cache_key.outer = self.current_fn_idx;
         }
-        // Mix in the protocol-generic bindings (Self + protocol's other
-        // generics) for protocol-derived methods. After the FnDef-shape
-        // refactor, those generics are no longer in `def.generic_params`
-        // and so don't appear in `type_args` — but they DO change the
-        // mono'd body. Without mixing them in, two distinct instantiations
-        // (e.g. `sum<SliceIterator<i32>, i32>` and `sum<SliceIterator<usize>,
-        // usize>`) collapse onto the same cache_key and the first one's
-        // body wins.
         let proto_gp_ids_opt = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
         if proto_gp_ids_opt.is_some() {
             let pgp_ids = proto_gp_ids_opt.unwrap();
-            for id in pgp_ids.iter() {
-                let bound_opt = self.type_map.get(&id);
-                if bound_opt.is_some() {
-                    let p_addr = bound_opt.unwrap() as &void as usize as u64;
-                    cache_key = cache_key ^ (p_addr * 0x9e3779b97f4a7c15u64);
-                    cache_key = cache_key * 1099511628211u64;
-                }
+            let args = self.ctx.arena.alloc_slice::<&IrTy>(type_args.len() + pgp_ids.len());
+            for i in 0usize..type_args.len() {
+                args[i] = type_args[i];
             }
+            for i in 0usize..pgp_ids.len() {
+                args[type_args.len() + i] = self.type_map.get(&pgp_ids[i]).unwrap_or(self.ctx.void_ty);
+            }
+            cache_key.args = args;
         }
         let cached = self.ctx.fn_cache.get(&cache_key);
         if cached.is_some() {
@@ -1229,12 +1211,12 @@ impl Mono {
             type_args: type_args,
         };
         self.ctx.ir_functions.push(placeholder);
-        self.ctx.fn_cache.insert(cache_key, idx);
+        self.ctx.fn_cache.insert(cache_key.stored(self.ctx.arena), idx);
 
         // Update the mono-context fingerprint so nested fns we encounter
         // while lowering the body key their cache against this mono.
-        let prev_mono_key = self.current_mono_key;
-        self.current_mono_key = cache_key;
+        let prev_fn_idx = self.current_fn_idx;
+        self.current_fn_idx = idx + 1;
 
         // Lower body (may recursively call mono_function)
         let body: Option<&IrExpr> = def.body.map(|=self, v: &Expr| -> &IrExpr {
@@ -1242,7 +1224,7 @@ impl Mono {
             self.check_and_coerce(body_ir, self.return_type, v.span)
         });
 
-        self.current_mono_key = prev_mono_key;
+        self.current_fn_idx = prev_fn_idx;
 
         // Back to the caller's generic context.
         self.type_map.free();
@@ -4639,8 +4621,7 @@ impl Mono {
             return 0usize as &IrExpr;
         }
         // Cache key: pointer-identity of protos_tuple + impl_ty.
-        let cache_key: u64 = (protos_tuple as &void as usize as u64)
-            ^ ((impl_ty as &void as usize as u64) * 0x9e3779b97f4a7c15u64);
+        let cache_key = (protos_tuple as &void as usize, impl_ty as &void as usize);
         let cached = self.ctx.dyn_vtable_cache.get(&cache_key);
         if cached.is_some() {
             return cached.unwrap();
@@ -6679,7 +6660,7 @@ impl Mono {
     /// through one reference are seen through all others.
     fn lower_static_ref(self: &mut Mono, def: &StaticDef, type_args: &[&IrTy]) -> &IrExpr {
         let type_args = self.complete_type_args(def.generic_params, type_args);
-        let cache_key = hash_mono_key(def.id, type_args);
+        let cache_key = MonoKey::new(def.id, type_args);
         let cached = self.ctx.static_cache.get(&cache_key);
         let global_idx = if cached.is_some() {
             cached.unwrap()
@@ -6696,7 +6677,7 @@ impl Mono {
 
     /// Emit the global for one instantiation of a static or const item and
     /// return its index in `ir_globals`.
-    fn emit_static(self: &mut Mono, def: &StaticDef, type_args: &[&IrTy], cache_key: u64) -> usize {
+    fn emit_static(self: &mut Mono, def: &StaticDef, type_args: &[&IrTy], cache_key: MonoKey) -> usize {
         let is_extern = def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Extern });
         let link_name = def.attributes.iter()
             .find(|a: Attribute| -> bool { a.tag == AttrTag::LinkName })
@@ -6751,7 +6732,7 @@ impl Mono {
             const_failure: Option::none(),
         });
         if !ty.is_void() {
-            self.ctx.static_cache.insert(cache_key, idx);
+            self.ctx.static_cache.insert(cache_key.stored(self.ctx.arena), idx);
         }
 
         if def.init.is_some() {
@@ -6765,7 +6746,7 @@ impl Mono {
             if ty.is_void() {
                 ty = init_ir.ty;
                 self.ctx.ir_globals[idx].ty = ty;
-                self.ctx.static_cache.insert(cache_key, idx);
+                self.ctx.static_cache.insert(cache_key.stored(self.ctx.arena), idx);
             }
             // Consts are evaluated here, so that codegen gets a literal and
             // other constants can use the value. Codegen may still manage to
@@ -6794,7 +6775,7 @@ impl Mono {
                 init_ir
             });
         } else {
-            self.ctx.static_cache.insert(cache_key, idx);
+            self.ctx.static_cache.insert(cache_key.stored(self.ctx.arena), idx);
         }
 
         self.type_map.free();

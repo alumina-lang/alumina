@@ -1,21 +1,17 @@
-// Verify the module_path and has_attribute intrinsics behave per the no-info
-// contract: module_path<T>() returns void (so Type::module_path falls back to
-// None via the `is ()` when-check), has_attribute<T>(_) returns false.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// has_attribute<T>(name) reports custom attributes on items, and is false
+// for types without attributes (see module_path_real.alu for module_path).
 
-extern "intrinsic" fn module_path<T>() -> &[u8];
 extern "intrinsic" fn has_attribute<T>(name: &[u8]) -> bool;
 
 struct Foo {}
 
+#[test::ignore]
+struct Bar {}
+
 fn main() -> i32 {
-    when module_path::<Foo>() is () {
-        // expected branch
-    } else {
-        return 1;
-    }
-
-    if has_attribute::<Foo>("test::ignore") { return 2; }
+    if has_attribute::<Foo>("test::ignore") { return 1; }
+    if !has_attribute::<Bar>("test::ignore") { return 2; }
     if has_attribute::<i32>("anything") { return 3; }
-
     0
 }
