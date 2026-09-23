@@ -626,6 +626,13 @@ impl FnCodegen {
             }
         }
         IrTag::Ref => {
+            // A reference to a zero-sized value is a dangling pointer, the
+            // address being the type's alignment (as in alumina-boot); the
+            // value is still evaluated for its effects.
+            if expr.lhs().ty.is_zero_sized() {
+                self.gen_expr(expr.lhs());
+                return self.ctx.dangling_pointer(expr.lhs().ty);
+            }
             let ptr = self.gen_lvalue(expr.lhs());
             let target_ty = self.ctx.llvm_type(expr.ty);
             self.coerce_value(ptr, target_ty)

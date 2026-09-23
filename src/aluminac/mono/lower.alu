@@ -7851,7 +7851,12 @@ impl Mono {
                 if !outcome.panic_msg.is_empty() {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, outcome.panic_msg));
                 }
-                if outcome.value.is_some() {
+                if outcome.value.is_some() && Mono::contains_pointer(outcome.value.unwrap()) {
+                    // Pointers point into the evaluator's memory; the
+                    // initializer is kept for codegen to fold (as addresses of
+                    // globals, e.g. `&A[2]`).
+                    init_ir
+                } else if outcome.value.is_some() {
                     self.ctx.const_values.insert(id._value, outcome.value.unwrap());
                     self.constvalue_to_ir(outcome.value.unwrap(), ty)
                 } else {
@@ -7883,6 +7888,17 @@ impl Mono {
             self.ctx.static_inits.push(StaticInit { global: idx, init: runtime_init.unwrap(), locals: locals });
         }
         idx
+    }
+
+    /// Whether a constant value contains pointers (other than to string
+    /// literals, which are values of their own).
+    fn contains_pointer(v: ConstValue) -> bool {
+        switch v.tag {
+            CValTag::Pointer, CValTag::Lvalue => true,
+            CValTag::Tuple, CValTag::Array => v.elems().iter().any(|e: ConstValue| -> bool { Mono::contains_pointer(e) }),
+            CValTag::Struct => v.fields().iter().any(|f: ConstField| -> bool { Mono::contains_pointer(f.value) }),
+            _ => false,
+        }
     }
 
     /// Whether a static's initializer is a constant that the global can be

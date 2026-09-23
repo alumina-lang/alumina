@@ -80,6 +80,9 @@ struct ParseContext {
     // Set at the top-level do_expand_macro call (where prev was None) and
     // restored on exit; nested do_expand_macro calls do not overwrite it.
     macro_outer_span: Option<Span>,
+    // `#[location("file", line)]` on the item being parsed: what `file!`,
+    // `line!` and `column!` report in it.
+    location_override: Option<LocationOverride>,
 
     // Items ready for compilation
     items: Vector<Item>,
@@ -218,6 +221,7 @@ impl ParseContext {
             macro_param_names: &[],
             macro_variadic_param_idx: NO_VARIADIC,
             macro_outer_span: Option::none(),
+            location_override: Option::none(),
             items: Vector::new(),
         }
     }
@@ -276,6 +280,37 @@ impl ParseContext {
 
     /// The arguments of a meta item (`name(arg, ...)`), or none if the meta
     /// item has no argument list.
+    /// An item's `#[location("file", line)]`: its lines count from `line`
+    /// at the start of the item (attributes included), as in alumina-boot.
+    fn item_location(self: &mut ParseContext, item: Node) -> Option<LocationOverride> {
+        let attrs = child_by!(item, FieldKind::Attributes)?;
+        let cursor = attrs.walk();
+        defer cursor.free();
+        for child in attrs.children(&cursor) {
+            if NODE_KINDS[child.symbol() as usize] != NodeKind::AttributeItem { continue; }
+            let meta = child_by!(child, FieldKind::Inner);
+            if meta.is_none() { continue; }
+            let name = child_by!(meta.unwrap(), FieldKind::Name);
+            if name.is_none() || self.node_text(name.unwrap()) != "location" { continue; }
+            let args = self.meta_args(meta.unwrap()).unwrap_or(&[]);
+            if args.len() != 2 || NODE_KINDS[args[0].symbol() as usize] != NodeKind::StringLiteral
+                || NODE_KINDS[args[1].symbol() as usize] != NodeKind::IntegerLiteral {
+                self.error(meta.unwrap(), "expected `#[location(\"file\", line)]`");
+                return Option::none();
+            }
+            let path = self.node_text(args[0]);
+            let file = &self.diag.files[self.file_id as usize];
+            let (from_line, _column) = file.line_col(item.start_byte() as u32);
+            return Option::some(LocationOverride {
+                file_id: self.file_id,
+                file: unescape_string(path[1..path.len() - 1], self.arena),
+                line: parse_usize(self.node_text(args[1])),
+                from_line: from_line as usize,
+            });
+        }
+        Option::none()
+    }
+
     fn meta_args(self: &mut ParseContext, meta: Node) -> Option<&[Node]> {
         let args = child_by!(meta, FieldKind::Arguments)?;
         let cursor = args.walk();
@@ -743,4 +778,12 @@ fn link_builtin_lang_items(contexts: &[ParseContext], scopes: &mut ScopeArena, r
             }
         }
     }
+}
+
+/// See `ParseContext::location_override`.
+struct LocationOverride {
+    file_id: u32,
+    file: &[u8],
+    line: usize,
+    from_line: usize,
 }

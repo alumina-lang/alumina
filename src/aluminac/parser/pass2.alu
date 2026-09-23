@@ -423,14 +423,20 @@ impl Pass2 {
             false
         };
 
-        // Parse body
+        // Parse body (with the item's `#[location]`, if any)
         let body_node = child_by!(node, FieldKind::Body);
+        let outer_location = self.ctx.location_override;
+        let location = self.ctx.item_location(node);
+        if location.is_some() {
+            self.ctx.location_override = location;
+        }
         let body: Option<&Expr> = if !body_node.is_none() {
             let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
             Option::some(expr_parser.parse_expr(body_node.unwrap()))
         } else {
             Option::none()
         };
+        self.ctx.location_override = outer_location;
 
         // Tag "main" functions with AttrTag::Main, and `fn*` with
         // AttrTag::Coroutine.

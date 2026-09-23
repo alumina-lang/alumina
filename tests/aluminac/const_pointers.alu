@@ -1,0 +1,20 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Constants holding pointers into other constants are addresses of the
+// globals (they were emitted as null), and references to zero-sized values
+// are dangling pointers whose address is the type's alignment (as in
+// alumina-boot).
+
+const A: [i32; 3] = [1, 2, 3];
+const B: &i32 = &A[2];
+const C: i32 = 5;
+const D: &i32 = &C;
+struct S { x: u8, y: u16 }
+const T: S = S { x: 1, y: 2 };
+const U: &u16 = &T.y;
+const Z: [i32; 0] = [];
+
+fn main() -> i32 {
+    if *B != 3 || *D != 5 || *U != 2 { return 1; }
+    if (&() as usize) != 1 || (&Z as usize) != 4 { return 3; }
+    0
+}

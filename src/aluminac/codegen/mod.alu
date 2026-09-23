@@ -1006,6 +1006,50 @@ impl CodegenCtx {
         }
     }
 
+    /// A dangling pointer for a zero-sized type: its alignment as address.
+    fn dangling_pointer(self: &mut CodegenCtx, ty: &IrTy) -> LLVMValueRef {
+        let align = layout_of(ty, self.pointer_size as usize).align;
+        LLVMConstIntToPtr(LLVMConstInt(self.isize_type, align as u64, 0i32), self.ptr_type)
+    }
+
+    /// The constant address of a place in a global (e.g. `&A[2]` or
+    /// `&S.field` in a constant's initializer), or null if it is not one.
+    fn gen_const_address(self: &mut CodegenCtx, place: &IrExpr) -> LLVMValueRef {
+        switch place.tag {
+            IrTag::GlobalRef => {
+                let global = self.global_decls.get(&place.global_ref().mangled_name);
+                global.unwrap_or(std::mem::zeroed::<LLVMValueRef>())
+            }
+            IrTag::Deref => self.gen_const_init(place._data.single.lhs),
+            IrTag::Index => {
+                let base = place._data.idx.lhs;
+                let index = place._data.idx.rhs;
+                if base.ty.tag != IrTyTag::Array || index.tag != IrTag::IntLit {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+                let base_addr = self.gen_const_address(base);
+                if (base_addr as usize) == 0 { return base_addr; }
+                let indices = self.arena.alloc_slice::<LLVMValueRef>(2);
+                indices[0] = LLVMConstInt(self.i32_type, 0, 0i32);
+                indices[1] = LLVMConstInt(self.i64_type, index.int_val(), 0i32);
+                LLVMConstInBoundsGEP2(self.llvm_type(base.ty), base_addr, &indices[0], 2)
+            }
+            IrTag::FieldAccess => {
+                let base = place._data.field.lhs;
+                if base.ty.tag != IrTyTag::Struct && base.ty.tag != IrTyTag::Tuple || base.ty.tag == IrTyTag::Struct && base.ty.struct_ref().is_union {
+                    return std::mem::zeroed::<LLVMValueRef>();
+                }
+                let base_addr = self.gen_const_address(base);
+                if (base_addr as usize) == 0 { return base_addr; }
+                let indices = self.arena.alloc_slice::<LLVMValueRef>(2);
+                indices[0] = LLVMConstInt(self.i32_type, 0, 0i32);
+                indices[1] = LLVMConstInt(self.i32_type, self.llvm_field_index(base.ty, place._data.field.field_idx) as u64, 0i32);
+                LLVMConstInBoundsGEP2(self.llvm_type(base.ty), base_addr, &indices[0], 2)
+            }
+            _ => std::mem::zeroed::<LLVMValueRef>(),
+        }
+    }
+
     fn gen_const_init(self: &mut CodegenCtx, expr: &IrExpr) -> LLVMValueRef {
         switch expr.tag {
         IrTag::IntLit => {
@@ -1051,6 +1095,12 @@ impl CodegenCtx {
             fields[0] = ptr;
             fields[1] = LLVMConstInt(self.i64_type, expr.str_val().len() as u64, 0i32);
             LLVMConstStructInContext(self.context, &fields[0], 2u32, 0i32)
+        }
+        IrTag::Ref => {
+            if expr.lhs().ty.is_zero_sized() {
+                return self.dangling_pointer(expr.lhs().ty);
+            }
+            self.gen_const_address(expr.lhs())
         }
         IrTag::Cast => {
             let inner = self.gen_const_init(expr.lhs());

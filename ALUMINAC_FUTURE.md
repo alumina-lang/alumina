@@ -301,10 +301,16 @@ zero-sized field or in `#[packed(N)]`; the struct type cache was keyed by
 a weak hash); constants with `()` fields/elements were malformed;
 constant slices of strings lost their offset; `transmute` in constants now
 goes through the value's bytes (e.g. `[u8; 4]` to `u32`).
-Remaining lang failures: `#[packed(N)]`'s alignment as seen by LLVM (a
-packed LLVM struct has alignment 1; aluminac's layout is right),
-`test_const_zst`, `test_location*` (`#[line_directive]`-style locations?),
-`test_pretty_print` (`stringify!({ a })`).
+Also: `#[location("file", line)]`; **constants holding pointers into
+other constants were null** (`const B: &i32 = &A[2];`; codegen now folds
+them as addresses of the globals); references to zero-sized values are
+dangling pointers (the alignment as address), as in alumina-boot.
+Remaining lang failures (31 of 33 pass): `#[packed(N)]`'s alignment as
+seen by LLVM (a packed LLVM struct has alignment 1; aluminac's layout is
+right), and `test_pretty_print`: alumina-boot's `stringify!` pretty-prints
+the AST (`stringify!((a))` is `a`, `a + b + c` is `(a + b) + c`);
+aluminac's gives the source text. Matching it needs a pretty-printer over
+the syntax tree (aluminac's AST is partly desugared).
 (`T::associated_type` type paths inside `stringify!` are fine since
 `stringify!` does not resolve; elsewhere they are unsupported.) Done for
 it: **linear block scopes** (each item declared in a block starts a new
