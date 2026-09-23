@@ -4,29 +4,13 @@
 // declaring an enum's underlying type from the variant value types yet, so
 // it's not exercised here — separate slice.)
 // ALUMINAC_FLAGS: --sysroot sysroot
+// (It used to redeclare the sysroot's lang items instead of using them.)
 
-extern "intrinsic" fn type_id<T>() -> usize;
-
-#[lang(typeop_arguments_of)]
-type arguments_of<F>;
-
-#[lang(typeop_return_type_of)]
-type return_type_of<F>;
-
-#[lang(typeop_function_pointer_of)]
-type function_pointer_of<Args, Ret>;
-
-#[lang(typeop_pointer_with_mut_of)]
-type pointer_with_mut_of<P, M>;
-
-#[lang(typeop_array_with_length_of)]
-type array_with_length_of<T, Arr>;
-
-#[lang(typeop_generic_args_of)]
-type generic_args_of<T>;
-
-#[lang(typeop_replace_generic_args_of)]
-type replace_generic_args_of<T, Args>;
+use std::builtins::{
+    arguments_of, return_type_of, function_pointer_of, pointer_with_mut_of,
+    array_with_length_of, generic_args_of, replace_generic_args_of,
+};
+use std::typing::type_id;
 
 struct Pair<A, B> { a: A, b: B }
 struct Empty {}
@@ -54,9 +38,10 @@ fn main() -> i32 {
     if type_id::<function_pointer_of<(i32, u32), u64>>() != type_id::<fn(i32, u32) -> u64>() { return 7; }
     if type_id::<function_pointer_of<(bool,), i32>>() != type_id::<fn(bool) -> i32>() { return 8; }
 
-    // pointer_with_mut_of: take a pointer, get one with the mutability of the second arg
-    if type_id::<pointer_with_mut_of<&u32, &mut u8>>() != type_id::<&mut u32>() { return 9; }
-    if type_id::<pointer_with_mut_of<&mut u32, &u8>>() != type_id::<&u32>() { return 10; }
+    // pointer_with_mut_of: a pointer to T with the mutability of the second arg
+    if type_id::<pointer_with_mut_of<u32, &mut u8>>() != type_id::<&mut u32>() { return 9; }
+    if type_id::<pointer_with_mut_of<u32, &u8>>() != type_id::<&u32>() { return 10; }
+    if type_id::<pointer_with_mut_of<void, &i32>>() != type_id::<&void>() { return 20; }
 
     // array_with_length_of: take element type and an array, build [Elem; len].
     if type_id::<array_with_length_of<u8, [(); 5]>>() != type_id::<[u8; 5]>() { return 11; }

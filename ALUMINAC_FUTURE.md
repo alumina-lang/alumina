@@ -195,6 +195,15 @@ boot misreads the language (record such cases here).
     structurally (enum types were not interned, so `unwrap<u32, Error>`
     was instantiated twice).
   - `use a::{b as c}` resolved `b` in the importing scope, not in `a`.
+- A generic parameter that cannot be inferred is "type hint required"
+  (it silently became `()`; e.g. `cast<i32, ()>` got instantiated while
+  lowering an argument tentatively). A `()` hint is told apart from no
+  hint (`MonoCtx::no_hint`), and whether a tentatively lowered argument's
+  type is unknown is scoped to that argument (`tentative_incomplete`).
+  Array literal elements after the first get its type as hint.
+- Casts follow alumina-boot's rules (`lower_cast`: e.g. no `value as &T`).
+- `pointer_with_mut_of<T, Ptr>` is `&T` with `Ptr`'s mutability (aluminac
+  expected a pointer `T`, so `std::typing`'s pointer checks were wrong).
 - **Spread types** `(A, T...)` and `fn(T...)`, and spreads in tuple
   literals (`(x, t...)`), are supported; they used to parse as
   unresolved types.
@@ -212,6 +221,9 @@ boot misreads the language (record such cases here).
   `std::std::mem::size_of` and `libc::libc::X` compile (the latter was a
   typo in `std::sync`, now fixed). aluminac resolves each later segment in
   the module named so far only, and reports the path.
+
+- Duplicate `#[lang]` items are accepted (one silently wins); aluminac
+  reports them (`duplicate_lang_item_compile_fail.alu`).
 
 ### alumina-boot quirks aluminac follows (for now)
 
@@ -258,9 +270,7 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
 - **Strictness gaps vs alumina-boot** (aluminac accepts invalid code):
   protocol bounds are not fully checked (`unified_sysroot_basic`'s `Point`
   lacked `not_equals`); `use std::io::ErrorKind` resolved although
-  `ErrorKind` lives in `std::io::unix`; a generic parameter that cannot
-  be inferred (and has no default) silently becomes `()` instead of
-  "type hint required" (e.g. `let x = Result::ok(1)`).
+  `ErrorKind` lives in `std::io::unix`.
 - Const-eval gaps (now reported, not silent): array-to-slice casts, slices
   of slices, pointer arithmetic into arrays.
 - Mono still lowers call arguments twice (tentatively for inference, then
@@ -269,7 +279,6 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
   driven by hints, as alumina-boot's `infer`, would replace them.
 - `make test-std-aluminac` still lacks `--cfg libbacktrace` and
   coroutines (aluminac has no stackful coroutines).
-- Duplicate `#[lang]` items are not rejected (a later one silently wins).
 - One unresolved path yields several cascading errors in mono ("expression
   is not callable" ×N, "could not resolve field on ()").
 - Cross-compilation: `--target` exists, but ABI lowering only knows

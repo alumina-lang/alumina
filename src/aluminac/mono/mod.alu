@@ -65,6 +65,10 @@ struct MonoCtx {
 
     // Canonical type instances (stable pointers)
     void_ty: &IrTy,
+    /// The type hint of an expression that has none: a `()` distinct from
+    /// `void_ty`, so that a hint of `()` (e.g. a `T = ()` parameter) can be
+    /// told apart from no hint.
+    no_hint: &IrTy,
     never_ty: &IrTy,
     bool_ty: &IrTy,
     i8_ty: &IrTy,
@@ -169,6 +173,7 @@ impl MonoCtx {
             tuple_ty_cache: HashMap::new(),
             mangle_counter: 0,
             void_ty: void_ty,
+            no_hint: arena.alloc(IrTy::mk_void()),
             never_ty: never_ty,
             bool_ty: bool_ty,
             i8_ty: i8_ty,
@@ -200,6 +205,25 @@ impl MonoCtx {
         ctx
     }
 
+    /// Register the item's `#[lang]` attributes; a lang item can only be
+    /// defined once (a later definition used to silently win).
+    fn register_lang_items(self: &mut MonoCtx, attributes: &[Attribute], id: usize, span: Span) {
+        for attr in attributes {
+            if attr.tag != AttrTag::Lang {
+                continue;
+            }
+            let existing = self.lang_items.get(&attr.str_val());
+            if existing.is_some() && existing.unwrap() != id {
+                self.diag.emit(diagnostics::CodeDiagnostic::generic_error(
+                    span,
+                    std::fmt::format!("duplicate lang item `{}`", attr.str_val()).unwrap().as_slice(),
+                ));
+                continue;
+            }
+            self.lang_items.insert(attr.str_val(), id);
+        }
+    }
+
     fn build_lookup_tables(self: &mut MonoCtx) {
         // Two-pass approach: register protocols first so their method FnDefs
         // (which have protocol generic_params prepended) are not overwritten
@@ -209,32 +233,16 @@ impl MonoCtx {
         for i in 0usize..self.items.len() {
             if self.items[i].tag == ItemTag::Struct {
                 self.struct_defs.insert(self.items[i].struct_def().id._value, self.items[i].struct_def());
-                for attr in self.items[i].struct_def().attributes {
-                    if attr.tag == AttrTag::Lang {
-                                                self.lang_items.insert(attr.str_val(), self.items[i].struct_def().id._value);
-                    }
-                }
+                self.register_lang_items(self.items[i].struct_def().attributes, self.items[i].struct_def().id._value, Span::empty());
             } else if self.items[i].tag == ItemTag::Enum {
                 self.enum_defs.insert(self.items[i].enum_def().id._value, self.items[i].enum_def());
-                for attr in self.items[i].enum_def().attributes {
-                    if attr.tag == AttrTag::Lang {
-                                                self.lang_items.insert(attr.str_val(), self.items[i].enum_def().id._value);
-                    }
-                }
+                self.register_lang_items(self.items[i].enum_def().attributes, self.items[i].enum_def().id._value, Span::empty());
             } else if self.items[i].tag == ItemTag::TypeAlias {
                 self.type_aliases.insert(self.items[i].type_alias().id._value, self.items[i].type_alias());
-                for attr in self.items[i].type_alias().attributes {
-                    if attr.tag == AttrTag::Lang {
-                                                self.lang_items.insert(attr.str_val(), self.items[i].type_alias().id._value);
-                    }
-                }
+                self.register_lang_items(self.items[i].type_alias().attributes, self.items[i].type_alias().id._value, Span::empty());
             } else if self.items[i].tag == ItemTag::Protocol {
                 self.protocol_defs.insert(self.items[i].protocol_def().id._value, self.items[i].protocol_def());
-                for attr in self.items[i].protocol_def().attributes {
-                    if attr.tag == AttrTag::Lang {
-                                                self.lang_items.insert(attr.str_val(), self.items[i].protocol_def().id._value);
-                    }
-                }
+                self.register_lang_items(self.items[i].protocol_def().attributes, self.items[i].protocol_def().id._value, Span::empty());
                 // Register protocol methods in fn_defs. As of the Self-uniformity
                 // refactor, method.generic_params is the method's own only — the
                 // protocol's generics (Self + others) are recorded separately in
@@ -276,12 +284,10 @@ impl MonoCtx {
                 if !self.proto_method_self_id.get(&fn_id).is_some() {
                     self.fn_defs.insert(fn_id, self.items[i].fn_def());
                 }
+                self.register_lang_items(self.items[i].fn_def().attributes, fn_id, self.items[i].fn_def().span);
                 for attr in self.items[i].fn_def().attributes {
-                    if attr.tag == AttrTag::Lang {
-                                                self.lang_items.insert(attr.str_val(), fn_id);
-                        if attr.str_val() == "slice_new" {
-                            self.slice_new_fn_id = fn_id;
-                        }
+                    if attr.tag == AttrTag::Lang && attr.str_val() == "slice_new" {
+                        self.slice_new_fn_id = fn_id;
                     }
                 }
             }

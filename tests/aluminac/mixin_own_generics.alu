@@ -11,9 +11,11 @@ struct Container<T> {
     inner: T,
 }
 
-impl Container<T> {
+// (`equals` uses the impl's `T`: with its own `<T>` it would shadow it, and
+// `Self::equals` in the mixin could not infer it.)
+impl Container<T: Equatable<T>> {
     fn new(v: T) -> Container<T> { Container::<T> { inner: v } }
-    fn equals<T: Equatable<T>>(lhs: &Container<T>, rhs: &Container<T>) -> bool {
+    fn equals(lhs: &Container<T>, rhs: &Container<T>) -> bool {
         lhs.inner.equals(&rhs.inner)
     }
 }

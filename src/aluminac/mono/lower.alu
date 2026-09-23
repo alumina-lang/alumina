@@ -67,6 +67,10 @@ struct Mono {
     // a hint, by local id: in `{ let x = ...; x }` expected to be `T`, `x`
     // is expected to be `T` (as in alumina-boot).
     local_type_hints: HashMap<usize, &IrTy>,
+    // Which generic parameters the last `infer_type_args` inferred.
+    inferred_found: &[bool],
+    // Whether the last tentatively lowered expression's type is unknown.
+    tentative_incomplete: bool,
     // Type for the bounds of the range literal about to be lowered, set by
     // the one context that dictates it (slice indexing) and consumed by the
     // range lowering itself.
@@ -122,7 +126,7 @@ impl Mono {
             local_defs: Vector::new(),
             return_type: ctx.void_ty,
             current_fn_name: "",
-            expected_type: ctx.void_ty,
+            expected_type: ctx.no_hint,
             suppress_field_error: false,
             const_replacements: HashMap::new(),
             current_fn_idx: 0usize,
@@ -132,6 +136,8 @@ impl Mono {
             tentative: false,
             lambda_cache: HashMap::new(),
             local_type_hints: HashMap::new(),
+            inferred_found: &[],
+            tentative_incomplete: false,
             range_bound_hint: Option::none(),
             inference_incomplete: false,
         }
@@ -155,7 +161,7 @@ impl Mono {
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
         self.return_type = return_type;
-        self.expected_type = self.ctx.void_ty;
+        self.expected_type = self.ctx.no_hint;
         self.inside_arg_inference = false;
         self.tentative = false;
         self.lambda_cache = HashMap::new();
@@ -680,12 +686,10 @@ impl Mono {
                             }
                         }
                     } else if lang == "typeop_pointer_with_mut_of" && type_args.len() >= 2 {
-                        // pointer_with_mut_of<Ptr, RefForMutability>: produce a pointer to
-                        // Ptr's pointee with the mutability of the second arg.
-                        let p = type_args[0];
+                        // pointer_with_mut_of<T, Ptr>: a pointer to T with Ptr's mutability.
                         let m = type_args[1];
-                        if p.tag == IrTyTag::Pointer && m.tag == IrTyTag::Pointer {
-                            return self.ctx.make_ptr_ty(p.inner(), m.is_const());
+                        if m.tag == IrTyTag::Pointer {
+                            return self.ctx.make_ptr_ty(type_args[0], m.is_const());
                         }
                     } else if lang == "typeop_array_with_length_of" && type_args.len() >= 2 {
                         // array_with_length_of<T, Arr: Array>: produce [T; len(Arr)].
@@ -1324,18 +1328,47 @@ impl Mono {
         result
     }
 
+    /// Whether a generic call's type arguments (after the `explicit` ones)
+    /// are missing one that inference did not find and that has no default.
+    fn has_uninferred_generics(self: &Mono, def: &FnDef, type_args: &[&IrTy], explicit: usize) -> bool {
+        for (i, param) in def.generic_params.iter().enumerate() {
+            if i < explicit || param.default_ty.is_some() {
+                continue;
+            }
+            let found = i < self.inferred_found.len() && self.inferred_found[i];
+            if i >= type_args.len() || (type_args[i].is_void() && !found) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A call whose generic arguments cannot be inferred (as alumina-boot):
+    /// an error, unless lowered only tentatively, where it means "no type
+    /// from this argument" (see `inference_incomplete`).
+    fn type_hint_required(self: &mut Mono, span: Span) -> &IrExpr {
+        self.inference_incomplete = true;
+        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, "type hint required"));
+        self.mk_void()
+    }
+
     /// Lower an expression only to learn its type (see `tentative`).
+    /// `tentative_incomplete` tells whether its type is unknown for lack of
+    /// a hint (a failed inference within it).
     fn lower_expr_tentative(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let saved = self.tentative;
+        let (saved, saved_incomplete) = (self.tentative, self.inference_incomplete);
         self.tentative = true;
+        self.inference_incomplete = false;
         let result = self.lower_expr(expr);
+        self.tentative_incomplete = self.inference_incomplete;
         self.tentative = saved;
+        self.inference_incomplete = saved_incomplete;
         result
     }
 
     /// Lower an expression without a type hint.
     fn lower_expr(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        self.lower_expr_hinted(expr, self.ctx.void_ty)
+        self.lower_expr_hinted(expr, self.ctx.no_hint)
     }
 
     /// Lower an expression with a type hint (as alumina-boot's `type_hint`):
@@ -1400,10 +1433,14 @@ impl Mono {
                 }
                 let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                 // (An empty array's element type is the hint's.)
+                // Lacking a hint, the elements after the first get its type
+                // (as in alumina-boot).
                 let elem_ty = expected_elem_ty;
                 for i in 0usize..expr.args().len() {
                     if !expected_elem_ty.is_void() {
                         ir_elems[i] = self.lower_expr_coerced(expr.args()[i], expected_elem_ty);
+                    } else if i > 0 {
+                        ir_elems[i] = self.lower_expr_coerced(expr.args()[i], elem_ty);
                     } else {
                         ir_elems[i] = self.lower_expr(expr.args()[i]);
                     }
@@ -2332,6 +2369,11 @@ impl Mono {
         // If any type args are void (unresolved from type alias generic params
         // or from padding above), use argument type inference to fill them in.
         if def.generic_params.len() > 0 {
+            // Which type args are known (a `()` from the hint is known too).
+            let known = self.ctx.arena.alloc_slice::<bool>(method_type_args.len());
+            for (i, ty) in method_type_args.iter().enumerate() {
+                known[i] = !ty.is_void();
+            }
             let has_unresolved = method_type_args.iter().any(|e: &IrTy| -> bool { e.is_void() });
             if has_unresolved {
                 // First try expected return-type shape — this beats arg
@@ -2362,12 +2404,13 @@ impl Mono {
                                         if def.generic_params[gi].id._value == target_gp
                                             && merged0[gi].is_void() {
                                             merged0[gi] = exp.struct_ref().type_args[ri];
+                                            known[gi] = true;
                                         }
                                     }
                                 }
                             }
                             method_type_args = merged0;
-                            has_unresolved = method_type_args.iter().any(|e: &IrTy| -> bool { e.is_void() });
+                            has_unresolved = known.iter().any(|k: bool| -> bool { !k });
                         }
                     }
                 }
@@ -2377,13 +2420,19 @@ impl Mono {
                 if inferred.len() == method_type_args.len() {
                     let merged = self.ctx.arena.alloc_slice::<&IrTy>(method_type_args.len());
                     for i in 0usize..method_type_args.len() {
-                        if method_type_args[i].is_void() && !inferred[i].is_void() {
+                        if !known[i] && self.inferred_found[i] {
                             merged[i] = inferred[i];
+                            known[i] = true;
                         } else {
                             merged[i] = method_type_args[i];
                         }
                     }
                     method_type_args = merged;
+                }
+                for (i, param) in def.generic_params.iter().enumerate() {
+                    if !known[i] && param.default_ty.is_none() {
+                        return Option::some(self.type_hint_required(expr.span));
+                    }
                 }
             }
         }
@@ -2880,7 +2929,7 @@ impl Mono {
             // operand has the left one's type (except for shift amounts and
             // pointer offsets).
             let lhs_hint = if op.is_comparison() {
-                self.ctx.void_ty
+                self.ctx.no_hint
             } else if op.is_logical() {
                 self.ctx.bool_ty
             } else {
@@ -4652,20 +4701,7 @@ impl Mono {
         } else if expr.tag == ExprTag::Cast {
             let ir_inner = self.lower_expr(expr.lhs());
             let ir_ty = self.resolve_type(expr.ty());
-            // Fn item (ZST) → fn pointer: emit a FnRef so codegen can take
-            // the function's address. Otherwise gen_cast falls through to
-            // `coerce_value` on a ZST source and produces a broken pointer
-            // (segfaults at call time). Mirrors the implicit-coerce path in
-            // `try_coerce`. Required by `callable::as_callback`'s
-            // `util::unit::<u<F>>() as fn(...)` pattern.
-            if ir_inner.ty.tag == IrTyTag::Fn && ir_ty.tag == IrTyTag::FnPointer {
-                let fn_ref = ir_inner.ty.fn_item_ref();
-                let result = IrExpr::void_expr(ir_ty);
-                result.tag = IrTag::FnRef;
-                result._data.fn_ref = fn_ref;
-                return self.ctx.arena.alloc(result);
-            }
-            self.mk_cast(ir_inner, ir_ty)
+            self.lower_cast(ir_inner, ir_ty, expr.span)
         } else if expr.tag == ExprTag::TypeCheck {
             // `expr is Type` / `expr is Protocol`, decided at compile time.
             let ir_val = self.lower_expr(expr.lhs());
@@ -4674,6 +4710,77 @@ impl Mono {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(r)
         }
+    }
+
+    /// `value as ty`, with alumina-boot's rules: anything that coerces;
+    /// numeric to numeric, `bool` to numeric, enums to and from numeric;
+    /// pointers (and fn pointers) to pointers and to and from `usize`; and
+    /// const to mut for slices and `dyn` (plus `dyn` to its data pointer).
+    fn lower_cast(self: &mut Mono, value: &IrExpr, ty: &IrTy, span: Span) -> &IrExpr {
+        if value.ty.is_never() {
+            return value;
+        }
+        let coerced = self.try_coerce(value, ty);
+        if coerced as &void != null {
+            return if coerced.ty.same_as(ty) { coerced } else { self.mk_cast(coerced, ty) };
+        }
+
+        let dyn_id = self.ctx.get_lang_item("dyn");
+        let is_dyn = |=dyn_id, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Struct && dyn_id.is_some() && t.struct_ref().id._value == dyn_id.unwrap()
+        };
+        if is_dyn(value.ty) {
+            if is_dyn(ty) && ty.struct_ref().type_args[0].same_as(value.ty.struct_ref().type_args[0]) {
+                return self.rebuild_dyn(value, ty);
+            }
+            if ty.tag == IrTyTag::Pointer {
+                // Unchecked downcast: the data pointer.
+                let data_ptr_ty = value.ty.struct_ref().fields[0].ty;
+                return self.mk_cast(self.mk_field(value, 0u32, data_ptr_ty), ty);
+            }
+        }
+
+        let is_pointer = |t: &IrTy| -> bool { t.tag == IrTyTag::Pointer || t.tag == IrTyTag::FnPointer };
+        let is_numeric = |t: &IrTy| -> bool { t.tag == IrTyTag::Builtin && t.builtin().is_numeric() };
+        let is_usize = |t: &IrTy| -> bool { t.tag == IrTyTag::Builtin && t.builtin() == BuiltinType::USize };
+        let from = value.ty;
+        let valid = (is_numeric(from) && is_numeric(ty))
+            || (from.tag == IrTyTag::Builtin && from.builtin() == BuiltinType::Bool && is_numeric(ty))
+            || (from.tag == IrTyTag::Enum && is_numeric(ty))
+            || (is_numeric(from) && ty.tag == IrTyTag::Enum)
+            || (is_pointer(from) && is_pointer(ty))
+            || (is_usize(from) && is_pointer(ty))
+            || (is_pointer(from) && is_usize(ty))
+            || (from.tag == IrTyTag::Slice && ty.tag == IrTyTag::Slice
+                && self.slice_elem_ty(from).same_as(self.slice_elem_ty(ty)));
+        if !valid {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                span,
+                std::fmt::format!("cannot cast `{}` into `{}`", self.ir_type_name(from), self.ir_type_name(ty))
+                    .unwrap().as_slice(),
+            ));
+        }
+        self.mk_cast(value, ty)
+    }
+
+    /// A `dyn` value with the same protocols but different mutability.
+    fn rebuild_dyn(self: &mut Mono, val: &IrExpr, target: &IrTy) -> &IrExpr {
+        // { let tmp = val; dyn { _ptr: tmp._ptr as &void, _vtable: tmp._vtable } }
+        let tmp_id = self.ctx.id_gen.next_id();
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: val.ty, name: "_dyn", span: val.span });
+        let fields = val.ty.struct_ref().fields;
+        let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        items[0] = self.mk_cast(self.mk_field(self.mk_local(tmp_id, val.ty), 0u32, fields[0].ty),
+            target.struct_ref().fields[0].ty);
+        items[1] = self.mk_field(self.mk_local(tmp_id, val.ty), 1u32, fields[1].ty);
+        let lit = IrExpr::void_expr(target);
+        lit.tag = IrTag::StructLit;
+        lit._data.struct_lit.ir_ty = target;
+        lit._data.struct_lit.items = items;
+        let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        stmts[0] = self.mk_let(tmp_id, val.ty, val);
+        stmts[1] = self.ctx.arena.alloc(lit);
+        self.mk_block(stmts)
     }
 
     /// Lower a method call on a `dyn Proto` value to vtable dispatch.
@@ -5158,22 +5265,7 @@ impl Mono {
             let (want, have) = (expected_ty.struct_ref().type_args, val.ty.struct_ref().type_args);
             if want.len() == 2 && have.len() == 2 && want[0].same_as(have[0])
                 && want[1].is_const() && !have[1].is_const() {
-                // { let tmp = val; dyn { _ptr: tmp._ptr as &void, _vtable: tmp._vtable } }
-                let tmp_id = self.ctx.id_gen.next_id();
-                self.local_defs.push(IrLocalDef { id: tmp_id, ty: val.ty, name: "_dyn", span: val.span });
-                let fields = val.ty.struct_ref().fields;
-                let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                items[0] = self.mk_cast(self.mk_field(self.mk_local(tmp_id, val.ty), 0u32, fields[0].ty),
-                    expected_ty.struct_ref().fields[0].ty);
-                items[1] = self.mk_field(self.mk_local(tmp_id, val.ty), 1u32, fields[1].ty);
-                let lit = IrExpr::void_expr(expected_ty);
-                lit.tag = IrTag::StructLit;
-                lit._data.struct_lit.ir_ty = expected_ty;
-                lit._data.struct_lit.items = items;
-                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                stmts[0] = self.mk_let(tmp_id, val.ty, val);
-                stmts[1] = self.ctx.arena.alloc(lit);
-                return self.mk_block(stmts);
+                return self.rebuild_dyn(val, expected_ty);
             }
         }
 
@@ -5980,17 +6072,15 @@ impl Mono {
         let saved_in_arg_inf = self.inside_arg_inference;
         self.return_type = self.ctx.void_ty;
         self.inside_arg_inference = true;
-        let saved_incomplete = self.inference_incomplete;
         for p in 0usize..num_params {
             if p >= args.len() { break; }
             let param_ty = def.params[p].ty;
             let arg_expr = args[p];
-            self.inference_incomplete = false;
             let arg_ty = self.lower_expr_tentative(arg_expr).ty;
             // The argument's own inference was incomplete (e.g. a bare
             // `Result::err(e)`, whose T needs a type hint): its type says
             // nothing about ours; the hint comes from our context instead.
-            if self.inference_incomplete {
+            if self.tentative_incomplete {
                 continue;
             }
             // When the arg comes back as Void from a Call-like expression,
@@ -6015,7 +6105,6 @@ impl Mono {
         }
         self.return_type = saved_return;
         self.inside_arg_inference = saved_in_arg_inf;
-        self.inference_incomplete = saved_incomplete;
 
         self.infer_from_callable_bounds(def.generic_params, inferred, found);
 
@@ -6265,7 +6354,7 @@ impl Mono {
             // could still see a stale return_type from outside arg-walking
             // unless the flag guards this branch too.
             if ret_ty_ast.tag == TyTag::Placeholder
-                && !hint_ty.is_void()
+                && hint_ty != self.ctx.no_hint
                 && !self.inside_arg_inference {
                 for g in 0usize..num_generics {
                     if !found[g] && def.generic_params[g].id._value == ret_ty_ast.id()._value {
@@ -6294,13 +6383,13 @@ impl Mono {
             }
         }
 
+        self.inferred_found = found;
+
         // Check if at least one generic was inferred (enough to differentiate)
         let any_found = false;
         for i in 0usize..num_generics {
             if found[i] {
                 any_found = true;
-            } else if def.generic_params[i].default_ty.is_none() {
-                self.inference_incomplete = true;
             }
         }
 
@@ -7419,6 +7508,9 @@ impl Mono {
                             }
                         }
                         call_ta = full_ta;
+                        if self.has_uninferred_generics(def, call_ta, resolved_type_args.len()) {
+                            return self.type_hint_required(expr.span);
+                        }
                     }
 
                     // Monomorphize the function with type args
@@ -7524,6 +7616,9 @@ impl Mono {
                                 }
                                 call_ta = ctx_ta;
                             }
+                        }
+                        if self.has_uninferred_generics(def, call_ta, 0) {
+                            return self.type_hint_required(expr.span);
                         }
                         if call_ta.len() > 0usize {
                             let fn_idx = self.mono_function(def, call_ta);
@@ -7811,7 +7906,7 @@ impl Mono {
                 let resolved = self.resolve_type(expr.opt_ty().unwrap());
                 resolved
             } else if expr.opt_expr().is_some() {
-                let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.void_ty);
+                let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.no_hint);
                 let ir_init = self.lower_expr_hinted(expr.opt_expr().unwrap(), hint);
                 let inferred = ir_init.ty;
                 self.local_types.insert(expr.id()._value, inferred);
