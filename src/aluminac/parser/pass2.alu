@@ -484,6 +484,10 @@ impl Pass2 {
             Option::none()
         };
         self.ctx.location_override = outer_location;
+        if body.is_none() {
+            // (The parameters of functions without bodies are not used.)
+            self.ctx.scopes.unchecked_scopes.insert(pending.scope_idx);
+        }
 
         // Tag "main" functions with AttrTag::Main, and `fn*` with
         // AttrTag::Coroutine.
@@ -620,8 +624,9 @@ impl Pass2 {
                 self.ctx.alloc_ty(Ty::unresolved())
             };
 
-            // Look up the param ID from scope (registered in Pass1)
-            let scope_item = self.ctx.scopes.resolve(scope_idx, name);
+            // Look up the param ID from scope (registered in Pass1; not a
+            // use of it)
+            let scope_item = self.ctx.scopes.get(scope_idx).items.get(&name);
             let param_id = if scope_item.is_some() {
                 scope_item.unwrap().kind.id()
             } else {
@@ -1313,6 +1318,7 @@ impl Pass2 {
                     let expr_parser = ExprParser::new(self.ctx, fn_scope_idx);
                     Option::some(expr_parser.parse_expr(fn_body_node.unwrap()))
                 } else {
+                    self.ctx.scopes.unchecked_scopes.insert(fn_scope_idx);
                     Option::none()
                 };
 

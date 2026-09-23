@@ -391,6 +391,7 @@ impl Compiler {
         }
 
         self.scopes.check_use_aliases(&self.diag);
+        self.scopes.check_unused_items(&self.diag);
 
         // Cleanup
         for i in 0usize..trees.len() {
@@ -399,6 +400,7 @@ impl Compiler {
         }
         parser.free();
 
+        self.diag.apply_lint_overrides();
         if self.diag.has_errors {
             self.diag.emit_all();
             return false;
@@ -416,6 +418,7 @@ impl Compiler {
             self.options.test_mode,
         );
 
+        self.diag.apply_lint_overrides();
         if self.diag.has_errors {
             self.diag.emit_all();
             return false;
@@ -433,6 +436,7 @@ impl Compiler {
             self.options.debug_info,
             self.options.optimize,
         );
+        self.diag.apply_lint_overrides();
         if self.diag.has_errors {
             self.diag.emit_all();
             ctx.free();

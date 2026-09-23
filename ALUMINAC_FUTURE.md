@@ -398,8 +398,29 @@ diagnostic's location, expansion or instantiation chain). Done so far:
   depend on each other; a function signature that depends on itself
   through `typeof` (aluminac instantiated the function twice). Mixins of
   non-protocols.
-- Remaining (2 of 112): the lints (`warnings.alu`, and an unused
-  variable in `not_a_protocol`).
+- **Lints** (111 of 112 tests match): warnings carry a lint name, and
+  `#[allow(lint)]`/`#[deny(lint)]`/`#[warn(lint)]` (or `warnings`) on
+  items and statements apply as in alumina-boot (the innermost around the
+  warning decides; denied ones are errors; unknown lint names are
+  reported). Unused variables, parameters, closure bindings and imports
+  in functions (tracked per declaration: alumina-boot marks names, so
+  e.g. a method call `x.args()` counts as a use of a variable `args`;
+  two dead declarations in the stdlib were found this way), dead code,
+  pure statements, `#[diag::must_use]` types, constant conditions (not
+  those depending on calls or `in_const_context()`), `while true`,
+  unnecessary casts (outside generic code), `defer` in loops,
+  uninitialized fields, union initializer overrides (the last now wins,
+  as in alumina-boot; aluminac rejected them), `std::typing::Self` in
+  signatures, protocols/consts/statics as value types, unknown attributes,
+  redundant top-level blocks. Lint warnings in macro-produced statements
+  point at the invocation; each place warns once (not per instance).
+  Found along the way: a struct literal missing a field crashed the
+  compiler; the constant evaluator took a static's initial value for its
+  value.
+- Remaining: `const_only` (alumina-boot warns in codegen for const-only
+  code that survives dead-code elimination; aluminac codegens every
+  instantiated function and both branches of `if in_const_context()`, so
+  it needs a reachability pass first), unused macro parameters.
 
 ### Cross-check status
 

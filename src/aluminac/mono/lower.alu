@@ -650,6 +650,18 @@ impl Mono {
         true
     }
 
+    /// Whether a (syntactic) type is the same type wherever it is written:
+    /// built from builtin types only (slices are instances of a generic
+    /// type, as in alumina-boot).
+    fn is_concrete_type(ty: &Ty) -> bool {
+        switch ty.tag {
+            TyTag::Builtin => true,
+            TyTag::Pointer, TyTag::Array => Mono::is_concrete_type(ty.inner()),
+            TyTag::Tuple => ty.elems().iter().all(|t: &Ty| -> bool { Mono::is_concrete_type(t) }),
+            _ => false,
+        }
+    }
+
     /// Whether a (syntactic) type mentions the generic parameter `id`.
     fn mentions_placeholder(ty: &Ty, id: usize) -> bool {
         switch ty.tag {
@@ -3156,8 +3168,8 @@ impl Mono {
                 } else if (op == BinOp::Add || op == BinOp::Sub) && rhs.tag == IrTyTag::Builtin
                     && (rhs.builtin() == BuiltinType::ISize || rhs.builtin() == BuiltinType::USize) {
                     if lhs.inner().is_zero_sized() {
-                        self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(
-                            span, "pointer offset on zero-sized types is a no-op"));
+                        self.emit_diag(diagnostics::CodeDiagnostic::lint(
+                            span, "zst_pointer_offset", "pointer offset on zero-sized types is a no-op"));
                     }
                     Option::some(lhs)
                 } else {
@@ -3515,6 +3527,7 @@ impl Mono {
     fn lower_control_flow(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::If {
             let ir_cond = self.lower_expr(expr.cond());
+            self.check_condition(ir_cond, expr.span, false);
 
             // If the if is in an rvalue position with a known expected_type
             // (e.g. `let p: &dyn Foo = if cond { &Quux{} } else { &Frob{} };`),
@@ -3572,6 +3585,7 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::While {
             let ir_cond = self.lower_expr(expr.cond());
+            self.check_condition(ir_cond, expr.span, true);
             let ir_body = self.lower_loop_body(expr.lhs());
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::While;
@@ -5348,6 +5362,14 @@ impl Mono {
         } else if expr.tag == ExprTag::Cast {
             let ir_inner = self.lower_expr(expr.lhs());
             let ir_ty = self.resolve_type(expr.ty());
+            // A cast to the type the value has, written as that type (not
+            // through an alias or a generic parameter, which may be another
+            // type elsewhere).
+            if ir_inner.ty.same_as(ir_ty) && !ir_ty.is_never() && Mono::is_concrete_type(expr.ty())
+                && self.type_map.is_empty() && !self.tentative {
+                self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "unnecessary_cast",
+                    std::fmt::format!("unnecessary cast (value is already `{}`)", self.ir_type_name(ir_ty)).unwrap().as_slice()));
+            }
             self.lower_cast(ir_inner, ir_ty, expr.span)
         } else if expr.tag == ExprTag::TypeCheck {
             // `expr is Type` / `expr is Protocol`, decided at compile time.
@@ -8772,12 +8794,19 @@ impl Mono {
             }
 
             if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref().is_union {
-                // Union: only lower the single initialized field
-                if expr.field_inits().len() != 1 {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "union literal must initialize exactly one field"));
-                    return self.ctx.arena.alloc(IrExpr::void_expr(ir_ty));
+                // Union: only one initialized field (none leaves it
+                // uninitialized).
+                if expr.field_inits().is_empty() {
+                    let undef = IrExpr::void_expr(ir_ty);
+                    undef.tag = IrTag::Undef;
+                    return self.ctx.arena.alloc(undef);
                 }
-                let fi = &expr.field_inits()[0];
+                // (The last initializer wins, as in alumina-boot.)
+                if expr.field_inits().len() > 1 {
+                    self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "union_initializer_override",
+                        "initializer overrides prior initialization of this union"));
+                }
+                let fi = &expr.field_inits()[expr.field_inits().len() - 1];
                 // Find the field type in the struct def
                 let field_ty = self.ctx.void_ty;
                 for j in 0usize..ir_ty.struct_ref().fields.len() {
@@ -8814,8 +8843,12 @@ impl Mono {
                         }
                     }
                     if !found {
-                        let fv = self.lower_expr_coerced(expr.field_inits()[i].value, field_ty);
-                        ir_fields[i] = self.check_and_coerce(fv, field_ty, expr.field_inits()[i].value.span);
+                        // (Left uninitialized, as in alumina-boot.)
+                        self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "uninitialized_field",
+                            std::fmt::format!("field `{}` is not initialized", def_name).unwrap().as_slice()));
+                        let undef = IrExpr::void_expr(field_ty);
+                        undef.tag = IrTag::Undef;
+                        ir_fields[i] = self.ctx.arena.alloc(undef);
                     }
                 } else {
                     ir_fields[i] = self.lower_expr(expr.field_inits()[i].value);
@@ -8833,20 +8866,106 @@ impl Mono {
     }
 
     // Lower block-like expressions: ExprTag::Block, ExprTag::Let, ExprTag::Defer
-    fn check_must_use_dropped(self: &mut Mono, ir_expr: &IrExpr, span: Span) {
-        if ir_expr.tag != IrTag::Call { return; }
-        if ir_expr.ty.is_void() || ir_expr.ty.is_never() { return; }
-        if ir_expr._data.call.call_target.tag != CallKind::Direct { return; }
-        let fn_ref = ir_expr._data.call.call_target.fn_ref;
-        let def_opt = self.ctx.fn_defs.get(&fn_ref.id._value);
-        if def_opt.is_none() { return; }
-        let def = def_opt.unwrap();
-        for j in 0usize..def.attributes.len() {
-            if def.attributes[j].tag == AttrTag::MustUse {
-                self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(
-                    span, "result of #[must_use] function is dropped"));
-                return;
+    /// The lints for a type given to a value: one that is a protocol, a
+    /// const or a static rather than a type of values (as alumina-boot's).
+    fn check_value_type(self: &mut Mono, ty: &IrTy, span: Span) {
+        if self.tentative {
+            return;
+        }
+        if ty.tag == IrTyTag::Protocol {
+            let name = self.ctx.protocol_defs.get(&ty.proto_id()).map(|p: &ProtocolDef| -> &[u8] { p.name }).unwrap_or("");
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "protocols_are_special_mkay",
+                std::fmt::format!("protocol is used as a concrete type (did you mean to use `&dyn {}`?)", name).unwrap().as_slice()));
+        } else if ty.tag == IrTyTag::ItemRef {
+            let what: &[u8] = if ty.item_ref_is_const() { "named constants" } else { "statics" };
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "invalid_type_for_value",
+                std::fmt::format!("{} used as a concrete type, this is probably not what you want", what).unwrap().as_slice()));
+        }
+    }
+
+    /// The lint for a condition that is always the same (as alumina-boot's:
+    /// `when` decides at compile time, `loop` loops forever). Conditions
+    /// on `in_const_context()` are not the same at compile time and run
+    /// time.
+    fn check_condition(self: &mut Mono, cond: &IrExpr, span: Span, is_loop: bool) {
+        if self.tentative || Mono::mentions_const_context(cond) {
+            return;
+        }
+        let value = self.try_const_eval_bool(cond);
+        if value.is_none() {
+            return;
+        }
+        let span = self.ctx.diag.written_span(span);
+        if is_loop && value.unwrap() {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "while_true",
+                "loop condition is always `true` (hint: `loop { ... }` is the idiomatic way of expressing infinite loops)"));
+        } else {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "constant_condition",
+                std::fmt::format!("condition is always `{}`, did you mean to use `when`?", value.unwrap()).unwrap().as_slice()));
+        }
+    }
+
+    /// Whether an expression depends on `in_const_context()`.
+    fn mentions_const_context(e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::InConstContext => true,
+            IrTag::Binary => Mono::mentions_const_context(e.lhs()) || Mono::mentions_const_context(e.rhs()),
+            IrTag::Unary, IrTag::Cast => Mono::mentions_const_context(e.lhs()),
+            IrTag::Block => e.items().iter().any(|i: &IrExpr| -> bool { Mono::mentions_const_context(i) }),
+            IrTag::If => Mono::mentions_const_context(e.cond()) || Mono::mentions_const_context(e.lhs())
+                || (e.opt_expr().is_some() && Mono::mentions_const_context(e.opt_expr().unwrap())),
+            // (A call may depend on it; conditions with calls are evaluated
+            // only for the lint.)
+            IrTag::Call => true,
+            _ => false,
+        }
+    }
+
+    /// The lints for a statement (as alumina-boot's): code after a statement
+    /// that never completes, values of `#[diag::must_use]` types that are
+    /// dropped, and statements without effects.
+    fn check_statement(self: &mut Mono, stmt: &IrExpr, span: Span, after_diverging: bool) {
+        if self.tentative {
+            return;
+        }
+        // (A statement a macro produced is the macro's invocation.)
+        let span = self.ctx.diag.written_span(span);
+        if after_diverging {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "dead_code", "this code is unreachable (dead code)"));
+            return;
+        }
+        if stmt.ty.tag == IrTyTag::Struct && stmt.ty.struct_ref().attributes.iter().any(|a: Attribute| -> bool {
+            a.tag == AttrTag::Custom && a.str_val() == "diag::must_use"
+        }) {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "unused_must_use",
+                std::fmt::format!("unused `{}` that must be used", self.ir_type_name(stmt.ty)).unwrap().as_slice()));
+        }
+        // (Also functions marked `#[must_use]`, an aluminac extension.)
+        if stmt.tag == IrTag::Call && stmt.call_target().tag == CallKind::Direct && !stmt.ty.is_void() {
+            let def = self.ctx.fn_defs.get(&stmt.call_target().fn_ref.id._value);
+            if def.is_some() && def.unwrap().attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::MustUse }) {
+                self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "unused_must_use",
+                    std::fmt::format!("unused result of `{}`, which must be used", def.unwrap().name).unwrap().as_slice()));
             }
+        }
+        if Mono::is_pure(stmt) && !stmt.ty.is_void() && !stmt.ty.is_never() {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "pure_statement", "statement has no effect"));
+        }
+    }
+
+    /// Whether evaluating an expression has no effects (as alumina-boot's
+    /// `Expr::pure`).
+    fn is_pure(e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::Local, IrTag::Param, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void, IrTag::Zeroed => true,
+            IrTag::Binary, IrTag::Index => Mono::is_pure(e.lhs()) && Mono::is_pure(e.rhs()),
+            IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Ref, IrTag::Deref => Mono::is_pure(e.lhs()),
+            IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block =>
+                e.items().iter().all(|i: &IrExpr| -> bool { Mono::is_pure(i) }),
+            IrTag::If => Mono::is_pure(e.cond()) && Mono::is_pure(e.lhs())
+                && (e.opt_expr().is_none() || Mono::is_pure(e.opt_expr().unwrap())),
+            _ => false,
         }
     }
 
@@ -8865,6 +8984,7 @@ impl Mono {
                 self.local_type_hints.remove(&value_local.unwrap());
             };
             let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(n);
+            let diverged = false;
             for i in 0usize..n {
                 // The block's value (its last item) gets the block's hint.
                 ir_stmts[i] = if i + 1 == n {
@@ -8873,13 +8993,15 @@ impl Mono {
                     self.lower_expr(expr.args()[i])
                 };
                 if i + 1 < n {
-                    self.check_must_use_dropped(ir_stmts[i], expr.args()[i].span);
+                    self.check_statement(ir_stmts[i], expr.args()[i].span, diverged);
+                    diverged = diverged || ir_stmts[i].ty.is_never();
                 }
             }
             self.mk_block(ir_stmts)
         } else if expr.tag == ExprTag::Let {
             let var_ty = if expr.opt_ty().is_some() {
                 let resolved = self.resolve_type(expr.opt_ty().unwrap());
+                self.check_value_type(resolved, expr.span);
                 resolved
             } else if expr.opt_expr().is_some() {
                 let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.no_hint);
@@ -8920,6 +9042,10 @@ impl Mono {
             if self.in_defer {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot defer inside a defered expression"));
                 return self.mk_error();
+            }
+            if !self.loop_contexts.is_empty() && !self.tentative {
+                self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "defer_in_a_loop",
+                    "defer inside a loop: this defered statement will only be executed once"));
             }
             self.in_defer = true;
             let ir_inner = self.lower_expr(expr.lhs());

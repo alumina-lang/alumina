@@ -30,6 +30,76 @@ enum DiagLevel {
     Error,
     Warning,
     Note,
+    /// A warning its lint is allowed for.
+    Allowed,
+}
+
+/// What `#[allow(lint)]`, `#[deny(lint)]` and `#[warn(lint)]` do with a
+/// lint's warnings in the item they are on.
+enum LintAction {
+    Allow,
+    Deny,
+    Warn,
+}
+
+/// The names `#[allow(...)]` etc. accept (as in alumina-boot, those of all
+/// its diagnostics).
+const LINT_NAMES: [&[u8]; 145] = [
+    "parse_error", "parse_error_missing", "unexpected", "unresolved_path", "cycle_detected",
+    "duplicate_name", "invalid_literal", "invalid_char_literal", "generic_param_count_mismatch",
+    "unexpected_generic_params", "et_cetera_expr_in_unsupported", "et_cetera_in_unsupported",
+    "et_cetera_on_non_tuple", "recursive_without_indirection", "type_hint_required",
+    "type_mismatch", "mismatched_branch_types", "invalid_escape_sequence", "invalid_attribute",
+    "invalid_attribute_detail", "duplicate_attribute", "invalid_bin_op", "invalid_un_op",
+    "cannot_assign_to_r_value", "cannot_assign_to_const", "invalid_cast",
+    "break_outside_of_loop", "continue_outside_of_loop", "param_count_mismatch",
+    "tuple_index_out_of_bounds", "function_or_static_expected_here", "not_callable",
+    "not_callable_field_confusion", "unexpected_generic_args", "unresolved_item",
+    "duplicate_field_initializer", "struct_like_expected_here", "method_not_found",
+    "not_a_method", "default_case_must_be_last", "cannot_reference_local", "missing_lang_item",
+    "range_index_non_slice", "internal_error", "local_with_unknown_type", "unsupported_a_b_i",
+    "unknown_intrinsic", "unknown_lang_item", "cannot_be_a_lang_item",
+    "intrinsics_are_special_mkay", "extern_c_generic_params", "constant_string_expected",
+    "cannot_const_evaluate", "invalid_value_for_enum_variant", "user_defined", "const_message",
+    "defer_in_defer", "yield_in_defer", "macro_et_cetera_outside_of_macro",
+    "dollared_outside_of_macro", "not_a_pointer", "not_a_tuple", "no_macro_et_cetera_args",
+    "multiple_macro_et_ceteras", "recursive_macro_call", "not_a_macro",
+    "not_enough_macro_arguments", "macro_et_cetera_in_macro_et_cetera",
+    "cannot_macro_et_cetera_here", "is_a_macro", "recursive_static_initialization",
+    "not_in_a_function_scope", "yield_outside_of_coroutine", "unknown_builtin_macro",
+    "not_a_protocol", "function_must_have_body", "protocol_fns_cannot_be_extern",
+    "var_args_can_only_be_extern", "extern_coroutine", "protocol_coroutine",
+    "coroutine_return_type", "protocol_match", "protocol_mismatch", "protocol_mismatch_detail",
+    "cyclic_protocol_bound", "multiple_main_functions", "unpopulated_item",
+    "generic_args_in_path", "builtin_types_are_special_mkay", "invalid_type_operator",
+    "invalid_transparent", "no_span_information", "no_free_standing_impl", "cannot_be_a_test",
+    "invalid_test_case_signature", "extern_static_must_have_type",
+    "extern_static_cannot_be_generic", "can_only_close_over_locals", "closures_are_not_fns",
+    "non_protocol_dyn", "builtin_protocol_dyn", "mixin_only_protocol", "indirect_dyn",
+    "non_dynnable_function", "invalid_format_string", "cannot_read_file",
+    "typedef_without_target", "type_with_infinite_size", "integer_out_of_range",
+    "float_out_of_range", "align_and_packed", "ir_inline_local_defs", "ir_inline_flow_control",
+    "ir_inline_early_return", "macros_cannot_define_items", "macros_cannot_define_lambdas",
+    "const_panic", "zst_pointer_difference", "tuple_call_arg_count", "tuple_call_arg_type",
+    "too_many_loop_vars", "too_many_enum_variants", "protocols_are_special_mkay",
+    "invalid_type_for_value", "defer_in_a_loop", "duplicate_name_shadow", "uninitialized_field",
+    "union_initializer_override", "self_confusion", "align1", "unused_must_use",
+    "unused_variable", "unused_closure_binding", "unused_parameter", "unused_import",
+    "im_so_meta_even_this_acronym", "top_level_block_without_attributes", "constant_condition",
+    "pure_statement", "const_only", "dead_code", "zst_pointer_offset", "unknown_attribute",
+    "unnecessary_cast", "while_true"
+];
+
+/// Whether `#[allow(name)]` etc. name a lint (or all of them).
+fn is_lint_name(name: &[u8]) -> bool {
+    name == "warnings" || LINT_NAMES.as_slice().iter().any(|=name, n: &[u8]| -> bool { n == name })
+}
+
+struct LintOverride {
+    span: Span,
+    /// The lint, or "" for all of them (`warnings`).
+    lint: &[u8],
+    action: LintAction,
 }
 
 struct SourceFile {
@@ -134,11 +204,13 @@ struct CodeDiagnostic {
     span: Span,
     kind: CodeDiagKind,
     _data: _CodeDiagData,
+    /// For a warning, its lint (e.g. `unused_variable`), if it has one.
+    lint: &[u8],
 }
 
 impl CodeDiagnostic {
     fn _new(level: DiagLevel, span: Span, kind: CodeDiagKind) -> CodeDiagnostic {
-        CodeDiagnostic { level: level, span: span, kind: kind, _data: std::mem::zeroed::<_CodeDiagData>() }
+        CodeDiagnostic { level: level, span: span, kind: kind, _data: std::mem::zeroed::<_CodeDiagData>(), lint: "" }
     }
 
     fn _new_named(level: DiagLevel, span: Span, kind: CodeDiagKind, name: &[u8]) -> CodeDiagnostic {
@@ -240,6 +312,13 @@ impl CodeDiagnostic {
         CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::GenericError, msg)
     }
 
+    /// A warning of a lint (which `#[allow(lint)]` etc. apply to).
+    fn lint(span: Span, lint: &[u8], msg: &[u8]) -> CodeDiagnostic {
+        let d = CodeDiagnostic::generic_warning(span, msg);
+        d.lint = lint;
+        d
+    }
+
     // --- Note constructors ---
 
     fn instantiation_note(span: Span, fn_name: &[u8]) -> CodeDiagnostic {
@@ -308,6 +387,12 @@ struct DiagnosticContext {
     files: std::collections::Vector<SourceFile>,
     /// The macro expansions spans refer to (`Span::expansion` - 1).
     expansions: std::collections::Vector<Expansion>,
+    /// The lint levels given by attributes (see `apply_lint_overrides`).
+    overrides: std::collections::Vector<LintOverride>,
+    /// How many diagnostics `apply_lint_overrides` has seen.
+    overrides_applied: usize,
+    /// The lint warnings given (see `emit`).
+    lints_seen: std::collections::HashSet<u64>,
     errors: std::collections::Vector<CodeDiagnostic>,
     has_errors: bool,
     has_warnings: bool,
@@ -318,6 +403,9 @@ impl DiagnosticContext {
         DiagnosticContext {
             files: std::collections::Vector::new(),
             expansions: std::collections::Vector::new(),
+            overrides: std::collections::Vector::new(),
+            overrides_applied: 0,
+            lints_seen: std::collections::HashSet::new(),
             errors: std::collections::Vector::new(),
             has_errors: false,
             has_warnings: false,
@@ -335,6 +423,53 @@ impl DiagnosticContext {
         id
     }
 
+    fn add_override(self: &mut DiagnosticContext, o: LintOverride) {
+        self.overrides.push(o);
+    }
+
+    /// Apply the lint levels to the warnings emitted since the last time
+    /// (as alumina-boot: the innermost attribute on an item around a
+    /// warning decides, and `warnings` stands for every lint). Denied
+    /// warnings become errors.
+    fn apply_lint_overrides(self: &mut DiagnosticContext) {
+        for i in self.overrides_applied..self.errors.len() {
+            let diag = &self.errors[i];
+            if diag.level != DiagLevel::Warning || diag.lint.is_empty() {
+                continue;
+            }
+            let action = LintAction::Warn;
+            let innermost: u32 = 0xffffffffu32;
+            for o in self.overrides.iter_ref() {
+                let applies = (o.lint.is_empty() || o.lint == diag.lint)
+                    && o.span.file_id == diag.span.file_id
+                    && o.span.start <= diag.span.start && diag.span.end <= o.span.end;
+                if applies && o.span.end - o.span.start < innermost {
+                    innermost = o.span.end - o.span.start;
+                    action = o.action;
+                }
+            }
+            switch action {
+                LintAction::Allow => diag.level = DiagLevel::Allowed,
+                LintAction::Deny => {
+                    diag.level = DiagLevel::Error;
+                    self.has_errors = true;
+                }
+                _ => {}
+            }
+        }
+        self.overrides_applied = self.errors.len();
+    }
+
+    /// Where code as written is (the outermost macro invocation, for code
+    /// produced by macros).
+    fn written_span(self: &DiagnosticContext, span: Span) -> Span {
+        let result = span;
+        while result.expansion != 0 && (result.expansion as usize) <= self.expansions.len() {
+            result = self.expansions[result.expansion as usize - 1].call_site;
+        }
+        result
+    }
+
     /// Record a macro expansion, for the spans of the code it produces.
     fn add_expansion(self: &mut DiagnosticContext, call_site: Span, macro_name: &[u8]) -> u32 {
         self.expansions.push(Expansion { call_site: call_site, macro_name: macro_name });
@@ -342,6 +477,18 @@ impl DiagnosticContext {
     }
 
     fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
+        // A lint's warning is given once for a place (not for each instance
+        // of generic code).
+        if !diag.lint.is_empty() {
+            let key = 1469598103934665603u64;
+            for b in diag.lint {
+                key = (key ^ (b as u64)) * 1099511628211u64;
+            }
+            key = key ^ (((diag.span.file_id as u64) << 40) | ((diag.span.start as u64) << 8)) ^ (diag.span.end as u64);
+            if !self.lints_seen.insert(key) {
+                return;
+            }
+        }
         switch diag.level {
             DiagLevel::Error => { self.has_errors = true; },
             DiagLevel::Warning => { self.has_warnings = true; },
@@ -374,6 +521,9 @@ impl DiagnosticContext {
             prev_file = diag.span.file_id;
             prev_start = diag.span.start;
             prev_end = diag.span.end;
+            if diag.level == DiagLevel::Allowed {
+                continue;
+            }
             let level_str: &[u8] = switch diag.level {
                 DiagLevel::Error => "error",
                 DiagLevel::Warning => "warning",
@@ -413,6 +563,9 @@ impl DiagnosticContext {
                 }
                 expansion = exp.call_site.expansion;
                 depth += 1;
+            }
+            if diag.level == DiagLevel::Warning && !diag.lint.is_empty() {
+                let _ = write!(&f, "\n  note: ignore with `#[allow({})]`", diag.lint);
             }
             let _ = f.write_str("\n");
         }

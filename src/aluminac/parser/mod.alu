@@ -26,6 +26,16 @@ struct ParseError {
 // Sentinel value for "no variadic parameter" / "not in et cetera expansion"
 const NO_VARIADIC: i32 = -1i32;
 
+/// The attributes there are (alumina-boot's, and aluminac's own); others
+/// are custom ones (for tools and `has_attribute`), which should be
+/// namespaced (`tool::name`).
+const KNOWN_ATTRIBUTES: [&[u8]; 32] = [
+    "cfg", "cfg_attr", "inline", "cold", "export", "test", "thread_local", "static_ctor", "no_return",
+    "transparent", "must_use", "no_mangle", "const_only", "no_const", "const", "tuple_args", "packed",
+    "builtin", "returns_twice", "test_main", "align", "link_name", "lang", "allow", "deny", "warn", "docs",
+    "location", "obsolete", "main", "name", "coroutine",
+];
+
 struct MacroEntry {
     name: &[u8],
     params: &[&[u8]],
@@ -392,8 +402,8 @@ impl ParseContext {
     }
 
     /// Whether the attributes on a statement contain a `#[cfg(...)]` that
-    /// excludes the statement.
-    fn stmt_cfg_suppresses(self: &mut ParseContext, attrs_node: Node) -> bool {
+    /// excludes the statement. Its lint levels are recorded (for `owner`).
+    fn stmt_cfg_suppresses(self: &mut ParseContext, attrs_node: Node, owner: Node) -> bool {
         let cursor = attrs_node.walk();
         defer cursor.free();
         for attr in attrs_node.children(&cursor) {
@@ -405,12 +415,47 @@ impl ParseContext {
                 continue;
             }
             let name_node = child_by!(meta.unwrap(), FieldKind::Name);
-            if name_node.is_some() && self.node_text(name_node.unwrap()) == "cfg"
-                && !self.eval_cfg_attribute(meta.unwrap()) {
+            if name_node.is_none() {
+                continue;
+            }
+            let name = self.node_text(name_node.unwrap());
+            if name == "cfg" && !self.eval_cfg_attribute(meta.unwrap()) {
                 return true;
+            }
+            self.lint_level(meta.unwrap(), name, owner);
+            if !std::string::contains(name, "::") && !KNOWN_ATTRIBUTES.as_slice().iter().any(|=name, n: &[u8]| -> bool { n == name }) {
+                self.diag.emit(diagnostics::CodeDiagnostic::lint(self.make_span(meta.unwrap()), "unknown_attribute",
+                    std::fmt::format!("unknown attribute `{}`", name).unwrap().as_slice()));
             }
         }
         false
+    }
+
+    /// Record `#[allow(lint)]`, `#[deny(lint)]` or `#[warn(lint)]` on the
+    /// item or statement `owner` (other attributes are not lint levels).
+    fn lint_level(self: &mut ParseContext, meta: Node, name: &[u8], owner: Node) {
+        let action = switch name {
+            "allow" => diagnostics::LintAction::Allow,
+            "deny" => diagnostics::LintAction::Deny,
+            "warn" => diagnostics::LintAction::Warn,
+            _ => return,
+        };
+        let args = self.meta_args(meta);
+        if args.is_none() || args.unwrap().len() != 1 {
+            self.error(meta, "invalid attribute (missing lint name)");
+            return;
+        }
+        let lint = self.intern_str(self.node_text(args.unwrap()[0]));
+        if !diagnostics::is_lint_name(lint) {
+            self.diag.emit(diagnostics::CodeDiagnostic::lint(self.make_span(meta), "im_so_meta_even_this_acronym",
+                std::fmt::format!("#[{}({})] refers to a lint that does not currently exist", name, lint).unwrap().as_slice()));
+            return;
+        }
+        self.diag.add_override(diagnostics::LintOverride {
+            span: self.make_span(owner),
+            lint: if lint == "warnings" { "" } else { lint },
+            action: action,
+        });
     }
 
     fn error(self: &mut ParseContext, node: Node, message: &[u8]) {

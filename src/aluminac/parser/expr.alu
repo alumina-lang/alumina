@@ -118,7 +118,7 @@ impl ExprParser {
                 // are diagnostics-only and don't affect lowering.
                 let attrs_node = child_by!(node, FieldKind::Attributes);
                 if attrs_node.is_some() {
-                    if self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                    if self.ctx.stmt_cfg_suppresses(attrs_node.unwrap(), node) {
                         return self.alloc_void(span);
                     }
                 }
@@ -321,7 +321,7 @@ impl ExprParser {
                 let inner_kind = NODE_KINDS[inner_node.symbol() as usize];
                 if inner_kind == NodeKind::ExpressionStatement {
                     let attrs_node = child_by!(inner_node, FieldKind::Attributes);
-                    if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                    if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap(), inner_node) {
                         continue;
                     }
                 }
@@ -395,7 +395,7 @@ impl ExprParser {
             let suppressed = false;
             if result_kind == NodeKind::ExpressionStatement {
                 let attrs_node = child_by!(result, FieldKind::Attributes);
-                if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+                if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap(), result) {
                     suppressed = true;
                 }
             }
@@ -1421,7 +1421,7 @@ impl ExprParser {
         // readdir64 split in `std/fs/unix.alu`) both parse, both run, and the
         // second shadows the first — silently consuming directory entries.
         let attrs_node = child_by!(node, FieldKind::Attributes);
-        if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap()) {
+        if attrs_node.is_some() && self.ctx.stmt_cfg_suppresses(attrs_node.unwrap(), node) {
             return self.alloc_void(span);
         }
 

@@ -548,6 +548,32 @@ impl MonoCtx {
 }
 
 
+impl MonoCtx {
+    /// The lint for `std::typing::Self` (the `Self` of a `dyn`'s protocol)
+    /// in a function's signature, which is more likely meant to be the type
+    /// being implemented (as alumina-boot's).
+    fn check_self_confusion(self: &mut MonoCtx) {
+        let dyn_self = self.get_lang_item("dyn_self");
+        if dyn_self.is_none() {
+            return;
+        }
+        let is_dyn_self = |=dyn_self, ty: &Ty| -> bool {
+            let t = if ty.tag == TyTag::Pointer { ty.inner() } else { ty };
+            t.tag == TyTag::Named && t.id()._value == dyn_self.unwrap()
+        };
+        for item in self.items {
+            if item.tag != ItemTag::Function {
+                continue;
+            }
+            let def = item.fn_def();
+            if def.params.iter().any(|=is_dyn_self, p: FnParam| -> bool { is_dyn_self(p.ty) }) || is_dyn_self(def.return_type) {
+                self.diag.emit(diagnostics::CodeDiagnostic::lint(def.span, "self_confusion",
+                    "this is `std::typing::Self`, did you mean the enclosing type?"));
+            }
+        }
+    }
+}
+
 // ============================================================
 // Top-level monomorphization entry point
 // ============================================================
@@ -561,6 +587,7 @@ fn monomorphize(
     test_mode: bool,
 ) -> CompilationUnit {
     let ctx = MonoCtx::new(arena, scopes, id_gen, diag, items);
+    ctx.check_self_confusion();
 
     // Find all root items (exported functions, main, statics)
     // In test mode, also include #[test] functions

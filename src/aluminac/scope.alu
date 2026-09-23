@@ -171,6 +171,12 @@ struct ScopeArena {
     mixin_proto_ids: HashMap<u64, usize>,
     mixin_type_args: HashMap<u64, &[&Ty]>,
     mixin_impl_generic_ids: HashMap<u64, &[Id]>,
+    // The declarations (by `span_key`) names have resolved to, for the
+    // unused-item lints.
+    used: std::collections::HashSet<u64>,
+    // Function scopes whose parameters are not checked for use (functions
+    // without bodies).
+    unchecked_scopes: std::collections::HashSet<u32>,
 }
 
 impl ScopeArena {
@@ -180,6 +186,56 @@ impl ScopeArena {
             mixin_proto_ids: HashMap::new(),
             mixin_type_args: HashMap::new(),
             mixin_impl_generic_ids: HashMap::new(),
+            used: std::collections::HashSet::new(),
+            unchecked_scopes: std::collections::HashSet::new(),
+        }
+    }
+
+    fn span_key(span: ast::Span) -> u64 {
+        ((span.file_id as u64) << 32) | (span.start as u64)
+    }
+
+    /// Note that a name resolved to `item`.
+    fn mark_used(self: &ScopeArena, item: NamedItem) {
+        if !item.span.is_empty() {
+            (self as &mut ScopeArena).used.insert(ScopeArena::span_key(item.span));
+        }
+    }
+
+    /// The warnings for variables, parameters, closure bindings and
+    /// imports of functions that are never used (as alumina-boot's
+    /// `check_unused_items`; names starting with `_` are exempt).
+    fn check_unused_items(self: &ScopeArena, diag: &mut diagnostics::DiagnosticContext) {
+        // (The same declaration can be in several scopes, e.g. the items
+        // of a block, once for each linear segment.)
+        let reported: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        defer reported.free();
+        for (idx, scope) in self.scopes.iter_ref().enumerate() {
+            if scope.kind != ScopeKind::Function && scope.kind != ScopeKind::Block
+                || self.unchecked_scopes.contains(&(idx as u32)) {
+                continue;
+            }
+            for pair in scope.items {
+                let item = pair.1;
+                if item.span.is_empty() || item.name.is_empty() || item.name[0] == '_' || item.name[0] == '$'
+                    || self.used.contains(&ScopeArena::span_key(item.span))
+                    || !reported.insert(ScopeArena::span_key(item.span)) {
+                    continue;
+                }
+                let (lint, what) = switch item.kind.tag {
+                    NamedItemTag::Local => ("unused_variable", "unused variable"),
+                    NamedItemTag::Param => {
+                        if item.name == "self" { continue; }
+                        ("unused_parameter", "unused parameter")
+                    }
+                    NamedItemTag::BoundValue => ("unused_closure_binding", "unused closure binding"),
+                    NamedItemTag::UseAlias => ("unused_import", "unused import"),
+                    _ => continue,
+                };
+                let hint: &[u8] = if item.kind.tag == NamedItemTag::Param { " (prefix with `_` if required)" } else { "" };
+                diag.emit(diagnostics::CodeDiagnostic::lint(item.span, lint,
+                    std::fmt::format!("{} `{}`{}", what, item.name, hint).unwrap().as_slice()));
+            }
         }
     }
 
@@ -304,6 +360,7 @@ impl ScopeArena {
         // 1. Check current scope
         let found = scope.items.get(&name);
         if found.is_some() {
+            self.mark_used(found.unwrap());
             return found;
         }
 
@@ -345,6 +402,7 @@ impl ScopeArena {
                     if target.is_some() {
                         let target_item = target.unwrap();
                         if target_item.kind.tag == NamedItemTag::Function {
+                            self.mark_used(item);
                             return Option::some(target_item.kind.id());
                         }
                     }
@@ -428,6 +486,7 @@ impl ScopeArena {
             let item = found.unwrap();
             let tag = item.kind.tag;
             if tag == NamedItemTag::Module || tag == NamedItemTag::Struct || tag == NamedItemTag::Enum || tag == NamedItemTag::Protocol || tag == NamedItemTag::UseAlias {
+                self.mark_used(item);
                 return found;
             }
             // BuiltinType with a scope_idx (from #[lang(builtin_X)] struct) can be navigated
@@ -519,9 +578,9 @@ impl ScopeArena {
                 } else if target.is_none() {
                     let segments = item.kind.path_segments().iter();
                     let path = std::string::join("::", &segments);
-                    defer path.free();
                     diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span,
                         std::fmt::format!("could not resolve the path `{}`", path).unwrap().as_slice()));
+                    path.free();
                 }
             }
         }

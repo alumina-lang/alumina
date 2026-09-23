@@ -605,10 +605,11 @@ impl ConstEvaluator {
         if cached.is_some() {
             return Result::ok(cached.unwrap());
         }
-        // Fall back to evaluating the global's init expression
+        // Fall back to evaluating the global's init expression (of a
+        // constant: a static's value is not its initial one)
         for i in 0usize..self.ir_globals.len() {
             if self.ir_globals[i].id._value == target_id {
-                if self.ir_globals[i].init.is_some() {
+                if self.ir_globals[i].init.is_some() && self.ir_globals[i].is_const {
                     return self.eval(self.ir_globals[i].init.unwrap());
                 }
                 break;

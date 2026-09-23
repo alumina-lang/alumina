@@ -59,6 +59,8 @@ struct Pass1 {
     // The functions of the `impl` block being visited (one of a type's
     // blocks may shadow a function of another, with a warning).
     impl_fn_names: std::collections::HashSet<&[u8]>,
+    // The item whose attributes are being parsed (what lint levels apply to).
+    attr_owner: Node,
     // `impl` blocks (and their scopes), visited once all the items they may
     // be of are declared (an `impl` may come before its type).
     deferred_impls: Vector<(Node, u32)>,
@@ -78,6 +80,7 @@ impl Pass1 {
             impl_decl_end: 0,
             skip_item: false,
             impl_fn_names: std::collections::HashSet::new(),
+            attr_owner: std::mem::zeroed::<Node>(),
             deferred_impls: Vector::new(),
             visiting_deferred: false,
         }
@@ -94,7 +97,7 @@ impl Pass1 {
                 // its scope.)
             } else if item.kind.tag == NamedItemTag::Method && previous.kind.tag == NamedItemTag::Method
                 && !self.impl_fn_names.contains(&item.name) {
-                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_warning(item.span,
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(item.span, "duplicate_name_shadow",
                     std::fmt::format!("duplicate function name \"{}\" (this function will shadow a previous one)", item.name).unwrap().as_slice()));
             } else if self.ctx.scopes.get(self.current_scope).kind != ScopeKind::Block {
                 self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span,
@@ -186,6 +189,7 @@ impl Pass1 {
         if attr_node.is_none() {
             return &[];
         }
+        self.attr_owner = node;
         self.parse_attribute_list(attr_node.unwrap())
     }
 
@@ -373,7 +377,7 @@ impl Pass1 {
                 if val.is_none() {
                     self.ctx.error(meta, "invalid attribute");
                 } else if val.unwrap() == 1 {
-                    self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_warning(self.ctx.make_span(meta),
+                    self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(self.ctx.make_span(meta), "align1",
                         "`#[align(1)]` has no effect, did you mean to use `#[packed]`?"));
                 } else if val.unwrap() == 0 || (val.unwrap() & (val.unwrap() - 1)) != 0 {
                     self.ctx.error(meta, "invalid attribute (alignment must be a power of two)");
@@ -403,10 +407,20 @@ impl Pass1 {
             }
             // Lint levels and documentation attributes only affect
             // diagnostics and are not stored on items (as in alumina-boot).
-            "allow", "deny", "warn", "docs" => {}
+            "allow", "deny", "warn" => self.ctx.lint_level(meta, name, self.attr_owner),
+            "docs" => {}
+            "location", "obsolete", "diag::hide_from_backtrace" => attrs.push(Attribute::custom(self.ctx.intern_str(name))),
             // Anything else is a Custom attribute, so tools (and the
-            // `has_attribute` intrinsic) can find it by name.
-            _ => attrs.push(Attribute::custom(self.ctx.intern_str(name))),
+            // `has_attribute` intrinsic) can find it by name. Unless it is
+            // namespaced (`tool::name`), it is probably a mistake (as in
+            // alumina-boot).
+            _ => {
+                if !std::string::contains(name, "::") {
+                    self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(self.ctx.make_span(meta), "unknown_attribute",
+                        std::fmt::format!("unknown attribute `{}`", name).unwrap().as_slice()));
+                }
+                attrs.push(Attribute::custom(self.ctx.intern_str(name)));
+            }
         }
     }
 
@@ -423,7 +437,12 @@ impl Pass1 {
     fn visit_top_level_block_p1(self: &mut Pass1, node: Node) {
         // Check cfg attributes on top-level blocks
         let attr_node = child_by!(node, FieldKind::Attributes);
+        if attr_node.is_none() {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(self.ctx.make_span(node),
+                "top_level_block_without_attributes", "redundant top level block (no attributes)"));
+        }
         if attr_node.is_some() {
+            self.attr_owner = node;
             let _ = self.parse_attribute_list(attr_node.unwrap());
             if self.skip_item {
                 self.skip_item = false;
