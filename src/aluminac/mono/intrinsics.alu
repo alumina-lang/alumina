@@ -437,18 +437,23 @@ fn lower_type_name(m: &mut Mono, ir_type_args: &[&IrTy], named_only: bool) -> &I
     let type_str: &[u8] = "";
     if named_only {
         // Return the short name for named types, void for anonymous
-        if measured_ty.tag == IrTyTag::Struct {
-            type_str = measured_ty.struct_ref().name;
-        } else if measured_ty.tag == IrTyTag::Enum {
-            type_str = measured_ty.enum_ref().name;
-        } else if measured_ty.tag == IrTyTag::Fn {
-            // Named-function type (e.g. test.alu's `F: NamedFunction`).
-            // alumina-boot's type_name returns the function's short name.
-            let fn_ref = measured_ty.fn_item_ref();
-            let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
-            if def_opt.is_some() {
-                type_str = def_opt.unwrap().name;
+        switch measured_ty.tag {
+            IrTyTag::Struct => {
+                type_str = measured_ty.struct_ref().name;
             }
+            IrTyTag::Enum => {
+                type_str = measured_ty.enum_ref().name;
+            }
+            IrTyTag::Fn => {
+                // Named-function type (e.g. test.alu's `F: NamedFunction`).
+                // alumina-boot's type_name returns the function's short name.
+                let fn_ref = measured_ty.fn_item_ref();
+                let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
+                if def_opt.is_some() {
+                    type_str = def_opt.unwrap().name;
+                }
+            }
+            _ => {}
         }
         // For non-named types, return void instead of empty string
         if type_str.is_empty() {
@@ -481,16 +486,21 @@ fn lower_module_path(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     let fn_container: u32 = 0;
     if !ir_type_args.is_empty() {
         let t = ir_type_args[0];
-        if t.tag == IrTyTag::Struct {
-            scope_idx = t.struct_ref().scope_idx;
-        } else if t.tag == IrTyTag::Enum {
-            scope_idx = t.enum_ref().scope_idx;
-        } else if t.tag == IrTyTag::Fn {
-            let fn_ref = t.fn_item_ref();
-            let cont = m.ctx.scopes.find_fn_container_scope_by_id(fn_ref.id._value);
-            if cont.is_some() {
-                fn_container = cont.unwrap();
+        switch t.tag {
+            IrTyTag::Struct => {
+                scope_idx = t.struct_ref().scope_idx;
             }
+            IrTyTag::Enum => {
+                scope_idx = t.enum_ref().scope_idx;
+            }
+            IrTyTag::Fn => {
+                let fn_ref = t.fn_item_ref();
+                let cont = m.ctx.scopes.find_fn_container_scope_by_id(fn_ref.id._value);
+                if cont.is_some() {
+                    fn_container = cont.unwrap();
+                }
+            }
+            _ => {}
         }
     }
     let path: &[u8] = "";
@@ -529,16 +539,15 @@ fn lower_has_attribute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &Ir
         return m.mk_bool_lit(false);
     }
     let t = ir_type_args[0];
-    let attrs: &[Attribute] = if t.tag == IrTyTag::Fn {
-        let fn_ref = t.fn_item_ref();
-        let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
-        def_opt.map(|v: &FnDef| -> &[Attribute] { v.attributes }).unwrap_or(&[])
-    } else if t.tag == IrTyTag::Struct {
-        t.struct_ref().attributes
-    } else if t.tag == IrTyTag::Enum {
-        t.enum_ref().attributes
-    } else {
-        &[]
+    let attrs: &[Attribute] = switch t.tag {
+        IrTyTag::Fn => {
+            let fn_ref = t.fn_item_ref();
+            let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
+            def_opt.map(|v: &FnDef| -> &[Attribute] { v.attributes }).unwrap_or(&[])
+        }
+        IrTyTag::Struct => t.struct_ref().attributes,
+        IrTyTag::Enum => t.enum_ref().attributes,
+        _ => &[],
     };
     for i in 0usize..attrs.len() {
         if attrs[i].tag == AttrTag::Custom && attrs[i].str_val() == name {
@@ -623,17 +632,22 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
     let ir_tuple = m.lower_expr(expr.args()[1]);
 
     let n: usize = 0;
-    if ir_tuple.ty.tag == IrTyTag::Tuple {
-        n = ir_tuple.ty.elems().len();
-    } else if ir_tuple.ty.tag == IrTyTag::Struct {
-        // Non-trivial tuples may be lowered as anonymous structs.
-        n = ir_tuple.ty.struct_ref().fields.len();
-    } else if ir_tuple.ty.tag == IrTyTag::Void {
-        n = 0;
-    } else {
-        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
-            "tuple_invoke: second argument must be a tuple"));
-        return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+    switch ir_tuple.ty.tag {
+        IrTyTag::Tuple => {
+            n = ir_tuple.ty.elems().len();
+        }
+        IrTyTag::Struct => {
+            // Non-trivial tuples may be lowered as anonymous structs.
+            n = ir_tuple.ty.struct_ref().fields.len();
+        }
+        IrTyTag::Void => {
+            n = 0;
+        }
+        _ => {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+                "tuple_invoke: second argument must be a tuple"));
+            return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+        }
     }
 
     let split_args = m.ctx.arena.alloc_slice::<&IrExpr>(n);
@@ -646,50 +660,55 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
         split_args[i] = m.mk_field(ir_tuple, i as u32, elem_ty);
     }
 
-    if ir_callee.ty.tag == IrTyTag::Fn {
-        // Match on (id, mangled_name) and break — multiple monos of the
-        // same source fn share `id`. See the equivalent fix in
-        // mono/lower.alu's lower_call Fn/Closure return-type path.
-        let fn_ref = ir_callee.ty.fn_item_ref();
-        let ret_ty = m.ctx.void_ty;
-        for i in 0usize..m.ctx.ir_functions.len() {
-            if m.ctx.ir_functions[i].id._value == fn_ref.id._value
-                && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
-                ret_ty = m.ctx.ir_functions[i].return_type;
-                break;
+    switch ir_callee.ty.tag {
+        IrTyTag::Fn => {
+            // Match on (id, mangled_name) and break — multiple monos of the
+            // same source fn share `id`. See the equivalent fix in
+            // mono/lower.alu's lower_call Fn/Closure return-type path.
+            let fn_ref = ir_callee.ty.fn_item_ref();
+            let ret_ty = m.ctx.void_ty;
+            for i in 0usize..m.ctx.ir_functions.len() {
+                if m.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    ret_ty = m.ctx.ir_functions[i].return_type;
+                    break;
+                }
             }
+            return m.mk_call(fn_ref, split_args, ret_ty);
         }
-        return m.mk_call(fn_ref, split_args, ret_ty);
-    } else if ir_callee.ty.tag == IrTyTag::FnPointer {
-        let ret_ty = ir_callee.ty.ret_ty();
-        let result = IrExpr::void_expr(ret_ty);
-        result.tag = IrTag::Call;
-        result._data.call.call_target = IrCallTarget {
-            tag: CallKind::Indirect,
-            fn_ref: IrFnRef::empty(),
-            callee: ir_callee,
-        };
-        result._data.call.items = split_args;
-        return m.ctx.arena.alloc(result);
-    } else if ir_callee.ty.tag == IrTyTag::Closure {
-        let closure_ty = ir_callee.ty;
-        let fn_ref = closure_ty.closure_fn();
-        // Same (id, mangled_name) + break rule as above.
-        let ret_ty = m.ctx.void_ty;
-        for i in 0usize..m.ctx.ir_functions.len() {
-            if m.ctx.ir_functions[i].id._value == fn_ref.id._value
-                && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
-                ret_ty = m.ctx.ir_functions[i].return_type;
-                break;
+        IrTyTag::FnPointer => {
+            let ret_ty = ir_callee.ty.ret_ty();
+            let result = IrExpr::void_expr(ret_ty);
+            result.tag = IrTag::Call;
+            result._data.call.call_target = IrCallTarget {
+                tag: CallKind::Indirect,
+                fn_ref: IrFnRef::empty(),
+                callee: ir_callee,
+            };
+            result._data.call.items = split_args;
+            return m.ctx.arena.alloc(result);
+        }
+        IrTyTag::Closure => {
+            let closure_ty = ir_callee.ty;
+            let fn_ref = closure_ty.closure_fn();
+            // Same (id, mangled_name) + break rule as above.
+            let ret_ty = m.ctx.void_ty;
+            for i in 0usize..m.ctx.ir_functions.len() {
+                if m.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    ret_ty = m.ctx.ir_functions[i].return_type;
+                    break;
+                }
             }
+            let ref_expr = m.mk_ref(ir_callee, false);
+            let all_args = m.ctx.arena.alloc_slice::<&IrExpr>(n + 1usize);
+            all_args[0] = ref_expr;
+            for i in 0usize..n {
+                all_args[i + 1usize] = split_args[i];
+            }
+            return m.mk_call(fn_ref, all_args, ret_ty);
         }
-        let ref_expr = m.mk_ref(ir_callee, false);
-        let all_args = m.ctx.arena.alloc_slice::<&IrExpr>(n + 1usize);
-        all_args[0] = ref_expr;
-        for i in 0usize..n {
-            all_args[i + 1usize] = split_args[i];
-        }
-        return m.mk_call(fn_ref, all_args, ret_ty);
+        _ => {}
     }
 
     m.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));

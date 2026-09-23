@@ -2744,103 +2744,123 @@ impl ExprParser {
 
         // Use a tag-dispatched approach for expand to avoid accessor/setter overhead
         // and ensure correct union variant access
-        if e.tag == ExprTag::Binary {
-            e._data.binary.lhs = self.expand_macro_expr(e._data.binary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            e._data.binary.rhs = self.expand_macro_expr(e._data.binary.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::Unary {
-            e._data.unary.lhs = self.expand_macro_expr(e._data.unary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::Assign {
-            e._data.assign.lhs = self.expand_macro_expr(e._data.assign.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            e._data.assign.rhs = self.expand_macro_expr(e._data.assign.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::Call || e.tag == ExprTag::TurbofishValue {
-            if e._data.call.lhs as &void as usize != 0usize {
-                e._data.call.lhs = self.expand_macro_expr(e._data.call.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+        switch e.tag {
+            ExprTag::Binary => {
+                e._data.binary.lhs = self.expand_macro_expr(e._data.binary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                e._data.binary.rhs = self.expand_macro_expr(e._data.binary.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-            if !e._data.call.args.is_empty() {
-                e._data.call.args = self.expand_macro_args_list(e._data.call.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::Unary => {
+                e._data.unary.lhs = self.expand_macro_expr(e._data.unary.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-        } else if e.tag == ExprTag::FieldAccess {
-            e._data.field.lhs = self.expand_macro_expr(e._data.field.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::Index || e.tag == ExprTag::TupleIndex {
-            if e._data.index.lhs as &void as usize != 0usize {
-                e._data.index.lhs = self.expand_macro_expr(e._data.index.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::Assign => {
+                e._data.assign.lhs = self.expand_macro_expr(e._data.assign.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                e._data.assign.rhs = self.expand_macro_expr(e._data.assign.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-            if e._data.index.rhs as &void as usize != 0usize {
-                e._data.index.rhs = self.expand_macro_expr(e._data.index.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::Call, ExprTag::TurbofishValue => {
+                if e._data.call.lhs as &void as usize != 0usize {
+                    e._data.call.lhs = self.expand_macro_expr(e._data.call.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+                if !e._data.call.args.is_empty() {
+                    e._data.call.args = self.expand_macro_args_list(e._data.call.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
             }
-            if e._data.index.opt_expr.is_some() {
-                e._data.index.opt_expr = Option::some(self.expand_macro_expr(e._data.index.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            ExprTag::FieldAccess => {
+                e._data.field.lhs = self.expand_macro_expr(e._data.field.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-        } else if e.tag == ExprTag::Ref || e.tag == ExprTag::Deref || e.tag == ExprTag::Cast || e.tag == ExprTag::TypeCheck {
-            e._data.typed.lhs = self.expand_macro_expr(e._data.typed.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::If || e.tag == ExprTag::When {
-            e._data.cond.cond = self.expand_macro_expr(e._data.cond.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            e._data.cond.lhs = self.expand_macro_expr(e._data.cond.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            if e._data.cond.opt_expr.is_some() {
-                e._data.cond.opt_expr = Option::some(self.expand_macro_expr(e._data.cond.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+            ExprTag::Index, ExprTag::TupleIndex => {
+                if e._data.index.lhs as &void as usize != 0usize {
+                    e._data.index.lhs = self.expand_macro_expr(e._data.index.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+                if e._data.index.rhs as &void as usize != 0usize {
+                    e._data.index.rhs = self.expand_macro_expr(e._data.index.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+                if e._data.index.opt_expr.is_some() {
+                    e._data.index.opt_expr = Option::some(self.expand_macro_expr(e._data.index.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+                }
             }
-        } else if e.tag == ExprTag::Switch {
-            e._data.switch_expr.lhs = self.expand_macro_expr(e._data.switch_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            if !e._data.switch_expr.switch_arms.is_empty() {
-                let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e._data.switch_expr.switch_arms.len());
-                for i in 0usize..e._data.switch_expr.switch_arms.len() {
-                    let arm = e._data.switch_expr.switch_arms[i];
-                    let new_patterns = self.ctx.arena.alloc_slice::<&Expr>(arm.pattern.len());
-                    for j in 0usize..arm.pattern.len() {
-                        new_patterns[j] = self.expand_macro_expr(arm.pattern[j], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::Ref, ExprTag::Deref, ExprTag::Cast, ExprTag::TypeCheck => {
+                e._data.typed.lhs = self.expand_macro_expr(e._data.typed.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            ExprTag::If, ExprTag::When => {
+                e._data.cond.cond = self.expand_macro_expr(e._data.cond.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                e._data.cond.lhs = self.expand_macro_expr(e._data.cond.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                if e._data.cond.opt_expr.is_some() {
+                    e._data.cond.opt_expr = Option::some(self.expand_macro_expr(e._data.cond.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+                }
+            }
+            ExprTag::Switch => {
+                e._data.switch_expr.lhs = self.expand_macro_expr(e._data.switch_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                if !e._data.switch_expr.switch_arms.is_empty() {
+                    let new_arms = self.ctx.arena.alloc_slice::<SwitchArm>(e._data.switch_expr.switch_arms.len());
+                    for i in 0usize..e._data.switch_expr.switch_arms.len() {
+                        let arm = e._data.switch_expr.switch_arms[i];
+                        let new_patterns = self.ctx.arena.alloc_slice::<&Expr>(arm.pattern.len());
+                        for j in 0usize..arm.pattern.len() {
+                            new_patterns[j] = self.expand_macro_expr(arm.pattern[j], param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                        }
+                        new_arms[i] = SwitchArm {
+                            pattern: new_patterns,
+                            body: self.expand_macro_expr(arm.body, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                        };
                     }
-                    new_arms[i] = SwitchArm {
-                        pattern: new_patterns,
-                        body: self.expand_macro_expr(arm.body, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
-                    };
+                    e._data.switch_expr.switch_arms = new_arms;
                 }
-                e._data.switch_expr.switch_arms = new_arms;
             }
-        } else if e.tag == ExprTag::While || e.tag == ExprTag::Loop {
-            if e._data.loop_expr.cond as &void as usize != 0usize {
-                e._data.loop_expr.cond = self.expand_macro_expr(e._data.loop_expr.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            }
-            e._data.loop_expr.lhs = self.expand_macro_expr(e._data.loop_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::For || e.tag == ExprTag::StaticFor {
-            e._data.for_expr.lhs = self.expand_macro_expr(e._data.for_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            e._data.for_expr.rhs = self.expand_macro_expr(e._data.for_expr.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            if !e._data.for_expr.args.is_empty() {
-                e._data.for_expr.args = self.expand_macro_args_list(e._data.for_expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-            }
-        } else if e.tag == ExprTag::Break || e.tag == ExprTag::Return || e.tag == ExprTag::Yield {
-            if e._data.jump.opt_expr.is_some() {
-                e._data.jump.opt_expr = Option::some(self.expand_macro_expr(e._data.jump.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
-            }
-        } else if e.tag == ExprTag::Let {
-            if e._data.let_expr.opt_expr.is_some() {
-                e._data.let_expr.opt_expr = Option::some(self.expand_macro_expr(e._data.let_expr.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
-            }
-        } else if e.tag == ExprTag::StructLit {
-            if !e._data.struct_lit.field_inits.is_empty() {
-                let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e._data.struct_lit.field_inits.len());
-                for i in 0usize..e._data.struct_lit.field_inits.len() {
-                    new_inits[i] = FieldInit {
-                        name: e._data.struct_lit.field_inits[i].name,
-                        value: self.expand_macro_expr(e._data.struct_lit.field_inits[i].value, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
-                    };
+            ExprTag::While, ExprTag::Loop => {
+                if e._data.loop_expr.cond as &void as usize != 0usize {
+                    e._data.loop_expr.cond = self.expand_macro_expr(e._data.loop_expr.cond, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
                 }
-                e._data.struct_lit.field_inits = new_inits;
+                e._data.loop_expr.lhs = self.expand_macro_expr(e._data.loop_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-        } else if e.tag == ExprTag::TupleLit || e.tag == ExprTag::ArrayLit || e.tag == ExprTag::Block {
-            if !e._data.list.args.is_empty() {
-                e._data.list.args = self.expand_macro_args_list(e._data.list.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::For, ExprTag::StaticFor => {
+                e._data.for_expr.lhs = self.expand_macro_expr(e._data.for_expr.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                e._data.for_expr.rhs = self.expand_macro_expr(e._data.for_expr.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                if !e._data.for_expr.args.is_empty() {
+                    e._data.for_expr.args = self.expand_macro_args_list(e._data.for_expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
             }
-        } else if e.tag == ExprTag::Lambda {
-            e._data.lambda.lhs = self.expand_macro_expr(e._data.lambda.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
-        } else if e.tag == ExprTag::Range {
-            if e._data.range.lhs as &void as usize != 0usize {
-                e._data.range.lhs = self.expand_macro_expr(e._data.range.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::Break, ExprTag::Return, ExprTag::Yield => {
+                if e._data.jump.opt_expr.is_some() {
+                    e._data.jump.opt_expr = Option::some(self.expand_macro_expr(e._data.jump.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+                }
             }
-            if e._data.range.rhs as &void as usize != 0usize {
-                e._data.range.rhs = self.expand_macro_expr(e._data.range.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::Let => {
+                if e._data.let_expr.opt_expr.is_some() {
+                    e._data.let_expr.opt_expr = Option::some(self.expand_macro_expr(e._data.let_expr.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
+                }
             }
-        } else if e.tag == ExprTag::Defer || e.tag == ExprTag::EtCetera || e.tag == ExprTag::MacroEtCetera {
-            e._data.defer.lhs = self.expand_macro_expr(e._data.defer.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            ExprTag::StructLit => {
+                if !e._data.struct_lit.field_inits.is_empty() {
+                    let new_inits = self.ctx.arena.alloc_slice::<FieldInit>(e._data.struct_lit.field_inits.len());
+                    for i in 0usize..e._data.struct_lit.field_inits.len() {
+                        new_inits[i] = FieldInit {
+                            name: e._data.struct_lit.field_inits[i].name,
+                            value: self.expand_macro_expr(e._data.struct_lit.field_inits[i].value, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map),
+                        };
+                    }
+                    e._data.struct_lit.field_inits = new_inits;
+                }
+            }
+            ExprTag::TupleLit, ExprTag::ArrayLit, ExprTag::Block => {
+                if !e._data.list.args.is_empty() {
+                    e._data.list.args = self.expand_macro_args_list(e._data.list.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+            }
+            ExprTag::Lambda => {
+                e._data.lambda.lhs = self.expand_macro_expr(e._data.lambda.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            ExprTag::Range => {
+                if e._data.range.lhs as &void as usize != 0usize {
+                    e._data.range.lhs = self.expand_macro_expr(e._data.range.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+                if e._data.range.rhs as &void as usize != 0usize {
+                    e._data.range.rhs = self.expand_macro_expr(e._data.range.rhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+                }
+            }
+            ExprTag::Defer, ExprTag::EtCetera, ExprTag::MacroEtCetera => {
+                e._data.defer.lhs = self.expand_macro_expr(e._data.defer.lhs, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
+            }
+            _ => {}
         }
 
         // Expand lambda params (their types use Ty, not Expr - skip for now)

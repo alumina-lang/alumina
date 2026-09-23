@@ -557,52 +557,55 @@ impl FnCodegen {
 
             // Check if base is a pointer or array
             let lhs_ty = expr.lhs().ty;
-            if lhs_ty.tag == IrTyTag::Array {
-                let base_ptr = self.gen_lvalue(expr.lhs());
-                let arr_ty = self.ctx.llvm_type(lhs_ty);
-                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
-                indices[0] = LLVMConstInt(self.ctx.i64_type, 0u64, 0i32);
-                indices[1] = index_val;
-                let elem_ptr = LLVMBuildInBoundsGEP2(
-                    self.ctx.builder, arr_ty, base_ptr,
-                    &indices[0], 2, self.temp_cname()
-                );
-                LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
-            } else if lhs_ty.tag == IrTyTag::Pointer {
-                // Bitcast i8* to elem_ty* for correct GEP
-                let typed_ptr = LLVMBuildBitCast(
-                    self.ctx.builder, base_val,
-                    LLVMPointerType(elem_ty, 0),
-                    self.temp_cname()
-                );
-                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
-                indices[0] = index_val;
-                let elem_ptr = LLVMBuildInBoundsGEP2(
-                    self.ctx.builder, elem_ty, typed_ptr,
-                    &indices[0], 1, self.temp_cname()
-                );
-                LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
-            } else if lhs_ty.tag == IrTyTag::Slice {
-                // Slice indexing: extract data pointer, then GEP
-                let slice_llvm = self.ctx.llvm_type(lhs_ty);
-                let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
-                LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
-                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
-                let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
-                let typed_ptr = LLVMBuildBitCast(
-                    self.ctx.builder, data_ptr,
-                    LLVMPointerType(elem_ty, 0),
-                    self.temp_cname()
-                );
-                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
-                indices[0] = index_val;
-                let elem_ptr = LLVMBuildInBoundsGEP2(
-                    self.ctx.builder, elem_ty, typed_ptr,
-                    &indices[0], 1, self.temp_cname()
-                );
-                LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
-            } else {
-                LLVMGetUndef(elem_ty)
+            switch lhs_ty.tag {
+                IrTyTag::Array => {
+                    let base_ptr = self.gen_lvalue(expr.lhs());
+                    let arr_ty = self.ctx.llvm_type(lhs_ty);
+                    let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
+                    indices[0] = LLVMConstInt(self.ctx.i64_type, 0u64, 0i32);
+                    indices[1] = index_val;
+                    let elem_ptr = LLVMBuildInBoundsGEP2(
+                        self.ctx.builder, arr_ty, base_ptr,
+                        &indices[0], 2, self.temp_cname()
+                    );
+                    LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
+                }
+                IrTyTag::Pointer => {
+                    // Bitcast i8* to elem_ty* for correct GEP
+                    let typed_ptr = LLVMBuildBitCast(
+                        self.ctx.builder, base_val,
+                        LLVMPointerType(elem_ty, 0),
+                        self.temp_cname()
+                    );
+                    let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+                    indices[0] = index_val;
+                    let elem_ptr = LLVMBuildInBoundsGEP2(
+                        self.ctx.builder, elem_ty, typed_ptr,
+                        &indices[0], 1, self.temp_cname()
+                    );
+                    LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
+                }
+                IrTyTag::Slice => {
+                    // Slice indexing: extract data pointer, then GEP
+                    let slice_llvm = self.ctx.llvm_type(lhs_ty);
+                    let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
+                    LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
+                    let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
+                    let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
+                    let typed_ptr = LLVMBuildBitCast(
+                        self.ctx.builder, data_ptr,
+                        LLVMPointerType(elem_ty, 0),
+                        self.temp_cname()
+                    );
+                    let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+                    indices[0] = index_val;
+                    let elem_ptr = LLVMBuildInBoundsGEP2(
+                        self.ctx.builder, elem_ty, typed_ptr,
+                        &indices[0], 1, self.temp_cname()
+                    );
+                    LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
+                }
+                _ => LLVMGetUndef(elem_ty),
             }
         }
         IrTag::Ref => {
@@ -1182,51 +1185,54 @@ impl FnCodegen {
                 index_val
             };
             let lhs_ty = expr.lhs().ty;
-            if lhs_ty.tag == IrTyTag::Array {
-                let base_ptr = self.gen_lvalue(expr.lhs());
-                let arr_ty = self.ctx.llvm_type(lhs_ty);
-                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
-                indices[0] = LLVMConstInt(self.ctx.i64_type, 0u64, 0i32);
-                indices[1] = safe_index;
-                LLVMBuildInBoundsGEP2(
-                    self.ctx.builder, arr_ty, base_ptr,
-                    &indices[0], 2, self.temp_cname()
-                )
-            } else if lhs_ty.tag == IrTyTag::Pointer {
-                let base_val = self.gen_expr(expr.lhs());
-                let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
-                // Protect against void element type
-                let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
-                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
-                indices[0] = safe_index;
-                LLVMBuildInBoundsGEP2(
-                    self.ctx.builder, safe_elem, base_val,
-                    &indices[0], 1, self.temp_cname()
-                )
-            } else if lhs_ty.tag == IrTyTag::Slice {
-                // Slice lvalue indexing: extract data pointer, then GEP
-                let base_val = self.gen_expr(expr.lhs());
-                let slice_llvm = self.ctx.llvm_type(lhs_ty);
-                let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
-                // Protect against void element type
-                let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
-                let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
-                LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
-                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
-                let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
-                let typed_ptr = LLVMBuildBitCast(
-                    self.ctx.builder, data_ptr,
-                    LLVMPointerType(safe_elem, 0),
-                    self.temp_cname()
-                );
-                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
-                indices[0] = safe_index;
-                LLVMBuildInBoundsGEP2(
-                    self.ctx.builder, safe_elem, typed_ptr,
-                    &indices[0], 1, self.temp_cname()
-                )
-            } else {
-                LLVMGetUndef(self.ctx.ptr_type)
+            switch lhs_ty.tag {
+                IrTyTag::Array => {
+                    let base_ptr = self.gen_lvalue(expr.lhs());
+                    let arr_ty = self.ctx.llvm_type(lhs_ty);
+                    let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
+                    indices[0] = LLVMConstInt(self.ctx.i64_type, 0u64, 0i32);
+                    indices[1] = safe_index;
+                    LLVMBuildInBoundsGEP2(
+                        self.ctx.builder, arr_ty, base_ptr,
+                        &indices[0], 2, self.temp_cname()
+                    )
+                }
+                IrTyTag::Pointer => {
+                    let base_val = self.gen_expr(expr.lhs());
+                    let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
+                    // Protect against void element type
+                    let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
+                    let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+                    indices[0] = safe_index;
+                    LLVMBuildInBoundsGEP2(
+                        self.ctx.builder, safe_elem, base_val,
+                        &indices[0], 1, self.temp_cname()
+                    )
+                }
+                IrTyTag::Slice => {
+                    // Slice lvalue indexing: extract data pointer, then GEP
+                    let base_val = self.gen_expr(expr.lhs());
+                    let slice_llvm = self.ctx.llvm_type(lhs_ty);
+                    let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
+                    // Protect against void element type
+                    let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
+                    let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
+                    LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
+                    let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
+                    let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
+                    let typed_ptr = LLVMBuildBitCast(
+                        self.ctx.builder, data_ptr,
+                        LLVMPointerType(safe_elem, 0),
+                        self.temp_cname()
+                    );
+                    let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+                    indices[0] = safe_index;
+                    LLVMBuildInBoundsGEP2(
+                        self.ctx.builder, safe_elem, typed_ptr,
+                        &indices[0], 1, self.temp_cname()
+                    )
+                }
+                _ => LLVMGetUndef(self.ctx.ptr_type),
             }
         }
         IrTag::GlobalRef => {
@@ -1842,12 +1848,10 @@ impl FnCodegen {
         let src_val = self.gen_expr(inner);
         let src_ty = inner.ty;
         let dst_llvm = self.ctx.llvm_type(target_ty);
-        let src_is_int = if src_ty.tag == IrTyTag::Builtin {
-            src_ty.builtin().is_integer() || src_ty.builtin() == BuiltinType::Bool
-        } else if src_ty.tag == IrTyTag::Enum {
-            true
-        } else {
-            false
+        let src_is_int = switch src_ty.tag {
+            IrTyTag::Builtin => src_ty.builtin().is_integer() || src_ty.builtin() == BuiltinType::Bool,
+            IrTyTag::Enum => true,
+            _ => false,
         };
         let src_is_float = if src_ty.tag == IrTyTag::Builtin {
             src_ty.builtin().is_float()
@@ -1861,12 +1865,10 @@ impl FnCodegen {
             false
         };
 
-        let dst_is_int = if target_ty.tag == IrTyTag::Builtin {
-            target_ty.builtin().is_integer() || target_ty.builtin() == BuiltinType::Bool
-        } else if target_ty.tag == IrTyTag::Enum {
-            true
-        } else {
-            false
+        let dst_is_int = switch target_ty.tag {
+            IrTyTag::Builtin => target_ty.builtin().is_integer() || target_ty.builtin() == BuiltinType::Bool,
+            IrTyTag::Enum => true,
+            _ => false,
         };
         let dst_is_float = if target_ty.tag == IrTyTag::Builtin {
             target_ty.builtin().is_float()

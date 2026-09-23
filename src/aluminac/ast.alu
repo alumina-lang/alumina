@@ -655,28 +655,23 @@ impl Expr {
     fn bool_val(self: &Expr) -> bool { self._data.lit.bool_val }
 
     fn str_val(self: &Expr) -> &[u8] {
-        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::NullLit {
-            self._data.lit.str_val
-        } else if self.tag == ExprTag::FieldAccess {
-            self._data.field.str_val
-        } else if self.tag == ExprTag::Let {
-            self._data.let_expr.str_val
-        } else if self.tag == ExprTag::MacroInvocation || self.tag == ExprTag::EtCetera {
-            self._data.macro_expr.str_val
-        } else {
-            self._data.id_ref.str_val  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam
+        switch self.tag {
+            ExprTag::IntLit, ExprTag::FloatLit, ExprTag::BoolLit, ExprTag::StringLit, ExprTag::NullLit => {
+                self._data.lit.str_val
+            }
+            ExprTag::FieldAccess => self._data.field.str_val,
+            ExprTag::Let => self._data.let_expr.str_val,
+            ExprTag::MacroInvocation, ExprTag::EtCetera => self._data.macro_expr.str_val,
+            _ => self._data.id_ref.str_val  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam,
         }
     }
 
     fn id(self: &Expr) -> Id {
-        if self.tag == ExprTag::For || self.tag == ExprTag::StaticFor {
-            self._data.for_expr.id
-        } else if self.tag == ExprTag::Let {
-            self._data.let_expr.id
-        } else if self.tag == ExprTag::Lambda {
-            self._data.lambda.id
-        } else {
-            self._data.id_ref.id  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam
+        switch self.tag {
+            ExprTag::For, ExprTag::StaticFor => self._data.for_expr.id,
+            ExprTag::Let => self._data.let_expr.id,
+            ExprTag::Lambda => self._data.lambda.id,
+            _ => self._data.id_ref.id  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam,
         }
     }
 

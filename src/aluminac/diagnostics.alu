@@ -5,27 +5,6 @@ use std::collections::Vector;
 use std::fmt::write;
 use std::io::StdioStream;
 
-struct _StderrFmt {}
-
-impl _StderrFmt {
-    fn new() -> _StderrFmt { _StderrFmt {} }
-
-    fn write_str(self: &mut _StderrFmt, buf: &[u8]) -> std::fmt::Result {
-        if buf.len() > 0usize {
-            let stderr = StdioStream::stderr();
-            let _ = stderr.write(buf);
-        }
-        std::result::Result::ok(())
-    }
-
-    fn write_byte(self: &mut _StderrFmt, byte: u8) -> std::fmt::Result {
-        let one = [byte];
-        let stderr = StdioStream::stderr();
-        let _ = stderr.write(one[..]);
-        std::result::Result::ok(())
-    }
-}
-
 enum DiagLevel {
     Error,
     Warning,
@@ -498,7 +477,12 @@ impl DiagnosticContext {
     }
 
     fn emit_all(self: &DiagnosticContext) {
-        let f = _StderrFmt::new();
+        let stderr = StdioStream::stderr();
+        let f = std::io::BufferedWriter::new(&stderr, 4096);
+        defer {
+            let _ = f.flush();
+            f.free();
+        };
         // Dedup adjacent identical diagnostics by (kind, span). The mono
         // pass can re-emit the same error if a generic instantiates twice
         // with the same shape — only show it once.
@@ -548,7 +532,7 @@ impl DiagnosticContext {
                     _ => false,
                 };
                 if render_snippet {
-                    self.render_source_snippet(&f, file, diag.span, line, col);
+                    let _ = self.render_source_snippet(&f, file, diag.span, line, col);
                 }
             }
             // The macro invocations the code comes from, innermost first.
@@ -580,21 +564,19 @@ impl DiagnosticContext {
     ///
     /// Multi-line spans render only the first line and elide the rest with
     /// `...`. Lines longer than MAX_SNIPPET_COLS are truncated.
-    fn render_source_snippet(
+    fn render_source_snippet<F: std::fmt::Formatter<F>>(
         self: &DiagnosticContext,
-        f: &mut _StderrFmt,
+        f: &mut F,
         file: &SourceFile,
         span: ast::Span,
         line: u32,
         col: u32,
-    ) {
-        let MAX_SNIPPET_COLS: u32 = 200u32;
-        // Find the line bytes via line_starts. `line` is 1-based; the line's
-        // start offset is line_starts[line-1], and its end is line_starts[line]
-        // (or contents.len() for the last line). Excludes the trailing newline.
+    ) -> std::fmt::Result {
+        let MAX_SNIPPET_COLS: usize = 200;
+        // The line (`line` is 1-based), without its line break.
         let line_idx = (line - 1u32) as usize;
         if line_idx >= file.line_starts.len() {
-            return;
+            return std::fmt::Result::ok(());
         }
         let start_off = file.line_starts[line_idx] as usize;
         let end_off = if line_idx + 1 < file.line_starts.len() {
@@ -602,57 +584,29 @@ impl DiagnosticContext {
         } else {
             file.contents.len()
         };
-        // Trim trailing \n / \r so we don't double-newline the output.
-        while end_off > start_off
-            && (file.contents[end_off - 1] == '\n' || file.contents[end_off - 1] == '\r') {
-            end_off = end_off - 1;
+        while end_off > start_off && (file.contents[end_off - 1] == '\n' || file.contents[end_off - 1] == '\r') {
+            end_off -= 1;
         }
-
         let line_bytes = file.contents[start_off..end_off];
-        let truncated = false;
-        if line_bytes.len() > MAX_SNIPPET_COLS as usize {
-            line_bytes = line_bytes[0usize..MAX_SNIPPET_COLS as usize];
-            truncated = true;
-        }
-
-        // Compute the line-number gutter width (digits in line number).
-        let gutter_width = count_digits(line);
-
-        // Top spacer line:  "    |"
-        let _ = f.write_str("\n");
-        write_spaces(f, gutter_width + 1u32);
-        let _ = f.write_str("|");
-
-        // Source line:     " 76 | <source>"
-        let _ = f.write_str("\n ");
-        let _ = write!(f, "{}", line);
-        let _ = f.write_str(" | ");
-        let _ = f.write_str(line_bytes);
+        let truncated = line_bytes.len() > MAX_SNIPPET_COLS;
         if truncated {
-            let _ = f.write_str(" ...");
+            line_bytes = line_bytes[..MAX_SNIPPET_COLS];
         }
 
-        // Caret line:      "    |     ^^^^^"
-        // Caret starts at (col - 1) bytes into the source. Caret length =
-        // min(span_length, remaining_line_bytes). At least 1 character.
-        let _ = f.write_str("\n");
-        write_spaces(f, gutter_width + 1u32);
-        let _ = f.write_str("| ");
-        // Column padding: col is 1-based; we want (col - 1) leading spaces.
-        write_spaces(f, col - 1u32);
+        // The caret starts at column `col` (1-based) and covers the span (on
+        // this line, at least one character).
+        let indent = (col - 1u32) as usize;
         let span_len = if span.end > span.start { (span.end - span.start) as usize } else { 1usize };
-        let line_remaining = if line_bytes.len() > (col - 1u32) as usize {
-            line_bytes.len() - (col - 1u32) as usize
-        } else {
-            1usize
-        };
-        let caret_len = if span_len < line_remaining { span_len } else { line_remaining };
-        if caret_len == 0usize { caret_len = 1usize; }
-        let j: usize = 0;
-        while j < caret_len {
-            let _ = f.write_byte('^');
-            j = j + 1;
-        }
+        let line_remaining = if line_bytes.len() > indent { line_bytes.len() - indent } else { 1usize };
+        let caret_len = std::cmp::max(std::cmp::min(span_len, line_remaining), 1usize);
+
+        //     |
+        //  76 | buf.free();
+        //     | ^^^^^^^^^^
+        let gutter = std::fmt::repeat(" ", count_digits(line) as usize + 1);
+        write!(f, "\n{}|\n {} | {}{}\n{}| {}{}",
+            gutter, line, line_bytes, if truncated { " ..." } else { "" },
+            gutter, std::fmt::repeat(" ", indent), std::fmt::repeat("^", caret_len))
     }
 
     fn free(self: &mut DiagnosticContext) {
@@ -672,10 +626,3 @@ fn count_digits(n: u32) -> u32 {
     count
 }
 
-fn write_spaces(f: &mut _StderrFmt, n: u32) {
-    let i: u32 = 0;
-    while i < n {
-        let _ = f.write_byte(' ');
-        i = i + 1u32;
-    }
-}
