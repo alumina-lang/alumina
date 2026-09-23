@@ -1759,14 +1759,24 @@ impl Mono {
             ExprTag::Binary, ExprTag::Unary, ExprTag::Assign =>
                 self.lower_binop(expr),
             ExprTag::When => self.lower_when(expr),
-            ExprTag::If, ExprTag::While, ExprTag::Loop, ExprTag::For,
-            ExprTag::Switch, ExprTag::Break, ExprTag::Continue, ExprTag::Return =>
-                self.lower_control_flow(expr),
+            ExprTag::If => self.lower_if(expr),
+            ExprTag::While => self.lower_while(expr),
+            ExprTag::Loop => self.lower_loop(expr),
+            ExprTag::For => self.lower_for(expr),
+            ExprTag::Switch => self.lower_switch(expr),
+            ExprTag::Break => self.lower_break(expr),
+            ExprTag::Continue => self.lower_continue(expr),
+            ExprTag::Return => self.lower_return(expr),
             ExprTag::Yield => self.lower_yield(expr),
-            ExprTag::Ref, ExprTag::Deref, ExprTag::FieldAccess,
-            ExprTag::TupleIndex, ExprTag::Index, ExprTag::Cast, ExprTag::TypeCheck =>
-                self.lower_memory(expr),
-            ExprTag::Call, ExprTag::StructLit, ExprTag::TurbofishValue => {
+            ExprTag::Ref => self.lower_ref(expr),
+            ExprTag::Deref => self.lower_deref(expr),
+            ExprTag::FieldAccess => self.lower_field_access(expr),
+            ExprTag::TupleIndex => self.lower_tuple_index(expr),
+            ExprTag::Index => self.lower_index(expr),
+            ExprTag::Cast => self.lower_cast(expr),
+            ExprTag::TypeCheck => self.lower_type_check(expr),
+            ExprTag::StructLit => self.lower_struct_lit(expr),
+            ExprTag::Call, ExprTag::TurbofishValue => {
                 let call = self.lower_call(expr);
                 if expr.tag == ExprTag::Call && call.tag == IrTag::Call {
                     self.check_arg_count(call, expr);
@@ -1783,8 +1793,9 @@ impl Mono {
                 }
                 call
             }
-            ExprTag::Block, ExprTag::Let, ExprTag::Defer =>
-                self.lower_block(expr),
+            ExprTag::Block => self.lower_block(expr),
+            ExprTag::Let => self.lower_let(expr),
+            ExprTag::Defer => self.lower_defer(expr),
             ExprTag::TupleLit => self.lower_tuple_lit(expr),
             ExprTag::EtCetera, ExprTag::MacroEtCetera => {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "... can only be used inside a tuple"));
@@ -2547,7 +2558,7 @@ impl Mono {
             //                  H is method-only, can't be derived from
             //                  receiver — leave a void slot for inference
             //                  to fill in from the hasher arg).
-            let elem_ty = self.slice_elem_ty(ty);
+            let elem_ty = ty.inner();
             let ptr_ty = self.ctx.make_ptr_ty(elem_ty, ty.is_const());
             if def.generic_params.len() == 3 {
                 let ta = self.ctx.arena.alloc_slice::<&IrTy>(3);
@@ -2664,7 +2675,7 @@ impl Mono {
             // slice methods like `Self::equals(...)` in mem.alu's
             // protocol-method bodies left T/Ptr unbound and downstream
             // `*lhs._ptr` -> void.
-            let elem_ty = self.slice_elem_ty(concrete_ty);
+            let elem_ty = concrete_ty.inner();
             let ptr_ty = self.ctx.make_ptr_ty(elem_ty, concrete_ty.is_const());
             if def.generic_params.len() == 3 {
                 let ta = self.ctx.arena.alloc_slice::<&IrTy>(3);
@@ -2943,7 +2954,7 @@ impl Mono {
     /// arm order):
     ///     { let _switch = value; if _switch == p1 || _switch == p2 { a1 } else if ... else { default } }
     /// A missing default arm is `()`, and the arms must agree on a type.
-    fn lower_switch(self: &mut Mono, ir_value: &IrExpr, arms: &[SwitchArm], span: Span) -> &IrExpr {
+    fn lower_switch_arms(self: &mut Mono, ir_value: &IrExpr, arms: &[SwitchArm], span: Span) -> &IrExpr {
         // Evaluate the value once.
         let tmp_id = self.ctx.id_gen.next_id();
         self.local_defs.push(IrLocalDef { id: tmp_id, ty: ir_value.ty, name: "_switch", span: Span::empty() });
@@ -3432,311 +3443,297 @@ impl Mono {
         }
     }
 
-    // Lower control flow: ExprTag::If, ExprTag::While, ExprTag::Loop, ExprTag::For, ExprTag::Switch, ExprTag::Break, ExprTag::Continue, ExprTag::Return
-    fn lower_control_flow(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        switch expr.tag {
-            ExprTag::If => {
-                let ir_cond = self.lower_expr(expr.cond());
-                self.check_condition(ir_cond, expr.span, false);
+    fn lower_if(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_cond = self.lower_expr(expr.cond());
+        self.check_condition(ir_cond, expr.span, false);
 
-                // If the if is in an rvalue position with a known expected_type
-                // (e.g. `let p: &dyn Foo = if cond { &Quux{} } else { &Frob{} };`),
-                // propagate that expectation into both arms so each arm's value
-                // gets coerced individually. Without this, the arms unify on the
-                // "most structured" type (often the first arm's, e.g. `&Quux`),
-                // and the else-arm's `&Frob` gets misdispatched. Particularly
-                // load-bearing for dyn coercion where each arm needs its own
-                // vtable.
-                let outer_expected = self.expected_type;
-                let propagate = !outer_expected.is_void()
-                    && !outer_expected.is_never()
-                    && outer_expected.tag == IrTyTag::Struct
-                    && {
-                        let dyn_id = self.ctx.get_lang_item("dyn");
-                        dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
-                    };
+        // If the if is in an rvalue position with a known expected_type
+        // (e.g. `let p: &dyn Foo = if cond { &Quux{} } else { &Frob{} };`),
+        // propagate that expectation into both arms so each arm's value
+        // gets coerced individually. Without this, the arms unify on the
+        // "most structured" type (often the first arm's, e.g. `&Quux`),
+        // and the else-arm's `&Frob` gets misdispatched. Particularly
+        // load-bearing for dyn coercion where each arm needs its own
+        // vtable.
+        let outer_expected = self.expected_type;
+        let propagate = !outer_expected.is_void()
+            && !outer_expected.is_never()
+            && outer_expected.tag == IrTyTag::Struct
+            && {
+                let dyn_id = self.ctx.get_lang_item("dyn");
+                dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
+            };
 
-                // Both branches get the if's hint; lacking one, the else branch
-                // gets the then branch's type (as in alumina-boot).
-                let ir_then = if propagate {
-                    self.lower_expr_coerced(expr.lhs(), outer_expected)
-                } else {
-                    self.lower_expr_hinted(expr.lhs(), outer_expected)
-                };
-                let ir_else: Option<&IrExpr> = if expr.opt_expr().is_some() {
-                    let else_expr = expr.opt_expr().unwrap();
-                    let else_result = if propagate {
-                        self.lower_expr_coerced(else_expr, outer_expected)
-                    } else if !outer_expected.is_void() || ir_then.ty.is_never() {
-                        self.lower_expr_hinted(else_expr, outer_expected)
-                    } else {
-                        self.lower_expr_hinted(else_expr, ir_then.ty)
-                    };
-                    Option::some(else_result)
-                } else {
-                    Option::none()
-                };
-                // The branches must agree on a type; a missing else is `()`.
-                let branches: [&IrExpr; 2] = [ir_then, ir_else.unwrap_or(self.mk_void())];
-                let result_ty = self.unify_branches(&branches, outer_expected, expr.span, if ir_else.is_some() {
-                    ""
-                } else {
-                    "an `if` without `else` has type `()`"
-                });
-                ir_then = branches[0];
-                if ir_else.is_some() {
-                    ir_else = Option::some(branches[1]);
-                }
-                let result = IrExpr::void_expr(result_ty);
-                result.tag = IrTag::If;
-                result._data.if_data.cond = ir_cond;
-                result._data.if_data.lhs = ir_then;
-                result._data.if_data.opt_expr = ir_else;
-                // (Only the branch taken at run time is compiled, if known.)
-                let at_run_time: Option<bool> = if self.tentative { Option::none() } else { self.try_bool_at_run_time(ir_cond) };
-                result._data.if_data.run_time_cond = if at_run_time.is_none() { 0u8 } else if at_run_time.unwrap() { 2u8 } else { 1u8 };
-                self.ctx.arena.alloc(result)
+        // Both branches get the if's hint; lacking one, the else branch
+        // gets the then branch's type (as in alumina-boot).
+        let ir_then = if propagate {
+            self.lower_expr_coerced(expr.lhs(), outer_expected)
+        } else {
+            self.lower_expr_hinted(expr.lhs(), outer_expected)
+        };
+        let ir_else: Option<&IrExpr> = if expr.opt_expr().is_some() {
+            let else_expr = expr.opt_expr().unwrap();
+            let else_result = if propagate {
+                self.lower_expr_coerced(else_expr, outer_expected)
+            } else if !outer_expected.is_void() || ir_then.ty.is_never() {
+                self.lower_expr_hinted(else_expr, outer_expected)
+            } else {
+                self.lower_expr_hinted(else_expr, ir_then.ty)
+            };
+            Option::some(else_result)
+        } else {
+            Option::none()
+        };
+        // The branches must agree on a type; a missing else is `()`.
+        let branches: [&IrExpr; 2] = [ir_then, ir_else.unwrap_or(self.mk_void())];
+        let result_ty = self.unify_branches(&branches, outer_expected, expr.span, if ir_else.is_some() {
+            ""
+        } else {
+            "an `if` without `else` has type `()`"
+        });
+        ir_then = branches[0];
+        if ir_else.is_some() {
+            ir_else = Option::some(branches[1]);
+        }
+        let result = IrExpr::void_expr(result_ty);
+        result.tag = IrTag::If;
+        result._data.if_data.cond = ir_cond;
+        result._data.if_data.lhs = ir_then;
+        result._data.if_data.opt_expr = ir_else;
+        // (Only the branch taken at run time is compiled, if known.)
+        let at_run_time: Option<bool> = if self.tentative { Option::none() } else { self.try_bool_at_run_time(ir_cond) };
+        result._data.if_data.run_time_cond = if at_run_time.is_none() { 0u8 } else if at_run_time.unwrap() { 2u8 } else { 1u8 };
+        self.ctx.arena.alloc(result)
+    }
+
+    fn lower_while(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_cond = self.lower_expr(expr.cond());
+        self.check_condition(ir_cond, expr.span, true);
+        let ir_body = self.lower_loop_body(expr.lhs());
+        let result = IrExpr::void_expr(self.ctx.void_ty);
+        result.tag = IrTag::While;
+        result._data.if_data.cond = ir_cond;
+        result._data.if_data.lhs = ir_body;
+        self.ctx.arena.alloc(result)
+    }
+
+    fn lower_loop(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // `loop { break value; }` produces `value` as the loop's
+        // result. To support that without restructuring the IR's
+        // Loop node, we allocate a fresh local that each `break
+        // value;` assigns into, then wrap the loop in a block whose
+        // trailing expression loads that local. Mirrors alumina-boot's
+        // `lower_loop` (src/alumina-boot/src/ir/mono/mod.rs:4523) —
+        // it uses `local_types` keyed on a synthesized `loop_result`
+        // id and reads the slot after the break label.
+        //
+        // The break-value type is committed on the FIRST break-with-
+        // value seen during body lowering; subsequent breaks must
+        // match (they typically do — same fn writing the same shape).
+        // A loop with no break-value lowers to the existing void Loop.
+        let slot_id = self.ctx.id_gen.next_id();
+        self.loop_contexts.push(LoopContext {
+            result_slot_id: slot_id,
+            // Until the first break commits it, the loop's hint.
+            break_value_ty: self.expected_type,
+            has_value: false,
+            allows_value: true,
+            has_break: false,
+        });
+        let ir_body = self.lower_expr(expr.lhs());
+        let ctx_popped = self.loop_contexts.pop().unwrap();
+
+        // A loop that is never broken out of diverges.
+        let loop_expr = IrExpr::void_expr(if ctx_popped.has_break { self.ctx.void_ty } else { self.ctx.never_ty });
+        loop_expr.tag = IrTag::Loop;
+        loop_expr._data.single.lhs = ir_body;
+        let loop_alloc = self.ctx.arena.alloc(loop_expr) as &IrExpr;
+
+        if !ctx_popped.has_value {
+            loop_alloc
+        } else {
+            let break_ty = ctx_popped.break_value_ty;
+            // Register the result slot as a local of the break type.
+            self.local_types.insert(slot_id._value, break_ty);
+            self.local_defs.push(IrLocalDef {
+                id: slot_id,
+                ty: break_ty,
+                name: "",
+                span: Span::empty(),
+            });
+            // { Let _slot; Loop { body }; _slot }
+            let let_slot = self.mk_let_uninit(slot_id, break_ty);
+            let load_slot = self.mk_local(slot_id, break_ty);
+            let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+            stmts[0] = let_slot;
+            stmts[1] = loop_alloc;
+            stmts[2] = load_slot;
+            let block = IrExpr::void_expr(break_ty);
+            block.tag = IrTag::Block;
+            block._data.block.items = stmts;
+            self.ctx.arena.alloc(block) as &IrExpr
+        }
+    }
+
+    fn lower_for(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // Desugar: for i in start..end { body }
+        // Into: let i = start; let _end = end; while i < _end { body; i = i + 1; }
+        let range_expr = expr.lhs();
+        if range_expr.tag != ExprTag::Range {
+            // Iterator-based for loop: for item in iterator { body }
+            // Desugar into: let _iter = expr; loop { let _opt = _iter.next(); if _opt.is_none() { break; } let item = _opt.unwrap(); body }
+            return self.lower_for_iterator(expr);
+        }
+
+        let ir_start = self.lower_expr(range_expr.lhs());
+        let ir_end = self.lower_expr(range_expr.rhs());
+        let iter_ty = ir_start.ty;
+
+        // Register loop variable type
+        let loop_var_id = expr.id();
+        self.local_types.insert(loop_var_id._value, iter_ty);
+        self.local_defs.push(IrLocalDef {
+            id: loop_var_id,
+            ty: iter_ty,
+            name: "",
+            span: Span::empty(),
+        });
+
+        // Register end variable
+        let end_var_id = self.ctx.id_gen.next_id();
+        self.local_types.insert(end_var_id._value, iter_ty);
+        self.local_defs.push(IrLocalDef {
+            id: end_var_id,
+            ty: iter_ty,
+            name: "",
+            span: Span::empty(),
+        });
+
+        // let i = start; let _end = end
+        let ir_let_start = self.mk_let(loop_var_id, iter_ty, ir_start);
+        let ir_let_end = self.mk_let(end_var_id, iter_ty, ir_end);
+
+        // i < _end (or i <= _end for inclusive)
+        let cmp_op = if range_expr.flag() { BinOp::Le } else { BinOp::Lt };
+        let ir_cond = self.mk_binary(cmp_op, self.mk_local(loop_var_id, iter_ty), self.mk_local(end_var_id, iter_ty), self.ctx.bool_ty);
+
+        // Lower body
+        let ir_body = self.lower_loop_body(expr.rhs());
+
+        // i = i + 1
+        let ir_read_i2 = self.mk_local(loop_var_id, iter_ty);
+        let ir_add = self.mk_binary(BinOp::Add, ir_read_i2, self.mk_int_lit(iter_ty, 1), iter_ty);
+        let ir_incr = self.mk_assign(ir_read_i2, ir_add);
+
+        // while i < _end { body } with continue -> increment
+        let while_expr = IrExpr::void_expr(self.ctx.void_ty);
+        while_expr.tag = IrTag::While;
+        while_expr._data.if_data.cond = ir_cond;
+        while_expr._data.if_data.lhs = ir_body;
+        while_expr._data.if_data.opt_expr = Option::some(ir_incr);
+        let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
+
+        // Full block: { let i = start; let _end = end; while ... }
+        let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+        block_stmts[0] = ir_let_start;
+        block_stmts[1] = ir_let_end;
+        block_stmts[2] = ir_while;
+        self.mk_block_void(block_stmts)
+    }
+
+    fn lower_switch(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // An if-else chain of `==` tests, as alumina-boot (LLVM turns it
+        // into a jump table where that pays off).
+        let ir_value = self.lower_expr(expr.lhs());
+        self.lower_switch_arms(ir_value, expr.switch_arms(), expr.span)
+    }
+
+    fn lower_break(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if self.loop_contexts.is_empty() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "break outside of loop"));
+            return self.mk_error();
+        }
+        // `break value;` flows the value through the enclosing loop's
+        // result slot. Without this, the value is evaluated for side
+        // effects and discarded — the codegen-side Break path drops
+        // its argument because gen_loop doesn't return a value. We
+        // lower to { _slot = value; break; } so the slot read after
+        // the loop sees the right value. Mirrors alumina-boot's
+        // `lower_break` (src/alumina-boot/src/ir/mono/mod.rs:4572).
+        if !self.loop_contexts.is_empty() {
+            let ctx = &self.loop_contexts[self.loop_contexts.len() - 1];
+            ctx.has_break = true;
+            if expr.opt_expr().is_some() && !ctx.allows_value {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    expr.span, "`break` with a value is only allowed in `loop`"));
             }
-            ExprTag::While => {
-                let ir_cond = self.lower_expr(expr.cond());
-                self.check_condition(ir_cond, expr.span, true);
-                let ir_body = self.lower_loop_body(expr.lhs());
-                let result = IrExpr::void_expr(self.ctx.void_ty);
-                result.tag = IrTag::While;
-                result._data.if_data.cond = ir_cond;
-                result._data.if_data.lhs = ir_body;
-                self.ctx.arena.alloc(result)
+        }
+        if expr.opt_expr().is_some() && self.loop_contexts.len() > 0 {
+            let ctx_idx = self.loop_contexts.len() - 1usize;
+            // Determine the break value type by lowering with the
+            // already-committed type as expected_type if available,
+            // else fall back to the outer expected_type so the very
+            // first break can pick up a hint from `let x: Option<…> =
+            // loop { break Option::none() … }` shaped contexts.
+            let preview_ty = self.loop_contexts[ctx_idx].break_value_ty;
+            let break_expr = expr.opt_expr().unwrap();
+            let ir_val = if !preview_ty.is_void() {
+                self.lower_expr_coerced(break_expr, preview_ty)
+            } else {
+                self.lower_expr(break_expr)
+            };
+            if !self.loop_contexts[ctx_idx].has_value && !ir_val.ty.is_void() {
+                self.loop_contexts[ctx_idx].break_value_ty = ir_val.ty;
+                self.loop_contexts[ctx_idx].has_value = true;
             }
-            ExprTag::Loop => {
-                // `loop { break value; }` produces `value` as the loop's
-                // result. To support that without restructuring the IR's
-                // Loop node, we allocate a fresh local that each `break
-                // value;` assigns into, then wrap the loop in a block whose
-                // trailing expression loads that local. Mirrors alumina-boot's
-                // `lower_loop` (src/alumina-boot/src/ir/mono/mod.rs:4523) —
-                // it uses `local_types` keyed on a synthesized `loop_result`
-                // id and reads the slot after the break label.
-                //
-                // The break-value type is committed on the FIRST break-with-
-                // value seen during body lowering; subsequent breaks must
-                // match (they typically do — same fn writing the same shape).
-                // A loop with no break-value lowers to the existing void Loop.
-                let slot_id = self.ctx.id_gen.next_id();
-                self.loop_contexts.push(LoopContext {
-                    result_slot_id: slot_id,
-                    // Until the first break commits it, the loop's hint.
-                    break_value_ty: self.expected_type,
-                    has_value: false,
-                    allows_value: true,
-                    has_break: false,
-                });
-                let ir_body = self.lower_expr(expr.lhs());
-                let ctx_popped = self.loop_contexts.pop().unwrap();
+            let slot_id = self.loop_contexts[ctx_idx].result_slot_id;
+            let slot_ty = self.loop_contexts[ctx_idx].break_value_ty;
+            let slot_local = self.mk_local(slot_id, slot_ty);
+            let assign = self.mk_assign(slot_local, ir_val);
+            let break_only = IrExpr::void_expr(self.ctx.never_ty);
+            break_only.tag = IrTag::Break;
+            break_only._data.ret.opt_expr = Option::none();
+            let break_alloc = self.ctx.arena.alloc(break_only) as &IrExpr;
+            let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+            stmts[0] = assign;
+            stmts[1] = break_alloc;
+            self.mk_block(stmts)
+        } else {
+            let ir_val: Option<&IrExpr> = expr.opt_expr().map(|=self, v: &Expr| -> &IrExpr { self.lower_expr(v) });
+            let result = IrExpr::void_expr(self.ctx.never_ty);
+            result.tag = IrTag::Break;
+            result._data.ret.opt_expr = ir_val;
+            self.ctx.arena.alloc(result)
+        }
+    }
 
-                // A loop that is never broken out of diverges.
-                let loop_expr = IrExpr::void_expr(if ctx_popped.has_break { self.ctx.void_ty } else { self.ctx.never_ty });
-                loop_expr.tag = IrTag::Loop;
-                loop_expr._data.single.lhs = ir_body;
-                let loop_alloc = self.ctx.arena.alloc(loop_expr) as &IrExpr;
+    fn lower_continue(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if self.loop_contexts.is_empty() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "continue outside of loop"));
+            return self.mk_error();
+        }
+        let result = IrExpr::void_expr(self.ctx.never_ty);
+        result.tag = IrTag::Continue;
+        self.ctx.arena.alloc(result)
+    }
 
-                if !ctx_popped.has_value {
-                    loop_alloc
-                } else {
-                    let break_ty = ctx_popped.break_value_ty;
-                    // Register the result slot as a local of the break type.
-                    self.local_types.insert(slot_id._value, break_ty);
-                    self.local_defs.push(IrLocalDef {
-                        id: slot_id,
-                        ty: break_ty,
-                        name: "",
-                        span: Span::empty(),
-                    });
-                    // { Let _slot; Loop { body }; _slot }
-                    let let_slot = self.mk_let_uninit(slot_id, break_ty);
-                    let load_slot = self.mk_local(slot_id, break_ty);
-                    let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-                    stmts[0] = let_slot;
-                    stmts[1] = loop_alloc;
-                    stmts[2] = load_slot;
-                    let block = IrExpr::void_expr(break_ty);
-                    block.tag = IrTag::Block;
-                    block._data.block.items = stmts;
-                    self.ctx.arena.alloc(block) as &IrExpr
-                }
-            }
-            ExprTag::For => {
-                // Desugar: for i in start..end { body }
-                // Into: let i = start; let _end = end; while i < _end { body; i = i + 1; }
-                let range_expr = expr.lhs();
-                if range_expr.tag != ExprTag::Range {
-                    // Iterator-based for loop: for item in iterator { body }
-                    // Desugar into: let _iter = expr; loop { let _opt = _iter.next(); if _opt.is_none() { break; } let item = _opt.unwrap(); body }
-                    return self.lower_for_iterator(expr);
-                }
-
-                let ir_start = self.lower_expr(range_expr.lhs());
-                let ir_end = self.lower_expr(range_expr.rhs());
-                let iter_ty = ir_start.ty;
-
-                // Register loop variable type
-                let loop_var_id = expr.id();
-                self.local_types.insert(loop_var_id._value, iter_ty);
-                self.local_defs.push(IrLocalDef {
-                    id: loop_var_id,
-                    ty: iter_ty,
-                    name: "",
-                    span: Span::empty(),
-                });
-
-                // Register end variable
-                let end_var_id = self.ctx.id_gen.next_id();
-                self.local_types.insert(end_var_id._value, iter_ty);
-                self.local_defs.push(IrLocalDef {
-                    id: end_var_id,
-                    ty: iter_ty,
-                    name: "",
-                    span: Span::empty(),
-                });
-
-                // let i = start; let _end = end
-                let ir_let_start = self.mk_let(loop_var_id, iter_ty, ir_start);
-                let ir_let_end = self.mk_let(end_var_id, iter_ty, ir_end);
-
-                // i < _end (or i <= _end for inclusive)
-                let cmp_op = if range_expr.flag() { BinOp::Le } else { BinOp::Lt };
-                let ir_cond = self.mk_binary(cmp_op, self.mk_local(loop_var_id, iter_ty), self.mk_local(end_var_id, iter_ty), self.ctx.bool_ty);
-
-                // Lower body
-                let ir_body = self.lower_loop_body(expr.rhs());
-
-                // i = i + 1
-                let ir_read_i2 = self.mk_local(loop_var_id, iter_ty);
-                let ir_add = self.mk_binary(BinOp::Add, ir_read_i2, self.mk_int_lit(iter_ty, 1), iter_ty);
-                let ir_incr = self.mk_assign(ir_read_i2, ir_add);
-
-                // while i < _end { body } with continue -> increment
-                let while_expr = IrExpr::void_expr(self.ctx.void_ty);
-                while_expr.tag = IrTag::While;
-                while_expr._data.if_data.cond = ir_cond;
-                while_expr._data.if_data.lhs = ir_body;
-                while_expr._data.if_data.opt_expr = Option::some(ir_incr);
-                let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
-
-                // Full block: { let i = start; let _end = end; while ... }
-                let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-                block_stmts[0] = ir_let_start;
-                block_stmts[1] = ir_let_end;
-                block_stmts[2] = ir_while;
-                self.mk_block_void(block_stmts)
-            }
-            ExprTag::Switch => {
-                // Always desugar to an if-else chain with `==` comparisons.
-                // Matches alumina-boot's semantics: switch is sugar for an
-                // ordered series of equality tests. LLVM's optimizer recognises
-                // the pattern and converts to a jump table when beneficial, so
-                // we don't lose codegen quality vs an explicit LLVM switch.
-                //
-                // The earlier integer-switch fast path extracted pattern values
-                // into a u64 table and silently zeroed any pattern shape it
-                // didn't recognise (const-references, enum variants in some
-                // contexts, etc.). That meant `switch x { libc::DT_DIR => Dir,
-                // libc::DT_REG => Reg }` collapsed both const-ref arms onto
-                // case 0 and the real `d_type=4` fell to the default — the
-                // root cause of the self-host bootstrap regression on the
-                // fs/mod.alu swap. Unifying through if-else removes the table
-                // extraction entirely and patterns just get compared as values.
-                let ir_value = self.lower_expr(expr.lhs());
-                self.lower_switch(ir_value, expr.switch_arms(), expr.span)
-            }
-            ExprTag::Break => {
-                if self.loop_contexts.is_empty() {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "break outside of loop"));
-                    return self.mk_error();
-                }
-                // `break value;` flows the value through the enclosing loop's
-                // result slot. Without this, the value is evaluated for side
-                // effects and discarded — the codegen-side Break path drops
-                // its argument because gen_loop doesn't return a value. We
-                // lower to { _slot = value; break; } so the slot read after
-                // the loop sees the right value. Mirrors alumina-boot's
-                // `lower_break` (src/alumina-boot/src/ir/mono/mod.rs:4572).
-                if !self.loop_contexts.is_empty() {
-                    let ctx = &self.loop_contexts[self.loop_contexts.len() - 1];
-                    ctx.has_break = true;
-                    if expr.opt_expr().is_some() && !ctx.allows_value {
-                        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
-                            expr.span, "`break` with a value is only allowed in `loop`"));
-                    }
-                }
-                if expr.opt_expr().is_some() && self.loop_contexts.len() > 0 {
-                    let ctx_idx = self.loop_contexts.len() - 1usize;
-                    // Determine the break value type by lowering with the
-                    // already-committed type as expected_type if available,
-                    // else fall back to the outer expected_type so the very
-                    // first break can pick up a hint from `let x: Option<…> =
-                    // loop { break Option::none() … }` shaped contexts.
-                    let preview_ty = self.loop_contexts[ctx_idx].break_value_ty;
-                    let break_expr = expr.opt_expr().unwrap();
-                    let ir_val = if !preview_ty.is_void() {
-                        self.lower_expr_coerced(break_expr, preview_ty)
-                    } else {
-                        self.lower_expr(break_expr)
-                    };
-                    if !self.loop_contexts[ctx_idx].has_value && !ir_val.ty.is_void() {
-                        self.loop_contexts[ctx_idx].break_value_ty = ir_val.ty;
-                        self.loop_contexts[ctx_idx].has_value = true;
-                    }
-                    let slot_id = self.loop_contexts[ctx_idx].result_slot_id;
-                    let slot_ty = self.loop_contexts[ctx_idx].break_value_ty;
-                    let slot_local = self.mk_local(slot_id, slot_ty);
-                    let assign = self.mk_assign(slot_local, ir_val);
-                    let break_only = IrExpr::void_expr(self.ctx.never_ty);
-                    break_only.tag = IrTag::Break;
-                    break_only._data.ret.opt_expr = Option::none();
-                    let break_alloc = self.ctx.arena.alloc(break_only) as &IrExpr;
-                    let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                    stmts[0] = assign;
-                    stmts[1] = break_alloc;
-                    self.mk_block(stmts)
-                } else {
-                    let ir_val: Option<&IrExpr> = expr.opt_expr().map(|=self, v: &Expr| -> &IrExpr { self.lower_expr(v) });
-                    let result = IrExpr::void_expr(self.ctx.never_ty);
-                    result.tag = IrTag::Break;
-                    result._data.ret.opt_expr = ir_val;
-                    self.ctx.arena.alloc(result)
-                }
-            }
-            ExprTag::Continue => {
-                if self.loop_contexts.is_empty() {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "continue outside of loop"));
-                    return self.mk_error();
-                }
-                let result = IrExpr::void_expr(self.ctx.never_ty);
-                result.tag = IrTag::Continue;
-                self.ctx.arena.alloc(result)
-            }
-            ExprTag::Return => {
-                if !self.fn_scope {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "can only do that in function scope"));
-                    return self.mk_error();
-                }
-                if expr.opt_expr().is_some() {
-                    let ret_expr = expr.opt_expr().unwrap();
-                    let ir_val = self.lower_expr_coerced(ret_expr, self.return_type);
-                    let ir_val = self.check_and_coerce(ir_val, self.return_type, ret_expr.span);
-                    let result = IrExpr::void_expr(self.ctx.never_ty);
-                    result.tag = IrTag::Return;
-                    result._data.ret.opt_expr = Option::some(ir_val);
-                    self.ctx.arena.alloc(result)
-                } else {
-                    let result = IrExpr::void_expr(self.ctx.never_ty);
-                    result.tag = IrTag::Return;
-                    self.ctx.arena.alloc(result)
-                }
-            }
-            _ => {
-                self.mk_void()
-            }
+    fn lower_return(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if !self.fn_scope {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "can only do that in function scope"));
+            return self.mk_error();
+        }
+        if expr.opt_expr().is_some() {
+            let ret_expr = expr.opt_expr().unwrap();
+            let ir_val = self.lower_expr_coerced(ret_expr, self.return_type);
+            let ir_val = self.check_and_coerce(ir_val, self.return_type, ret_expr.span);
+            let result = IrExpr::void_expr(self.ctx.never_ty);
+            result.tag = IrTag::Return;
+            result._data.ret.opt_expr = Option::some(ir_val);
+            self.ctx.arena.alloc(result)
+        } else {
+            let result = IrExpr::void_expr(self.ctx.never_ty);
+            result.tag = IrTag::Return;
+            self.ctx.arena.alloc(result)
         }
     }
 
@@ -4746,7 +4743,7 @@ impl Mono {
             IrTyTag::Slice => {
                 scope_idx = self.resolve_lang_scope("slice");
                 if scope_idx != 0u32 {
-                    let elem_ty = self.slice_elem_ty(resolved_ty);
+                    let elem_ty = resolved_ty.inner();
                     let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
                     let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
                     ta[0] = ptr_ty;
@@ -4889,230 +4886,228 @@ impl Mono {
         Option::some(self.mk_call(fn_ref, call_args, ir_fn.return_type))
     }
 
-    // Lower memory operations: ExprTag::Ref, ExprTag::Deref, ExprTag::FieldAccess, ExprTag::TupleIndex, ExprTag::Index, ExprTag::Cast, ExprTag::TypeCheck
-    fn lower_memory(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        switch expr.tag {
-            ExprTag::Ref => {
-                // `&x` expected to be `&T` has `x` expected to be `T`; `&[...]`
-                // expected to be a slice leaves the slice for the array literal.
-                let inner_hint = switch self.expected_type.tag {
-                    IrTyTag::Pointer => self.expected_type.inner(),
-                    IrTyTag::Slice => self.expected_type,
-                    _ => self.ctx.void_ty,
-                };
-                let ir_inner = self.lower_expr_hinted(expr.lhs(), inner_hint);
-                self.mk_ref(ir_inner, self.is_const_place(ir_inner))
+    fn lower_ref(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // `&x` expected to be `&T` has `x` expected to be `T`; `&[...]`
+        // expected to be a slice leaves the slice for the array literal.
+        let inner_hint = switch self.expected_type.tag {
+            IrTyTag::Pointer => self.expected_type.inner(),
+            IrTyTag::Slice => self.expected_type,
+            _ => self.ctx.void_ty,
+        };
+        let ir_inner = self.lower_expr_hinted(expr.lhs(), inner_hint);
+        self.mk_ref(ir_inner, self.is_const_place(ir_inner))
+    }
+
+    fn lower_deref(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_inner = self.lower_expr(expr.lhs());
+        let pointee_ty = if ir_inner.ty.tag == IrTyTag::Pointer {
+            ir_inner.ty.inner()
+        } else {
+            self.emit_diag(diagnostics::CodeDiagnostic::invalid_deref(expr.span));
+            self.ctx.void_ty
+        };
+        self.mk_deref(ir_inner, pointee_ty)
+    }
+
+    fn lower_field_access(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_obj = self.lower_expr(expr.lhs());
+        // Auto-deref through pointers for field access
+        let actual_obj = ir_obj;
+        loop {
+            if actual_obj.ty.tag != IrTyTag::Pointer {
+                break;
             }
-            ExprTag::Deref => {
-                let ir_inner = self.lower_expr(expr.lhs());
-                let pointee_ty = if ir_inner.ty.tag == IrTyTag::Pointer {
-                    ir_inner.ty.inner()
-                } else {
-                    self.emit_diag(diagnostics::CodeDiagnostic::invalid_deref(expr.span));
-                    self.ctx.void_ty
-                };
-                self.mk_deref(ir_inner, pointee_ty)
+            actual_obj = self.mk_deref(actual_obj, actual_obj.ty.inner());
+        }
+        // Find field index on the dereferenced struct type
+        let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val());
+        if !field_found && expr.str_val().len() > 0usize && !self.suppress_field_error {
+            let ty_name = self.ir_type_name(actual_obj.ty);
+            self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(expr.span, expr.str_val(), ty_name));
+        }
+        self.mk_field(actual_obj, field_idx, field_ty)
+    }
+
+    fn lower_tuple_index(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_obj = self.lower_expr(expr.lhs());
+        // Auto-deref through pointer layers — `t.0` / `t.(i)` on a `&T`
+        // should reach into the pointee tuple, mirroring FieldAccess.
+        while ir_obj.ty.tag == IrTyTag::Pointer {
+            ir_obj = self.mk_deref(ir_obj, ir_obj.ty.inner());
+        }
+        // `t.(a..b)` is the tuple of those elements.
+        if expr.opt_expr().is_some() && expr.opt_expr().unwrap().tag == ExprTag::Range {
+            return self.lower_tuple_slice(ir_obj, expr.opt_expr().unwrap(), expr.span);
+        }
+        // The index is a literal (`t.0`) or a constant expression (`t.(i)`).
+        let idx: usize = if expr.opt_expr().is_some() {
+            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+            let ir_idx = self.lower_expr_coerced(expr.opt_expr().unwrap(), usize_ty);
+            let val = self.try_const_eval_u64(ir_idx);
+            if val.is_none() {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    expr.opt_expr().unwrap().span, "tuple index must be a constant"));
+                return self.mk_void();
             }
-            ExprTag::FieldAccess => {
-                let ir_obj = self.lower_expr(expr.lhs());
-                // Auto-deref through pointers for field access
-                let actual_obj = ir_obj;
-                loop {
-                    if actual_obj.ty.tag != IrTyTag::Pointer {
-                        break;
-                    }
-                    actual_obj = self.mk_deref(actual_obj, actual_obj.ty.inner());
-                }
-                // Find field index on the dereferenced struct type
-                let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val());
-                if !field_found && expr.str_val().len() > 0usize && !self.suppress_field_error {
-                    let ty_name = self.ir_type_name(actual_obj.ty);
-                    self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(expr.span, expr.str_val(), ty_name));
-                }
-                self.mk_field(actual_obj, field_idx, field_ty)
+            val.unwrap() as usize
+        } else {
+            expr.index_val()
+        };
+        let elem_ty = if ir_obj.ty.tag == IrTyTag::Tuple {
+            if idx < ir_obj.ty.elems().len() {
+                ir_obj.ty.elems()[idx]
+            } else {
+                self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(expr.span));
+                self.ctx.void_ty
             }
-            ExprTag::TupleIndex => {
-                let ir_obj = self.lower_expr(expr.lhs());
-                // Auto-deref through pointer layers — `t.0` / `t.(i)` on a `&T`
-                // should reach into the pointee tuple, mirroring FieldAccess.
-                while ir_obj.ty.tag == IrTyTag::Pointer {
-                    ir_obj = self.mk_deref(ir_obj, ir_obj.ty.inner());
-                }
-                // `t.(a..b)` is the tuple of those elements.
-                if expr.opt_expr().is_some() && expr.opt_expr().unwrap().tag == ExprTag::Range {
-                    return self.lower_tuple_slice(ir_obj, expr.opt_expr().unwrap(), expr.span);
-                }
-                // The index is a literal (`t.0`) or a constant expression (`t.(i)`).
-                let idx: usize = if expr.opt_expr().is_some() {
-                    let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                    let ir_idx = self.lower_expr_coerced(expr.opt_expr().unwrap(), usize_ty);
-                    let val = self.try_const_eval_u64(ir_idx);
-                    if val.is_none() {
-                        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
-                            expr.opt_expr().unwrap().span, "tuple index must be a constant"));
-                        return self.mk_void();
-                    }
-                    val.unwrap() as usize
-                } else {
-                    expr.index_val()
-                };
-                let elem_ty = if ir_obj.ty.tag == IrTyTag::Tuple {
-                    if idx < ir_obj.ty.elems().len() {
-                        ir_obj.ty.elems()[idx]
-                    } else {
-                        self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(expr.span));
-                        self.ctx.void_ty
-                    }
-                } else if ir_obj.ty.tag == IrTyTag::Struct && !ir_obj.ty.struct_ref().is_zero_sized {
-                    // Tuples of non-trivial types may be lowered as anonymous structs
-                    if idx < ir_obj.ty.struct_ref().fields.len() {
-                        ir_obj.ty.struct_ref().fields[idx].ty
-                    } else {
-                        self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(expr.span));
-                        self.ctx.void_ty
-                    }
-                } else {
-                    self.ctx.void_ty
-                };
-                self.mk_field(ir_obj, idx as u32, elem_ty)
+        } else if ir_obj.ty.tag == IrTyTag::Struct && !ir_obj.ty.struct_ref().is_zero_sized {
+            // Tuples of non-trivial types may be lowered as anonymous structs
+            if idx < ir_obj.ty.struct_ref().fields.len() {
+                ir_obj.ty.struct_ref().fields[idx].ty
+            } else {
+                self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(expr.span));
+                self.ctx.void_ty
             }
-            ExprTag::Index => {
-                let ir_base = self.lower_expr(expr.lhs());
+        } else {
+            self.ctx.void_ty
+        };
+        self.mk_field(ir_obj, idx as u32, elem_ty)
+    }
 
-                // Auto-deref through pointer layers to find the underlying type.
-                // Pointers cannot be directly indexed in Alumina (use *(ptr + i) instead).
-                let derefed = ir_base;
-                while derefed.ty.tag == IrTyTag::Pointer {
-                    derefed = self.mk_deref(derefed, derefed.ty.inner());
-                }
+    fn lower_index(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_base = self.lower_expr(expr.lhs());
 
-                // Lower the index expression and determine whether it's a range
-                // (sub-slicing) or a scalar (element access). Either way the
-                // index is a usize (for a range, its bounds are), as in
-                // alumina-boot.
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                let ir_index = if expr.rhs().tag == ExprTag::Range {
-                    self.range_bound_hint = Option::some(usize_ty);
-                    self.lower_expr(expr.rhs())
-                } else {
-                    self.lower_expr_coerced(expr.rhs(), usize_ty)
-                };
+        // Auto-deref through pointer layers to find the underlying type.
+        // Pointers cannot be directly indexed in Alumina (use *(ptr + i) instead).
+        let derefed = ir_base;
+        while derefed.ty.tag == IrTyTag::Pointer {
+            derefed = self.mk_deref(derefed, derefed.ty.inner());
+        }
 
-                // Coerce to indexable type (slice/array) via as_slice() if needed
-                let indexee = self.coerce_to_indexable(derefed);
+        // Lower the index expression and determine whether it's a range
+        // (sub-slicing) or a scalar (element access). Either way the
+        // index is a usize (for a range, its bounds are), as in
+        // alumina-boot.
+        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+        let ir_index = if expr.rhs().tag == ExprTag::Range {
+            self.range_bound_hint = Option::some(usize_ty);
+            self.lower_expr(expr.rhs())
+        } else {
+            self.lower_expr_coerced(expr.rhs(), usize_ty)
+        };
 
-                // Slices are indexed through the sysroot's `slice_index` /
-                // `slice_range_index` lang functions, which carry the bounds
-                // checks (enabled in debug mode). Arrays are indexed directly.
-                if indexee.ty.tag == IrTyTag::Slice {
-                    let ptr_ty = self.ctx.make_ptr_ty(self.slice_elem_ty(indexee.ty), indexee.ty.is_const());
-                    let lowered: Option<&IrExpr> = if self.is_range_ty(ir_index.ty) {
-                        self.call_lang_fn("slice_range_index", &[ptr_ty, ir_index.ty], &[indexee, ir_index], expr.span)
-                    } else {
-                        self.call_lang_fn("slice_index", &[ptr_ty], &[indexee, ir_index], expr.span)
-                            .map(|=self, ptr: &IrExpr| -> &IrExpr { self.mk_deref(ptr, ptr.ty.inner()) })
-                    };
-                    if lowered.is_some() {
-                        return lowered.unwrap();
-                    }
-                }
+        // Coerce to indexable type (slice/array) via as_slice() if needed
+        let indexee = self.coerce_to_indexable(derefed);
 
-                if self.is_range_ty(ir_index.ty) {
-                    // Range indexing (sub-slicing): extract lower/upper bounds from
-                    // the appropriate fields of each range variant.
-                    let range_struct_id = ir_index.ty.struct_ref().id._value;
-                    let len_expr = self.get_indexee_len(indexee);
-                    let zero_lit = self.mk_int_lit(usize_ty, 0u64);
-
-                    let ir_start: &IrExpr = zero_lit;
-                    let ir_end: &IrExpr = len_expr;
-
-                    if self.ctx.is_lang_item(range_struct_id, "range_full") {
-                        // .. — full slice. start = 0, end = len.
-                    } else if self.ctx.is_lang_item(range_struct_id, "range_from") {
-                        // a.. — start = lower, end = len.
-                        ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                    } else if self.ctx.is_lang_item(range_struct_id, "range_to") {
-                        // ..b — start = 0, end = upper.
-                        ir_end = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                    } else if self.ctx.is_lang_item(range_struct_id, "range_to_inclusive") {
-                        // ..=b — start = 0, end = upper + 1.
-                        let upper = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                        let one_lit = self.mk_int_lit(usize_ty, 1u64);
-                        ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
-                    } else if self.ctx.is_lang_item(range_struct_id, "range_inclusive") {
-                        // a..=b — start = lower, end = upper + 1.
-                        ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                        let upper = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
-                        let one_lit = self.mk_int_lit(usize_ty, 1u64);
-                        ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
-                    } else {
-                        // Fallback: legacy Range<T> { lower, upper } shape.
-                        // Aluminac sysroot uses this for `..` (no RangeFull lang item),
-                        // emitting Range<usize>{0, MAX_USIZE} as a sentinel. Detect the
-                        // sentinel and use the indexee's length.
-                        ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                        if ir_index.ty.struct_ref().fields.len() > 1 {
-                            let is_sentinel = false;
-                            if ir_index.tag == IrTag::StructLit {
-                                let upper_item = ir_index._data.struct_lit.items[1];
-                                if upper_item.tag == IrTag::IntLit && upper_item.int_val() == 18446744073709551615u64 {
-                                    is_sentinel = true;
-                                }
-                            }
-                            if is_sentinel {
-                                ir_end = len_expr;
-                            } else {
-                                ir_end = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
-                            }
-                        }
-                    }
-                    return self.lower_subslice_ir(indexee, ir_start, ir_end);
-                }
-
-                if indexee.ty.tag == IrTyTag::Slice {
-                    let elem_ty = self.slice_elem_ty(indexee.ty);
-                    let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
-                    let data_ptr_ref = self.mk_field(indexee, SLICE_DATA_FIELD, data_ptr_ty);
-                    return self.mk_index(data_ptr_ref, ir_index, elem_ty);
-                }
-
-                if indexee.ty.tag == IrTyTag::Array {
-                    return self.mk_index(indexee, ir_index, indexee.ty.inner());
-                }
-
-                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot index into this type"));
-                self.alloc(IrExpr::of(IrTag::Undef, self.ctx.void_ty))
-            }
-            ExprTag::Cast => {
-                let ir_inner = self.lower_expr(expr.lhs());
-                let ir_ty = self.resolve_type(expr.ty());
-                // A cast to the type the value has, written as that type (not
-                // through an alias or a generic parameter, which may be another
-                // type elsewhere).
-                if ir_inner.ty.same_as(ir_ty) && !ir_ty.is_never() && expr.ty().is_concrete()
-                    && self.type_map.is_empty() && !self.tentative {
-                    self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "unnecessary_cast",
-                        std::fmt::format!("unnecessary cast (value is already `{}`)", self.type_name(ir_ty)).unwrap().as_slice()));
-                }
-                self.lower_cast(ir_inner, ir_ty, expr.span)
-            }
-            ExprTag::TypeCheck => {
-                // `expr is Type` / `expr is Protocol`, decided at compile time.
-                let ir_val = self.lower_expr(expr.lhs());
-                self.mk_bool_lit(self.type_matches(ir_val.ty, expr.ty()))
-            }
-            _ => {
-                self.mk_void()
+        // Slices are indexed through the sysroot's `slice_index` /
+        // `slice_range_index` lang functions, which carry the bounds
+        // checks (enabled in debug mode). Arrays are indexed directly.
+        if indexee.ty.tag == IrTyTag::Slice {
+            let ptr_ty = self.ctx.make_ptr_ty(indexee.ty.inner(), indexee.ty.is_const());
+            let lowered: Option<&IrExpr> = if self.is_range_ty(ir_index.ty) {
+                self.call_lang_fn("slice_range_index", &[ptr_ty, ir_index.ty], &[indexee, ir_index], expr.span)
+            } else {
+                self.call_lang_fn("slice_index", &[ptr_ty], &[indexee, ir_index], expr.span)
+                    .map(|=self, ptr: &IrExpr| -> &IrExpr { self.mk_deref(ptr, ptr.ty.inner()) })
+            };
+            if lowered.is_some() {
+                return lowered.unwrap();
             }
         }
+
+        if self.is_range_ty(ir_index.ty) {
+            // Range indexing (sub-slicing): extract lower/upper bounds from
+            // the appropriate fields of each range variant.
+            let range_struct_id = ir_index.ty.struct_ref().id._value;
+            let len_expr = self.get_indexee_len(indexee);
+            let zero_lit = self.mk_int_lit(usize_ty, 0u64);
+
+            let ir_start: &IrExpr = zero_lit;
+            let ir_end: &IrExpr = len_expr;
+
+            if self.ctx.is_lang_item(range_struct_id, "range_full") {
+                // .. — full slice. start = 0, end = len.
+            } else if self.ctx.is_lang_item(range_struct_id, "range_from") {
+                // a.. — start = lower, end = len.
+                ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+            } else if self.ctx.is_lang_item(range_struct_id, "range_to") {
+                // ..b — start = 0, end = upper.
+                ir_end = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+            } else if self.ctx.is_lang_item(range_struct_id, "range_to_inclusive") {
+                // ..=b — start = 0, end = upper + 1.
+                let upper = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                let one_lit = self.mk_int_lit(usize_ty, 1u64);
+                ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
+            } else if self.ctx.is_lang_item(range_struct_id, "range_inclusive") {
+                // a..=b — start = lower, end = upper + 1.
+                ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                let upper = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
+                let one_lit = self.mk_int_lit(usize_ty, 1u64);
+                ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
+            } else {
+                // Fallback: legacy Range<T> { lower, upper } shape.
+                // Aluminac sysroot uses this for `..` (no RangeFull lang item),
+                // emitting Range<usize>{0, MAX_USIZE} as a sentinel. Detect the
+                // sentinel and use the indexee's length.
+                ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
+                if ir_index.ty.struct_ref().fields.len() > 1 {
+                    let is_sentinel = false;
+                    if ir_index.tag == IrTag::StructLit {
+                        let upper_item = ir_index._data.struct_lit.items[1];
+                        if upper_item.tag == IrTag::IntLit && upper_item.int_val() == 18446744073709551615u64 {
+                            is_sentinel = true;
+                        }
+                    }
+                    if is_sentinel {
+                        ir_end = len_expr;
+                    } else {
+                        ir_end = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
+                    }
+                }
+            }
+            return self.lower_subslice_ir(indexee, ir_start, ir_end);
+        }
+
+        if indexee.ty.tag == IrTyTag::Slice {
+            let elem_ty = indexee.ty.inner();
+            let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+            let data_ptr_ref = self.mk_field(indexee, SLICE_DATA_FIELD, data_ptr_ty);
+            return self.mk_index(data_ptr_ref, ir_index, elem_ty);
+        }
+
+        if indexee.ty.tag == IrTyTag::Array {
+            return self.mk_index(indexee, ir_index, indexee.ty.inner());
+        }
+
+        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot index into this type"));
+        self.alloc(IrExpr::of(IrTag::Undef, self.ctx.void_ty))
+    }
+
+    fn lower_cast(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_inner = self.lower_expr(expr.lhs());
+        let ir_ty = self.resolve_type(expr.ty());
+        // A cast to the type the value has, written as that type (not
+        // through an alias or a generic parameter, which may be another
+        // type elsewhere).
+        if ir_inner.ty.same_as(ir_ty) && !ir_ty.is_never() && expr.ty().is_concrete()
+            && self.type_map.is_empty() && !self.tentative {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "unnecessary_cast",
+                std::fmt::format!("unnecessary cast (value is already `{}`)", self.type_name(ir_ty)).unwrap().as_slice()));
+        }
+        self.cast_to(ir_inner, ir_ty, expr.span)
+    }
+
+    fn lower_type_check(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // `expr is Type` / `expr is Protocol`, decided at compile time.
+        let ir_val = self.lower_expr(expr.lhs());
+        self.mk_bool_lit(self.type_matches(ir_val.ty, expr.ty()))
     }
 
     /// `value as ty`, with alumina-boot's rules: anything that coerces;
     /// numeric to numeric, `bool` to numeric, enums to and from numeric;
     /// pointers (and fn pointers) to pointers and to and from `usize`; and
     /// const to mut for slices and `dyn` (plus `dyn` to its data pointer).
-    fn lower_cast(self: &mut Mono, value: &IrExpr, ty: &IrTy, span: Span) -> &IrExpr {
+    fn cast_to(self: &mut Mono, value: &IrExpr, ty: &IrTy, span: Span) -> &IrExpr {
         if value.ty.is_never() {
             return value;
         }
@@ -5149,7 +5144,7 @@ impl Mono {
             || (is_usize(from) && is_pointer(ty))
             || (is_pointer(from) && is_usize(ty))
             || (from.tag == IrTyTag::Slice && ty.tag == IrTyTag::Slice
-                && self.slice_elem_ty(from).same_as(self.slice_elem_ty(ty)));
+                && from.inner().same_as(ty.inner()));
         if !valid {
             self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
                 span,
@@ -5413,7 +5408,7 @@ impl Mono {
                     if sd.is_some() {
                         impl_scope_idx = sd.unwrap().scope_idx;
                         slice_lang_struct_id = lang_item_id;
-                        let elem_ty = self.slice_elem_ty(impl_ty);
+                        let elem_ty = impl_ty.inner();
                         slice_ptr_ty = self.ctx.make_ptr_ty(elem_ty, impl_ty.is_const());
                     }
                 }
@@ -5692,8 +5687,8 @@ impl Mono {
 
         // Coerce &mut [T] -> &[T] (mutable slice to const slice)
         if expected_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Slice {
-            let target_elem = self.slice_elem_ty(expected_ty);
-            let val_elem = self.slice_elem_ty(val.ty);
+            let target_elem = expected_ty.inner();
+            let val_elem = val.ty.inner();
             if target_elem.same_as(val_elem) && expected_ty.is_const() && !val.ty.is_const() {
                 return Option::some(self.mk_cast(val, expected_ty));
             }
@@ -5797,11 +5792,6 @@ impl Mono {
                 let name = ty.struct_ref().name;
                 name == "RangeFrom" || name == "RangeTo" || name == "RangeToInclusive" || name == "RangeFull"
             }
-    }
-
-    // Get the element type of a slice
-    fn slice_elem_ty(self: &Mono, ty: &IrTy) -> &IrTy {
-        ty.inner()
     }
 
     // Bound-derived inference for `RangeOf<T>`. A signature like
@@ -5933,7 +5923,7 @@ impl Mono {
             return self.mk_void();
         }
 
-        let elem_ty = self.slice_elem_ty(base.ty);
+        let elem_ty = base.ty.inner();
         let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
         let ir_data_ptr = self.mk_field(base, SLICE_DATA_FIELD, data_ptr_ty);
 
@@ -7008,7 +6998,7 @@ impl Mono {
                     if sd.is_some() {
                         scope_idx = sd.unwrap().scope_idx;
                         // Set up type arg: Ptr = &elem_type (or &mut elem_type)
-                        let elem_ty = self.slice_elem_ty(resolved_ty);
+                        let elem_ty = resolved_ty.inner();
                         let ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
                         let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
                         type_args[0] = ptr_ty;
@@ -7142,7 +7132,7 @@ impl Mono {
         // `s1.equals(&s2)` was failing on after the io/mod.alu swap.
         if resolved_ty.tag == IrTyTag::Slice && method_type_args.len() == 1
             && def.generic_params.len() > 1 {
-            let elem_ty = self.slice_elem_ty(resolved_ty);
+            let elem_ty = resolved_ty.inner();
             let ptr_ty = method_type_args[0];
             if def.generic_params.len() == 3 {
                 let ta = self.ctx.arena.alloc_slice::<&IrTy>(3);
@@ -8013,151 +8003,239 @@ impl Mono {
     }
 
     fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        switch expr.tag {
-            ExprTag::Call, ExprTag::TurbofishValue => {
-                // Check for intrinsic calls first
-                if expr.lhs().tag == ExprTag::FnRef {
-                    let fn_def = self.ctx.fn_defs.get(&expr.lhs().id()._value);
-                    if fn_def.is_some() {
-                        let def = fn_def.unwrap();
-                        if def.abi.is_some() && def.abi.unwrap() == "intrinsic" {
-                            // Resolve type args for intrinsics
-                            let ir_type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
-                            for i in 0usize..expr.type_args().len() {
-                                ir_type_args[i] = self.resolve_type(expr.type_args()[i]);
-                            }
-                            return self.lower_intrinsic(def.name, expr.type_args(), ir_type_args, expr);
-                        }
-                    }
-                }
-
-                // Check for deferred call: T::method(args) where T is a generic type param
-                if expr.lhs().tag == ExprTag::Defered {
-                    let defered_result = self.lower_defered_call(expr);
-                    if defered_result.is_some() {
-                        return defered_result.unwrap();
-                    }
-                }
-
-                // Check for method call: obj.method(args)
-                if expr.lhs().tag == ExprTag::FieldAccess {
-                    let method_result = self.try_lower_method_call(expr);
-                    if method_result.is_some() {
-                        return method_result.unwrap();
-                    }
-                    // Fall through to normal field access (function pointer in struct field)
-                    // Suppress field error since method error will be reported if this also fails
-                    self.suppress_field_error = true;
-                }
-
-                // Turbofish-value reference to a generic const/static: `MY_CONST::<T>`.
-                // Bind the const's generic_params to the resolved type args, lower
-                // the init expression with those bindings, and (for consts) inline
-                // the const-evaluated value. For non-generic statics the normal
-                // StaticRef path handles it; we only intercept when there are
-                // generic params to substitute.
-                if expr.tag == ExprTag::TurbofishValue && expr.lhs().tag == ExprTag::StaticRef {
-                    let sd_opt = self.ctx.static_defs.get(&expr.lhs().id()._value);
-                    if sd_opt.is_some() && sd_opt.unwrap().generic_params.len() > 0 {
-                        let type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
-                        for i in 0usize..expr.type_args().len() {
-                            type_args[i] = self.resolve_type(expr.type_args()[i]);
-                        }
-                        return self.lower_static_ref(sd_opt.unwrap(), type_args);
-                    }
-                }
-
-                // Check for turbofish generic calls: func::<T>(args)
-                if expr.type_args().len() > 0 && expr.lhs().tag == ExprTag::FnRef {
-                    // Resolve type args
-                    let resolved_type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
+        // Check for intrinsic calls first
+        if expr.lhs().tag == ExprTag::FnRef {
+            let fn_def = self.ctx.fn_defs.get(&expr.lhs().id()._value);
+            if fn_def.is_some() {
+                let def = fn_def.unwrap();
+                if def.abi.is_some() && def.abi.unwrap() == "intrinsic" {
+                    // Resolve type args for intrinsics
+                    let ir_type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
                     for i in 0usize..expr.type_args().len() {
-                        resolved_type_args[i] = self.resolve_type(expr.type_args()[i]);
+                        ir_type_args[i] = self.resolve_type(expr.type_args()[i]);
+                    }
+                    return self.lower_intrinsic(def.name, expr.type_args(), ir_type_args, expr);
+                }
+            }
+        }
+
+        // Check for deferred call: T::method(args) where T is a generic type param
+        if expr.lhs().tag == ExprTag::Defered {
+            let defered_result = self.lower_defered_call(expr);
+            if defered_result.is_some() {
+                return defered_result.unwrap();
+            }
+        }
+
+        // Check for method call: obj.method(args)
+        if expr.lhs().tag == ExprTag::FieldAccess {
+            let method_result = self.try_lower_method_call(expr);
+            if method_result.is_some() {
+                return method_result.unwrap();
+            }
+            // Fall through to normal field access (function pointer in struct field)
+            // Suppress field error since method error will be reported if this also fails
+            self.suppress_field_error = true;
+        }
+
+        // Turbofish-value reference to a generic const/static: `MY_CONST::<T>`.
+        // Bind the const's generic_params to the resolved type args, lower
+        // the init expression with those bindings, and (for consts) inline
+        // the const-evaluated value. For non-generic statics the normal
+        // StaticRef path handles it; we only intercept when there are
+        // generic params to substitute.
+        if expr.tag == ExprTag::TurbofishValue && expr.lhs().tag == ExprTag::StaticRef {
+            let sd_opt = self.ctx.static_defs.get(&expr.lhs().id()._value);
+            if sd_opt.is_some() && sd_opt.unwrap().generic_params.len() > 0 {
+                let type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
+                for i in 0usize..expr.type_args().len() {
+                    type_args[i] = self.resolve_type(expr.type_args()[i]);
+                }
+                return self.lower_static_ref(sd_opt.unwrap(), type_args);
+            }
+        }
+
+        // Check for turbofish generic calls: func::<T>(args)
+        if expr.type_args().len() > 0 && expr.lhs().tag == ExprTag::FnRef {
+            // Resolve type args
+            let resolved_type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
+            for i in 0usize..expr.type_args().len() {
+                resolved_type_args[i] = self.resolve_type(expr.type_args()[i]);
+            }
+
+            // Look up the function definition
+            let fn_def = self.ctx.fn_defs.get(&expr.lhs().id()._value);
+            if fn_def.is_some() {
+                let def = fn_def.unwrap();
+
+                // Check for #[lang(slice_new)] intrinsic
+                let is_slice_new = false;
+                for attr in def.attributes {
+                    if attr.tag == AttrTag::Lang && attr.str_val() == "slice_new" {
+                        is_slice_new = true;
+                    }
+                }
+
+                if is_slice_new && expr.args().len() == 2 {
+                    // #[lang(slice_new)] intrinsic: construct slice from (ptr, len)
+                    let ir_ptr = self.lower_expr(expr.args()[0]);
+                    let ir_len = self.lower_expr_coerced(expr.args()[1], self.ctx.usize_ty);
+
+                    // Build proper IrTyTag::Slice type from the pointer's element type
+                    let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
+                        ir_ptr.ty.inner()
+                    } else {
+                        self.ctx.intern_builtin_ty(BuiltinType::U8)
+                    };
+                    let is_const = ir_ptr.ty.is_const();
+                    let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
+
+                    let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                    items[0] = ir_ptr;
+                    items[1] = ir_len;
+
+                    let result = IrExpr::void_expr(slice_ty);
+                    result.tag = IrTag::TupleLit;
+                    result._data.block.items = items;
+                    return self.ctx.arena.alloc(result);
+                }
+
+                // Explicit generic arguments are all or nothing (as in
+                // alumina-boot); only defaulted trailing ones may be left out.
+                self.check_generic_arity(def.generic_params, resolved_type_args.len(), expr.span);
+
+                // If fewer explicit type args than generic params, infer the rest
+                let call_ta = resolved_type_args;
+                if resolved_type_args.len() < def.generic_params.len() {
+                    let full_ta = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
+                    for i in 0usize..resolved_type_args.len() {
+                        full_ta[i] = resolved_type_args[i];
+                    }
+                    // Set up partial type map so we can resolve param types for inference
+                    for i in 0usize..resolved_type_args.len() {
+                        self.type_map.insert(def.generic_params[i].id._value, resolved_type_args[i]);
+                    }
+                    // Infer remaining from arguments
+                    let inferred = self.infer_type_args(def, expr.args());
+                    for i in resolved_type_args.len()..def.generic_params.len() {
+                        let inf_idx = i;
+                        if inf_idx < inferred.len() && !inferred[inf_idx].is_void() {
+                            full_ta[i] = inferred[inf_idx];
+                        } else {
+                            full_ta[i] = self.ctx.void_ty;
+                        }
+                    }
+                    call_ta = full_ta;
+                    if self.has_uninferred_generics(def, call_ta, resolved_type_args.len()) {
+                        return self.type_hint_required(expr.span);
+                    }
+                }
+
+                // Monomorphize the function with type args
+                let fn_idx = self.mono_function(def, call_ta);
+                let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+
+                // Turbofish value (func::<T> as value): produce Fn type, not a call
+                if expr.tag == ExprTag::TurbofishValue {
+                    let fn_ref = IrFnRef {
+                        id: ir_fn.id,
+                        mangled_name: ir_fn.mangled_name,
+                    };
+                    let fn_ty = self.ctx.make_fn_ty(fn_ref);
+                    return self.alloc(IrExpr::of_fn(fn_ty, fn_ref));
+                }
+
+                // Lower arguments
+                let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
+                for i in 0usize..expr.args().len() {
+                    if i < ir_fn.params.len() {
+                        let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                        ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
+                    } else {
+                        ir_args[i] = self.lower_expr(expr.args()[i]);
+                    }
+                }
+
+                let fn_ref = IrFnRef {
+                    id: ir_fn.id,
+                    mangled_name: ir_fn.mangled_name,
+                };
+                return self.mk_call(fn_ref, ir_args, ir_fn.return_type);
+            }
+        }
+
+        // Handle function calls by name (ExprTag::FnRef)
+        if expr.type_args().len() == 0 && expr.lhs().tag == ExprTag::FnRef {
+            let fn_def = self.ctx.fn_defs.get(&expr.lhs().id()._value);
+            if fn_def.is_some() {
+                let def = fn_def.unwrap();
+                if def.generic_params.len() > 0 {
+                    // Check for #[lang(slice_new)] intrinsic (inferred type args path)
+                    let is_slice_new = false;
+                    for attr in def.attributes {
+                        if attr.tag == AttrTag::Lang && attr.str_val() == "slice_new" {
+                            is_slice_new = true;
+                        }
+                    }
+                    if is_slice_new && expr.args().len() == 2 {
+                        let ir_ptr = self.lower_expr(expr.args()[0]);
+                        let ir_len = self.lower_expr_coerced(expr.args()[1], self.ctx.usize_ty);
+                        let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
+                            ir_ptr.ty.inner()
+                        } else {
+                            self.ctx.intern_builtin_ty(BuiltinType::U8)
+                        };
+                        let is_const = ir_ptr.ty.is_const();
+                        let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
+                        let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                        items[0] = ir_ptr;
+                        items[1] = ir_len;
+                        return self.alloc(IrExpr::list(IrTag::TupleLit, slice_ty, items));
                     }
 
-                    // Look up the function definition
-                    let fn_def = self.ctx.fn_defs.get(&expr.lhs().id()._value);
-                    if fn_def.is_some() {
-                        let def = fn_def.unwrap();
-
-                        // Check for #[lang(slice_new)] intrinsic
-                        let is_slice_new = false;
-                        for attr in def.attributes {
-                            if attr.tag == AttrTag::Lang && attr.str_val() == "slice_new" {
-                                is_slice_new = true;
+                    // Infer type args from argument types
+                    let inferred = self.infer_type_args(def, expr.args());
+                    let call_ta: &[&IrTy] = inferred;
+                    if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
+                        // Try to extract type args from expected_type (e.g. Option<usize>)
+                        if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref().type_args.len() == def.generic_params.len() {
+                            call_ta = self.expected_type.struct_ref().type_args;
+                        } else if self.expected_type.tag == IrTyTag::Struct && def.generic_params.len() == 1usize {
+                            // For single-generic functions returning a wrapper struct,
+                            // the expected type's first type arg is probably the generic param
+                            if self.expected_type.struct_ref().type_args.len() > 0usize {
+                                let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
+                                ctx_ta[0] = self.expected_type.struct_ref().type_args[0];
+                                call_ta = ctx_ta;
                             }
-                        }
-
-                        if is_slice_new && expr.args().len() == 2 {
-                            // #[lang(slice_new)] intrinsic: construct slice from (ptr, len)
-                            let ir_ptr = self.lower_expr(expr.args()[0]);
-                            let ir_len = self.lower_expr_coerced(expr.args()[1], self.ctx.usize_ty);
-
-                            // Build proper IrTyTag::Slice type from the pointer's element type
-                            let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
-                                ir_ptr.ty.inner()
+                        } else if self.expected_type.tag == IrTyTag::Slice && def.generic_params.len() == 1usize {
+                            // Single-generic fns returning a slice. The placeholder
+                            // can appear either as the *element* type (declared
+                            // `-> &[T]` / `-> &mut [T]`, AST `TyTag::Slice` over a
+                            // Placeholder) or as the *pointer* type-arg (declared
+                            // `-> slice<Ptr>`, AST `TyTag::Generic` over the
+                            // lang(slice) struct with Ptr as the single arg). Pick
+                            // the right substitution by inspecting `def.return_type`.
+                            let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
+                            if def.return_type.tag == TyTag::Slice
+                                && def.return_type.inner().tag == TyTag::Placeholder
+                                && def.return_type.inner().id()._value == def.generic_params[0].id._value {
+                                // Declared `-> &[T]`: T is the element type.
+                                ctx_ta[0] = self.expected_type.inner();
                             } else {
-                                self.ctx.intern_builtin_ty(BuiltinType::U8)
-                            };
-                            let is_const = ir_ptr.ty.is_const();
-                            let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
-
-                            let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                            items[0] = ir_ptr;
-                            items[1] = ir_len;
-
-                            let result = IrExpr::void_expr(slice_ty);
-                            result.tag = IrTag::TupleLit;
-                            result._data.block.items = items;
-                            return self.ctx.arena.alloc(result);
+                                // Declared `-> slice<Ptr>`: Ptr = `&{const?}elem`.
+                                ctx_ta[0] = self.ctx.make_ptr_ty(self.expected_type.inner(), self.expected_type.is_const());
+                            }
+                            call_ta = ctx_ta;
                         }
-
-                        // Explicit generic arguments are all or nothing (as in
-                        // alumina-boot); only defaulted trailing ones may be left out.
-                        self.check_generic_arity(def.generic_params, resolved_type_args.len(), expr.span);
-
-                        // If fewer explicit type args than generic params, infer the rest
-                        let call_ta = resolved_type_args;
-                        if resolved_type_args.len() < def.generic_params.len() {
-                            let full_ta = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
-                            for i in 0usize..resolved_type_args.len() {
-                                full_ta[i] = resolved_type_args[i];
-                            }
-                            // Set up partial type map so we can resolve param types for inference
-                            for i in 0usize..resolved_type_args.len() {
-                                self.type_map.insert(def.generic_params[i].id._value, resolved_type_args[i]);
-                            }
-                            // Infer remaining from arguments
-                            let inferred = self.infer_type_args(def, expr.args());
-                            for i in resolved_type_args.len()..def.generic_params.len() {
-                                let inf_idx = i;
-                                if inf_idx < inferred.len() && !inferred[inf_idx].is_void() {
-                                    full_ta[i] = inferred[inf_idx];
-                                } else {
-                                    full_ta[i] = self.ctx.void_ty;
-                                }
-                            }
-                            call_ta = full_ta;
-                            if self.has_uninferred_generics(def, call_ta, resolved_type_args.len()) {
-                                return self.type_hint_required(expr.span);
-                            }
-                        }
-
-                        // Monomorphize the function with type args
+                    }
+                    if self.has_uninferred_generics(def, call_ta, 0) {
+                        return self.type_hint_required(expr.span);
+                    }
+                    if call_ta.len() > 0usize {
                         let fn_idx = self.mono_function(def, call_ta);
                         let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
-                        // Turbofish value (func::<T> as value): produce Fn type, not a call
-                        if expr.tag == ExprTag::TurbofishValue {
-                            let fn_ref = IrFnRef {
-                                id: ir_fn.id,
-                                mangled_name: ir_fn.mangled_name,
-                            };
-                            let fn_ty = self.ctx.make_fn_ty(fn_ref);
-                            return self.alloc(IrExpr::of_fn(fn_ty, fn_ref));
-                        }
-
-                        // Lower arguments
                         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                         for i in 0usize..expr.args().len() {
                             if i < ir_fn.params.len() {
@@ -8174,329 +8252,235 @@ impl Mono {
                         };
                         return self.mk_call(fn_ref, ir_args, ir_fn.return_type);
                     }
-                }
-
-                // Handle function calls by name (ExprTag::FnRef)
-                if expr.type_args().len() == 0 && expr.lhs().tag == ExprTag::FnRef {
-                    let fn_def = self.ctx.fn_defs.get(&expr.lhs().id()._value);
-                    if fn_def.is_some() {
-                        let def = fn_def.unwrap();
-                        if def.generic_params.len() > 0 {
-                            // Check for #[lang(slice_new)] intrinsic (inferred type args path)
-                            let is_slice_new = false;
-                            for attr in def.attributes {
-                                if attr.tag == AttrTag::Lang && attr.str_val() == "slice_new" {
-                                    is_slice_new = true;
-                                }
-                            }
-                            if is_slice_new && expr.args().len() == 2 {
-                                let ir_ptr = self.lower_expr(expr.args()[0]);
-                                let ir_len = self.lower_expr_coerced(expr.args()[1], self.ctx.usize_ty);
-                                let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
-                                    ir_ptr.ty.inner()
-                                } else {
-                                    self.ctx.intern_builtin_ty(BuiltinType::U8)
-                                };
-                                let is_const = ir_ptr.ty.is_const();
-                                let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
-                                let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                                items[0] = ir_ptr;
-                                items[1] = ir_len;
-                                return self.alloc(IrExpr::list(IrTag::TupleLit, slice_ty, items));
-                            }
-
-                            // Infer type args from argument types
-                            let inferred = self.infer_type_args(def, expr.args());
-                            let call_ta: &[&IrTy] = inferred;
-                            if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
-                                // Try to extract type args from expected_type (e.g. Option<usize>)
-                                if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref().type_args.len() == def.generic_params.len() {
-                                    call_ta = self.expected_type.struct_ref().type_args;
-                                } else if self.expected_type.tag == IrTyTag::Struct && def.generic_params.len() == 1usize {
-                                    // For single-generic functions returning a wrapper struct,
-                                    // the expected type's first type arg is probably the generic param
-                                    if self.expected_type.struct_ref().type_args.len() > 0usize {
-                                        let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
-                                        ctx_ta[0] = self.expected_type.struct_ref().type_args[0];
-                                        call_ta = ctx_ta;
-                                    }
-                                } else if self.expected_type.tag == IrTyTag::Slice && def.generic_params.len() == 1usize {
-                                    // Single-generic fns returning a slice. The placeholder
-                                    // can appear either as the *element* type (declared
-                                    // `-> &[T]` / `-> &mut [T]`, AST `TyTag::Slice` over a
-                                    // Placeholder) or as the *pointer* type-arg (declared
-                                    // `-> slice<Ptr>`, AST `TyTag::Generic` over the
-                                    // lang(slice) struct with Ptr as the single arg). Pick
-                                    // the right substitution by inspecting `def.return_type`.
-                                    let ctx_ta = self.ctx.arena.alloc_slice::<&IrTy>(1usize);
-                                    if def.return_type.tag == TyTag::Slice
-                                        && def.return_type.inner().tag == TyTag::Placeholder
-                                        && def.return_type.inner().id()._value == def.generic_params[0].id._value {
-                                        // Declared `-> &[T]`: T is the element type.
-                                        ctx_ta[0] = self.expected_type.inner();
-                                    } else {
-                                        // Declared `-> slice<Ptr>`: Ptr = `&{const?}elem`.
-                                        ctx_ta[0] = self.ctx.make_ptr_ty(self.expected_type.inner(), self.expected_type.is_const());
-                                    }
-                                    call_ta = ctx_ta;
-                                }
-                            }
-                            if self.has_uninferred_generics(def, call_ta, 0) {
-                                return self.type_hint_required(expr.span);
-                            }
-                            if call_ta.len() > 0usize {
-                                let fn_idx = self.mono_function(def, call_ta);
-                                let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
-
-                                let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
-                                for i in 0usize..expr.args().len() {
-                                    if i < ir_fn.params.len() {
-                                        let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
-                                        ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
-                                    } else {
-                                        ir_args[i] = self.lower_expr(expr.args()[i]);
-                                    }
-                                }
-
-                                let fn_ref = IrFnRef {
-                                    id: ir_fn.id,
-                                    mangled_name: ir_fn.mangled_name,
-                                };
-                                return self.mk_call(fn_ref, ir_args, ir_fn.return_type);
-                            }
-                        } else {
-                            // Non-generic function call: emit as CallKind::Direct
-                            // For protocol methods, set up Self type from first argument
-                            let self_param_opt = self.ctx.proto_method_self_id.get(&def.id._value);
-                            // A *static path-call* to a mixin'd protocol method
-                            // (`Type::method(args)`, e.g. `u16::parse(s)` or
-                            // `f64::nan()`) — the path resolver stashed the
-                            // impl_scope_idx in lhs.id2 (set in process_mixins).
-                            // Self must come from the *path type* (the mixin's
-                            // type-args), NOT the first value argument. This must
-                            // take precedence over the first-arg heuristic below:
-                            // for `u16::parse(s: &[u8])` the first-arg rule would
-                            // wrongly bind Self=&[u8] (surfaced via net's
-                            // address parser → parse_integer::<&[u8]>).
-                            let did_mixin_self = false;
-                            if self.ctx.proto_method_proto_gp_ids.get(&def.id._value).is_some()
-                                && expr.lhs().tag == ExprTag::FnRef
-                                && expr.lhs().id2()._value != 0usize {
-                                let impl_scope_idx = expr.lhs().id2()._value as u32;
-                                let mixin_ast_args = self.ctx.scopes.get_mixin_type_args(impl_scope_idx, def.id._value);
-                                if mixin_ast_args.is_some() {
-                                    let ast_args = mixin_ast_args.unwrap();
-                                    let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
-                                    for i in 0usize..ast_args.len() {
-                                        resolved[i] = self.resolve_type(ast_args[i]);
-                                    }
-                                    let _ = self.bind_proto_generics(def, resolved);
-                                    did_mixin_self = true;
-                                }
-                            }
-                            if !did_mixin_self && self_param_opt.is_some() && expr.args().len() > 0 {
-                                // Receiver-style call (e.g. UFCS / value call where
-                                // the first arg IS the receiver): infer Self from
-                                // the first argument's type.
-                                let first_arg_ir = self.lower_expr(expr.args()[0]);
-                                let self_ty = if first_arg_ir.ty.tag == IrTyTag::Pointer {
-                                    first_arg_ir.ty.inner()
-                                } else {
-                                    first_arg_ir.ty
-                                };
-                                self.type_map.insert(self_param_opt.unwrap(), self_ty);
-                            }
-                            let fn_idx = self.mono_function(def, &[]);
-                            let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
-
-                            let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
-                            for i in 0usize..expr.args().len() {
-                                if i < ir_fn.params.len() {
-                                    let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
-                                    ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
-                                } else {
-                                    ir_args[i] = self.lower_expr(expr.args()[i]);
-                                }
-                            }
-
-                            let fn_ref = IrFnRef {
-                                id: ir_fn.id,
-                                mangled_name: ir_fn.mangled_name,
-                            };
-                            return self.mk_call(fn_ref, ir_args, ir_fn.return_type);
-                        }
-                    }
-                }
-
-                let ir_callee = self.lower_expr(expr.lhs());
-                self.suppress_field_error = false;
-                // Arguments are expected to have the callee's parameter types.
-                let signature = self.callable_signature(ir_callee.ty);
-                let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
-                for i in 0usize..expr.args().len() {
-                    ir_args[i] = if signature.is_some() && i < signature.unwrap().0.len() {
-                        self.lower_expr_coerced(expr.args()[i], signature.unwrap().0[i])
-                    } else {
-                        self.lower_expr(expr.args()[i])
-                    };
-                }
-
-                // Determine return type from callee
-                if ir_callee.ty.tag == IrTyTag::Fn {
-                    // Direct call through Fn type (ZST function item).
-                    // Match on (id, mangled_name) and break: multiple monos of the
-                    // same source function share `id`, so id-only matching can pick
-                    // up an unrelated mono's return_type.
-                    let fn_ref = ir_callee.ty.fn_item_ref();
-                    let ret_ty = self.ctx.void_ty;
-                    for i in 0usize..self.ctx.ir_functions.len() {
-                        if self.ctx.ir_functions[i].id._value == fn_ref.id._value
-                            && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
-                            ret_ty = self.ctx.ir_functions[i].return_type;
-                            break;
-                        }
-                    }
-                    self.mk_call(fn_ref, ir_args, ret_ty)
-                } else if ir_callee.ty.tag == IrTyTag::FnPointer {
-                    // Indirect call through function pointer
-                    let ret_ty = ir_callee.ty.ret_ty();
-                    let result = IrExpr::void_expr(ret_ty);
-                    result.tag = IrTag::Call;
-                    result._data.call.call_target = IrCallTarget { tag: CallKind::Indirect, fn_ref: IrFnRef::empty(), callee: ir_callee };
-                    result._data.call.items = ir_args;
-                    self.ctx.arena.alloc(result)
-                } else if ir_callee.ty.tag == IrTyTag::Closure {
-                    // Closure call: take &callee, get fn from closure type, prepend self arg
-                    let closure_ty = ir_callee.ty;
-                    let fn_ref = closure_ty.closure_fn();
-
-                    // Same (id, mangled_name) + break rule as above.
-                    let ret_ty = self.ctx.void_ty;
-                    for i in 0usize..self.ctx.ir_functions.len() {
-                        if self.ctx.ir_functions[i].id._value == fn_ref.id._value
-                            && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
-                            ret_ty = self.ctx.ir_functions[i].return_type;
-                            break;
-                        }
-                    }
-
-                    // Take a reference to the closure struct
-                    let ref_expr = self.mk_ref(ir_callee, false);
-
-                    // Build args: [&closure, arg0, arg1, ...]
-                    let all_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len() + 1usize);
-                    all_args[0] = ref_expr;
-                    for i in 0usize..expr.args().len() {
-                        all_args[i + 1usize] = ir_args[i];
-                    }
-
-                    self.mk_call(fn_ref, all_args, ret_ty)
                 } else {
-                    // Not a function pointer or closure - method resolution failed
-                    if ir_callee.tag == IrTag::FieldAccess && !ir_callee.ty.is_void() {
-                        // A field of that name exists, and it takes precedence.
-                        let ty_name = self.ir_type_name(ir_callee.ty);
-                        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
-                            expr.span,
-                            std::fmt::format!(
-                                "`{}` is not callable (hint: fields take precedence over methods; call the method as `Type::method(...)`)",
-                                ty_name,
-                            ).unwrap().as_slice(),
-                        ));
-                    } else if expr.lhs().tag == ExprTag::FieldAccess && expr.lhs().str_val().len() > 0usize {
-                        // Recover the receiver's type for the error message. The
-                        // FieldAccess was already lowered (into ir_callee, which
-                        // is now void / not-callable); re-lower the receiver with
-                        // suppress_field_error set so we don't double-emit. After
-                        // auto-deref through pointer layers we have the type the
-                        // method was actually looked up on.
-                        let prev_suppress = self.suppress_field_error;
-                        self.suppress_field_error = true;
-                        let recv = self.lower_expr(expr.lhs().lhs());
-                        self.suppress_field_error = prev_suppress;
-                        if recv.ty.is_never() {
-                            // (The receiver diverges, so the call is never made.)
-                            return recv;
-                        }
-                        let recv_ty = recv.ty;
-                        while recv_ty.tag == IrTyTag::Pointer {
-                            recv_ty = recv_ty.inner();
-                        }
-                        let ty_name = self.ir_type_name(recv_ty);
-                        self.emit_diag(diagnostics::CodeDiagnostic::unresolved_method(expr.span, expr.lhs().str_val(), ty_name));
-                    } else {
-                        self.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
-                    }
-                    let r = IrExpr::void_expr(self.ctx.void_ty);
-                    self.ctx.arena.alloc(r)
-                }
-            }
-            ExprTag::StructLit => {
-                let ir_ty = self.resolve_struct_lit_type(expr);
-                if ir_ty.tag != IrTyTag::Struct && ir_ty.tag != IrTyTag::Slice {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "expected a struct-like type here"));
-                    return self.mk_error();
-                }
-
-                if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref().is_union {
-                    // Union: only one initialized field (none leaves it
-                    // uninitialized).
-                    if expr.field_inits().is_empty() {
-                        return self.alloc(IrExpr::of(IrTag::Undef, ir_ty));
-                    }
-                    // (The last initializer wins, as in alumina-boot.)
-                    if expr.field_inits().len() > 1 {
-                        self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "union_initializer_override",
-                            "initializer overrides prior initialization of this union"));
-                    }
-                    let fi = &expr.field_inits()[expr.field_inits().len() - 1];
-                    // Find the field type in the struct def
-                    let field_ty = self.ctx.void_ty;
-                    for j in 0usize..ir_ty.struct_ref().fields.len() {
-                        if ir_ty.struct_ref().fields[j].name == fi.name {
-                            field_ty = ir_ty.struct_ref().fields[j].ty;
-                            break;
-                        }
-                    }
-                    let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(1);
-                    let field_val = self.lower_expr_coerced(fi.value, field_ty);
-                    ir_fields[0] = self.check_and_coerce(field_val, field_ty, fi.value.span);
-                    return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
-                }
-
-                // Reorder field_inits to match struct definition order
-                let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref().fields.len() } else { expr.field_inits().len() };
-                let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);
-                for i in 0usize..num_fields {
-                    if ir_ty.tag == IrTyTag::Struct {
-                        // Find the field_init matching this struct field by name
-                        let def_name = ir_ty.struct_ref().fields[i].name;
-                        let field_ty = ir_ty.struct_ref().fields[i].ty;
-                        let found = false;
-                        for j in 0usize..expr.field_inits().len() {
-                            if expr.field_inits()[j].name == def_name {
-                                let fv = self.lower_expr_coerced(expr.field_inits()[j].value, field_ty);
-                                ir_fields[i] = self.check_and_coerce(fv, field_ty, expr.field_inits()[j].value.span);
-                                found = true;
-                                break;
+                    // Non-generic function call: emit as CallKind::Direct
+                    // For protocol methods, set up Self type from first argument
+                    let self_param_opt = self.ctx.proto_method_self_id.get(&def.id._value);
+                    // A *static path-call* to a mixin'd protocol method
+                    // (`Type::method(args)`, e.g. `u16::parse(s)` or
+                    // `f64::nan()`) — the path resolver stashed the
+                    // impl_scope_idx in lhs.id2 (set in process_mixins).
+                    // Self must come from the *path type* (the mixin's
+                    // type-args), NOT the first value argument. This must
+                    // take precedence over the first-arg heuristic below:
+                    // for `u16::parse(s: &[u8])` the first-arg rule would
+                    // wrongly bind Self=&[u8] (surfaced via net's
+                    // address parser → parse_integer::<&[u8]>).
+                    let did_mixin_self = false;
+                    if self.ctx.proto_method_proto_gp_ids.get(&def.id._value).is_some()
+                        && expr.lhs().tag == ExprTag::FnRef
+                        && expr.lhs().id2()._value != 0usize {
+                        let impl_scope_idx = expr.lhs().id2()._value as u32;
+                        let mixin_ast_args = self.ctx.scopes.get_mixin_type_args(impl_scope_idx, def.id._value);
+                        if mixin_ast_args.is_some() {
+                            let ast_args = mixin_ast_args.unwrap();
+                            let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ast_args.len());
+                            for i in 0usize..ast_args.len() {
+                                resolved[i] = self.resolve_type(ast_args[i]);
                             }
+                            let _ = self.bind_proto_generics(def, resolved);
+                            did_mixin_self = true;
                         }
-                        if !found {
-                            // (Left uninitialized, as in alumina-boot.)
-                            self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "uninitialized_field",
-                                std::fmt::format!("field `{}` is not initialized", def_name).unwrap().as_slice()));
-                            ir_fields[i] = self.alloc(IrExpr::of(IrTag::Undef, field_ty));
-                        }
-                    } else {
-                        ir_fields[i] = self.lower_expr(expr.field_inits()[i].value);
                     }
+                    if !did_mixin_self && self_param_opt.is_some() && expr.args().len() > 0 {
+                        // Receiver-style call (e.g. UFCS / value call where
+                        // the first arg IS the receiver): infer Self from
+                        // the first argument's type.
+                        let first_arg_ir = self.lower_expr(expr.args()[0]);
+                        let self_ty = if first_arg_ir.ty.tag == IrTyTag::Pointer {
+                            first_arg_ir.ty.inner()
+                        } else {
+                            first_arg_ir.ty
+                        };
+                        self.type_map.insert(self_param_opt.unwrap(), self_ty);
+                    }
+                    let fn_idx = self.mono_function(def, &[]);
+                    let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+
+                    let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
+                    for i in 0usize..expr.args().len() {
+                        if i < ir_fn.params.len() {
+                            let arg = self.lower_expr_coerced(expr.args()[i], ir_fn.params[i].ty);
+                            ir_args[i] = self.check_and_coerce(arg, ir_fn.params[i].ty, expr.args()[i].span);
+                        } else {
+                            ir_args[i] = self.lower_expr(expr.args()[i]);
+                        }
+                    }
+
+                    let fn_ref = IrFnRef {
+                        id: ir_fn.id,
+                        mangled_name: ir_fn.mangled_name,
+                    };
+                    return self.mk_call(fn_ref, ir_args, ir_fn.return_type);
                 }
-                self.alloc(IrExpr::struct_lit(ir_ty, ir_fields))
-            }
-            _ => {
-                self.mk_void()
             }
         }
+
+        let ir_callee = self.lower_expr(expr.lhs());
+        self.suppress_field_error = false;
+        // Arguments are expected to have the callee's parameter types.
+        let signature = self.callable_signature(ir_callee.ty);
+        let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
+        for i in 0usize..expr.args().len() {
+            ir_args[i] = if signature.is_some() && i < signature.unwrap().0.len() {
+                self.lower_expr_coerced(expr.args()[i], signature.unwrap().0[i])
+            } else {
+                self.lower_expr(expr.args()[i])
+            };
+        }
+
+        // Determine return type from callee
+        if ir_callee.ty.tag == IrTyTag::Fn {
+            // Direct call through Fn type (ZST function item).
+            // Match on (id, mangled_name) and break: multiple monos of the
+            // same source function share `id`, so id-only matching can pick
+            // up an unrelated mono's return_type.
+            let fn_ref = ir_callee.ty.fn_item_ref();
+            let ret_ty = self.ctx.void_ty;
+            for i in 0usize..self.ctx.ir_functions.len() {
+                if self.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    ret_ty = self.ctx.ir_functions[i].return_type;
+                    break;
+                }
+            }
+            self.mk_call(fn_ref, ir_args, ret_ty)
+        } else if ir_callee.ty.tag == IrTyTag::FnPointer {
+            // Indirect call through function pointer
+            let ret_ty = ir_callee.ty.ret_ty();
+            let result = IrExpr::void_expr(ret_ty);
+            result.tag = IrTag::Call;
+            result._data.call.call_target = IrCallTarget { tag: CallKind::Indirect, fn_ref: IrFnRef::empty(), callee: ir_callee };
+            result._data.call.items = ir_args;
+            self.ctx.arena.alloc(result)
+        } else if ir_callee.ty.tag == IrTyTag::Closure {
+            // Closure call: take &callee, get fn from closure type, prepend self arg
+            let closure_ty = ir_callee.ty;
+            let fn_ref = closure_ty.closure_fn();
+
+            // Same (id, mangled_name) + break rule as above.
+            let ret_ty = self.ctx.void_ty;
+            for i in 0usize..self.ctx.ir_functions.len() {
+                if self.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && self.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    ret_ty = self.ctx.ir_functions[i].return_type;
+                    break;
+                }
+            }
+
+            // Take a reference to the closure struct
+            let ref_expr = self.mk_ref(ir_callee, false);
+
+            // Build args: [&closure, arg0, arg1, ...]
+            let all_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len() + 1usize);
+            all_args[0] = ref_expr;
+            for i in 0usize..expr.args().len() {
+                all_args[i + 1usize] = ir_args[i];
+            }
+
+            self.mk_call(fn_ref, all_args, ret_ty)
+        } else {
+            // Not a function pointer or closure - method resolution failed
+            if ir_callee.tag == IrTag::FieldAccess && !ir_callee.ty.is_void() {
+                // A field of that name exists, and it takes precedence.
+                let ty_name = self.ir_type_name(ir_callee.ty);
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    expr.span,
+                    std::fmt::format!(
+                        "`{}` is not callable (hint: fields take precedence over methods; call the method as `Type::method(...)`)",
+                        ty_name,
+                    ).unwrap().as_slice(),
+                ));
+            } else if expr.lhs().tag == ExprTag::FieldAccess && expr.lhs().str_val().len() > 0usize {
+                // Recover the receiver's type for the error message. The
+                // FieldAccess was already lowered (into ir_callee, which
+                // is now void / not-callable); re-lower the receiver with
+                // suppress_field_error set so we don't double-emit. After
+                // auto-deref through pointer layers we have the type the
+                // method was actually looked up on.
+                let prev_suppress = self.suppress_field_error;
+                self.suppress_field_error = true;
+                let recv = self.lower_expr(expr.lhs().lhs());
+                self.suppress_field_error = prev_suppress;
+                if recv.ty.is_never() {
+                    // (The receiver diverges, so the call is never made.)
+                    return recv;
+                }
+                let recv_ty = recv.ty;
+                while recv_ty.tag == IrTyTag::Pointer {
+                    recv_ty = recv_ty.inner();
+                }
+                let ty_name = self.ir_type_name(recv_ty);
+                self.emit_diag(diagnostics::CodeDiagnostic::unresolved_method(expr.span, expr.lhs().str_val(), ty_name));
+            } else {
+                self.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
+            }
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    fn lower_struct_lit(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let ir_ty = self.resolve_struct_lit_type(expr);
+        if ir_ty.tag != IrTyTag::Struct && ir_ty.tag != IrTyTag::Slice {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "expected a struct-like type here"));
+            return self.mk_error();
+        }
+
+        if ir_ty.tag == IrTyTag::Struct && ir_ty.struct_ref().is_union {
+            // Union: only one initialized field (none leaves it
+            // uninitialized).
+            if expr.field_inits().is_empty() {
+                return self.alloc(IrExpr::of(IrTag::Undef, ir_ty));
+            }
+            // (The last initializer wins, as in alumina-boot.)
+            if expr.field_inits().len() > 1 {
+                self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "union_initializer_override",
+                    "initializer overrides prior initialization of this union"));
+            }
+            let fi = &expr.field_inits()[expr.field_inits().len() - 1];
+            // Find the field type in the struct def
+            let field_ty = self.ctx.void_ty;
+            for j in 0usize..ir_ty.struct_ref().fields.len() {
+                if ir_ty.struct_ref().fields[j].name == fi.name {
+                    field_ty = ir_ty.struct_ref().fields[j].ty;
+                    break;
+                }
+            }
+            let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(1);
+            let field_val = self.lower_expr_coerced(fi.value, field_ty);
+            ir_fields[0] = self.check_and_coerce(field_val, field_ty, fi.value.span);
+            return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
+        }
+
+        // Reorder field_inits to match struct definition order
+        let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref().fields.len() } else { expr.field_inits().len() };
+        let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);
+        for i in 0usize..num_fields {
+            if ir_ty.tag == IrTyTag::Struct {
+                // Find the field_init matching this struct field by name
+                let def_name = ir_ty.struct_ref().fields[i].name;
+                let field_ty = ir_ty.struct_ref().fields[i].ty;
+                let found = false;
+                for j in 0usize..expr.field_inits().len() {
+                    if expr.field_inits()[j].name == def_name {
+                        let fv = self.lower_expr_coerced(expr.field_inits()[j].value, field_ty);
+                        ir_fields[i] = self.check_and_coerce(fv, field_ty, expr.field_inits()[j].value.span);
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    // (Left uninitialized, as in alumina-boot.)
+                    self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "uninitialized_field",
+                        std::fmt::format!("field `{}` is not initialized", def_name).unwrap().as_slice()));
+                    ir_fields[i] = self.alloc(IrExpr::of(IrTag::Undef, field_ty));
+                }
+            } else {
+                ir_fields[i] = self.lower_expr(expr.field_inits()[i].value);
+            }
+        }
+        self.alloc(IrExpr::struct_lit(ir_ty, ir_fields))
     }
 
     // Lower block-like expressions: ExprTag::Block, ExprTag::Let, ExprTag::Defer
@@ -8572,98 +8556,93 @@ impl Mono {
     }
 
     fn lower_block(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        switch expr.tag {
-            ExprTag::Block => {
-                let n = expr.args().len();
-                let value_local: Option<usize> = Option::none();
-                if n > 0 && expr.args()[n - 1].tag == ExprTag::Local && !self.expected_type.is_void() {
-                    let id = expr.args()[n - 1].id()._value;
-                    if !self.local_type_hints.contains(&id) {
-                        self.local_type_hints.insert(id, self.expected_type);
-                        value_local = Option::some(id);
-                    }
-                }
-                defer if value_local.is_some() {
-                    self.local_type_hints.remove(&value_local.unwrap());
-                };
-                let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(n);
-                let diverged = false;
-                for i in 0usize..n {
-                    // The block's value (its last item) gets the block's hint.
-                    ir_stmts[i] = if i + 1 == n {
-                        self.lower_expr_hinted(expr.args()[i], self.expected_type)
-                    } else {
-                        self.lower_expr(expr.args()[i])
-                    };
-                    if i + 1 < n {
-                        self.check_statement(ir_stmts[i], expr.args()[i].span, diverged);
-                        diverged = diverged || ir_stmts[i].ty.is_never();
-                    }
-                }
-                self.mk_block(ir_stmts)
-            }
-            ExprTag::Let => {
-                let var_ty = if expr.opt_ty().is_some() {
-                    let resolved = self.resolve_type(expr.opt_ty().unwrap());
-                    self.check_value_type(resolved, expr.span);
-                    resolved
-                } else if expr.opt_expr().is_some() {
-                    let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.no_hint);
-                    let ir_init = self.lower_expr_hinted(expr.opt_expr().unwrap(), hint);
-                    let inferred = ir_init.ty;
-                    self.local_types.insert(expr.id()._value, inferred);
-                    self.local_defs.push(IrLocalDef {
-                        id: expr.id(),
-                        ty: inferred,
-                        name: expr.str_val(),
-                        span: expr.span,
-                    });
-                    return self.mk_let(expr.id(), inferred, ir_init);
-                } else {
-                    self.ctx.void_ty
-                };
-
-                self.local_types.insert(expr.id()._value, var_ty);
-                self.local_defs.push(IrLocalDef {
-                    id: expr.id(),
-                    ty: var_ty,
-                    name: expr.str_val(),
-                    span: expr.span,
-                });
-
-                if expr.opt_expr().is_some() {
-                    let init_val = self.lower_expr_coerced(expr.opt_expr().unwrap(), var_ty);
-                    let init_val = self.check_and_coerce(init_val, var_ty, expr.span);
-                    self.mk_let(expr.id(), var_ty, init_val)
-                } else {
-                    self.mk_let_uninit(expr.id(), var_ty)
-                }
-            }
-            ExprTag::Defer => {
-                if !self.fn_scope {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "can only do that in function scope"));
-                    return self.mk_error();
-                }
-                if self.in_defer {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot defer inside a defered expression"));
-                    return self.mk_error();
-                }
-                if !self.loop_contexts.is_empty() && !self.tentative {
-                    self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "defer_in_a_loop",
-                        "defer inside a loop: this defered statement will only be executed once"));
-                }
-                self.in_defer = true;
-                let ir_inner = self.lower_expr(expr.lhs());
-                self.in_defer = false;
-                let result = IrExpr::void_expr(self.ctx.void_ty);
-                result.tag = IrTag::Defer;
-                result._data.single.lhs = ir_inner;
-                self.ctx.arena.alloc(result)
-            }
-            _ => {
-                self.mk_void()
+        let n = expr.args().len();
+        let value_local: Option<usize> = Option::none();
+        if n > 0 && expr.args()[n - 1].tag == ExprTag::Local && !self.expected_type.is_void() {
+            let id = expr.args()[n - 1].id()._value;
+            if !self.local_type_hints.contains(&id) {
+                self.local_type_hints.insert(id, self.expected_type);
+                value_local = Option::some(id);
             }
         }
+        defer if value_local.is_some() {
+            self.local_type_hints.remove(&value_local.unwrap());
+        };
+        let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(n);
+        let diverged = false;
+        for i in 0usize..n {
+            // The block's value (its last item) gets the block's hint.
+            ir_stmts[i] = if i + 1 == n {
+                self.lower_expr_hinted(expr.args()[i], self.expected_type)
+            } else {
+                self.lower_expr(expr.args()[i])
+            };
+            if i + 1 < n {
+                self.check_statement(ir_stmts[i], expr.args()[i].span, diverged);
+                diverged = diverged || ir_stmts[i].ty.is_never();
+            }
+        }
+        self.mk_block(ir_stmts)
+    }
+
+    fn lower_let(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let var_ty = if expr.opt_ty().is_some() {
+            let resolved = self.resolve_type(expr.opt_ty().unwrap());
+            self.check_value_type(resolved, expr.span);
+            resolved
+        } else if expr.opt_expr().is_some() {
+            let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.no_hint);
+            let ir_init = self.lower_expr_hinted(expr.opt_expr().unwrap(), hint);
+            let inferred = ir_init.ty;
+            self.local_types.insert(expr.id()._value, inferred);
+            self.local_defs.push(IrLocalDef {
+                id: expr.id(),
+                ty: inferred,
+                name: expr.str_val(),
+                span: expr.span,
+            });
+            return self.mk_let(expr.id(), inferred, ir_init);
+        } else {
+            self.ctx.void_ty
+        };
+
+        self.local_types.insert(expr.id()._value, var_ty);
+        self.local_defs.push(IrLocalDef {
+            id: expr.id(),
+            ty: var_ty,
+            name: expr.str_val(),
+            span: expr.span,
+        });
+
+        if expr.opt_expr().is_some() {
+            let init_val = self.lower_expr_coerced(expr.opt_expr().unwrap(), var_ty);
+            let init_val = self.check_and_coerce(init_val, var_ty, expr.span);
+            self.mk_let(expr.id(), var_ty, init_val)
+        } else {
+            self.mk_let_uninit(expr.id(), var_ty)
+        }
+    }
+
+    fn lower_defer(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if !self.fn_scope {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "can only do that in function scope"));
+            return self.mk_error();
+        }
+        if self.in_defer {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot defer inside a defered expression"));
+            return self.mk_error();
+        }
+        if !self.loop_contexts.is_empty() && !self.tentative {
+            self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "defer_in_a_loop",
+                "defer inside a loop: this defered statement will only be executed once"));
+        }
+        self.in_defer = true;
+        let ir_inner = self.lower_expr(expr.lhs());
+        self.in_defer = false;
+        let result = IrExpr::void_expr(self.ctx.void_ty);
+        result.tag = IrTag::Defer;
+        result._data.single.lhs = ir_inner;
+        self.ctx.arena.alloc(result)
     }
 
     // Returns (field_idx, field_ty, found)
