@@ -1,0 +1,166 @@
+// Inference of a generic function's type arguments at a call, as
+// alumina-boot's `TypeInferer` (unifying the types of the parameters with the
+// evidence) and beyond it where the answer is unambiguous. The evidence, in
+// the order it binds the type arguments (the first binding of each counts):
+// - the type arguments given explicitly, and the receiver of a method;
+// - the arguments whose types are their own, lowered tentatively without a
+//   hint (one that cannot be typed on its own, e.g. `Option::none()`, gives
+//   nothing);
+// - the type the context expects of the result;
+// - the type arguments the receiver's type implies (for methods);
+// - untyped literals (`5`, `2.5`), whose types are only defaults: so
+//   `let x: u8 = id(5)` and `same(1, 2u8)` are `u8` (alumina-boot has
+//   `i32` and reports a mismatch);
+// - the protocol bounds of the type parameters, until nothing more follows:
+//   `F: Fn(A) -> R` with F known gives A and R (and a callable argument that
+//   cannot be typed on its own is lowered with the bound as its hint),
+//   `Ptr: PointerOf<T>` gives T, `R: RangeOf<T>` gives T.
+// The defaults of the parameters still unknown are the caller's to apply.
+
+use mono::*;
+use mono::lower::Mono;
+use ast::*;
+use ir::*;
+use std::collections::Vector;
+use std::option::Option;
+
+/// The type arguments of a generic item, as they are inferred.
+struct Inference {
+    params: &[GenericParam],
+    types: &mut [&IrTy],
+    found: &mut [bool],
+}
+
+impl Inference {
+    fn new(m: &mut Mono, params: &[GenericParam]) -> Inference {
+        let types = m.ctx.arena.alloc_slice::<&IrTy>(params.len());
+        let found = m.ctx.arena.alloc_slice::<bool>(params.len());
+        for i in 0usize..params.len() {
+            types[i] = m.ctx.void_ty;
+            found[i] = false;
+        }
+        Inference { params: params, types: types, found: found }
+    }
+
+    /// Bind type argument `i`, unless it is bound already.
+    fn bind(self: &mut Inference, i: usize, ty: &IrTy) {
+        if i < self.params.len() && !self.found[i] {
+            self.types[i] = ty;
+            self.found[i] = true;
+        }
+    }
+
+    /// Bind the type arguments `param` (a type written in terms of them)
+    /// takes to be `arg`.
+    fn unify(self: &mut Inference, m: &mut Mono, param: &Ty, arg: &IrTy) {
+        m.unify_type_for_inference(param, arg, self.types, self.found, self.params);
+    }
+
+    fn found_count(self: &Inference) -> usize {
+        self.found.iter().filter(|f: bool| -> bool { f }).count()
+    }
+}
+
+/// Whether an expression is an untyped numeric literal, whose type (`i32`,
+/// `f64`) is only a default.
+fn is_untyped_literal(e: &Expr) -> bool {
+    switch e.tag {
+        ExprTag::IntLit, ExprTag::FloatLit => e.type_suffix().is_none(),
+        ExprTag::Unary => e.un_op() == UnOp::Neg && is_untyped_literal(e.lhs()),
+        _ => false,
+    }
+}
+
+/// Infer from a call whose explicit type arguments (and receiver) are bound
+/// already: `params` are the parameters the `args` are for, `ret` the result
+/// type and `implied` the type arguments the receiver's type implies (void
+/// where it implies none).
+fn infer_call(
+    m: &mut Mono,
+    inf: &mut Inference,
+    params: &[FnParam],
+    args: &[&Expr],
+    ret: &Ty,
+    tuple_args: bool,
+    implied: &[&IrTy],
+) {
+    // The arguments, lowered without a hint and outside the context of this
+    // call (see `Mono::inside_arg_inference`).
+    let saved_return = m.return_type;
+    let saved_inside = m.inside_arg_inference;
+    m.return_type = m.ctx.void_ty;
+    m.inside_arg_inference = true;
+    let literals: Vector<(usize, &IrTy)> = Vector::new();
+    defer literals.free();
+    if tuple_args && params.len() == 1 {
+        // (#[tuple_args]: the arguments are the elements of the parameter.)
+        let arg_tys = m.ctx.arena.alloc_slice::<&IrTy>(args.len());
+        let complete = true;
+        for (i, arg) in args.iter().enumerate() {
+            arg_tys[i] = m.lower_expr_tentative(arg).ty;
+            complete = complete && !m.tentative_incomplete;
+        }
+        if complete {
+            inf.unify(m, params[0].ty, m.ctx.make_tuple_ty(arg_tys));
+        }
+    } else {
+        for i in 0usize..std::cmp::min(params.len(), args.len()) {
+            let arg = args[i];
+            let ty = m.lower_expr_tentative(arg).ty;
+            // (An argument whose own inference was incomplete, which a void
+            // call result also means, says nothing.)
+            if m.tentative_incomplete || (ty.is_void() && (arg.tag == ExprTag::Call || arg.tag == ExprTag::MethodCall
+                || arg.tag == ExprTag::TurbofishValue || arg.tag == ExprTag::Defered)) {
+                continue;
+            }
+            if is_untyped_literal(arg) {
+                literals.push((i, ty));
+            } else {
+                inf.unify(m, params[i].ty, ty);
+            }
+        }
+    }
+    m.return_type = saved_return;
+    m.inside_arg_inference = saved_inside;
+
+    from_hint(m, inf, ret);
+    for (i, ty) in implied.iter().enumerate() {
+        if !ty.is_void() {
+            inf.bind(i, ty);
+        }
+    }
+    for (i, ty) in literals {
+        inf.unify(m, params[i].ty, ty);
+    }
+    from_bounds(m, inf, params, args);
+}
+
+/// The type the call's context expects of its result `ret`.
+fn from_hint(m: &mut Mono, inf: &mut Inference, ret: &Ty) {
+    let hint = m.expected_type;
+    if hint == m.ctx.no_hint {
+        return;
+    }
+    // (A result that is a type parameter itself takes no hint meant for an
+    // enclosing call, which an argument lowered for inference would see.)
+    if ret.tag == TyTag::Placeholder && m.inside_arg_inference {
+        return;
+    }
+    // (`&dyn P` is written as one type, the pointer to the `dyn` struct.)
+    let target = if ret.tag == TyTag::Dyn && hint.tag == IrTyTag::Pointer { hint.inner() } else { hint };
+    inf.unify(m, ret, target);
+}
+
+/// The protocol bounds of the type parameters, until nothing more follows.
+fn from_bounds(m: &mut Mono, inf: &mut Inference, params: &[FnParam], args: &[&Expr]) {
+    loop {
+        let before = inf.found_count();
+        m.infer_from_callable_bounds(inf.params, inf.types, inf.found);
+        m.infer_callables_from_bounds(inf.params, params, args, inf.types, inf.found);
+        m.infer_from_pointer_bounds(inf.params, inf.types, inf.found);
+        m.infer_from_range_of_bounds(inf.params, inf.types, inf.found);
+        if inf.found_count() == before {
+            break;
+        }
+    }
+}

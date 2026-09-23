@@ -3288,10 +3288,10 @@ impl Mono {
     /// A callable argument for `F: Fn(A...) -> R` that cannot be typed on its
     /// own (e.g. a generic function) is lowered with the bound, resolved with
     /// the arguments inferred so far, as its hint; its type is then F.
-    fn infer_callables_from_bounds(self: &mut Mono, def: &FnDef, args: &[&Expr], inferred: &mut [&IrTy], found: &mut [bool]) {
-        for (g, param) in def.generic_params.iter().enumerate() {
+    fn infer_callables_from_bounds(self: &mut Mono, generic_params: &[GenericParam], params: &[FnParam], args: &[&Expr], inferred: &mut [&IrTy], found: &mut [bool]) {
+        for (g, param) in generic_params.iter().enumerate() {
             if found[g] { continue; }
-            let arg_idx = def.params.iter().find_index(|=param, p: FnParam| -> bool {
+            let arg_idx = params.iter().find_index(|=param, p: FnParam| -> bool {
                 p.ty.tag == TyTag::Placeholder && p.ty.id()._value == param.id._value
             });
             if arg_idx.is_none() || arg_idx.unwrap() >= args.len() { continue; }
@@ -3299,7 +3299,7 @@ impl Mono {
                 if bound.tag != TyTag::FnPointer { continue; }
                 let outer_type_map = self.type_map;
                 self.type_map = outer_type_map.clone();
-                for (i, other) in def.generic_params.iter().enumerate() {
+                for (i, other) in generic_params.iter().enumerate() {
                     if found[i] {
                         self.type_map.insert(other.id._value, inferred[i]);
                     }
@@ -6031,11 +6031,11 @@ impl Mono {
     // Returns true if it bound at least one previously-unbound generic.
     fn infer_from_range_of_bounds(
         self: &mut Mono,
-        def: &FnDef,
+        generic_params: &[GenericParam],
         inferred: &mut [&IrTy],
         found: &mut [bool]
     ) -> bool {
-        let n = def.generic_params.len();
+        let n = generic_params.len();
         let any = false;
         for h in 0usize..n {
             if !found[h] { continue; }
@@ -6043,8 +6043,8 @@ impl Mono {
             if !self.is_range_ty(range_ty) { continue; }
             let ta = range_ty.struct_ref().type_args;
             if ta.len() < 1 { continue; }
-            for b in 0usize..def.generic_params[h].bounds.len() {
-                let bound_ty = def.generic_params[h].bounds[b];
+            for b in 0usize..generic_params[h].bounds.len() {
+                let bound_ty = generic_params[h].bounds[b];
                 if bound_ty.tag != TyTag::Generic { continue; }
                 if bound_ty.elems().len() < 1 { continue; }
                 let elem_arg = bound_ty.elems()[0];
@@ -6064,7 +6064,7 @@ impl Mono {
                     // concrete `Uniform<i32, Range<i32>>` binds T=void,
                     // found=true). RangeOf-derivation is authoritative here.
                     if found[g] && !inferred[g].is_void() { continue; }
-                    if def.generic_params[g].id._value == elem_gp_id {
+                    if generic_params[g].id._value == elem_gp_id {
                         inferred[g] = ta[0];
                         found[g] = true;
                         any = true;
@@ -6733,387 +6733,14 @@ impl Mono {
     // Recursively unifies parameter types against argument types to extract
     // placeholder bindings, supporting arbitrarily nested generic types.
     fn infer_type_args(self: &mut Mono, def: &FnDef, args: &[&Expr]) -> &[&IrTy] {
-        let num_generics = def.generic_params.len();
-        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
-        let found = self.ctx.arena.alloc_slice::<bool>(num_generics);
-        for i in 0usize..num_generics {
-            inferred[i] = self.ctx.void_ty;
-            found[i] = false;
-        }
-
-        // Match each parameter against the corresponding argument.
-        // Lower each arg with NO expected_type / return_type hint — the
-        // arg's type should come from its own context (its own subterms),
-        // not from the OUTER call's expected return type. Otherwise an
-        // inner call whose return type is a direct Placeholder (e.g.
-        // `util::cast<T1,T2>(t:T1) -> T2`) picks up the OUTER caller's
-        // expected_type / return_type as its own return-type hint (see
-        // the "direct placeholder in return type" branch at line ~5500),
-        // mis-binding T2 to the outer caller's expected return type.
-        // Mirrors alumina-boot's tentative arg lowering in
-        // `lower_function_call` (`child.lower_expr(e, None)` at
-        // src/alumina-boot/src/ir/mono/mod.rs:3035) — boot passes None
-        // for both hint and outer return context during inference.
-        //
-        // The `inside_arg_inference` flag additionally guards the
-        // direct-Placeholder return-type-from-hint branch in nested
-        // `infer_type_args` calls (e.g. `util::cast`'s own inference run
-        // while walking `Option::some`'s args). Without the flag, that
-        // branch would still fire on `self.return_type` (the outer's,
-        // still set), since clearing only fires at the *call we
-        // arrived from*. The flag stays sticky through arbitrary
-        // recursion depth.
-        let num_params = def.params.len();
-        let saved_return = self.return_type;
-        let saved_in_arg_inf = self.inside_arg_inference;
-        self.return_type = self.ctx.void_ty;
-        self.inside_arg_inference = true;
-        // #[tuple_args]: the arguments are the elements of the one parameter.
-        if def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::TupleArgs }) && num_params == 1 {
-            let arg_tys = self.ctx.arena.alloc_slice::<&IrTy>(args.len());
-            let complete = true;
-            for (i, arg) in args.iter().enumerate() {
-                arg_tys[i] = self.lower_expr_tentative(arg).ty;
-                complete = complete && !self.tentative_incomplete;
-            }
-            if complete {
-                self.unify_type_for_inference(def.params[0].ty, self.ctx.make_tuple_ty(arg_tys), inferred, found, def.generic_params);
-            }
-            num_params = 0;
-        }
-        for p in 0usize..num_params {
-            if p >= args.len() { break; }
-            let param_ty = def.params[p].ty;
-            let arg_expr = args[p];
-            let arg_ty = self.lower_expr_tentative(arg_expr).ty;
-            // The argument's own inference was incomplete (e.g. a bare
-            // `Result::err(e)`, whose T needs a type hint): its type says
-            // nothing about ours; the hint comes from our context instead.
-            if self.tentative_incomplete {
-                continue;
-            }
-            // When the arg comes back as Void from a Call-like expression,
-            // skip unification: aluminac eagerly mono's the inner call
-            // with any-unresolved-slot=void during tentative inference,
-            // and the resulting void return is "inference failed" — not a
-            // real unit value. Binding the outer's generic to that void
-            // would lock it in before the call-site's expected-type
-            // fallback can fill it from the surrounding context. A unit
-            // literal `()` (ExprTag::TupleLit with 0 args), an empty
-            // block, or any non-Call expression that legitimately
-            // evaluates to () keeps the existing behavior so
-            // `assert_eq!((), ())` still binds T=void.
-            if arg_ty.tag == IrTyTag::Void
-                && (arg_expr.tag == ExprTag::Call
-                    || arg_expr.tag == ExprTag::MethodCall
-                    || arg_expr.tag == ExprTag::TurbofishValue
-                    || arg_expr.tag == ExprTag::Defered) {
-                continue;
-            }
-            self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
-        }
-        self.return_type = saved_return;
-        self.inside_arg_inference = saved_in_arg_inf;
-
-        self.infer_from_callable_bounds(def.generic_params, inferred, found);
-        self.infer_callables_from_bounds(def, args, inferred, found);
-
-        // Try to infer remaining generics from Fn bounds.
-        // For F: Fn(A) -> R, if the actual argument for F is a lambda or function,
-        // extract the return type to infer R.
-        for g in 0usize..num_generics {
-            if found[g] { continue; }
-            // Check all generic params for Fn bounds that reference this one
-            for h in 0usize..num_generics {
-                if h == g { continue; }
-                // Check bounds of param h
-                for b in 0usize..def.generic_params[h].bounds.len() {
-                    let bound = def.generic_params[h].bounds[b];
-                    // Fn bound is TyTag::FnPointer: Fn(params) -> ret_ty
-                    if bound.tag == TyTag::FnPointer {
-                        // Find which parameter position corresponds to generic h
-                        let param_idx: i32 = -1i32;
-                        for pp in 0usize..num_params {
-                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id()._value == def.generic_params[h].id._value {
-                                param_idx = pp as i32;
-                                break;
-                            }
-                        }
-                        if param_idx < 0i32 || param_idx as usize >= args.len() { continue; }
-                        let arg_expr = args[param_idx as usize];
-
-                        // Check if ret_ty is a placeholder matching our target generic
-                        if bound.ret_ty().tag == TyTag::Placeholder && bound.ret_ty().id()._value == def.generic_params[g].id._value {
-                            // Extract return type from the lambda/fn's AST return
-                            // type (a lambda without one returns `()`).
-                            if arg_expr.tag == ExprTag::Lambda {
-                                let ret_ty = if arg_expr.opt_ty().is_some() {
-                                    self.resolve_type(arg_expr.opt_ty().unwrap())
-                                } else {
-                                    self.ctx.void_ty
-                                };
-                                inferred[g] = ret_ty;
-                                found[g] = true;
-                            } else if arg_expr.tag == ExprTag::FnRef {
-                                // Function reference: look up the function def's return type
-                                let fn_def = self.ctx.fn_defs.get(&arg_expr.id()._value);
-                                if fn_def.is_some() {
-                                    let ret_ty = self.resolve_type(fn_def.unwrap().return_type);
-                                    inferred[g] = ret_ty;
-                                    found[g] = true;
-                                }
-                            } else if arg_expr.tag == ExprTag::Local || arg_expr.tag == ExprTag::Param || arg_expr.tag == ExprTag::FieldAccess {
-                                // Closure / fn-pointer / fn-item value referenced
-                                // through a local, parameter, or struct field
-                                // (e.g. `MapIterator::next` calls
-                                // `option.map(self._fun)`). Lower the arg to
-                                // recover its IR type, then dig out the return.
-                                // Without this, Tm in `Fn(T) -> Tm` stays
-                                // unbound and Option::map mono's Tm=void —
-                                // truncating the closure's pointer return into
-                                // a 1-byte Option payload, the bug behind
-                                // `xs.iter().map(closure).to_vector()`
-                                // returning garbage addresses.
-                                let arg_ir_ty = self.lower_expr_tentative(arg_expr).ty;
-                                let ret_ty: &IrTy = self.ctx.void_ty;
-                                switch arg_ir_ty.tag {
-                                    IrTyTag::Closure => {
-                                        let cfn = arg_ir_ty.closure_fn();
-                                        for func in self.ctx.ir_functions.iter() {
-                                            if func.id._value == cfn.id._value
-                                                && func.mangled_name == cfn.mangled_name {
-                                                ret_ty = func.return_type;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    IrTyTag::Fn => {
-                                        let fnref = arg_ir_ty.fn_item_ref();
-                                        for func in self.ctx.ir_functions.iter() {
-                                            if func.id._value == fnref.id._value
-                                                && func.mangled_name == fnref.mangled_name {
-                                                ret_ty = func.return_type;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    IrTyTag::FnPointer => {
-                                        ret_ty = arg_ir_ty.ret_ty();
-                                    }
-                                    _ => {}
-                                }
-                                if !ret_ty.is_void() {
-                                    inferred[g] = ret_ty;
-                                    found[g] = true;
-                                }
-                            } else if arg_expr.tag == ExprTag::TurbofishValue && arg_expr.lhs().tag == ExprTag::FnRef {
-                                // Turbofish-applied function reference: e.g.
-                                // `Result::unwrap::<u32, Error>` passed as a value.
-                                // Bind the function's generic params from the
-                                // explicit type args, resolve the return type,
-                                // then restore type_map. Without this branch the
-                                // explicit args would be ignored and the return
-                                // type would resolve under whatever stale
-                                // bindings happened to be in type_map.
-                                let fn_def = self.ctx.fn_defs.get(&arg_expr.lhs().id()._value);
-                                if fn_def.is_some() {
-                                    let inner_def = fn_def.unwrap();
-                                    let n_ta = arg_expr.type_args().len();
-                                    let n_bind = if n_ta < inner_def.generic_params.len() { n_ta } else { inner_def.generic_params.len() };
-                                    let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(n_bind);
-                                    let saved_had = self.ctx.arena.alloc_slice::<bool>(n_bind);
-                                    for k in 0usize..n_bind {
-                                        let prev = self.type_map.get(&inner_def.generic_params[k].id._value);
-                                        if prev.is_some() {
-                                            saved_vals[k] = prev.unwrap();
-                                            saved_had[k] = true;
-                                        } else {
-                                            saved_had[k] = false;
-                                        }
-                                        let resolved = self.resolve_type(arg_expr.type_args()[k]);
-                                        self.type_map.insert(inner_def.generic_params[k].id._value, resolved);
-                                    }
-                                    let ret_ty = self.resolve_type(inner_def.return_type);
-                                    for k in 0usize..n_bind {
-                                        if saved_had[k] {
-                                            self.type_map.insert(inner_def.generic_params[k].id._value, saved_vals[k]);
-                                        } else {
-                                            self.type_map.remove(&inner_def.generic_params[k].id._value);
-                                        }
-                                    }
-                                    inferred[g] = ret_ty;
-                                    found[g] = true;
-                                }
-                            }
-                        }
-                        // Check if Fn bound return type is Generic containing our placeholder
-                        // e.g. F: Fn(T) -> Option<Tm>
-                        if !found[g] && bound.ret_ty().tag == TyTag::Generic && bound.ret_ty().elems().len() > 0 {
-                            for re in 0usize..bound.ret_ty().elems().len() {
-                                if found[g] { break; }
-                                if bound.ret_ty().elems()[re].tag == TyTag::Placeholder && bound.ret_ty().elems()[re].id()._value == def.generic_params[g].id._value {
-                                    if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty().is_some() {
-                                        let ret_ty = self.resolve_type(arg_expr.opt_ty().unwrap());
-                                        if ret_ty.tag == IrTyTag::Struct && ret_ty.struct_ref().type_args.len() > re {
-                                            inferred[g] = ret_ty.struct_ref().type_args[re];
-                                            found[g] = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // Also check Fn bound params for placeholder matches
-                        for bp in 0usize..bound.elems().len() {
-                            if found[g] { break; }
-                            if bound.elems()[bp].tag == TyTag::Placeholder && bound.elems()[bp].id()._value == def.generic_params[g].id._value {
-                                if arg_expr.tag == ExprTag::Lambda && bp < arg_expr.lambda_params().len() {
-                                    // Get the lambda parameter type
-                                    let lp_ty = arg_expr.lambda_params()[bp].ty;
-                                    if lp_ty.is_some() {
-                                        let param_ty = self.resolve_type(lp_ty.unwrap());
-                                        inferred[g] = param_ty;
-                                        found[g] = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Bound-derived: `R: RangeOf<T>` ⟹ T = R's element type. Mirrors the
-        // mixin-path (try_lower_method_call) so direct calls like
-        // `internal::gen_integer(rng, 0i32..10i32)` and the recursive
-        // `rng.next(T::min_value()..range.upper)` inside gen_integer bind T
-        // without relying on the call-site expected type.
-        self.infer_from_range_of_bounds(def, inferred, found);
-
-        // If we haven't inferred all generics from args, try return type inference.
-        // If the function's return type is a named type with generic placeholders,
-        // and we have an expected_type or return_type that's a concrete struct,
-        // try to match placeholders against the struct's type args.
-        let all_found = true;
-        for f in found.iter() {
-            if !f { all_found = false; }
-        }
-        if !all_found {
-            // Try inferring from return type context
-            let ret_ty_ast = def.return_type;
-            // Only the hint: the enclosing function's return type says
-            // nothing about a call that is not its return value.
-            let hint_ty = self.expected_type;
-            // Match: fn returns GenericType<T> (TyTag::Generic) and hint is a struct with type_args
-            if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Struct && hint_ty.struct_ref().type_args.len() > 0 {
-                // TyTag::Generic has inner (base type) and elems (type args as AST types)
-                let ret_type_args = ret_ty_ast.elems();
-                let hint_type_args = hint_ty.struct_ref().type_args;
-                let min_len = if ret_type_args.len() < hint_type_args.len() { ret_type_args.len() } else { hint_type_args.len() };
-                for ta in 0usize..min_len {
-                    if ret_type_args[ta].tag == TyTag::Placeholder {
-                        for g in 0usize..num_generics {
-                            if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id()._value {
-                                inferred[g] = hint_type_args[ta];
-                                found[g] = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            // Match: fn returns GenericType<T> (TyTag::Generic) and hint is a tuple
-            // This handles cases like slice<Ptr> where slice is a struct but the hint
-            // is the tuple representation {Ptr, usize}
-            if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Tuple && hint_ty.elems().len() > 0 {
-                let ret_type_args = ret_ty_ast.elems();
-                let min_len = if ret_type_args.len() < hint_ty.elems().len() { ret_type_args.len() } else { hint_ty.elems().len() };
-                for ta in 0usize..min_len {
-                    if ret_type_args[ta].tag == TyTag::Placeholder {
-                        for g in 0usize..num_generics {
-                            if !found[g] && def.generic_params[g].id._value == ret_type_args[ta].id()._value {
-                                inferred[g] = hint_ty.elems()[ta];
-                                found[g] = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            // Match: fn returns a tuple of placeholders (e.g. `fn make_pair<T>() -> (T, T)`)
-            // and hint is a concrete tuple. Walk the declared tuple's elems in
-            // parallel with the hint's elems and bind any direct-Placeholder
-            // slot to the corresponding hint elem.
-            if ret_ty_ast.tag == TyTag::Tuple && hint_ty.tag == IrTyTag::Tuple
-                && ret_ty_ast.elems().len() == hint_ty.elems().len() {
-                let ret_elems = ret_ty_ast.elems();
-                let hint_elems = hint_ty.elems();
-                for ti in 0usize..ret_elems.len() {
-                    if ret_elems[ti].tag == TyTag::Placeholder {
-                        for g in 0usize..num_generics {
-                            if !found[g] && def.generic_params[g].id._value == ret_elems[ti].id()._value {
-                                inferred[g] = hint_elems[ti];
-                                found[g] = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            // Direct placeholder in return type: fn foo<T>() -> T.
-            // Skipped when we're inside arg-inference for an OUTER call —
-            // otherwise an inner call like `util::cast(x)` (return type
-            // direct-Placeholder T2) would bind T2 to the *outer*
-            // call's expected_type / return_type. The arg-inference
-            // path's `expected_type` clearing zeros the current frame's
-            // hint, but a nested `infer_type_args` for the inner call
-            // could still see a stale return_type from outside arg-walking
-            // unless the flag guards this branch too.
-            if ret_ty_ast.tag == TyTag::Placeholder
-                && hint_ty != self.ctx.no_hint
-                && !self.inside_arg_inference {
-                for g in 0usize..num_generics {
-                    if !found[g] && def.generic_params[g].id._value == ret_ty_ast.id()._value {
-                        inferred[g] = hint_ty;
-                        found[g] = true;
-                        break;
-                    }
-                }
-            }
-
-            // Dyn return-type unification. Aluminac parses `&dyn Proto`
-            // as a single `TyTag::Dyn` AST node (the `&` is implicit in
-            // the dyn syntax), so the AST side is Dyn directly. The IR
-            // side is the lang(dyn) struct, fronted by a Pointer if the
-            // caller's expected type is `&dyn …`.
-            if !hint_ty.is_void()
-                && ret_ty_ast.tag == TyTag::Dyn {
-                let ir_target = if hint_ty.tag == IrTyTag::Pointer {
-                    hint_ty.inner()
-                } else {
-                    hint_ty
-                };
-                if ir_target.tag == IrTyTag::Struct {
-                    self.unify_type_for_inference(ret_ty_ast, ir_target, inferred, found, def.generic_params);
-                }
-            }
-        }
-
-        self.inferred_found = found;
-
-        // Check if at least one generic was inferred (enough to differentiate)
-        let any_found = false;
-        for i in 0usize..num_generics {
-            if found[i] {
-                any_found = true;
-            }
-        }
-
-        if any_found {
-            inferred as &[&IrTy]
+        let inf = mono::infer::Inference::new(self, def.generic_params);
+        let tuple_args = def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::TupleArgs });
+        mono::infer::infer_call(self, &inf, def.params, args, def.return_type, tuple_args, &[]);
+        self.inferred_found = inf.found;
+        if inf.found_count() > 0 {
+            inf.types as &[&IrTy]
         } else {
-            // Return empty - couldn't infer any types
-            // Note: use alloc_slice(0) instead of &[] because &[] in an if-else branch
-            // generates a broken bitcast that reads garbage for the slice length
+            // (None: the caller may still have other evidence.)
             self.ctx.arena.alloc_slice::<&IrTy>(0usize)
         }
     }
@@ -7470,286 +7097,34 @@ impl Mono {
         // the struct's type_args don't correspond to the method's generic params, so we must
         // infer from the self parameter via recursive type unification.
         if def.generic_params.len() > 0 {
-            let num_generics = def.generic_params.len();
-            let inferred = self.ctx.arena.alloc_slice::<&IrTy>(num_generics);
-            let found = self.ctx.arena.alloc_slice::<bool>(num_generics);
-            let found_count = 0usize;
-            for i in 0usize..num_generics {
-                inferred[i] = self.ctx.void_ty;
-                found[i] = false;
+            let inf = mono::infer::Inference::new(self, def.generic_params);
+            // The type arguments given explicitly: after those the receiver's
+            // type implies, or all of them.
+            let explicit = combined_type_args[method_type_args.len()..];
+            let offset = if explicit.len() >= def.generic_params.len() { 0usize } else { method_type_args.len() };
+            for (i, ty) in explicit.iter().enumerate() {
+                inf.bind(offset + i, ty);
             }
-
-            // Infer from the self parameter using recursive unification.
+            // The receiver, auto-(de)referenced to the self parameter's
+            // indirection.
             if def.params.len() > 0 {
-                // The receiver is auto-(de)referenced to the self param's
-                // indirection, so unify the self param's pointee with the
-                // receiver's type through all of its pointers.
                 let self_param_ty = def.params[0].ty;
                 if self_param_ty.tag == TyTag::Pointer {
                     self_param_ty = self_param_ty.inner();
                 }
-                self.unify_type_for_inference(self_param_ty, resolved_ty, inferred, found, def.generic_params);
+                inf.unify(self, self_param_ty, resolved_ty);
             }
-
-            // Then infer from explicit args (skipping self)
-            let num_explicit_params = if def.params.len() > 0 { def.params.len() - 1 } else { 0usize };
-            for p in 0usize..num_explicit_params {
-                if p >= expr.args().len() { break; }
-                let param_ty = def.params[p + 1].ty;  // +1 to skip self
-                let arg_ty = self.lower_expr_tentative(expr.args()[p]).ty;
-                self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
-            }
-            self.infer_from_callable_bounds(def.generic_params, inferred, found);
-
-            // The rest from the return type and the hint (as alumina-boot),
-            // leaving the ones the receiver's type already gives.
-            if self.expected_type != self.ctx.no_hint && !self.inside_arg_inference {
-                let known = self.ctx.arena.alloc_slice::<bool>(num_generics);
-                for i in 0usize..num_generics {
-                    known[i] = found[i] || (i < combined_type_args.len() && !combined_type_args[i].is_void());
-                }
-                let from_hint = self.ctx.arena.alloc_slice_copy::<&IrTy>(inferred);
-                self.unify_type_for_inference(def.return_type, self.expected_type, from_hint, known, def.generic_params);
-                for i in 0usize..num_generics {
-                    if !found[i] && known[i] && !(i < combined_type_args.len() && !combined_type_args[i].is_void()) {
-                        inferred[i] = from_hint[i];
-                        found[i] = true;
-                    }
-                }
-            }
-
-            // Fill remaining from combined_type_args where inference didn't produce a result
-            for i in 0usize..num_generics {
-                if found[i] {
-                    found_count += 1usize;
-                } else if i < combined_type_args.len() {
-                    inferred[i] = combined_type_args[i];
-                    found_count += 1usize;
-                }
-            }
-            // Infer generics from Fn bounds (e.g. F: Fn(T) -> Tm => infer Tm from lambda return type)
-            for g in 0usize..num_generics {
-                if !inferred[g].is_void() { continue; }
-                for h in 0usize..num_generics {
-                    if h == g { continue; }
-                    for b in 0usize..def.generic_params[h].bounds.len() {
-                        let bound = def.generic_params[h].bounds[b];
-                        if bound.tag != TyTag::FnPointer { continue; }
-                        // Find which explicit parameter (skipping self) corresponds to generic h
-                        let param_idx: i32 = -1i32;
-                        for pp in 1usize..def.params.len() {
-                            if def.params[pp].ty.tag == TyTag::Placeholder && def.params[pp].ty.id()._value == def.generic_params[h].id._value {
-                                param_idx = (pp - 1) as i32;  // index into expr.args() (0-based, skip self)
-                                break;
-                            }
-                        }
-                        if param_idx < 0i32 || param_idx as usize >= expr.args().len() { continue; }
-                        let arg_expr = expr.args()[param_idx as usize];
-                        // Check if Fn bound return type is a placeholder matching our target generic
-                        if bound.ret_ty().tag == TyTag::Placeholder && bound.ret_ty().id()._value == def.generic_params[g].id._value {
-                            if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty().is_some() {
-                                let ret_ty = self.resolve_type(arg_expr.opt_ty().unwrap());
-                                inferred[g] = ret_ty;
-                                found_count += 1usize;
-                            } else if arg_expr.tag == ExprTag::FnRef {
-                                // For named function refs, infer from the function's return type
-                                let fn_ref_def = self.ctx.fn_defs.get(&arg_expr.id()._value);
-                                if fn_ref_def.is_some() {
-                                    let ret_ty = self.resolve_type(fn_ref_def.unwrap().return_type);
-                                    inferred[g] = ret_ty;
-                                    found_count += 1usize;
-                                }
-                            } else {
-                                // General case: lower the arg and check if it's a function pointer, Fn item, or closure
-                                let arg_ir = self.lower_expr_tentative(arg_expr);
-                                switch arg_ir.ty.tag {
-                                    IrTyTag::FnPointer => {
-                                        inferred[g] = arg_ir.ty.ret_ty();
-                                        found_count += 1usize;
-                                    }
-                                    IrTyTag::Fn => {
-                                        // Match on (id, mangled_name) and break: multiple
-                                        // monos of the same source function share `id`,
-                                        // so id-only matching would let the LAST matching
-                                        // mono's return_type win — and pick up an
-                                        // unrelated mono (e.g. Result::unwrap<()> from
-                                        // the panic chain) when the caller meant a
-                                        // specific one (Result::unwrap<u32, Error>).
-                                        let fn_ref = arg_ir.ty.fn_item_ref();
-                                        for fi in 0usize..self.ctx.ir_functions.len() {
-                                            if self.ctx.ir_functions[fi].id._value == fn_ref.id._value
-                                                && self.ctx.ir_functions[fi].mangled_name == fn_ref.mangled_name {
-                                                inferred[g] = self.ctx.ir_functions[fi].return_type;
-                                                found_count += 1usize;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    IrTyTag::Closure => {
-                                        // Closure value (e.g. `MapIterator::next` calls
-                                        // `option.map(self._fun)` — self._fun's IR type
-                                        // is Closure). Look up the underlying fn's
-                                        // mono'd return type. Without this, Tm in
-                                        // `Fn(T) -> Tm` stays unbound and Option::map
-                                        // mono's Tm=void — truncating the closure's
-                                        // pointer return into a 1-byte Option payload.
-                                        // Surfaced as the `iter().map(closure).next()`
-                                        // returning garbage addresses bug.
-                                        let cfn = arg_ir.ty.closure_fn();
-                                        for fi in 0usize..self.ctx.ir_functions.len() {
-                                            if self.ctx.ir_functions[fi].id._value == cfn.id._value
-                                                && self.ctx.ir_functions[fi].mangled_name == cfn.mangled_name {
-                                                inferred[g] = self.ctx.ir_functions[fi].return_type;
-                                                found_count += 1usize;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        // Check if Fn bound return type is a Generic containing our placeholder
-                        // e.g. F: Fn(T) -> Option<Tm> where Tm is what we're inferring
-                        if bound.ret_ty().tag == TyTag::Generic && bound.ret_ty().elems().len() > 0 {
-                            for re in 0usize..bound.ret_ty().elems().len() {
-                                if !inferred[g].is_void() { break; }
-                                if bound.ret_ty().elems()[re].tag == TyTag::Placeholder && bound.ret_ty().elems()[re].id()._value == def.generic_params[g].id._value {
-                                    // Resolve the callable's return type and extract the type arg
-                                    let resolved_ret: &IrTy = self.ctx.void_ty;
-                                    if arg_expr.tag == ExprTag::Lambda && arg_expr.opt_ty().is_some() {
-                                        resolved_ret = self.resolve_type(arg_expr.opt_ty().unwrap());
-                                    } else if arg_expr.tag == ExprTag::FnRef {
-                                        let fn_ref_def2 = self.ctx.fn_defs.get(&arg_expr.id()._value);
-                                        if fn_ref_def2.is_some() {
-                                            resolved_ret = self.resolve_type(fn_ref_def2.unwrap().return_type);
-                                        }
-                                    } else {
-                                        let arg_ir2 = self.lower_expr_tentative(arg_expr);
-                                        switch arg_ir2.ty.tag {
-                                            IrTyTag::FnPointer => {
-                                                resolved_ret = arg_ir2.ty.ret_ty();
-                                            }
-                                            IrTyTag::Fn => {
-                                                // Same (id, mangled_name) + break rule as above.
-                                                let fn_ref2 = arg_ir2.ty.fn_item_ref();
-                                                for fi in 0usize..self.ctx.ir_functions.len() {
-                                                    if self.ctx.ir_functions[fi].id._value == fn_ref2.id._value
-                                                        && self.ctx.ir_functions[fi].mangled_name == fn_ref2.mangled_name {
-                                                        resolved_ret = self.ctx.ir_functions[fi].return_type;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            IrTyTag::Closure => {
-                                                let cfn2 = arg_ir2.ty.closure_fn();
-                                                for fi in 0usize..self.ctx.ir_functions.len() {
-                                                    if self.ctx.ir_functions[fi].id._value == cfn2.id._value
-                                                        && self.ctx.ir_functions[fi].mangled_name == cfn2.mangled_name {
-                                                        resolved_ret = self.ctx.ir_functions[fi].return_type;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    if resolved_ret.tag == IrTyTag::Struct && resolved_ret.struct_ref().type_args.len() > re {
-                                        inferred[g] = resolved_ret.struct_ref().type_args[re];
-                                        found_count += 1usize;
-                                    }
-                                }
-                            }
-                        }
-                        // Check Fn bound params for placeholder matches
-                        for bp in 0usize..bound.elems().len() {
-                            if !inferred[g].is_void() { break; }
-                            if bound.elems()[bp].tag == TyTag::Placeholder && bound.elems()[bp].id()._value == def.generic_params[g].id._value {
-                                if arg_expr.tag == ExprTag::Lambda && bp < arg_expr.lambda_params().len() {
-                                    let lp_ty = arg_expr.lambda_params()[bp].ty;
-                                    if lp_ty.is_some() {
-                                        let param_ty = self.resolve_type(lp_ty.unwrap());
-                                        inferred[g] = param_ty;
-                                        found_count += 1usize;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Bound-derived: `R: RangeOf<T>` ⟹ T = R's element type. A
-            // signature like `fn next<T: Integer, R: RangeOf<T>>(.., R) -> T`
-            // carries T in no parameter (only R, the whole range). Through
-            // the mixin'd-method dispatch, T would otherwise stay void —
-            // collapsing `when range is Range<T>` and hanging gen_uniform's
-            // rejection loop. Independent of expected_type so it's correct
-            // in any call context; an expected-return-type fallback was
-            // tried and reverted (it leaked `assert!`'s bool through `>=`
-            // into T, regressing io's `assert_eq!(read_exact(..), ok(()))`).
-            if self.infer_from_range_of_bounds(def, inferred, found) {
-                found_count += 1usize;
-            }
-
-            // Expected-return-type inference for a mixin'd method whose own
-            // generic is a bare Placeholder in return position and has at
-            // least one protocol bound (e.g. `fn next_float<T: FloatingPoint>
-            // (rng) -> T`). Such a `T` is in no parameter and has no
-            // RangeOf-style bound to derive it from — it can only come from
-            // the call's expected type (`let uf: f64 = rng.next_float()`).
-            // Through the mixin dispatch this otherwise stays void and the
-            // body computes `x as void` = 0.
-            //
-            // The earlier *unguarded* version of this branch leaked
-            // `assert!(... >= ...)`'s `bool` (propagated through the `>=`
-            // operand) into an unrelated mixin method's T, regressing io's
-            // `assert_eq!(read_exact(..), Result::ok(()))`. Guard: bind only
-            // if the generic has >=1 protocol bound AND `expected_type`
-            // *satisfies* every such bound. `bool` does not conform to
-            // `FloatingPoint`/`Integer`/etc., so a leaked bool is rejected
-            // here; `f64` conforms to `FloatingPoint`, so `next_float`'s T
-            // binds correctly. Generics with no bound get no expected-type
-            // inference (conservative — the leak risk outweighs the rare
-            // unbounded return-only-generic case).
-            if def.return_type.tag == TyTag::Placeholder
-                && !self.expected_type.is_void()
-                && !self.inside_arg_inference {
-                for g in 0usize..num_generics {
-                    if !inferred[g].is_void() { continue; }
-                    if def.return_type.id()._value != def.generic_params[g].id._value { continue; }
-                    let gp = &def.generic_params[g];
-                    if gp.bounds.len() == 0 { continue; }
-                    let all_ok = true;
-                    for b in 0usize..gp.bounds.len() {
-                        let bound_ir = self.resolve_type(gp.bounds[b]);
-                        if bound_ir.tag == IrTyTag::Protocol {
-                            let pd = self.ctx.protocol_defs.get(&bound_ir.proto_id());
-                            if pd.is_some() && !self.check_protocol_conformance(self.expected_type, pd.unwrap(), &[]) {
-                                all_ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    if all_ok {
-                        inferred[g] = self.expected_type;
-                        found[g] = true;
-                        found_count += 1usize;
-                    }
-                }
-            }
+            let implied = combined_type_args[0..std::cmp::min(method_type_args.len(), combined_type_args.len())];
+            let params = if def.params.len() > 0 { def.params[1..] } else { def.params };
+            mono::infer::infer_call(self, &inf, params, expr.args(), def.return_type, false, implied);
 
             // A generic parameter that nothing determines needs a type hint.
             for (i, param) in def.generic_params.iter().enumerate() {
-                let known = found[i] || (i < combined_type_args.len() && !combined_type_args[i].is_void());
-                if !known && param.default_ty.is_none() {
+                if !inf.found[i] && param.default_ty.is_none() {
                     return Option::some(self.type_hint_required(expr.span));
                 }
             }
-
-            if found_count > 0 {
-                combined_type_args = inferred;
-            }
+            combined_type_args = inf.types;
         }
 
         // For protocol methods (from mixins), set up Self type substitution
