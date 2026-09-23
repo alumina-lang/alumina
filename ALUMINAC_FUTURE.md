@@ -463,10 +463,13 @@ instances.
 
 ### Backlog (found along the way)
 
-- **Strictness gaps vs alumina-boot** (aluminac accepts invalid code):
-  protocol bounds are not fully checked (`unified_sysroot_basic`'s `Point`
-  lacked `not_equals`); `use std::io::ErrorKind` resolved although
-  `ErrorKind` lives in `std::io::unix`.
+- **Strictness gaps vs alumina-boot** (aluminac accepted invalid code):
+  protocol conformance compared method names only; it now compares
+  signatures as alumina-boot (`has_protocol_signature`: the candidate's and
+  a mixin protocol's generics inferred from the protocol's signature,
+  cached per type/protocol; `protocol_signatures.alu`), and a `&mut self`
+  method called through `&` is an error. (Missing `not_equals` and
+  `use std::io::ErrorKind` were already fixed.)
 - Mono still lowers call arguments twice (tentatively for inference, then
   for real) and has several ad-hoc inference paths (`Fn`-bound return
   types, method vs function calls); one unification-based inference

@@ -4366,7 +4366,25 @@ impl Mono {
             .unwrap_or(0)
     }
 
-    fn check_protocol_conformance(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef) -> bool {
+    /// Whether `ty` has the methods of `proto` (with the arguments
+    /// `proto_args`, if known), with their signatures (as alumina-boot).
+    fn check_protocol_conformance(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef, proto_args: &[&IrTy]) -> bool {
+        let key_args = self.ctx.arena.alloc_slice::<&IrTy>(proto_args.len() + 1);
+        key_args[0] = ty;
+        for (i, arg) in proto_args.iter().enumerate() {
+            key_args[i + 1] = arg;
+        }
+        let key = MonoKey::new(proto.id, key_args);
+        let cached = self.ctx.conformance_cache.get(&key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+        let result = self.check_protocol_conformance_uncached(ty, proto, proto_args);
+        self.ctx.conformance_cache.insert(key, result);
+        result
+    }
+
+    fn check_protocol_conformance_uncached(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef, proto_args: &[&IrTy]) -> bool {
         // A `dyn` conforms to its protocols (as in alumina-boot).
         let dyn_protos = self.dyn_protocols(ty);
         if dyn_protos.is_some() && dyn_protos.unwrap().iter().any(|=proto, p: &IrTy| -> bool {
@@ -4403,11 +4421,105 @@ impl Mono {
             };
             let m_def = self.ctx.fn_defs.get(&fn_id_val);
             if m_def.is_none() { continue; }
+            if proto_args.len() == proto.generic_params.len()
+                && !self.has_protocol_signature(m_def.unwrap(), method, proto, proto_args) {
+                return false;
+            }
             if !self.check_method_bounds_satisfied(m_def.unwrap(), ty) {
                 return false;
             }
         }
         true
+    }
+
+    /// `Ptr: PointerOf<T>` with `Ptr` inferred gives `T`.
+    fn infer_from_pointer_bounds(self: &mut Mono, params: &[GenericParam], inferred: &mut [&IrTy], found: &mut [bool]) {
+        for (i, gp) in params.iter().enumerate() {
+            if !found[i] || inferred[i].tag != IrTyTag::Pointer {
+                continue;
+            }
+            for bound in gp.bounds {
+                if bound.tag == TyTag::Generic && bound.inner().tag == TyTag::Named
+                    && self.ctx.is_lang_item(bound.inner().id()._value, "proto_pointer_of")
+                    && bound.elems().len() == 1 {
+                    self.unify_type_for_inference(bound.elems()[0], inferred[i].inner(), inferred, found, params);
+                }
+            }
+        }
+    }
+
+    /// Whether `candidate` (a method of a type) has the signature of the
+    /// protocol's `method`, as alumina-boot decides it: its generic
+    /// parameters are inferred from the protocol's signature (with `Self`
+    /// and the protocol's parameters bound), which must then be its own.
+    fn has_protocol_signature(self: &mut Mono, candidate: &FnDef, method: &FnDef, proto: &ProtocolDef, proto_args: &[&IrTy]) -> bool {
+        // (The protocol's own, by a mixin; a generic protocol method is not
+        // compared.)
+        if candidate.id._value == method.id._value || !method.generic_params.is_empty() {
+            return true;
+        }
+        if candidate.params.len() != method.params.len() {
+            return false;
+        }
+        // (Tentatively: resolving types, e.g. `typeof(...)`, lowers code, which
+        // must leave no diagnostics or temporaries.)
+        let saved_tentative = self.tentative;
+        let saved_locals = self.local_defs.len();
+        self.tentative = true;
+        let outer_type_map = self.type_map;
+        self.type_map = outer_type_map.clone();
+        defer {
+            self.type_map.free();
+            self.type_map = outer_type_map;
+            self.tentative = saved_tentative;
+            self.local_defs.truncate(saved_locals);
+        };
+
+        // The protocol's signature for these arguments.
+        for (i, gp) in proto.generic_params.iter().enumerate() {
+            self.type_map.insert(gp.id._value, proto_args[i]);
+        }
+        let expected = self.ctx.arena.alloc_slice::<&IrTy>(method.params.len());
+        for (i, param) in method.params.iter().enumerate() {
+            expected[i] = self.resolve_type(param.ty);
+        }
+        let expected_ret = self.resolve_type(method.return_type);
+
+        // The candidate's generic parameters, from it (and those of the
+        // protocol it is from, for one mixed in).
+        let params: Vector<GenericParam> = Vector::from_slice(candidate.generic_params);
+        defer params.free();
+        let proto_gp_ids = self.ctx.proto_method_proto_gp_ids.get(&candidate.id._value);
+        if proto_gp_ids.is_some() {
+            for id in proto_gp_ids.unwrap() {
+                params.push(GenericParam::plain(Id { _value: id }, ""));
+            }
+        }
+        let n = params.len();
+        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
+        let found = self.ctx.arena.alloc_slice::<bool>(n);
+        for i in 0usize..n {
+            inferred[i] = self.ctx.void_ty;
+            found[i] = false;
+        }
+        for (i, param) in candidate.params.iter().enumerate() {
+            self.unify_type_for_inference(param.ty, expected[i], inferred, found, params.as_slice());
+        }
+        self.unify_type_for_inference(candidate.return_type, expected_ret, inferred, found, params.as_slice());
+        self.infer_from_pointer_bounds(params.as_slice(), inferred, found);
+        for i in 0usize..n {
+            // (A type hint would be needed.)
+            if !found[i] {
+                return false;
+            }
+            self.type_map.insert(params[i].id._value, inferred[i]);
+        }
+        for (i, param) in candidate.params.iter().enumerate() {
+            if !self.resolve_type(param.ty).same_as(expected[i]) {
+                return false;
+            }
+        }
+        self.resolve_type(candidate.return_type).same_as(expected_ret)
     }
 
     /// Verify that `m_def`'s generic-parameter bounds (if any) are satisfiable
@@ -4464,17 +4576,7 @@ impl Mono {
             }
         }
 
-        // `Ptr: PointerOf<T>` with Ptr known gives T.
-        for (i, gp) in m_def.generic_params.iter().enumerate() {
-            if !found[i] || inferred[i].tag != IrTyTag::Pointer { continue; }
-            for bound in gp.bounds {
-                if bound.tag == TyTag::Generic && bound.inner().tag == TyTag::Named
-                    && self.ctx.is_lang_item(bound.inner().id()._value, "proto_pointer_of")
-                    && bound.elems().len() == 1 {
-                    self.unify_type_for_inference(bound.elems()[0], inferred[i].inner(), inferred, found, m_def.generic_params);
-                }
-            }
-        }
+        self.infer_from_pointer_bounds(m_def.generic_params, inferred, found);
         for i in 0usize..n {
             if found[i] {
                 self.type_map.insert(m_def.generic_params[i].id._value, inferred[i]);
@@ -6380,7 +6482,7 @@ impl Mono {
                     is_match = val_ty.tag == IrTyTag::ItemRef && !val_ty.item_ref_is_const();
                 } else {
                     // User-defined protocol: check if type has all required methods
-                    is_match = self.check_protocol_conformance(val_ty, proto);
+                    is_match = self.check_protocol_conformance(val_ty, proto, proto_args);
                 }
             } else {
                 // Not a protocol - concrete type comparison
@@ -6414,7 +6516,7 @@ impl Mono {
             return true;
         };
         let proto = self.ctx.protocol_defs.get(&proto_id);
-        proto.is_none() || self.check_protocol_conformance(arg, proto.unwrap())
+        proto.is_none() || self.check_protocol_conformance(arg, proto.unwrap(), &[])
     }
 
     /// Whether `arg` satisfies `param`'s bounds (all of them, or any of them
@@ -7562,7 +7664,7 @@ impl Mono {
                         let bound_ir = self.resolve_type(gp.bounds[b]);
                         if bound_ir.tag == IrTyTag::Protocol {
                             let pd = self.ctx.protocol_defs.get(&bound_ir.proto_id());
-                            if pd.is_some() && !self.check_protocol_conformance(self.expected_type, pd.unwrap()) {
+                            if pd.is_some() && !self.check_protocol_conformance(self.expected_type, pd.unwrap(), &[]) {
                                 all_ok = false;
                                 break;
                             }
@@ -7612,8 +7714,9 @@ impl Mono {
         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(total_args);
 
         // Autoref/autoderef: match receiver indirection level to method's self parameter
+        // (A `&mut` self parameter needs a mutable place or pointer.)
         let self_param_ty = if ir_fn.params.len() > 0 { ir_fn.params[0].ty } else { ir_obj.ty };
-        ir_args[0] = self.autoref(ir_obj, self_param_ty);
+        ir_args[0] = self.check_and_coerce(self.autoref(ir_obj, self_param_ty), self_param_ty, expr.lhs().lhs().span);
 
         // Rest of the args
         for i in 0usize..expr.args().len() {

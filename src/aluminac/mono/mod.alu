@@ -76,6 +76,9 @@ struct MonoCtx {
     struct_ty_cache: HashMap<MonoKey, &IrTy>,
     /// The protocol instances whose arguments' bounds have been checked.
     checked_protocols: HashSet<MonoKey>,
+    /// Whether types conform to protocols (with arguments), by
+    /// `MonoKey { id: protocol, args: [type, protocol args...] }`.
+    conformance_cache: HashMap<MonoKey, bool>,
     enum_cache: HashMap<MonoKey, usize>,
 
     // Type caching for pointer stability
@@ -197,6 +200,7 @@ impl MonoCtx {
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
             checked_protocols: HashSet::new(),
+            conformance_cache: HashMap::new(),
             enum_cache: HashMap::new(),
             ty_cache: HashMap::new(),
             mangle_counter: 0,
@@ -555,6 +559,7 @@ impl MonoCtx {
         self.struct_cache.free();
         self.struct_ty_cache.free();
         self.checked_protocols.free();
+        self.conformance_cache.free();
         self.enum_cache.free();
         self.ty_cache.free();
         self.mono_stack.free();
