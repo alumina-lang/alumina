@@ -51,7 +51,9 @@ ifndef STD_BACKTRACE
 endif
 ifndef NO_THREADS
 	ALUMINA_FLAGS += --cfg threading
+	ALUMINAC_FLAGS += --cfg threading
 	LDFLAGS += -lpthread
+	ALUMINAC_LDFLAGS += -lpthread
 endif
 ifndef NO_MINICORO
 	MINICORO = $(BUILD_DIR)/minicoro.o
@@ -221,13 +223,13 @@ BOOTSTRAP_DEPS = $(BUILD_DIR)/parser.o $(ALU_LIBRARIES) $(ALUMINAC_MODULES_SOURC
 
 $(ALUMINAC_S2): $(ALUMINAC_S1) $(BOOTSTRAP_DEPS)
 	$(ALUMINAC_S1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
-		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o $(ALUMINAC_LDFLAGS)" \
 		-o $(ALUMINAC_S2) \
 		$(ALUMINAC_INPUTS)
 
 $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
 	$(ALUMINAC_S2) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
-		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o" \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(BUILD_DIR)/parser.o $(ALUMINAC_LDFLAGS)" \
 		-o $(ALUMINAC_S3) \
 		$(ALUMINAC_INPUTS)
 
@@ -236,6 +238,7 @@ $(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
 
 $(STDLIB_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES)
 	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --cfg test_std --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "$(ALUMINAC_LDFLAGS)" \
 		-o $@
 
 # The bootstrap fixpoint: stage 2 and stage 3 must emit byte-identical LLVM IR

@@ -1,3 +1,4 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
 // Test: #[link_name("...")] overrides the LLVM symbol name a function
 // resolves to at link time. Without this attribute the declared Alumina
 // name was used directly for extern functions, so calling the renamed
@@ -7,7 +8,10 @@
 // libc's `strlen`, then verify that calling the Alumina-named function
 // actually invokes strlen.
 
-#[link_name("strlen")]
+// The link name is the exact object-file symbol (Mach-O prefixes C names
+// with `_`).
+#[cfg_attr(target_os = "macos", link_name("_strlen"))]
+#[cfg_attr(not(target_os = "macos"), link_name("strlen"))]
 extern "C" fn c_string_len(s: &u8) -> usize;
 
 fn main() -> i32 {

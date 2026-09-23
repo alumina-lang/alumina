@@ -117,11 +117,33 @@ boot misreads the language (record such cases here).
 - `tests/aluminac/cross_check.sh` runs every aluminac test through
   alumina-boot. `// BOOT_DIVERGES: reason` marks justified divergences.
 
+- **Threading works under aluminac** (`--cfg threading`; the Makefile now
+  passes it, like for alumina-boot). Fixes: the entry point is the
+  sysroot's `#[lang(entrypoint_glue)]` instantiated for `main` (it runs
+  `threading_init`; codegen's hand-built C `main` is only a fallback for
+  freestanding programs); `#[link_name]` symbols are emitted raw (`\x01`),
+  like alumina-boot's C asm labels; method receivers auto-deref through
+  any number of pointers; `for x in e` iterates `e` in place rather than a
+  copy (a channel's copied mutex deadlocked the thread pool).
+- `for const` loops: each step builds a fresh const evaluator (the old one
+  held slices of `ir_functions` across lowering — use-after-free that cut
+  loops short), and `const_replacements` are per instantiation (a
+  recursive instantiation clobbered the caller's loop variable). With
+  closure captures in `fields<T>`, `test_debug_formatter` is ungated.
+- Unresolved identifiers/paths are errors ("could not resolve the path"),
+  as are paths to non-values; they used to become a silent bogus local
+  (`let b = undefined_thing;` compiled; `libc::libc::X` in the sysroot
+  became `undef` and broke `RwLock` on macOS).
+
 ### alumina-boot bugs found (aluminac deliberately differs)
 
 - `Ty::gcd` joins `&mut T` and `&T` to `&mut T` (its own `assignable_from`
   treats `&T` as the supertype), so `if c { &x } else { &y as &T }` is
   rejected. aluminac joins to `&T` (`if_branch_mut_const_pointer.alu`).
+- Later path segments resolve lexically in the module found so far, so
+  `std::std::mem::size_of` and `libc::libc::X` compile (the latter was a
+  typo in `std::sync`, now fixed). aluminac resolves each later segment in
+  the module named so far only, and reports the path.
 
 ### Cross-check divergences to resolve (2026-09-23 snapshot)
 
@@ -168,9 +190,11 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
 - Mono lowers call arguments twice (once for inference without hints, once
   for real); inference should be driven by expected types like
   alumina-boot's type hints.
-- `--cfg threading` does not compile under aluminac
-  (`ThreadHandle::free`), and `make test-std-aluminac` does not pass the
-  flags alumina-boot's `test-std` gets (threading, coroutines, ...).
+- `make test-std-aluminac` still lacks `--cfg libbacktrace` and
+  coroutines (aluminac has no stackful coroutines).
+- Duplicate `#[lang]` items are not rejected (a later one silently wins).
+- One unresolved path yields several cascading errors in mono ("expression
+  is not callable" ×N, "could not resolve field on ()").
 - macOS: 13 `std::net` tests fail (aluminac-compiled only);
   `warning: codegen: field index out of bounds` at `std/fmt/mod.alu:525`.
 - Cross-compilation: `--target` exists, but ABI lowering only knows

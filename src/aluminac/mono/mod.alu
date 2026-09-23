@@ -561,6 +561,33 @@ fn monomorphize(
         }
     }
 
+    // The program's entry point, as in alumina-boot: the sysroot's
+    // `#[lang(entrypoint_glue)]` function instantiated for the user's `main`
+    // (the test runner's `#[test_main]` in test mode). It is `#[export]`ed
+    // as the C `main`, converts argv, initializes threading, etc. Without a
+    // sysroot, codegen falls back to a minimal C `main` wrapper.
+    let entry_attr = if test_mode { AttrTag::TestMain } else { AttrTag::Main };
+    let glue_def = ctx.get_lang_item("entrypoint_glue")
+        .and_then(|&ctx, id: usize| -> Option<&FnDef> { ctx.fn_defs.get(&id) });
+    if glue_def.is_some() {
+        for item in items {
+            if item.tag != ItemTag::Function {
+                continue;
+            }
+            let fn_def = item.fn_def();
+            if fn_def.body.is_none() || !fn_def.attributes.iter().any(|&entry_attr, a: Attribute| -> bool { a.tag == entry_attr }) {
+                continue;
+            }
+            let mono = Mono::new(&ctx);
+            let main_idx = mono.mono_function(fn_def, &[]);
+            let main_ref = IrFnRef { id: ctx.ir_functions[main_idx].id, mangled_name: ctx.ir_functions[main_idx].mangled_name };
+            let main_ty = ctx.make_fn_ty(main_ref);
+            mono.mono_function(glue_def.unwrap(), &[main_ty]);
+            mono.free();
+            break;
+        }
+    }
+
     // Build compilation unit
     let cu = CompilationUnit {
         functions: arena.alloc_slice_copy::<IrFunction>(ctx.ir_functions.as_slice()),

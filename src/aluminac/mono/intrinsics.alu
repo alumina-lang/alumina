@@ -735,7 +735,7 @@ fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     let type_args_buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
     type_args_buf[0] = enum_ty;
     let fn_idx = m.mono_function(def, type_args_buf);
-    let ir_fn = &m.ctx.ir_functions[fn_idx];
+    let ir_fn = m.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
     let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
     let return_ty = ir_fn.return_type;
 
@@ -767,7 +767,8 @@ fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
 }
 
 fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
-    // fields<T: Struct | Union>() -> (Field<T, F0>, Field<T, F1>, ...)
+    // fields<T: Struct | Union | Closure>() -> (Field<T, F0>, Field<T, F1>, ...)
+    // (a closure's fields are its captures)
     //
     // Builds a tuple whose i-th element is a call to the
     // `field_descriptor_new` lang item parameterised by `(StructT, FieldT_i)`,
@@ -781,7 +782,8 @@ fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     // Falls back to an empty void slice when the type isn't a struct/union
     // or when the lang item isn't declared. Mirrors alumina-boot's
     // `intr_fields` (in `src/alumina-boot/src/ir/mono/intrinsics.rs`).
-    if ir_type_args.len() < 1 || ir_type_args[0].tag != IrTyTag::Struct {
+    if ir_type_args.len() < 1
+        || (ir_type_args[0].tag != IrTyTag::Struct && ir_type_args[0].tag != IrTyTag::Closure) {
         return lower_empty_descriptor_slice(m, "field_descriptor");
     }
     let struct_ty = ir_type_args[0];
@@ -832,7 +834,7 @@ fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
         type_args_buf[0] = struct_ty;
         type_args_buf[1] = field.ty;
         let fn_idx = m.mono_function(def, type_args_buf);
-        let ir_fn = &m.ctx.ir_functions[fn_idx];
+        let ir_fn = m.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
         let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
         let return_ty = ir_fn.return_type;
         elem_tys[i] = return_ty;
@@ -925,7 +927,7 @@ fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExp
         // Mono the matched function with the Args type-args. The Fn ZST
         // is the item type for the descriptor.
         let fn_idx = m.mono_function(def, args_ty);
-        let ir_fn = &m.ctx.ir_functions[fn_idx];
+        let ir_fn = m.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
         let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
         let fn_ty = m.ctx.make_fn_ty(fn_ref);
 
@@ -933,7 +935,7 @@ fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExp
         let td_buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
         td_buf[0] = fn_ty;
         let td_idx = m.mono_function(td_def, td_buf);
-        let td_ir = &m.ctx.ir_functions[td_idx];
+        let td_ir = m.ctx.ir_functions[td_idx]; // copy: lowering below may grow ir_functions
         let td_ref = IrFnRef { id: td_ir.id, mangled_name: td_ir.mangled_name };
         let entry = m.mk_call(td_ref, &[], td_ir.return_type);
         entries.push(entry);

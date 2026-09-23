@@ -593,6 +593,22 @@ impl CodegenCtx {
         buf
     }
 
+    /// The NUL-terminated LLVM name of a function or global. A
+    /// `#[link_name]` is the exact object-file symbol (as the C asm label
+    /// alumina-boot emits), so it is marked with `\x01` to keep LLVM from
+    /// adding the platform's symbol prefix (`_` on Mach-O).
+    fn symbol_name(self: &mut CodegenCtx, name: &[u8], attributes: &[Attribute]) -> &[u8] {
+        if attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::LinkName }) {
+            let buf = self.arena.alloc_slice::<u8>(name.len() + 2);
+            buf[0] = 1u8;
+            name.copy_to_nonoverlapping(&buf[1]);
+            buf[name.len() + 1] = 0u8;
+            buf
+        } else {
+            self.null_terminate(name)
+        }
+    }
+
     fn null_terminate(self: &mut CodegenCtx, s: &[u8]) -> &[u8] {
         let buf = self.arena.alloc_slice::<u8>(s.len() + 1);
         s.copy_to_nonoverlapping(&buf[0]);
@@ -785,7 +801,7 @@ impl CodegenCtx {
         // Use extern C ABI handling for large struct params (byval)
         let is_extern_c = ir_fn.abi.is_some() && ir_fn.body.is_none();
         let fn_type = self.llvm_fn_type_ext(ir_fn, is_extern_c);
-        let name = self.null_terminate(ir_fn.mangled_name);
+        let name = self.symbol_name(ir_fn.mangled_name, ir_fn.attributes);
         let llvm_fn = LLVMAddFunction(self.module, &name[0] as &libc::c_char, fn_type);
 
         // Mark for call-site handling, and on x86_64 attach the `byval`
@@ -895,7 +911,7 @@ impl CodegenCtx {
         if LLVMGetTypeKind(ty) == LLVMTypeKind::Void {
             ty = LLVMStructTypeInContext(self.context, null, 0, 0i32);
         }
-        let name = self.null_terminate(ir_global.mangled_name);
+        let name = self.symbol_name(ir_global.mangled_name, ir_global.attributes);
         let global = LLVMAddGlobal(self.module, ty, &name[0] as &libc::c_char);
 
         if ir_global.is_extern {
@@ -1588,8 +1604,14 @@ fn generate(
         }
     }
 
-    // Phase 7: Generate main wrapper
-    if test_mode {
+    // Phase 7: Without the sysroot's entrypoint glue (a freestanding
+    // program), generate a minimal C `main` wrapper.
+    let has_entrypoint_glue = unit.functions.iter_ref().any(|f: &IrFunction| -> bool {
+        f.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Lang && a.str_val() == "entrypoint_glue" })
+    });
+    if has_entrypoint_glue {
+        // nothing to do
+    } else if test_mode {
         // In test mode, use the #[test_main] function from test.alu as main
         for fn_def in unit.functions.iter_ref() {
             let is_test_main = fn_def.attributes.iter().any(|attr: Attribute| -> bool { attr.tag == AttrTag::TestMain });

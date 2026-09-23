@@ -508,9 +508,7 @@ impl ExprParser {
                 e._data.macro_expr.macro_id = item.kind.id()._value;
                 return self.ctx.alloc_expr(e);
             } else {
-                let e = self.make_expr(ExprTag::Local, span);
-                e._data.id_ref.id = Id { _value: 0 };
-                return self.ctx.alloc_expr(e);
+                return self.not_a_value(span, name);
             }
         } else {
             // Unresolved at parse time. When parsing a macro body, the
@@ -520,13 +518,33 @@ impl ExprParser {
             // ... }` where `buf` is declared in test_fmt's body, BEFORE
             // the macro definition textually but BEFORE the macro body
             // is pre-parsed in source order).
+            if !self.ctx.in_macro_body {
+                return self.unresolved_path(span, name);
+            }
             let e = self.make_expr(ExprTag::Local, span);
             e._data.id_ref.id = Id { _value: 0 };
-            if self.ctx.in_macro_body {
-                e._data.id_ref.str_val = self.ctx.intern_str(name);
-            }
+            e._data.id_ref.str_val = self.ctx.intern_str(name);
             self.ctx.alloc_expr(e)
         }
+    }
+
+    /// Report a path that resolves to nothing (as alumina-boot words it).
+    fn unresolved_path(self: &ExprParser, span: Span, path: &[u8]) -> &Expr {
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
+            span,
+            std::fmt::format!("could not resolve the path `{}`", path).unwrap().as_slice(),
+        ));
+        self.alloc_void(span)
+    }
+
+    /// Report a path to an item that cannot be used as a value (a type,
+    /// module, protocol, ...).
+    fn not_a_value(self: &ExprParser, span: Span, path: &[u8]) -> &Expr {
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
+            span,
+            std::fmt::format!("`{}` cannot be used as a value", path).unwrap().as_slice(),
+        ));
+        self.alloc_void(span)
     }
 
     // Walk `segments` looking for a TypeAlias / GenericParam anchor that the
@@ -742,9 +760,7 @@ impl ExprParser {
                 e._data.macro_expr.macro_id = item.kind.id()._value;
                 return self.ctx.alloc_expr(e);
             } else {
-                let e = self.make_expr(ExprTag::Local, span);
-                e._data.id_ref.id = Id { _value: 0 };
-                return self.ctx.alloc_expr(e);
+                return self.not_a_value(span, self.ctx.node_text(node));
             }
         } else {
             // Resolve through TypeAlias / GenericParam anchors that occur
@@ -764,9 +780,7 @@ impl ExprParser {
                     return self.ctx.alloc_expr(e);
                 }
             }
-            let e = self.make_expr(ExprTag::Local, span);
-            e._data.id_ref.id = Id { _value: 0 };
-            self.ctx.alloc_expr(e)
+            self.unresolved_path(span, self.ctx.node_text(node))
         }
     }
 
@@ -2561,7 +2575,9 @@ impl ExprParser {
                             e._data.id_ref.id = item.kind.id();
                             return self.ctx.alloc_expr(e);
                         }
+                        return self.not_a_value(expr.span, expr.str_val());
                     }
+                    return self.unresolved_path(expr.span, expr.str_val());
                 }
                 let mapped = id_map.get(&expr.id()._value);
                 if mapped.is_some() {

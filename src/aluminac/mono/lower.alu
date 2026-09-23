@@ -93,24 +93,6 @@ impl Mono {
         }
     }
 
-    fn with_substitutions(ctx: &mut MonoCtx, type_map: HashMap<usize, &IrTy>) -> Mono {
-        Mono {
-            ctx: ctx,
-            type_map: type_map,
-            local_types: HashMap::new(),
-            local_defs: Vector::new(),
-            return_type: ctx.void_ty,
-            current_fn_name: "",
-            expected_type: ctx.void_ty,
-            suppress_field_error: false,
-            current_fn_idx: 0usize,
-            bound_check_depth: 0usize,
-            loop_contexts: Vector::new(),
-            inside_arg_inference: false,
-            range_bound_hint: Option::none(),
-        }
-    }
-
     // ---- IR node construction helpers ----
     // These reduce the 3-4 line boilerplate for constructing common IR nodes.
 
@@ -1083,11 +1065,16 @@ impl Mono {
         let prev_expected_type = self.expected_type;
         let prev_inside_arg_inference = self.inside_arg_inference;
         let prev_loop_contexts = self.loop_contexts;
+        let prev_const_replacements = self.const_replacements;
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
         self.expected_type = self.ctx.void_ty;
         self.inside_arg_inference = false;
         self.loop_contexts = Vector::new();
+        // `for const` loop variables of the caller are not in scope (and a
+        // recursive instantiation running the same loop must not clobber
+        // the caller's binding of it).
+        self.const_replacements = HashMap::new();
 
         // Each instantiation is lowered in its own generic context: a fresh
         // type_map holding only the bindings that are lexically visible in
@@ -1177,8 +1164,6 @@ impl Mono {
                 link_name = Option::some(attr.str_val());
             } else if attr.tag == AttrTag::Export {
                 keep_name = true;
-            } else if attr.tag == AttrTag::Main {
-                keep_name = true;
             } else if attr.tag == AttrTag::NoMangle {
                 keep_name = true;
             }
@@ -1239,6 +1224,8 @@ impl Mono {
 
         // Restore saved state
         self.loop_contexts.free();
+        self.const_replacements.free();
+        self.const_replacements = prev_const_replacements;
         self.return_type = prev_return_type;
         self.local_types = prev_local_types;
         self.local_defs = prev_local_defs;
@@ -2971,24 +2958,32 @@ impl Mono {
         let iter_let_stmt: Option<&IrExpr> = Option::none();
 
         {
-            // Store iterable in a local so we can take a reference for .iter() call
+            // `for x in e` calls `e.iter()` on `e` itself (as alumina-boot
+            // does): iterating a copy would be wrong for anything whose
+            // identity matters (e.g. a channel's mutex). Only an rvalue is
+            // first stored in a local, to take its address.
             let iterable_var_id = self.ctx.id_gen.next_id();
-            self.local_types.insert(iterable_var_id._value, iterable_ty);
-            self.local_defs.push(IrLocalDef {
-                id: iterable_var_id,
-                ty: iterable_ty,
-                name: "_iterable",
-                span: Span::empty(),
-            });
-
-            // &_iterable for method call
-            let ir_iterable_local = self.mk_local(iterable_var_id, iterable_ty);
-            let ir_iterable_ref = self.mk_ref(ir_iterable_local, false);
+            let ir_iterable_ref = if Mono::is_place(iterable_ir) {
+                self.mk_ref(iterable_ir, false)
+            } else {
+                self.local_types.insert(iterable_var_id._value, iterable_ty);
+                self.local_defs.push(IrLocalDef {
+                    id: iterable_var_id,
+                    ty: iterable_ty,
+                    name: "_iterable",
+                    span: Span::empty(),
+                });
+                self.mk_ref(self.mk_local(iterable_var_id, iterable_ty), false)
+            };
 
             let iter_call = self.resolve_method_call_on_type(iterable_ty, "iter", ir_iterable_ref, &[]);
             if iter_call.is_some() {
-                // let _iterable = iterable_expr;
-                iter_let_stmt = Option::some(self.mk_let(iterable_var_id, iterable_ty, iterable_ir));
+                // let _iterable = iterable_expr; (rvalues only)
+                iter_let_stmt = if Mono::is_place(iterable_ir) {
+                    Option::none()
+                } else {
+                    Option::some(self.mk_let(iterable_var_id, iterable_ty, iterable_ir))
+                };
 
                 let iter_result = iter_call.unwrap();
                 iter_ir = iter_result;
@@ -3012,11 +3007,18 @@ impl Mono {
                         // Chain: let _iter_slice = iterable.iter(); let _iter = _iter_slice.iter();
                         iter_ir = slice_iter_call.unwrap();
                         iter_ty = iter_ir.ty;
-                        // We need to emit the slice let in the preamble too
-                        // Wrap iter_let_stmt and slice_let into a block
-                        let block_items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                        block_items[0] = iter_let_stmt.unwrap();
-                        block_items[1] = slice_let;
+                        // The slice let goes into the preamble too (after
+                        // the iterable's let, if there is one).
+                        let block_items = if iter_let_stmt.is_some() {
+                            let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                            items[0] = iter_let_stmt.unwrap();
+                            items[1] = slice_let;
+                            items
+                        } else {
+                            let items = self.ctx.arena.alloc_slice::<&IrExpr>(1);
+                            items[0] = slice_let;
+                            items
+                        };
                         let block = IrExpr::void_expr(self.ctx.void_ty);
                         block.tag = IrTag::Block;
                         block._data.block.items = block_items;
@@ -3183,6 +3185,20 @@ impl Mono {
             &self.ctx.const_values,
             self.ctx.pointer_size,
             expr,
+        )
+    }
+
+    /// A const evaluator over the current IR, with the given variable store.
+    /// Not to be kept across lowering (which may grow the IR it looks at).
+    fn const_evaluator(self: &mut Mono, variables: &mut HashMap<usize, ConstValue>) -> const_eval::ConstEvaluator {
+        const_eval::ConstEvaluator::new(
+            self.ctx.arena,
+            variables,
+            self.ctx.id_gen,
+            self.ctx.ir_functions.as_slice(),
+            self.ctx.ir_globals.as_slice(),
+            &self.ctx.const_values,
+            self.ctx.pointer_size,
         )
     }
 
@@ -3825,17 +3841,12 @@ impl Mono {
         init_block_items[1] = ir_let_iter;
         let init_block = self.mk_block_void(init_block_items);
 
+        // The iterator's state lives in `sf_vars` across steps. Each step
+        // gets a fresh evaluator: lowering the body in between may grow
+        // ir_functions / ir_globals, which the evaluator holds slices of.
         let sf_vars: HashMap<usize, ConstValue> = HashMap::new();
-        let evaluator = const_eval::ConstEvaluator::new(
-            self.ctx.arena,
-            &sf_vars,
-            self.ctx.id_gen,
-            self.ctx.ir_functions.as_slice(),
-            self.ctx.ir_globals.as_slice(),
-            &self.ctx.const_values,
-            self.ctx.pointer_size,
-        );
-        let init_result = evaluator.eval(init_block);
+        defer sf_vars.free();
+        let init_result = self.const_evaluator(&sf_vars).eval(init_block);
         if init_result.is_err() {
             return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
         }
@@ -3845,7 +3856,7 @@ impl Mono {
         let loop_var_id = expr.id()._value;
 
         loop {
-            let next_result = evaluator.eval(ir_next_call);
+            let next_result = self.const_evaluator(&sf_vars).eval(ir_next_call);
             if next_result.is_err() { break; }
 
             // Result is Option<T> struct: { _is_some: bool, _inner: T }
@@ -5874,11 +5885,11 @@ impl Mono {
         let ir_obj = self.lower_expr(field_expr.lhs());
         let method_name = field_expr.str_val();
 
-        // Get the struct or enum type (auto-deref)
+        // The receiver's type, through any number of pointers (auto-deref).
         let scope_idx: u32 = 0u32;
         let method_type_args: &[&IrTy] = &[];
         let resolved_ty = ir_obj.ty;
-        if resolved_ty.tag == IrTyTag::Pointer {
+        while resolved_ty.tag == IrTyTag::Pointer {
             resolved_ty = resolved_ty.inner();
         }
 
@@ -6145,16 +6156,14 @@ impl Mono {
 
             // Infer from the self parameter using recursive unification.
             if def.params.len() > 0 {
+                // The receiver is auto-(de)referenced to the self param's
+                // indirection, so unify the self param's pointee with the
+                // receiver's type through all of its pointers.
                 let self_param_ty = def.params[0].ty;
-                let self_arg_ty = ir_obj.ty;
-                // Unwrap pointer for &self / &mut self
                 if self_param_ty.tag == TyTag::Pointer {
                     self_param_ty = self_param_ty.inner();
-                    if self_arg_ty.tag == IrTyTag::Pointer {
-                        self_arg_ty = self_arg_ty.inner();
-                    }
                 }
-                self.unify_type_for_inference(self_param_ty, self_arg_ty, inferred, found, def.generic_params);
+                self.unify_type_for_inference(self_param_ty, resolved_ty, inferred, found, def.generic_params);
             }
 
             // Then infer from explicit args (skipping self)
@@ -7411,6 +7420,17 @@ impl Mono {
 
     /// Autoref/autoderef: add or remove pointer indirections to match a target type.
     /// Counts pointer depth of both actual and target, then adds refs or derefs as needed.
+    /// Whether `e` denotes a mutable place (an lvalue) whose address can be
+    /// taken without materializing a copy. Globals are excluded, as a const
+    /// lives in read-only memory.
+    fn is_place(e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::Local, IrTag::Param, IrTag::Deref, IrTag::Index => true,
+            IrTag::FieldAccess => Mono::is_place(e._data.field.lhs),
+            _ => false,
+        }
+    }
+
     fn autoref(self: &mut Mono, expr: &IrExpr, target_ty: &IrTy) -> &IrExpr {
         // Count pointer depth of actual expression type
         let a: i32 = 0;
