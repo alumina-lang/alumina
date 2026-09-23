@@ -1064,9 +1064,12 @@ fn check_expr_evaluated_once(e: &IrExpr, seen: &mut HashSet<usize>, diag: &mut d
         IrTag::Unreachable, IrTag::Trap, IrTag::InConstContext, IrTag::TypeLayout, IrTag::InlineAsm => true,
         _ => false,
     };
-    if !seen.insert(e as usize) && !leaf && !e.is_pure() {
-        diag.emit(diagnostics::CodeDiagnostic::generic_error(diag.written_span(e.span),
-            "internal compiler error: an expression with effects is evaluated more than once"));
+    if !seen.insert(e as usize) {
+        // (A shared subtree is checked once.)
+        if !leaf && !e.is_pure() {
+            diag.emit(diagnostics::CodeDiagnostic::generic_error(diag.written_span(e.span),
+                "internal compiler error: an expression with effects is evaluated more than once"));
+        }
         return;
     }
     for child in e.children() {

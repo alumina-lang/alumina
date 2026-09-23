@@ -705,12 +705,24 @@ impl ExprParser {
     }
 
     fn lookup_in_chain_through_use(self: &ExprParser, scope_idx: u32, segments: &[&[u8]]) -> Option<scope::NamedItem> {
+        self.lookup_through_use(scope_idx, segments, 0)
+    }
+
+    /// (`depth`: the imports followed so far, of which a cycle would have no
+    /// end.)
+    fn lookup_through_use(self: &ExprParser, scope_idx: u32, segments: &[&[u8]], depth: usize) -> Option<scope::NamedItem> {
         // Walk a use-alias's path, descending into module/struct scopes and
         // tolerating TypeAlias / GenericParam at the terminal. Mirrors what
         // resolve_path would do but without filtering out TypeAlias.
-        if segments.is_empty() { return Option::none(); }
+        if segments.is_empty() || depth > 64 { return Option::none(); }
         let cur_scope = scope_idx;
         let i: usize = 0;
+        // (A path from the root module, `::x`.)
+        if segments[0].is_empty() {
+            if segments.len() == 1 { return Option::none(); }
+            cur_scope = 0u32;
+            i = 1;
+        }
         loop {
             let scope = self.ctx.scopes.get(cur_scope);
             let found = scope.items.get(&segments[i]);
@@ -737,12 +749,12 @@ impl ExprParser {
             let item = found.unwrap();
             if i + 1 == segments.len() {
                 if item.kind.tag == scope::NamedItemTag::UseAlias {
-                    return self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
+                    return self.lookup_through_use(item.kind.scope_idx, item.kind.path_segments(), depth + 1);
                 }
                 return Option::some(item);
             }
             if item.kind.tag == scope::NamedItemTag::UseAlias {
-                let target = self.lookup_in_chain_through_use(item.kind.scope_idx, item.kind.path_segments());
+                let target = self.lookup_through_use(item.kind.scope_idx, item.kind.path_segments(), depth + 1);
                 item = target?;
             }
             // Descend through module/struct/etc only
@@ -2332,6 +2344,22 @@ impl ExprParser {
         }
 
         let args_slice = self.ctx.arena.alloc_slice_copy::<&Expr>(all_args.as_slice());
+
+        // In a macro body, the invocation (of the macro its name resolves to
+        // here) is expanded with the macro, as `m!(obj, args)` is.
+        if self.ctx.in_macro_body {
+            let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+            let e = self.make_expr(ExprTag::MacroInvocation, span);
+            e._data.macro_expr.macro_id = if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::Macro {
+                resolved.unwrap().kind.id()._value
+            } else {
+                0usize
+            };
+            e._data.macro_expr.str_val = name;
+            e._data.macro_expr.args = args_slice;
+            e._data.macro_expr.flag = true;
+            return self.ctx.alloc_expr(e);
+        }
 
         // Try to expand the macro
         let macro_entry = self.ctx.resolve_macro(self.scope_idx, name);

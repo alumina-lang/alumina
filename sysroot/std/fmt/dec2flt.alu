@@ -2,7 +2,7 @@
 //!
 //! This is the high-level parser behind [std::string::parse_float] (and hence
 //! [f64::parse] / [f32::parse]). Unlike the mechanical Ryu port in
-//! [std::fmt::ryu] (whose `s2d`/`s2f` only accept up to 17 significant mantissa
+//! `std::fmt::ryu` (whose `s2d`/`s2f` only accept up to 17 significant mantissa
 //! digits), this handles decimal strings of arbitrary length and is
 //! round-to-nearest, ties-to-even correct for every input.
 //!
@@ -34,8 +34,8 @@ const MAX_SHIFT: i32 = 60;
 // Per-`dp` power-of-two step sizes; index by min(|dp|, 8), else use 27.
 const POWTAB: [u32; 9] = [1, 3, 6, 9, 13, 16, 19, 23, 26];
 
-/// An exact decimal value: digits `d[0..nd]` with the decimal point `dp` digits
-/// from the left, i.e. value = d[0..nd] (as an integer) * 10^(dp - nd).
+/// An exact decimal value: the first `nd` digits of `d`, with the decimal point
+/// `dp` digits from the left, i.e. those digits (as an integer) times `10^(dp - nd)`.
 struct Decimal {
     d: [u8; MAX_DIGITS],
     nd: usize,
@@ -145,7 +145,7 @@ impl Decimal {
         }
     }
 
-    /// Divide the value by 2^k (0 < k <= MAX_SHIFT).
+    /// Divide the value by `2^k` (`0 < k <= MAX_SHIFT`).
     fn right_shift(self: &mut Decimal, k: u32) {
         let r: usize = 0; // read index
         let w: usize = 0; // write index
@@ -194,7 +194,7 @@ impl Decimal {
         self.trim();
     }
 
-    /// Multiply the value by 2^k (0 < k <= MAX_SHIFT).
+    /// Multiply the value by `2^k` (`0 < k <= MAX_SHIFT`).
     fn left_shift(self: &mut Decimal, k: u32) {
         // Produce output digits right-to-left into a scratch buffer.
         let scratch: [u8; MAX_DIGITS];
@@ -241,7 +241,7 @@ impl Decimal {
         self.trim();
     }
 
-    /// Multiply by 2^k (k > 0) or divide by 2^(-k) (k < 0), in MAX_SHIFT chunks.
+    /// Multiply by `2^k` (`k > 0`) or divide by `2^(-k)` (`k < 0`), in `MAX_SHIFT` chunks.
     fn shift(self: &mut Decimal, k: i32) {
         if self.nd == 0 {
             return;

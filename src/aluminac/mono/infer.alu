@@ -85,10 +85,9 @@ fn infer_call(
     implied: &[&IrTy],
 ) {
     // The arguments, lowered without a hint and outside the context of this
-    // call (see `Mono::inside_arg_inference`).
-    let saved_return = m.return_type;
+    // call (see `Mono::inside_arg_inference`). (A `return` in one, e.g. from
+    // `?`, still has the function's result type.)
     let saved_inside = m.inside_arg_inference;
-    m.return_type = m.ctx.void_ty;
     m.inside_arg_inference = true;
     let literals: Vector<(usize, &IrTy)> = Vector::new();
     defer literals.free();
@@ -120,7 +119,6 @@ fn infer_call(
             }
         }
     }
-    m.return_type = saved_return;
     m.inside_arg_inference = saved_inside;
 
     from_hint(m, inf, ret);
