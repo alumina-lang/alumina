@@ -372,6 +372,8 @@ struct DiagnosticContext {
     overrides_applied: usize,
     /// The lint warnings given (see `emit`).
     lints_seen: std::collections::HashSet<u64>,
+    /// Whether the last diagnostic was dropped (so are its notes).
+    dropped: bool,
     errors: std::collections::Vector<CodeDiagnostic>,
     has_errors: bool,
     has_warnings: bool,
@@ -385,6 +387,7 @@ impl DiagnosticContext {
             overrides: std::collections::Vector::new(),
             overrides_applied: 0,
             lints_seen: std::collections::HashSet::new(),
+            dropped: false,
             errors: std::collections::Vector::new(),
             has_errors: false,
             has_warnings: false,
@@ -456,6 +459,10 @@ impl DiagnosticContext {
     }
 
     fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
+        if diag.level == DiagLevel::Note && self.dropped {
+            return;
+        }
+        self.dropped = false;
         // A lint's warning is given once for a place (not for each instance
         // of generic code).
         if !diag.lint.is_empty() {
@@ -465,6 +472,7 @@ impl DiagnosticContext {
             }
             key = key ^ (((diag.span.file_id as u64) << 40) | ((diag.span.start as u64) << 8)) ^ (diag.span.end as u64);
             if !self.lints_seen.insert(key) {
+                self.dropped = true;
                 return;
             }
         }
@@ -490,8 +498,14 @@ impl DiagnosticContext {
         let prev_file: u32 = 0u32;
         let prev_start: u32 = 0u32;
         let prev_end: u32 = 0u32;
+        let allowed = false;
         for i in 0usize..self.errors.len() {
             let diag = &self.errors[i];
+            // (With the notes of an allowed warning.)
+            if diag.level == DiagLevel::Note && allowed {
+                continue;
+            }
+            allowed = diag.level == DiagLevel::Allowed;
             // Compare against the previous unsuppressed diagnostic.
             let cur_kind = diag.kind as i32;
             if i > 0usize

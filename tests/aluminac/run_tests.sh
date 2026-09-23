@@ -89,6 +89,16 @@ for src in "$TESTDIR"/*.alu; do
         continue
     fi
 
+    # `// EXPECTED_QUIET`: the compiler must print nothing (no warnings or notes).
+    if grep -q '^// EXPECTED_QUIET' "$src" && [ -n "$compile_output" ]; then
+        echo "FAIL (unexpected compiler output)"
+        FAIL=$((FAIL + 1))
+        FAILURES="$FAILURES\n  $name: unexpected compiler output"
+        echo "$compile_output" | head -5 | sed 's/^/    /'
+        rm -f "$out"
+        continue
+    fi
+
     # Run
     "$out"
     rc=$?
