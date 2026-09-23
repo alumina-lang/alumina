@@ -467,6 +467,47 @@ struct IrExpr {
 }
 
 impl IrExpr {
+    /// A node of a kind without parts (e.g. `Zeroed`, `Undef`, `NullLit`).
+    fn of(tag: IrTag, ty: &IrTy) -> IrExpr {
+        let e = IrExpr::void_expr(ty);
+        e.tag = tag;
+        e
+    }
+
+    /// A block, tuple or array of `items`.
+    fn list(tag: IrTag, ty: &IrTy, items: &[&IrExpr]) -> IrExpr {
+        let e = IrExpr::of(tag, ty);
+        e._data.block.items = items;
+        e
+    }
+
+    /// A struct literal of `items` (a value for each field, in order).
+    fn struct_lit(ty: &IrTy, items: &[&IrExpr]) -> IrExpr {
+        let e = IrExpr::of(IrTag::StructLit, ty);
+        e._data.struct_lit = _IrStructLitData { items: items, ir_ty: ty };
+        e
+    }
+
+    fn string_lit(ty: &IrTy, value: &[u8]) -> IrExpr {
+        let e = IrExpr::of(IrTag::StringLit, ty);
+        e._data.lit.str_val = value;
+        e
+    }
+
+    /// A reference to a function (as a value).
+    fn of_fn(ty: &IrTy, target: IrFnRef) -> IrExpr {
+        let e = IrExpr::of(IrTag::FnRef, ty);
+        e._data.fn_ref = target;
+        e
+    }
+
+    /// A reference to a global (as a place).
+    fn of_global(ty: &IrTy, target: IrGlobalRef) -> IrExpr {
+        let e = IrExpr::of(IrTag::GlobalRef, ty);
+        e._data.global_ref = target;
+        e
+    }
+
     fn void_expr(void_ty: &IrTy) -> IrExpr {
         let r = std::mem::zeroed::<IrExpr>();
         r.tag = IrTag::Void;

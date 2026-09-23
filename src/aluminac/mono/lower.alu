@@ -261,9 +261,12 @@ impl Mono {
     /// What an expression that was reported as erroneous lowers to: `!`,
     /// which fits any context, so that the error does not cascade.
     fn mk_error(self: &mut Mono) -> &IrExpr {
-        let e = IrExpr::void_expr(self.ctx.never_ty);
-        e.tag = IrTag::Unreachable;
-        self.ctx.arena.alloc(e) as &IrExpr
+        self.alloc(IrExpr::of(IrTag::Unreachable, self.ctx.never_ty))
+    }
+
+    /// An IR node, allocated for as long as the IR lives.
+    fn alloc(self: &mut Mono, e: IrExpr) -> &IrExpr {
+        self.ctx.arena.alloc(e)
     }
 
     fn mk_int_lit(self: &mut Mono, ty: &IrTy, val: u64) -> &IrExpr {
@@ -340,17 +343,11 @@ impl Mono {
         }
         let m = effective_stmts.len();
         let ty = if m == 0usize { self.ctx.void_ty } else { effective_stmts[m - 1usize].ty };
-        let e = IrExpr::void_expr(ty);
-        e.tag = IrTag::Block;
-        e._data.block.items = effective_stmts;
-        self.ctx.arena.alloc(e) as &IrExpr
+        self.alloc(IrExpr::list(IrTag::Block, ty, effective_stmts))
     }
 
     fn mk_block_void(self: &mut Mono, stmts: &[&IrExpr]) -> &IrExpr {
-        let e = IrExpr::void_expr(self.ctx.void_ty);
-        e.tag = IrTag::Block;
-        e._data.block.items = stmts;
-        self.ctx.arena.alloc(e) as &IrExpr
+        self.alloc(IrExpr::list(IrTag::Block, self.ctx.void_ty, stmts))
     }
 
     fn mk_ref(self: &mut Mono, inner: &IrExpr, is_const: bool) -> &IrExpr {
@@ -1599,9 +1596,7 @@ impl Mono {
     }
 
     fn mk_void(self: &mut Mono) -> &IrExpr {
-        let v = IrExpr::void_expr(self.ctx.void_ty);
-        v.tag = IrTag::Void;
-        self.ctx.arena.alloc(v)
+        self.alloc(IrExpr::void_expr(self.ctx.void_ty))
     }
 
     /// The type of an expression with several branches (`if`, `switch`),
@@ -1843,14 +1838,10 @@ impl Mono {
             }
             ExprTag::Zeroed => {
                 if expr.ty() as &void as usize == 0usize {
-                    let result = IrExpr::void_expr(self.ctx.void_ty);
-                    result.tag = IrTag::Zeroed;
-                    self.ctx.arena.alloc(result)
+                    self.alloc(IrExpr::of(IrTag::Zeroed, self.ctx.void_ty))
                 } else {
                     let ir_ty = self.resolve_type(expr.ty());
-                    let result = IrExpr::void_expr(ir_ty);
-                    result.tag = IrTag::Zeroed;
-                    self.ctx.arena.alloc(result)
+                    self.alloc(IrExpr::of(IrTag::Zeroed, ir_ty))
                 }
             }
             ExprTag::Range => {
@@ -1962,11 +1953,7 @@ impl Mono {
                     if is_inclusive {
                         fields[2] = self.mk_bool_lit(false);
                     }
-                    let result = IrExpr::void_expr(range_ty);
-                    result.tag = IrTag::StructLit;
-                    result._data.struct_lit.ir_ty = range_ty;
-                    result._data.struct_lit.items = fields;
-                    return self.ctx.arena.alloc(result);
+                    return self.alloc(IrExpr::struct_lit(range_ty, fields));
                 }
 
                 let sd = sd_opt.unwrap();
@@ -1997,11 +1984,7 @@ impl Mono {
                 if is_inclusive && has_lower && has_upper {
                     fields[fi] = self.mk_bool_lit(false);
                 }
-                let result = IrExpr::void_expr(range_ty);
-                result.tag = IrTag::StructLit;
-                result._data.struct_lit.ir_ty = range_ty;
-                result._data.struct_lit.items = fields;
-                self.ctx.arena.alloc(result)
+                self.alloc(IrExpr::struct_lit(range_ty, fields))
             }
             ExprTag::StaticFor => self.lower_static_for(expr),
             _ => {
@@ -2017,8 +2000,7 @@ impl Mono {
                 // macro isn't in scope, which is what was breaking the
                 // io/mod.alu swap) — track it in PORTING_STATUS rather
                 // than fixing here in one slice.
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -2082,9 +2064,7 @@ impl Mono {
     fn coerce_int(self: &mut Mono, ir: &IrExpr, expected: &IrTy) -> &IrExpr {
         // Coerce null literal to expected pointer type
         if ir.tag == IrTag::NullLit && expected.tag == IrTyTag::Pointer && ir.ty != expected {
-            let result = IrExpr::void_expr(expected);
-            result.tag = IrTag::NullLit;
-            return self.ctx.arena.alloc(result);
+            return self.alloc(IrExpr::of(IrTag::NullLit, expected));
         }
         ir
     }
@@ -2161,10 +2141,7 @@ impl Mono {
                 // String literals are &[u8] - use IrTyTag::Slice type
                 let u8_ty = self.ctx.intern_builtin_ty(BuiltinType::U8);
                 let slice_ty = self.ctx.make_slice_ty(u8_ty, true);
-                let result = IrExpr::void_expr(slice_ty);
-                result.tag = IrTag::StringLit;
-                result._data.lit.str_val = expr.str_val();
-                self.ctx.arena.alloc(result)
+                self.alloc(IrExpr::string_lit(slice_ty, expr.str_val()))
             }
             ExprTag::NullLit => {
                 // `null` is a pointer of the expected type, `&mut void` by default.
@@ -2173,13 +2150,10 @@ impl Mono {
                 } else {
                     self.ctx.make_ptr_ty(self.ctx.void_ty, false)
                 };
-                let result = IrExpr::void_expr(ptr_ty);
-                result.tag = IrTag::NullLit;
-                self.ctx.arena.alloc(result)
+                self.alloc(IrExpr::of(IrTag::NullLit, ptr_ty))
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -2284,18 +2258,13 @@ impl Mono {
                     };
                     let fn_ty = self.ctx.make_fn_ty(fn_ref);
 
-                    let result = IrExpr::void_expr(fn_ty);
-                    result.tag = IrTag::FnRef;
-                    result._data.fn_ref = fn_ref;
-                    self.ctx.arena.alloc(result)
+                    self.alloc(IrExpr::of_fn(fn_ty, fn_ref))
                 } else {
                     let name = if expr.str_val().len() > 0usize { expr.str_val() } else { "<unknown>" };
                     if expr.str_val().len() > 0usize || expr.id()._value != 0usize {
                         self.emit_diag(diagnostics::CodeDiagnostic::unresolved_function(expr.span, name));
                     }
-                    let result = IrExpr::void_expr(self.ctx.void_ty);
-                    result.tag = IrTag::NullLit;
-                    self.ctx.arena.alloc(result)
+                    self.alloc(IrExpr::of(IrTag::NullLit, self.ctx.void_ty))
                 }
             }
             ExprTag::StaticRef => {
@@ -2330,8 +2299,7 @@ impl Mono {
                 }
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -3189,10 +3157,7 @@ impl Mono {
         for (i, item) in items.iter().enumerate() {
             elem_types[i] = item.ty;
         }
-        let result = IrExpr::void_expr(self.ctx.make_tuple_ty(elem_types));
-        result.tag = IrTag::TupleLit;
-        result._data.block.items = items;
-        let tuple = self.ctx.arena.alloc(result) as &IrExpr;
+        let tuple = self.alloc(IrExpr::list(IrTag::TupleLit, self.ctx.make_tuple_ty(elem_types), items));
         if stmts.is_empty() {
             return tuple;
         }
@@ -3462,8 +3427,7 @@ impl Mono {
                 self.mk_assign(ir_lhs, ir_rhs)
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -3771,8 +3735,7 @@ impl Mono {
                 }
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -3790,8 +3753,7 @@ impl Mono {
         let iterable_ty = iterable_ir.ty;
 
         if iterable_ty.is_void() {
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            return self.ctx.arena.alloc(r);
+            return self.mk_void();
         }
 
         // Try calling .iter() on the iterable to get an iterator.
@@ -3861,10 +3823,7 @@ impl Mono {
                             items[0] = slice_let;
                             items
                         };
-                        let block = IrExpr::void_expr(self.ctx.void_ty);
-                        block.tag = IrTag::Block;
-                        block._data.block.items = block_items;
-                        iter_let_stmt = Option::some(self.ctx.arena.alloc(block) as &IrExpr);
+                        iter_let_stmt = Option::some(self.alloc(IrExpr::list(IrTag::Block, self.ctx.void_ty, block_items)));
                     }
                 }
             }
@@ -3896,8 +3855,7 @@ impl Mono {
         let next_result = self.resolve_method_call_on_type(iter_ty, "next", ir_iter_ref, &[]);
 
         if next_result.is_none() {
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            return self.ctx.arena.alloc(r);
+            return self.mk_void();
         }
         let ir_next_call = next_result.unwrap();
         let opt_ty = ir_next_call.ty; // Option<T>
@@ -4119,9 +4077,7 @@ impl Mono {
                 }
                 if field_val.tag == CValTag::Void {
                     // Field not set — use zeroed
-                    let z = IrExpr::void_expr(sr.fields[i].ty);
-                    z.tag = IrTag::Zeroed;
-                    items[i] = self.ctx.arena.alloc(z) as &IrExpr;
+                    items[i] = self.alloc(IrExpr::of(IrTag::Zeroed, sr.fields[i].ty));
                 } else {
                     items[i] = self.constvalue_to_ir(field_val, sr.fields[i].ty);
                 }
@@ -4150,14 +4106,10 @@ impl Mono {
                 }
             }
         } else if val.tag == CValTag::Void || val.tag == CValTag::Uninitialized {
-            let e = IrExpr::void_expr(ty);
-            e.tag = IrTag::Zeroed;
-            self.ctx.arena.alloc(e) as &IrExpr
+            self.alloc(IrExpr::of(IrTag::Zeroed, ty))
         } else {
             // Unsupported const value type - produce zeroed
-            let e = IrExpr::void_expr(ty);
-            e.tag = IrTag::Zeroed;
-            self.ctx.arena.alloc(e) as &IrExpr
+            self.alloc(IrExpr::of(IrTag::Zeroed, ty))
         }
     }
 
@@ -4197,10 +4149,7 @@ impl Mono {
                     self.ctx.ir_globals[idx.unwrap()].init = Option::some(init);
                 }
                 let global = self.ctx.ir_globals[idx.unwrap()];
-                let e = IrExpr::void_expr(global.ty);
-                e.tag = IrTag::GlobalRef;
-                e._data.global_ref = IrGlobalRef { id: global.id, mangled_name: global.mangled_name };
-                Option::some(self.ctx.arena.alloc(e) as &IrExpr)
+                Option::some(self.alloc(IrExpr::of_global(global.ty, IrGlobalRef { id: global.id, mangled_name: global.mangled_name })))
             }
             CLVTag::Index => {
                 let base = self.const_place(lv.inner())?;
@@ -4574,8 +4523,7 @@ impl Mono {
             if expr.opt_expr().is_some() {
                 self.lower_expr_hinted(expr.opt_expr().unwrap(), self.expected_type)
             } else {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -4589,7 +4537,7 @@ impl Mono {
         let iterable_ty = iterable_ir.ty;
 
         if iterable_ty.is_void() {
-            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+            return self.mk_void();
         }
 
         // 2. Store iterable in a local, call .iter() — same as lower_for_iterator
@@ -4633,7 +4581,7 @@ impl Mono {
             }
             let ty_name = self.ir_type_name(unwrapped_iter_ty);
             self.emit_diag(diagnostics::CodeDiagnostic::unresolved_method(expr.span, "next", ty_name));
-            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+            return self.mk_void();
         }
         let ir_next_call = next_call.unwrap();
 
@@ -4650,7 +4598,7 @@ impl Mono {
         defer sf_vars.free();
         let init_result = self.const_evaluator(&sf_vars).eval(init_block);
         if init_result.is_err() {
-            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+            return self.mk_void();
         }
 
         // 6. Drive iteration: const-eval .next() repeatedly, lower body per value
@@ -4717,7 +4665,7 @@ impl Mono {
         self.const_replacements.remove(&loop_var_id);
 
         if stmts.len() == 0 {
-            return self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
+            return self.mk_void();
         }
 
         let result_items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(stmts.as_slice());
@@ -5134,9 +5082,7 @@ impl Mono {
                 }
 
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot index into this type"));
-                let result = IrExpr::void_expr(self.ctx.void_ty);
-                result.tag = IrTag::Undef;
-                self.ctx.arena.alloc(result) as &IrExpr
+                self.alloc(IrExpr::of(IrTag::Undef, self.ctx.void_ty))
             }
             ExprTag::Cast => {
                 let ir_inner = self.lower_expr(expr.lhs());
@@ -5157,8 +5103,7 @@ impl Mono {
                 self.mk_bool_lit(self.type_matches(ir_val.ty, expr.ty()))
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -5524,16 +5469,12 @@ impl Mono {
                     0usize
                 };
                 if fn_id_val == 0usize {
-                    let null_e = IrExpr::void_expr(opaque_fn_ty);
-                    null_e.tag = IrTag::NullLit;
-                    entries.push(self.ctx.arena.alloc(null_e) as &IrExpr);
+                    entries.push(self.alloc(IrExpr::of(IrTag::NullLit, opaque_fn_ty)));
                     continue;
                 }
                 let fn_def_opt = self.ctx.fn_defs.get(&fn_id_val);
                 if fn_def_opt.is_none() {
-                    let null_e = IrExpr::void_expr(opaque_fn_ty);
-                    null_e.tag = IrTag::NullLit;
-                    entries.push(self.ctx.arena.alloc(null_e) as &IrExpr);
+                    entries.push(self.alloc(IrExpr::of(IrTag::NullLit, opaque_fn_ty)));
                     continue;
                 }
                 let fn_def = fn_def_opt.unwrap();
@@ -5664,10 +5605,7 @@ impl Mono {
                 }
                 let typed_fn_ty = self.ctx.make_fn_ptr_ty(typed_param_tys, ir_fn.return_type);
 
-                let fn_ref_e = IrExpr::void_expr(typed_fn_ty);
-                fn_ref_e.tag = IrTag::FnRef;
-                fn_ref_e._data.fn_ref = fn_ref;
-                let fn_ref_expr = self.ctx.arena.alloc(fn_ref_e) as &IrExpr;
+                let fn_ref_expr = self.alloc(IrExpr::of_fn(typed_fn_ty, fn_ref));
 
                 // Cast to opaque fn() and push.
                 entries.push(self.mk_cast(fn_ref_expr, opaque_fn_ty));
@@ -5681,10 +5619,7 @@ impl Mono {
         // Build the array literal initializer.
         let arr_items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(entries.as_slice());
         let arr_ty = self.ctx.arena.alloc(IrTy::mk_array(opaque_fn_ty, arr_items.len())) as &IrTy;
-        let arr_lit = IrExpr::void_expr(arr_ty);
-        arr_lit.tag = IrTag::ArrayLit;
-        arr_lit._data.block.items = arr_items;
-        let arr_lit_expr = self.ctx.arena.alloc(arr_lit) as &IrExpr;
+        let arr_lit_expr = self.alloc(IrExpr::list(IrTag::ArrayLit, arr_ty, arr_items));
 
         // Mangle a unique name for this vtable.
         let base_name: &[u8] = "_dyn_vtable";
@@ -5707,10 +5642,7 @@ impl Mono {
         // take its address. The address of the array (which is also the
         // address of element 0) is what dyn._vtable should hold; cast to
         // &fn() so callers can do pointer arithmetic.
-        let global_ref_expr = IrExpr::void_expr(arr_ty);
-        global_ref_expr.tag = IrTag::GlobalRef;
-        global_ref_expr._data.global_ref = IrGlobalRef { id: global_id, mangled_name: mangled };
-        let global_ref = self.ctx.arena.alloc(global_ref_expr) as &IrExpr;
+        let global_ref = self.alloc(IrExpr::of_global(arr_ty, IrGlobalRef { id: global_id, mangled_name: mangled }));
 
         let arr_addr = self.mk_ref(global_ref, true);
         let opaque_fn_ptr_ty = self.ctx.make_ptr_ty(opaque_fn_ty, true);
@@ -5750,10 +5682,7 @@ impl Mono {
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
             items[0] = data_ptr_ref;
             items[1] = len_ref;
-            let tuple_result = IrExpr::void_expr(expected_ty);
-            tuple_result.tag = IrTag::TupleLit;
-            tuple_result._data.block.items = items;
-            return self.ctx.arena.alloc(tuple_result);
+            return self.alloc(IrExpr::list(IrTag::TupleLit, expected_ty, items));
         }
 
         // Coerce &mut T -> &T (mutable pointer to const pointer)
@@ -5788,10 +5717,7 @@ impl Mono {
         // Coerce Fn (function item ZST) to fn pointer
         if expected_ty.tag == IrTyTag::FnPointer && val.ty.tag == IrTyTag::Fn {
             let fn_ref = val.ty.fn_item_ref();
-            let result = IrExpr::void_expr(expected_ty);
-            result.tag = IrTag::FnRef;
-            result._data.fn_ref = fn_ref;
-            return self.ctx.arena.alloc(result);
+            return self.alloc(IrExpr::of_fn(expected_ty, fn_ref));
         }
 
         // Coerce &T (or any pointer) to a dyn struct (`&dyn Proto` resolved
@@ -5824,19 +5750,13 @@ impl Mono {
                 let vtable_cast: &IrExpr = if vtable_expr as &void as usize != 0usize {
                     self.mk_cast(vtable_expr, opaque_fn_ptr_ty)
                 } else {
-                    let null_vtable = IrExpr::void_expr(opaque_fn_ptr_ty);
-                    null_vtable.tag = IrTag::NullLit;
-                    self.ctx.arena.alloc(null_vtable) as &IrExpr
+                    self.alloc(IrExpr::of(IrTag::NullLit, opaque_fn_ptr_ty))
                 };
 
                 let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
                 items[0] = data_cast;
                 items[1] = vtable_cast;
-                let result = IrExpr::void_expr(expected_ty);
-                result.tag = IrTag::StructLit;
-                result._data.struct_lit.ir_ty = expected_ty;
-                result._data.struct_lit.items = items;
-                return self.ctx.arena.alloc(result);
+                return self.alloc(IrExpr::struct_lit(expected_ty, items));
             }
         }
 
@@ -5857,8 +5777,7 @@ impl Mono {
         self.emit_diag(diagnostics::CodeDiagnostic::type_mismatch(
             span, expected_name, got_name));
         // Return a dummy expression with expected type so compilation can continue
-        let dummy = IrExpr::void_expr(expected_ty);
-        self.ctx.arena.alloc(dummy)
+        self.alloc(IrExpr::void_expr(expected_ty))
     }
 
     /// Coerce without error reporting (for contexts where mismatch is not an error).
@@ -6014,15 +5933,11 @@ impl Mono {
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
             items[0] = ir_new_ptr;
             items[1] = ir_new_len;
-            let result = IrExpr::void_expr(slice_ty);
-            result.tag = IrTag::TupleLit;
-            result._data.block.items = items;
-            return self.ctx.arena.alloc(result);
+            return self.alloc(IrExpr::list(IrTag::TupleLit, slice_ty, items));
         }
 
         if base.ty.tag != IrTyTag::Slice {
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            return self.ctx.arena.alloc(r);
+            return self.mk_void();
         }
 
         let elem_ty = self.slice_elem_ty(base.ty);
@@ -6036,10 +5951,7 @@ impl Mono {
         let elems = self.ctx.arena.alloc_slice::<&IrExpr>(2);
         elems[0] = ir_new_ptr;
         elems[1] = ir_new_len;
-        let result = IrExpr::void_expr(base.ty);
-        result.tag = IrTag::TupleLit;
-        result._data.block.items = elems;
-        self.ctx.arena.alloc(result)
+        self.alloc(IrExpr::list(IrTag::TupleLit, base.ty, elems))
     }
 
     // Get the struct type from an IrTy, auto-dereffing through pointers
@@ -7080,9 +6992,7 @@ impl Mono {
                     for i in 0usize..expr.args().len() {
                         self.lower_expr(expr.args()[i]);
                     }
-                    let unreach = IrExpr::void_expr(self.ctx.never_ty);
-                    unreach.tag = IrTag::Unreachable;
-                    return Option::some(self.ctx.arena.alloc(unreach) as &IrExpr);
+                    return Option::some(self.alloc(IrExpr::of(IrTag::Unreachable, self.ctx.never_ty)));
                 }
                 // As in alumina-boot, a field takes precedence over a method of
                 // the same name: `s.f(...)` calls the field's value.
@@ -7798,11 +7708,7 @@ impl Mono {
         if has_captures {
             // Build a struct literal with the captured values
             let items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(bound_values);
-            let result = IrExpr::void_expr(closure_ty);
-            result.tag = IrTag::StructLit;
-            result._data.struct_lit.ir_ty = closure_ty;
-            result._data.struct_lit.items = items;
-            self.ctx.arena.alloc(result)
+            self.alloc(IrExpr::struct_lit(closure_ty, items))
         } else {
             // No captures: return Fn type (ZST representing this lambda)
             let fn_ref = IrFnRef {
@@ -7810,10 +7716,7 @@ impl Mono {
                 mangled_name: mangled,
             };
             let fn_ty = self.ctx.make_fn_ty(fn_ref);
-            let result = IrExpr::void_expr(fn_ty);
-            result.tag = IrTag::FnRef;
-            result._data.fn_ref = fn_ref;
-            self.ctx.arena.alloc(result)
+            self.alloc(IrExpr::of_fn(fn_ty, fn_ref))
         }
     }
 
@@ -7859,8 +7762,7 @@ impl Mono {
         }
 
         if !found {
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            return self.ctx.arena.alloc(r);
+            return self.mk_void();
         }
 
         // Build: (*self_param).field[field_idx]
@@ -7915,10 +7817,7 @@ impl Mono {
         }
         let global = self.ctx.ir_globals[global_idx];
 
-        let result = IrExpr::void_expr(global.ty);
-        result.tag = IrTag::GlobalRef;
-        result._data.global_ref = IrGlobalRef { id: global.id, mangled_name: global.mangled_name };
-        self.ctx.arena.alloc(result)
+        self.alloc(IrExpr::of_global(global.ty, IrGlobalRef { id: global.id, mangled_name: global.mangled_name }))
     }
 
     /// Emit the global for one instantiation of a static or const item and
@@ -8032,9 +7931,7 @@ impl Mono {
                     if outcome.panic_msg.is_empty() {
                         self.report_const_failure(outcome.failure, span);
                     }
-                    let zeroed = IrExpr::void_expr(ty);
-                    zeroed.tag = IrTag::Zeroed;
-                    self.ctx.arena.alloc(zeroed) as &IrExpr
+                    self.alloc(IrExpr::of(IrTag::Zeroed, ty))
                 }
             } else if is_extern || init_ir.is_plain_constant()
                 || def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::ThreadLocal }) {
@@ -8264,10 +8161,7 @@ impl Mono {
                                 mangled_name: ir_fn.mangled_name,
                             };
                             let fn_ty = self.ctx.make_fn_ty(fn_ref);
-                            let result = IrExpr::void_expr(fn_ty);
-                            result.tag = IrTag::FnRef;
-                            result._data.fn_ref = fn_ref;
-                            return self.ctx.arena.alloc(result);
+                            return self.alloc(IrExpr::of_fn(fn_ty, fn_ref));
                         }
 
                         // Lower arguments
@@ -8315,10 +8209,7 @@ impl Mono {
                                 let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
                                 items[0] = ir_ptr;
                                 items[1] = ir_len;
-                                let result = IrExpr::void_expr(slice_ty);
-                                result.tag = IrTag::TupleLit;
-                                result._data.block.items = items;
-                                return self.ctx.arena.alloc(result);
+                                return self.alloc(IrExpr::list(IrTag::TupleLit, slice_ty, items));
                             }
 
                             // Infer type args from argument types
@@ -8558,9 +8449,7 @@ impl Mono {
                     // Union: only one initialized field (none leaves it
                     // uninitialized).
                     if expr.field_inits().is_empty() {
-                        let undef = IrExpr::void_expr(ir_ty);
-                        undef.tag = IrTag::Undef;
-                        return self.ctx.arena.alloc(undef);
+                        return self.alloc(IrExpr::of(IrTag::Undef, ir_ty));
                     }
                     // (The last initializer wins, as in alumina-boot.)
                     if expr.field_inits().len() > 1 {
@@ -8579,11 +8468,7 @@ impl Mono {
                     let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(1);
                     let field_val = self.lower_expr_coerced(fi.value, field_ty);
                     ir_fields[0] = self.check_and_coerce(field_val, field_ty, fi.value.span);
-                    let result = IrExpr::void_expr(ir_ty);
-                    result.tag = IrTag::StructLit;
-                    result._data.struct_lit.ir_ty = ir_ty;
-                    result._data.struct_lit.items = ir_fields;
-                    return self.ctx.arena.alloc(result);
+                    return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
                 }
 
                 // Reorder field_inits to match struct definition order
@@ -8607,23 +8492,16 @@ impl Mono {
                             // (Left uninitialized, as in alumina-boot.)
                             self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "uninitialized_field",
                                 std::fmt::format!("field `{}` is not initialized", def_name).unwrap().as_slice()));
-                            let undef = IrExpr::void_expr(field_ty);
-                            undef.tag = IrTag::Undef;
-                            ir_fields[i] = self.ctx.arena.alloc(undef);
+                            ir_fields[i] = self.alloc(IrExpr::of(IrTag::Undef, field_ty));
                         }
                     } else {
                         ir_fields[i] = self.lower_expr(expr.field_inits()[i].value);
                     }
                 }
-                let result = IrExpr::void_expr(ir_ty);
-                result.tag = IrTag::StructLit;
-                result._data.struct_lit.ir_ty = ir_ty;
-                result._data.struct_lit.items = ir_fields;
-                self.ctx.arena.alloc(result)
+                self.alloc(IrExpr::struct_lit(ir_ty, ir_fields))
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }
@@ -8790,8 +8668,7 @@ impl Mono {
                 self.ctx.arena.alloc(result)
             }
             _ => {
-                let r = IrExpr::void_expr(self.ctx.void_ty);
-                self.ctx.arena.alloc(r)
+                self.mk_void()
             }
         }
     }

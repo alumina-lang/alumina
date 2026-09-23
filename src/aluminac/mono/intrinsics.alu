@@ -118,9 +118,7 @@ fn lower_in_const_context(m: &mut Mono) -> &IrExpr {
     // codegen emits `false`. Matches alumina-boot's context-sensitive
     // semantics so sysroot's `if in_const_context() { ... }` branches
     // reach the const-only side when reached during const evaluation.
-    let r = IrExpr::void_expr(m.ctx.bool_ty);
-    r.tag = IrTag::InConstContext;
-    m.ctx.arena.alloc(r)
+    m.alloc(IrExpr::of(IrTag::InConstContext, m.ctx.bool_ty))
 }
 
 /// `codegen_type_func::<T, Ret>(name)`: alumina-boot's C type functions.
@@ -135,7 +133,7 @@ fn lower_codegen_type_func(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) ->
     if ir_type_args.len() != 2 || (query != "sizeof" && query != "_Alignof") {
         m.emit_diag(diagnostics::CodeDiagnostic::generic_error(
             expr.span, "aluminac supports `codegen_type_func` only for \"sizeof\" and \"_Alignof\""));
-        return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+        return m.mk_void();
     }
     let result = IrExpr::void_expr(ir_type_args[1]);
     result.tag = IrTag::TypeLayout;
@@ -225,9 +223,7 @@ fn lower_transmute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr
         m.ctx.void_ty
     };
     let ir_val: &IrExpr = if expr.args().is_empty() {
-        let v = IrExpr::void_expr(m.ctx.void_ty);
-        v.tag = IrTag::Undef;
-        m.ctx.arena.alloc(v) as &IrExpr
+        m.alloc(IrExpr::of(IrTag::Undef, m.ctx.void_ty))
     } else if !ir_type_args.is_empty() {
         m.lower_expr_coerced(expr.args()[0], ir_type_args[0])
     } else {
@@ -350,7 +346,7 @@ fn lower_const_diag_tag(m: &mut Mono, expr: &Expr, tag: IrTag, ty: &IrTy) -> &Ir
 /// the constant evaluator's heap (unreachable at run time).
 fn lower_const_heap(m: &mut Mono, ir_type_args: &[&IrTy], name: &[u8], expr: &Expr) -> &IrExpr {
     let items = m.ctx.arena.alloc_slice::<&IrExpr>(1);
-    items[0] = m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+    items[0] = m.mk_void();
     // (`T` is that of the argument unless given.)
     let lowered = false;
     let elem_ty = if ir_type_args.len() >= 1 && !ir_type_args[0].is_void() {
@@ -513,9 +509,7 @@ fn lower_module_path(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
         }
     }
     if path.is_empty() {
-        let r = IrExpr::void_expr(m.ctx.void_ty);
-        r.tag = IrTag::Void;
-        return m.ctx.arena.alloc(r);
+        return m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty));
     }
     let u8_ty = m.ctx.intern_builtin_ty(BuiltinType::U8);
     let slice_ty = m.ctx.make_slice_ty(u8_ty, true);
@@ -603,9 +597,7 @@ fn lower_expect(m: &mut Mono, expr: &Expr) -> &IrExpr {
         if !expr.args().is_empty() {
             return m.lower_expr(expr.args()[0]);
         }
-        let r = IrExpr::void_expr(m.ctx.bool_ty);
-        r.tag = IrTag::Undef;
-        return m.ctx.arena.alloc(r);
+        return m.alloc(IrExpr::of(IrTag::Undef, m.ctx.bool_ty));
     }
     let val_ir = m.lower_expr(expr.args()[0]);
     let to_be_ir = m.lower_expr(expr.args()[1]);
@@ -626,7 +618,7 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
     if expr.args().len() < 2 {
         m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
             "tuple_invoke requires (callee, tuple) arguments"));
-        return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+        return m.mk_void();
     }
     let ir_callee = m.lower_expr(expr.args()[0]);
     let ir_tuple = m.lower_expr(expr.args()[1]);
@@ -646,7 +638,7 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
         _ => {
             m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
                 "tuple_invoke: second argument must be a tuple"));
-            return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+            return m.mk_void();
         }
     }
 
@@ -712,7 +704,7 @@ fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
     }
 
     m.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
-    m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty))
+    m.mk_void()
 }
 
 fn lower_stop_iteration(m: &mut Mono) -> &IrExpr {
@@ -731,9 +723,7 @@ fn lower_with_span_of(m: &mut Mono, expr: &Expr) -> &IrExpr {
     if !expr.args().is_empty() {
         return m.lower_expr(expr.args()[0]);
     }
-    let result = IrExpr::void_expr(m.ctx.void_ty);
-    result.tag = IrTag::Void;
-    m.ctx.arena.alloc(result)
+    m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty))
 }
 
 fn lower_empty_descriptor_slice(m: &mut Mono, _kind: &[u8]) -> &IrExpr {
@@ -745,10 +735,7 @@ fn lower_empty_descriptor_slice(m: &mut Mono, _kind: &[u8]) -> &IrExpr {
     let void_ty = m.ctx.void_ty;
     let slice_ty = m.ctx.make_slice_ty(void_ty, true);
     let empty_str: &[u8] = "";
-    let result = IrExpr::void_expr(slice_ty);
-    result.tag = IrTag::StringLit;
-    result._data.lit.str_val = empty_str;
-    m.ctx.arena.alloc(result)
+    m.alloc(IrExpr::string_lit(slice_ty, empty_str))
 }
 
 fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
@@ -791,10 +778,7 @@ fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
 
     for i in 0usize..n_variants {
         let variant = &enum_ref.variants[i];
-        let name_lit = IrExpr::void_expr(m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true));
-        name_lit.tag = IrTag::StringLit;
-        name_lit._data.lit.str_val = variant.name;
-        let name_expr = m.ctx.arena.alloc(name_lit) as &IrExpr;
+        let name_expr = m.alloc(IrExpr::string_lit(m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true), variant.name));
 
         let int_lit = m.mk_int_lit(underlying_ty, variant.value);
         let cast_to_enum = m.mk_cast(int_lit, enum_ty);
@@ -806,10 +790,7 @@ fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     }
 
     let arr_ty = m.ctx.arena.alloc(IrTy::mk_array(return_ty, n_variants)) as &IrTy;
-    let arr_lit = IrExpr::void_expr(arr_ty);
-    arr_lit.tag = IrTag::ArrayLit;
-    arr_lit._data.block.items = entries;
-    m.ctx.arena.alloc(arr_lit) as &IrExpr
+    m.alloc(IrExpr::list(IrTag::ArrayLit, arr_ty, entries))
 }
 
 fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
@@ -867,10 +848,7 @@ fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
         let return_ty = ir_fn.return_type;
         elem_tys[i] = return_ty;
 
-        let name_lit = IrExpr::void_expr(u8_slice_ty);
-        name_lit.tag = IrTag::StringLit;
-        name_lit._data.lit.str_val = field.name;
-        let name_expr = m.ctx.arena.alloc(name_lit) as &IrExpr;
+        let name_expr = m.alloc(IrExpr::string_lit(u8_slice_ty, field.name));
         let offset_expr = m.mk_int_lit(usize_ty, field_offset as u64);
 
         let args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
@@ -880,10 +858,7 @@ fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
     }
 
     let tuple_ty = m.ctx.make_tuple_ty(elem_tys);
-    let tuple_lit = IrExpr::void_expr(tuple_ty);
-    tuple_lit.tag = IrTag::TupleLit;
-    tuple_lit._data.block.items = entries;
-    m.ctx.arena.alloc(tuple_lit) as &IrExpr
+    m.alloc(IrExpr::list(IrTag::TupleLit, tuple_ty, entries))
 }
 
 fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
@@ -977,10 +952,7 @@ fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExp
     let elems_slice = m.ctx.arena.alloc_slice_copy::<&IrTy>(elem_tys.as_slice());
     let tuple_ty = m.ctx.make_tuple_ty(elems_slice);
     let items_slice = m.ctx.arena.alloc_slice_copy::<&IrExpr>(entries.as_slice());
-    let tuple_lit = IrExpr::void_expr(tuple_ty);
-    tuple_lit.tag = IrTag::TupleLit;
-    tuple_lit._data.block.items = items_slice;
-    m.ctx.arena.alloc(tuple_lit) as &IrExpr
+    m.alloc(IrExpr::list(IrTag::TupleLit, tuple_ty, items_slice))
 }
 
 fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
@@ -997,9 +969,7 @@ fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr
     let item_id = ir_type_args[0].item_ref_id();
     let sd_opt = m.ctx.static_defs.get(&item_id);
     if sd_opt.is_none() {
-        let result = IrExpr::void_expr(m.ctx.void_ty);
-        result.tag = IrTag::Void;
-        return m.ctx.arena.alloc(result);
+        return m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty));
     }
     let sd = sd_opt.unwrap();
     // Build a StaticRef expression — lower_expr's StaticRef path then handles
@@ -1018,7 +988,5 @@ fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr
 fn lower_unknown(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
     // Unknown intrinsic - emit void with error
     m.emit_diag(diagnostics::CodeDiagnostic::unknown_intrinsic(expr.span, name));
-    let result = IrExpr::void_expr(m.ctx.void_ty);
-    result.tag = IrTag::Void;
-    m.ctx.arena.alloc(result)
+    m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty))
 }
