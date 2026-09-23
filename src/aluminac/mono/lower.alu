@@ -1194,6 +1194,28 @@ impl Mono {
             self.local_types.insert(def.params[i].id._value, param_ty);
         }
 
+        // #[tuple_args] (as in alumina-boot): the instance takes the elements
+        // of its single tuple parameter as separate parameters, and the body
+        // starts by assembling the tuple from them.
+        let tuple_param: Option<IrParam> = Option::none();
+        if def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::TupleArgs }) {
+            if params.len() != 1 {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    def.span, "functions with #[tuple_args] must have a single argument"));
+            } else if params[0].ty.tag != IrTyTag::Tuple && !params[0].ty.is_void() {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    def.span, "the argument to a #[tuple_args] function must be a tuple"));
+            } else {
+                tuple_param = Option::some(params[0]);
+                let elems: &[&IrTy] = if params[0].ty.tag == IrTyTag::Tuple { params[0].ty.elems() } else { &[] };
+                params = self.ctx.arena.alloc_slice::<IrParam>(elems.len());
+                for (i, elem) in elems.iter().enumerate() {
+                    params[i] = IrParam { id: self.ctx.id_gen.next_id(), ty: elem, name: "_tuple_arg" };
+                    self.local_types.insert(params[i].id._value, elem);
+                }
+            }
+        }
+
         // Resolve return type
         self.return_type = self.resolve_type(def.return_type);
 
@@ -1254,6 +1276,22 @@ impl Mono {
             let body_ir = self.lower_expr_coerced(v, self.return_type);
             self.check_and_coerce(body_ir, self.return_type, v.span)
         });
+        if body.is_some() && tuple_param.is_some() {
+            // { let tuple = (arg0, arg1, ...); body }
+            let tuple = tuple_param.unwrap();
+            self.local_defs.push(IrLocalDef { id: tuple.id, ty: tuple.ty, name: tuple.name, span: def.span });
+            let items = self.ctx.arena.alloc_slice::<&IrExpr>(params.len());
+            for (i, param) in params.iter().enumerate() {
+                items[i] = self.mk_local(param.id, param.ty);
+            }
+            let lit = IrExpr::void_expr(tuple.ty);
+            lit.tag = IrTag::TupleLit;
+            lit._data.block.items = items;
+            let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+            stmts[0] = self.mk_let(tuple.id, tuple.ty, self.ctx.arena.alloc(lit));
+            stmts[1] = body.unwrap();
+            body = Option::some(self.mk_block(stmts));
+        }
 
         self.current_fn_idx = prev_fn_idx;
 
@@ -4578,11 +4616,21 @@ impl Mono {
             while ir_obj.ty.tag == IrTyTag::Pointer {
                 ir_obj = self.mk_deref(ir_obj, ir_obj.ty.inner());
             }
-            // Resolve index: either from literal index_val or from const-evaluated expression
+            // `t.(a..b)` is the tuple of those elements.
+            if expr.opt_expr().is_some() && expr.opt_expr().unwrap().tag == ExprTag::Range {
+                return self.lower_tuple_slice(ir_obj, expr.opt_expr().unwrap(), expr.span);
+            }
+            // The index is a literal (`t.0`) or a constant expression (`t.(i)`).
             let idx: usize = if expr.opt_expr().is_some() {
-                let ir_idx = self.lower_expr(expr.opt_expr().unwrap());
+                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+                let ir_idx = self.lower_expr_coerced(expr.opt_expr().unwrap(), usize_ty);
                 let val = self.try_const_eval_u64(ir_idx);
-                if val.is_some() { val.unwrap() as usize } else { expr.index_val() }
+                if val.is_none() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        expr.opt_expr().unwrap().span, "tuple index must be a constant"));
+                    return self.mk_void();
+                }
+                val.unwrap() as usize
             } else {
                 expr.index_val()
             };
@@ -4796,6 +4844,49 @@ impl Mono {
         let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
         stmts[0] = self.mk_let(tmp_id, val.ty, val);
         stmts[1] = self.ctx.arena.alloc(lit);
+        self.mk_block(stmts)
+    }
+
+    /// `t.(a..b)`: the tuple of `t`'s elements in the (constant) range.
+    fn lower_tuple_slice(self: &mut Mono, tuple: &IrExpr, range: &Expr, span: Span) -> &IrExpr {
+        if tuple.ty.tag != IrTyTag::Tuple && !tuple.ty.is_void() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, "only tuples can be sliced with `.(range)`"));
+            return self.mk_void();
+        }
+        let elems: &[&IrTy] = if tuple.ty.tag == IrTyTag::Tuple { tuple.ty.elems() } else { &[] };
+        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+        let bound = |&self, =usize_ty, e: &Expr| -> Option<usize> {
+            let v = self.try_const_eval_u64(self.lower_expr_coerced(e, usize_ty));
+            if v.is_none() {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(e.span, "tuple slice bounds must be constants"));
+            }
+            v.map(|v: u64| -> usize { v as usize })
+        };
+        let lower = if range.lhs() as &void != null { bound(range.lhs()).unwrap_or(0) } else { 0 };
+        let upper = if range.rhs() as &void == null {
+            elems.len()
+        } else {
+            let b = bound(range.rhs()).unwrap_or(0);
+            if range.flag() { b + 1 } else { b }
+        };
+        if lower > upper || upper > elems.len() {
+            self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(span));
+            return self.mk_void();
+        }
+
+        // { let tmp = t; (tmp.lower, ..., tmp.(upper - 1)) }
+        let tmp_id = self.ctx.id_gen.next_id();
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: tuple.ty, name: "_tuple", span: span });
+        let items = self.ctx.arena.alloc_slice::<&IrExpr>(upper - lower);
+        for i in lower..upper {
+            items[i - lower] = self.mk_field(self.mk_local(tmp_id, tuple.ty), i as u32, elems[i]);
+        }
+        let result = IrExpr::void_expr(self.ctx.make_tuple_ty(elems[lower..upper]));
+        result.tag = IrTag::TupleLit;
+        result._data.block.items = items;
+        let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+        stmts[0] = self.mk_let(tmp_id, tuple.ty, tuple);
+        stmts[1] = self.ctx.arena.alloc(result);
         self.mk_block(stmts)
     }
 
@@ -6095,6 +6186,19 @@ impl Mono {
         let saved_in_arg_inf = self.inside_arg_inference;
         self.return_type = self.ctx.void_ty;
         self.inside_arg_inference = true;
+        // #[tuple_args]: the arguments are the elements of the one parameter.
+        if def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::TupleArgs }) && num_params == 1 {
+            let arg_tys = self.ctx.arena.alloc_slice::<&IrTy>(args.len());
+            let complete = true;
+            for (i, arg) in args.iter().enumerate() {
+                arg_tys[i] = self.lower_expr_tentative(arg).ty;
+                complete = complete && !self.tentative_incomplete;
+            }
+            if complete {
+                self.unify_type_for_inference(def.params[0].ty, self.ctx.make_tuple_ty(arg_tys), inferred, found, def.generic_params);
+            }
+            num_params = 0;
+        }
         for p in 0usize..num_params {
             if p >= args.len() { break; }
             let param_ty = def.params[p].ty;

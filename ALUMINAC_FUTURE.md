@@ -237,6 +237,25 @@ boot misreads the language (record such cases here).
   `std::result::Result` under the `io::Result<T>` alias). Arguably a bug.
 - Names resolve through enclosing modules lexically (a child module sees
   its parent's items).
+- A path's first segment is also looked up in the *enclosing scopes of a
+  star-imported scope*: through the root's `use std::prelude::*`, all of
+  `std`'s modules (`mem::size_of`, `typing::is_same`) work anywhere without
+  a `use`. Looks accidental, but the lang tests rely on it. (aluminac used
+  to approximate it with the modules named by `use`s in scope.)
+
+### alumina-boot's lang tests under aluminac
+
+`tests/lang/lang.alu` (alumina-boot's language test suite) needs, beyond
+what is done: **linear scoping of block items** (a block's `const A` /
+`fn foo` / `struct foo` shadow earlier ones from their declaration on;
+aluminac's scopes map a name to one item), **coroutines** (`fn*`,
+`yield`; aluminac has none), and deferred type paths through generic
+parameters (`T::associated_type`). Done for it: tuple slicing
+`t.(a..b)`, `#[tuple_args]` (aluminac had a `tuple_call` of its own),
+text-only `stringify!`, `codegen_type_func` `sizeof`/`_Alignof` (from
+LLVM's data layout, so it checks aluminac's layout), prelude module paths,
+and a crash (`transmute` lowered without its target type, which the const
+evaluator dereferenced).
 
 ### Cross-check status
 

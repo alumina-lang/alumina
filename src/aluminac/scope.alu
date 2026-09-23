@@ -377,20 +377,7 @@ impl ScopeArena {
         // local variables/parameters from shadowing module names.
         let first = self.resolve_scoped(scope_idx, segments[0]);
         if first.is_none() {
-            // alumina-boot semantics: `use seg0::seg1::…::leaf` also makes
-            // `seg1` (and only seg1 — the first segment after the crate
-            // root) usable as a module qualifier. We expose this purely as
-            // a *resolution-time fallback* (consulted only when normal
-            // resolution already failed), NOT by inserting a NamedItem
-            // into the scope — eager insertion shadows identically-named
-            // locals/items and miscompiles aluminac's own self-bootstrap.
-            // Real items / locals / params / explicit imports therefore
-            // always outrank this.
-            let tm = self.resolve_top_module_fallback(scope_idx, segments[0]);
-            if tm.is_none() {
-                return Option::none();
-            }
-            first = tm;
+            return Option::none();
         }
 
         // Walk through remaining segments
@@ -409,38 +396,6 @@ impl ScopeArena {
             Option::none()
         };
         result
-    }
-
-    // alumina-boot top-module exposure, as a pure resolution-time
-    // fallback. `use seg0::seg1::…::leaf` makes `seg1` usable as a
-    // module qualifier (only seg1 — `use std::collections::hashmap::X`
-    // exposes `collections`, never `hashmap`). We discover this by
-    // scanning, across the scope's ancestor chain, the leaf use-aliases
-    // that `process_use` already recorded (their `path_segments` are the
-    // absolute import paths, e.g. [std, string, split]); a match on
-    // `path_segments[1] == name` means `name` is an exposed top module
-    // `[path_segments[0], name]`. Returns the resolved Module item so
-    // callers can treat it like any module. Only ever consulted after
-    // normal resolution failed ⇒ never shadows real items.
-    fn resolve_top_module_fallback(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
-        let cur = scope_idx;
-        loop {
-            let scope = self.get(cur);
-            for pair in scope.items {
-                let item = pair.1;
-                if item.kind.tag == NamedItemTag::UseAlias {
-                    let segs = item.kind.path_segments();
-                    if segs.len() >= 2usize && segs[1] == name {
-                        return self.resolve_path(item.kind.scope_idx, segs[0..2]);
-                    }
-                }
-            }
-            if scope.parent.is_none() {
-                break;
-            }
-            cur = scope.parent.unwrap();
-        }
-        Option::none()
     }
 
     // Resolve a name but only return items that can have :: children
@@ -483,18 +438,19 @@ impl ScopeArena {
             // Found something else (local var, etc.) but it's not a scope-bearing item; continue looking
         }
 
-        // Check star imports
+        // Check star imports. As in alumina-boot, a path's first segment is
+        // also looked up in the ancestors of a star-imported scope: through
+        // the root's `use std::prelude::*`, every child of `std` (`mem`,
+        // `typing`, ...) can start a path anywhere.
         for import_idx in scope.star_imports {
-            let imp_found = self.get(import_idx).items.get(&name);
-            if imp_found.is_some() {
-                let imp_item = imp_found.unwrap();
-                let imp_tag = imp_item.kind.tag;
-                if imp_tag == NamedItemTag::Module || imp_tag == NamedItemTag::Struct || imp_tag == NamedItemTag::Enum || imp_tag == NamedItemTag::Protocol || imp_tag == NamedItemTag::UseAlias {
+            let cur: Option<u32> = Option::some(import_idx);
+            while cur.is_some() {
+                let imported = self.get(cur.unwrap());
+                let imp_found = imported.items.get(&name);
+                if imp_found.is_some() && ScopeArena::is_scope_bearing(imp_found.unwrap()) {
                     return imp_found;
                 }
-                if imp_tag == NamedItemTag::BuiltinType && imp_item.kind.scope_idx != 0u32 {
-                    return imp_found;
-                }
+                cur = imported.parent;
             }
         }
 
@@ -504,6 +460,16 @@ impl ScopeArena {
         }
 
         Option::none()
+    }
+
+    /// Whether an item can start a multi-segment path (`item::x`).
+    fn is_scope_bearing(item: NamedItem) -> bool {
+        switch item.kind.tag {
+            NamedItemTag::Module, NamedItemTag::Struct, NamedItemTag::Enum,
+            NamedItemTag::Protocol, NamedItemTag::UseAlias => true,
+            NamedItemTag::BuiltinType => item.kind.scope_idx != 0u32,
+            _ => false,
+        }
     }
 
     // Follow use aliases to their target

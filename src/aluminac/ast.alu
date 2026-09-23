@@ -860,7 +860,7 @@ enum AttrTag {
     NoMangle = 22i32,
     ConstOnly = 23i32,
     NoConst = 24i32,
-    TupleCall = 25i32,
+    TupleArgs = 25i32,     // #[tuple_args]: the single tuple parameter is passed as separate arguments
     Custom = 26i32,        // unrecognized #[name(...)]; str_val = name
 }
 
@@ -905,7 +905,7 @@ impl Attribute {
     fn no_mangle() -> Attribute { Attribute { tag: AttrTag::NoMangle, _data: Attribute::_no_data() } }
     fn const_only() -> Attribute { Attribute { tag: AttrTag::ConstOnly, _data: Attribute::_no_data() } }
     fn no_const() -> Attribute { Attribute { tag: AttrTag::NoConst, _data: Attribute::_no_data() } }
-    fn tuple_call() -> Attribute { Attribute { tag: AttrTag::TupleCall, _data: Attribute::_no_data() } }
+    fn tuple_args() -> Attribute { Attribute { tag: AttrTag::TupleArgs, _data: Attribute::_no_data() } }
     fn custom(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Custom, _data: _AttributeData { str_val: name } } }
 }
 
@@ -1388,6 +1388,7 @@ enum IrTag {
     ConstNote = 49i32,    // const_note intrinsic — str_val holds the message; const_eval surfaces a note, codegen no-ops
     InConstContext = 50i32, // in_const_context intrinsic — const_eval returns true, codegen emits false
     AtomicOp = 51i32,     // atomic intrinsic; str_val = op ("load"/"store"/"rmw"/"cmpxchg"/"fence"), items = args, ty = return type
+    TypeLayout = 52i32,   // codegen_type_func("sizeof" / "_Alignof"): the size or alignment of a type per LLVM's data layout
 }
 
 // Call target tags
@@ -1426,6 +1427,7 @@ struct _IrLetData { id: Id, ir_ty: &IrTy, opt_expr: Option<&IrExpr> }
 struct _IrStructLitData { items: &[&IrExpr], ir_ty: &IrTy }
 struct _IrTypeOpData { ir_ty: &IrTy }
 struct _IrCodegenData { str_val: &[u8], items: &[&IrExpr] }
+struct _IrTypeLayoutData { query: &[u8], of: &IrTy }
 struct _IrIdxData { lhs: &IrExpr, rhs: &IrExpr }
 
 union _IrExprData {
@@ -1446,6 +1448,7 @@ union _IrExprData {
     struct_lit: _IrStructLitData,
     type_op: _IrTypeOpData,
     codegen: _IrCodegenData,
+    type_layout: _IrTypeLayoutData,
     idx: _IrIdxData,
     fn_ref: IrFnRef,
     global_ref: IrGlobalRef,

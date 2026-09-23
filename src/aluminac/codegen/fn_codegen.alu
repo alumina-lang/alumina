@@ -861,6 +861,16 @@ impl FnCodegen {
             LLVMBuildBitCast(self.ctx.builder, alloca, self.ctx.llvm_type(expr.ty), self.temp_cname())
         }
 
+        IrTag::TypeLayout => {
+            let data = expr._data.type_layout;
+            let of = self.ctx.llvm_type(data.of);
+            let value: u64 = if data.query == "sizeof" {
+                LLVMABISizeOfType(self.ctx.target_data, of)
+            } else {
+                LLVMABIAlignmentOfType(self.ctx.target_data, of) as u64
+            };
+            LLVMConstInt(self.ctx.llvm_type(expr.ty), value, 0i32)
+        }
         IrTag::LlvmIntrinsic => {
             let intrinsic_name = expr.str_val();
             let items = expr.items();

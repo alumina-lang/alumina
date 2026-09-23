@@ -19,6 +19,7 @@ fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &
         "is_const_evaluable" => lower_is_const_evaluable(m, expr),
         "in_const_context" => lower_in_const_context(m),
         "size_of" => lower_size_of(m, ir_type_args, expr),
+        "codegen_type_func" => lower_codegen_type_func(m, ir_type_args, expr),
         "align_of" => lower_align_of(m, ir_type_args, expr),
         "unreachable" => lower_unreachable(m),
         "trap" => lower_trap(m),
@@ -124,6 +125,26 @@ fn lower_in_const_context(m: &mut Mono) -> &IrExpr {
     m.ctx.arena.alloc(r)
 }
 
+/// `codegen_type_func::<T, Ret>(name)`: alumina-boot's C type functions.
+/// aluminac supports `sizeof` and `_Alignof`, answered from LLVM's data
+/// layout (so e.g. the lang tests check aluminac's own layout against it).
+fn lower_codegen_type_func(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    let query: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    if ir_type_args.len() != 2 || (query != "sizeof" && query != "_Alignof") {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+            expr.span, "aluminac supports `codegen_type_func` only for \"sizeof\" and \"_Alignof\""));
+        return m.ctx.arena.alloc(IrExpr::void_expr(m.ctx.void_ty));
+    }
+    let result = IrExpr::void_expr(ir_type_args[1]);
+    result.tag = IrTag::TypeLayout;
+    result._data.type_layout = _IrTypeLayoutData { query: query, of: ir_type_args[0] };
+    m.ctx.arena.alloc(result)
+}
+
 fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
     // size_of<T>() -> usize - compute at monomorphization time
     let measured_ty = if !ir_type_args.is_empty() {
@@ -205,16 +226,20 @@ fn lower_transmute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr
     } else {
         m.ctx.void_ty
     };
-    let ir_val: &IrExpr = if !expr.args().is_empty() {
-        m.lower_expr(expr.args()[0])
-    } else {
+    let ir_val: &IrExpr = if expr.args().is_empty() {
         let v = IrExpr::void_expr(m.ctx.void_ty);
         v.tag = IrTag::Undef;
         m.ctx.arena.alloc(v) as &IrExpr
+    } else if !ir_type_args.is_empty() {
+        m.lower_expr_coerced(expr.args()[0], ir_type_args[0])
+    } else {
+        m.lower_expr(expr.args()[0])
     };
     let result = IrExpr::void_expr(ret_ty);
     result.tag = IrTag::Transmute;
     result._data.cast.lhs = ir_val;
+    // (The target type; the const evaluator reads it.)
+    result._data.cast.ir_ty = ret_ty;
     m.ctx.arena.alloc(result)
 }
 

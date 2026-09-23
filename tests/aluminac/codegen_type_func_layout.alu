@@ -1,0 +1,27 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `codegen_type_func::<T, usize>("sizeof" / "_Alignof")` answers from the
+// backend (C for alumina-boot, LLVM's data layout for aluminac), so it
+// cross-checks the compiler's own layout (`size_of` / `align_of`).
+
+use std::intrinsics::codegen_type_func;
+use std::mem::{size_of, align_of};
+
+struct Mixed { a: u8, b: u64, c: u16 }
+#[align(16)] struct Aligned { a: u8 }
+#[packed] struct Packed { a: u8, b: u32 }
+union U { a: u8, b: u64, c: [u8; 3] }
+enum E { A = 1u16, B = 2u16 }
+
+fn same<T>() -> bool {
+    size_of::<T>() == codegen_type_func::<T, usize>("sizeof")
+        && align_of::<T>() == codegen_type_func::<T, usize>("_Alignof")
+}
+
+fn main() -> i32 {
+    if !same::<u8>() || !same::<i128>() || !same::<f64>() { return 1; }
+    if !same::<&[u8]>() || !same::<&dyn std::fmt::Formattable<Self, std::string::StringBuf>>() { return 2; }
+    if !same::<Mixed>() || !same::<(u8, u32, u16)>() || !same::<[u16; 5]>() { return 3; }
+    if !same::<Aligned>() || !same::<Packed>() { return 4; }
+    if !same::<U>() || !same::<E>() || !same::<Option<u8>>() { return 5; }
+    0
+}

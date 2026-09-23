@@ -1815,6 +1815,30 @@ impl ExprParser {
             }
         }
 
+        // `stringify!(x)` is the text of `x`, which is not an expression to
+        // resolve (e.g. `stringify!(T::associated_type)`).
+        if !self.ctx.in_macro_body && args_node.is_some() {
+            let entry = if macro_item_id != 0 {
+                self.ctx.resolve_macro_by_id(macro_item_id)
+            } else {
+                self.ctx.resolve_macro(self.scope_idx, name)
+            };
+            if entry.is_some() && entry.unwrap().is_builtin && name == "stringify" {
+                let cursor = args_node.unwrap().walk();
+                defer cursor.free();
+                let text: &[u8] = "";
+                for child in args_node.unwrap().children(&cursor) {
+                    if child.is_named() {
+                        text = self.ctx.intern_str(self.ctx.node_text(child));
+                        break;
+                    }
+                }
+                let e = self.make_expr(ExprTag::StringLit, self.ctx.macro_outer_span.unwrap_or(span));
+                e._data.lit.str_val = text;
+                return self.ctx.alloc_expr(e);
+            }
+        }
+
         let args = if args_node.is_some() {
             self.parse_arg_list(args_node.unwrap())
         } else {
