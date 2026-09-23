@@ -53,6 +53,10 @@ struct Mono {
     // picking up the OUTER caller's expected_type / return_type — see
     // the comment in `infer_type_args` for context.
     inside_arg_inference: bool,
+    // Type for the bounds of the range literal about to be lowered, set by
+    // the one context that dictates it (slice indexing) and consumed by the
+    // range lowering itself.
+    range_bound_hint: Option<&IrTy>,
 }
 
 struct LoopContext {
@@ -84,6 +88,7 @@ impl Mono {
             bound_check_depth: 0usize,
             loop_contexts: Vector::new(),
             inside_arg_inference: false,
+            range_bound_hint: Option::none(),
         }
     }
 
@@ -101,6 +106,7 @@ impl Mono {
             bound_check_depth: 0usize,
             loop_contexts: Vector::new(),
             inside_arg_inference: false,
+            range_bound_hint: Option::none(),
         }
     }
 
@@ -442,16 +448,20 @@ impl Mono {
     /// When a generic struct is referenced without type args (e.g. `TakeIterator { ... }`),
     /// uses the function's return type as a hint, matching alumina-boot's type_hint mechanism.
     fn resolve_struct_lit_type(self: &mut Mono, expr: &Expr) -> &IrTy {
-        let ir_ty = self.resolve_type(expr.ty());
-
-        // Only apply hints when the type is a struct with generic params but no type args
-        if ir_ty.tag != IrTyTag::Struct || ir_ty.struct_ref().type_args.len() > 0 {
-            return ir_ty;
+        // Type arguments are inferred only for a bare generic struct name
+        // (`Foo { .. }` with `struct Foo<T>`). Anything else is an ordinary
+        // type. The bare struct is deliberately not instantiated before
+        // inference: resolving its fields with the params unbound is
+        // meaningless (and fails for fields like `typeof(expr)`).
+        let ast_ty = expr.ty();
+        if ast_ty.tag != TyTag::Named {
+            return self.resolve_type(ast_ty);
         }
-        let sd = self.ctx.struct_defs.get(&ir_ty.struct_ref().id._value);
+        let sd = self.ctx.struct_defs.get(&ast_ty.id()._value);
         if sd.is_none() || sd.unwrap().generic_params.len() == 0 {
-            return ir_ty;
+            return self.resolve_type(ast_ty);
         }
+        let struct_id = sd.unwrap().id._value;
 
         // Hint 0: caller-supplied expected_type matches the same struct.
         // Set by lower_expr_coerced when the struct lit appears in a
@@ -464,14 +474,14 @@ impl Mono {
         // FusedIterator<…, void> miscompiles `chain` (the second leg
         // reads from a void-typed Option slot instead of Option<T>).
         if self.expected_type.tag == IrTyTag::Struct
-            && self.expected_type.struct_ref().id._value == ir_ty.struct_ref().id._value
+            && self.expected_type.struct_ref().id._value == struct_id
             && self.expected_type.struct_ref().type_args.len() > 0 {
             return self.expected_type;
         }
 
         // Hint 1: function return type matches the same struct
         if self.return_type.tag == IrTyTag::Struct {
-            if self.return_type.struct_ref().id._value == ir_ty.struct_ref().id._value
+            if self.return_type.struct_ref().id._value == struct_id
                 && self.return_type.struct_ref().type_args.len() > 0 {
                 return self.return_type;
             }
@@ -524,7 +534,7 @@ impl Mono {
             return self.mono_struct(struct_def, inferred);
         }
 
-        ir_ty
+        self.resolve_type(ast_ty)
     }
 
     fn resolve_named_type(self: &mut Mono, item_ref: ItemRef, type_args: &[&IrTy]) -> &IrTy {
@@ -562,12 +572,7 @@ impl Mono {
         let ta = self.ctx.type_aliases.get(&item_ref.id._value);
         if ta.is_some() {
             let alias = ta.unwrap();
-            // Set up type parameter substitution
-            if alias.generic_params.len() > 0 && type_args.len() > 0 {
-                for i in 0usize..std::cmp::min(alias.generic_params.len(), type_args.len()) {
-                    self.type_map.insert(alias.generic_params[i].id._value, type_args[i]);
-                }
-            }
+            let type_args = self.complete_type_args(alias.generic_params, type_args);
 
             // Compiler-evaluated typeop type aliases (e.g. arguments_of<F>,
             // return_type_of<F>) have an opaque target — recognize them by
@@ -743,7 +748,16 @@ impl Mono {
                 }
             }
 
+            // The alias's generic params are bound only while resolving its
+            // target (on top of the enclosing context, as for structs).
+            let outer_type_map = self.type_map;
+            self.type_map = outer_type_map.clone();
+            for i in 0usize..std::cmp::min(alias.generic_params.len(), type_args.len()) {
+                self.type_map.insert(alias.generic_params[i].id._value, type_args[i]);
+            }
             let result = self.resolve_type(alias.target);
+            self.type_map.free();
+            self.type_map = outer_type_map;
             return result;
         }
 
@@ -754,7 +768,7 @@ impl Mono {
         if fn_def.is_some() {
             let def = fn_def.unwrap();
             let fn_idx = self.mono_function(def, type_args);
-            let ir_fn = &self.ctx.ir_functions[fn_idx];
+            let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
             let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
             return self.ctx.arena.alloc(IrTy::mk_fn(fn_ref));
         }
@@ -784,7 +798,38 @@ impl Mono {
         self.ctx.void_ty
     }
 
+    /// Complete a generic item's type arguments with the defaults of any
+    /// trailing parameters the caller omitted, so that e.g. `HashMap<K, V>`
+    /// and `HashMap<K, V, DefaultHash>` denote the same type. A default may
+    /// refer to earlier parameters, so each is resolved with those bound.
+    ///
+    /// A bare name with no type arguments at all is left alone: it means the
+    /// arguments are to be inferred (e.g. a struct literal `Foo { .. }`).
+    fn complete_type_args(self: &mut Mono, params: &[GenericParam], type_args: &[&IrTy]) -> &[&IrTy] {
+        if type_args.len() == 0 || type_args.len() >= params.len() {
+            return type_args;
+        }
+        let full = self.ctx.arena.alloc_slice::<&IrTy>(params.len());
+        let outer_type_map = self.type_map;
+        self.type_map = outer_type_map.clone();
+        for i in 0usize..params.len() {
+            full[i] = if i < type_args.len() {
+                type_args[i]
+            } else if params[i].default_ty.is_some() {
+                self.resolve_type(params[i].default_ty.unwrap())
+            } else {
+                self.ctx.void_ty
+            };
+            self.type_map.insert(params[i].id._value, full[i]);
+        }
+        self.type_map.free();
+        self.type_map = outer_type_map;
+        full
+    }
+
     fn mono_struct(self: &mut Mono, def: &StructDef, type_args: &[&IrTy]) -> &IrTy {
+        let type_args = self.complete_type_args(def.generic_params, type_args);
+
         // Check cache
         let cache_key = hash_mono_key(def.id, type_args);
         let cached = self.ctx.struct_ty_cache.get(&cache_key);
@@ -809,11 +854,13 @@ impl Mono {
             return result;
         }
 
-        // Set up generic substitution
-        if def.generic_params.len() > 0 && type_args.len() > 0 {
-            for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
-                self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
-            }
+        // Field types are resolved with the struct's own generic params bound
+        // on top of the lexically enclosing context (a local struct may use
+        // the enclosing function's generics); the bindings must not leak out.
+        let outer_type_map = self.type_map;
+        self.type_map = outer_type_map.clone();
+        for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
+            self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
         }
 
         // Use scope_idx directly from StructDef
@@ -865,6 +912,9 @@ impl Mono {
         if def.fields.len() == 0 {
             is_zst = true;
         }
+
+        self.type_map.free();
+        self.type_map = outer_type_map;
 
         // Update both the ir_structs entry AND the cached IrTy in-place
         self.ctx.ir_structs[idx].fields = fields;
@@ -1041,59 +1091,55 @@ impl Mono {
             return 0usize;
         }
 
-        // Save state for nested mono_function calls
+        // Save the caller's per-function lowering state. The callee's body is
+        // lowered from scratch: nothing about the call site (in particular
+        // its expected-type hint, which would otherwise steer inference in
+        // the callee's first expression, or its enclosing loops) is visible.
         let prev_return_type = self.return_type;
         let prev_local_types = self.local_types;
         let prev_local_defs = self.local_defs;
+        let prev_expected_type = self.expected_type;
+        let prev_inside_arg_inference = self.inside_arg_inference;
+        let prev_loop_contexts = self.loop_contexts;
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
+        self.expected_type = self.ctx.void_ty;
+        self.inside_arg_inference = false;
+        self.loop_contexts = Vector::new();
 
-        // Snapshot any *prior* type_map bindings for this fn's generic
-        // params. After body lowering we restore the entries that were
-        // bound before so a recursive mono with different type_args
-        // doesn't leave the outer context's bindings overwritten.
-        let saved_gp = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
-        let had_gp = self.ctx.arena.alloc_slice::<bool>(def.generic_params.len());
-        for gi in 0usize..def.generic_params.len() {
-            let gp_id = def.generic_params[gi].id._value;
-            let old = self.type_map.get(&gp_id);
-            if old.is_some() {
-                saved_gp[gi] = old.unwrap();
-                had_gp[gi] = true;
-            } else {
-                had_gp[gi] = false;
-            }
+        // Each instantiation is lowered in its own generic context: a fresh
+        // type_map holding only the bindings that are lexically visible in
+        // the function. Sharing the caller's map let bindings leak between
+        // unrelated instantiations (a stale placeholder binding silently
+        // changing which types a sibling mono resolves to).
+        //
+        // What is visible:
+        //  - nested fns and closures see the enclosing function's bindings;
+        //  - protocol-derived methods see `Self` and the protocol's generics,
+        //    which the caller binds before dispatching here;
+        //  - the fn's own generic params, from `type_args`, or (for any the
+        //    caller did not pass) from what the caller bound for them.
+        let outer_type_map = self.type_map;
+        let is_local_fn = self.ctx.local_fn_ids.contains(&def.id._value);
+        self.type_map = if is_local_fn { outer_type_map.clone() } else { HashMap::new() };
+
+        let carried_ids: Vector<usize> = Vector::new();
+        defer carried_ids.free();
+        let proto_gp_ids = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
+        if proto_gp_ids.is_some() {
+            carried_ids.extend_from_slice(proto_gp_ids.unwrap());
         }
-        let proto_ids: &[usize] = &[];
-        let proto_save_vals = self.ctx.arena.alloc_slice::<&IrTy>(0);
-        let proto_save_had = self.ctx.arena.alloc_slice::<bool>(0);
-        let proto_gp_snap = self.ctx.proto_method_proto_gp_ids.get(&def.id._value);
-        if proto_gp_snap.is_some() {
-            proto_ids = proto_gp_snap.unwrap();
-            proto_save_vals = self.ctx.arena.alloc_slice::<&IrTy>(proto_ids.len());
-            proto_save_had = self.ctx.arena.alloc_slice::<bool>(proto_ids.len());
-            for k in 0usize..proto_ids.len() {
-                let prev = self.type_map.get(&proto_ids[k]);
-                if prev.is_some() {
-                    proto_save_vals[k] = prev.unwrap();
-                    proto_save_had[k] = true;
-                } else {
-                    proto_save_had[k] = false;
-                }
-            }
+        let self_param_id = self.ctx.proto_method_self_id.get(&def.id._value);
+        if self_param_id.is_some() {
+            carried_ids.push(self_param_id.unwrap());
         }
-        let self_id_v: usize = 0usize;
-        let self_id_have = false;
-        let self_id_val: &IrTy = self.ctx.void_ty;
-        let self_id_had = false;
-        let self_id_snap = self.ctx.proto_method_self_id.get(&def.id._value);
-        if self_id_snap.is_some() {
-            self_id_v = self_id_snap.unwrap();
-            self_id_have = true;
-            let prev_self = self.type_map.get(&self_id_v);
-            if prev_self.is_some() {
-                self_id_val = prev_self.unwrap();
-                self_id_had = true;
+        for gi in type_args.len()..def.generic_params.len() {
+            carried_ids.push(def.generic_params[gi].id._value);
+        }
+        for id in carried_ids {
+            let bound = outer_type_map.get(&id);
+            if bound.is_some() {
+                self.type_map.insert(id, bound.unwrap());
             }
         }
 
@@ -1198,20 +1244,9 @@ impl Mono {
 
         self.current_mono_key = prev_mono_key;
 
-        // Restore the *previously-bound* type_map entries.
-        for gi in 0usize..def.generic_params.len() {
-            if had_gp[gi] {
-                self.type_map.insert(def.generic_params[gi].id._value, saved_gp[gi]);
-            }
-        }
-        for k in 0usize..proto_ids.len() {
-            if proto_save_had[k] {
-                self.type_map.insert(proto_ids[k], proto_save_vals[k]);
-            }
-        }
-        if self_id_have && self_id_had {
-            self.type_map.insert(self_id_v, self_id_val);
-        }
+        // Back to the caller's generic context.
+        self.type_map.free();
+        self.type_map = outer_type_map;
 
         // Collect local defs
         let local_defs_slice = self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice());
@@ -1221,9 +1256,13 @@ impl Mono {
         self.ctx.ir_functions[idx].local_defs = local_defs_slice;
 
         // Restore saved state
+        self.loop_contexts.free();
         self.return_type = prev_return_type;
         self.local_types = prev_local_types;
         self.local_defs = prev_local_defs;
+        self.expected_type = prev_expected_type;
+        self.inside_arg_inference = prev_inside_arg_inference;
+        self.loop_contexts = prev_loop_contexts;
         self.current_fn_name = prev_fn_name;
         self.ctx.pop_mono_frame();
         idx
@@ -1361,8 +1400,24 @@ impl Mono {
                 let has_upper = expr.rhs() as &void as usize != 0;
                 let is_inclusive = expr.flag();
 
-                let raw_lower = if has_lower { self.lower_expr(expr.lhs()) } else { null as &IrExpr };
-                let raw_upper = if has_upper { self.lower_expr(expr.rhs()) } else { null as &IrExpr };
+                // The bounds' type, when the context dictates it (usize when
+                // indexing a slice, as in alumina-boot).
+                let bound_hint = self.range_bound_hint;
+                self.range_bound_hint = Option::none();
+                let raw_lower = if !has_lower {
+                    null as &IrExpr
+                } else if bound_hint.is_some() {
+                    self.lower_expr_coerced(expr.lhs(), bound_hint.unwrap())
+                } else {
+                    self.lower_expr(expr.lhs())
+                };
+                let raw_upper = if !has_upper {
+                    null as &IrExpr
+                } else if bound_hint.is_some() {
+                    self.lower_expr_coerced(expr.rhs(), bound_hint.unwrap())
+                } else {
+                    self.lower_expr(expr.rhs())
+                };
 
                 let elem_ty: &IrTy = if has_lower && has_upper {
                     if raw_lower.ty as &void == raw_upper.ty as &void {
@@ -1671,7 +1726,7 @@ impl Mono {
                     }
                 }
                 let fn_idx = self.mono_function(def, &[]);
-                let ir_fn = &self.ctx.ir_functions[fn_idx];
+                let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
                 // Build Fn type (ZST representing this specific function)
                 let fn_ref = IrFnRef {
@@ -1694,120 +1749,9 @@ impl Mono {
                 self.ctx.arena.alloc(result)
             }
         } else if expr.tag == ExprTag::StaticRef {
-            // Look up the static/const definition
             let sd = self.ctx.static_defs.get(&expr.id()._value);
             if sd.is_some() {
-                let def = sd.unwrap();
-                // Emit as a global reference (both consts and statics)
-                let ty = if def.ty.is_some() {
-                    self.resolve_type(def.ty.unwrap())
-                } else {
-                    self.ctx.void_ty
-                };
-
-                // Ensure the global is emitted (non-extern statics are lazy)
-                if !self.ctx.emitted_globals.contains(&def.id._value) {
-                    self.ctx.emitted_globals.insert(def.id._value);
-                    let init: Option<&IrExpr> = if def.init.is_some() {
-                        let init_expr = def.init.unwrap();
-                        let init_ir = if !ty.is_void() {
-                            self.lower_expr_coerced(init_expr, ty)
-                        } else {
-                            self.lower_expr(init_expr)
-                        };
-                        // If no explicit type, infer from init
-                        if ty.is_void() {
-                            ty = init_ir.ty;
-                        }
-                        // For consts, const-evaluate the init so codegen
-                        // gets simple literals instead of arbitrary IR.
-                        if def.is_const {
-                            let (cv, panic_msg, warn_msg, note_msg) = self.try_const_eval_with_diags(init_ir);
-                            let span = init_expr.span;
-                            if warn_msg.len() > 0 {
-                                self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, warn_msg));
-                            }
-                            if note_msg.len() > 0 {
-                                self.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, note_msg));
-                            }
-                            if panic_msg.len() > 0 {
-                                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, panic_msg));
-                            }
-                            if cv.is_some() {
-                                let cv_val = cv.unwrap();
-                                self.ctx.const_values.insert(def.id._value, cv_val);
-                                Option::some(self.constvalue_to_ir(cv_val, ty))
-                            } else {
-                                Option::some(init_ir)
-                            }
-                        } else {
-                            Option::some(init_ir)
-                        }
-                    } else {
-                        Option::none()
-                    };
-                    let is_extern = false;
-                    let link_name: Option<&[u8]> = Option::none();
-                    let keep_name = false;
-                    for attr in def.attributes {
-                        if attr.tag == AttrTag::Extern {
-                            is_extern = true;
-                        } else if attr.tag == AttrTag::LinkName {
-                            link_name = Option::some(attr.str_val());
-                        } else if attr.tag == AttrTag::Export {
-                            keep_name = true;
-                        } else if attr.tag == AttrTag::NoMangle {
-                            keep_name = true;
-                        }
-                    }
-                    let mangled = if link_name.is_some() {
-                        link_name.unwrap()
-                    } else if is_extern {
-                        def.name
-                    } else if keep_name {
-                        def.name
-                    } else {
-                        // Per-def mangling — two fn-local `const X` in
-                        // different fns would otherwise collide on def.name.
-                        self.ctx.mangle_global_name(def.name, def.id._value)
-                    };
-                    self.ctx.ir_globals.push(IrGlobal {
-                        id: def.id,
-                        name: def.name,
-                        mangled_name: mangled,
-                        ty: ty,
-                        init: init,
-                        is_const: def.is_const,
-                        is_extern: is_extern,
-                        attributes: def.attributes,
-                    });
-                } else if ty.is_void() {
-                    // Already emitted — look up the resolved type
-                    for global in self.ctx.ir_globals.iter() {
-                        if global.id._value == def.id._value {
-                            ty = global.ty;
-                            break;
-                        }
-                    }
-                }
-
-                // Look up the IrGlobal's mangled_name from the cache so the
-                // GlobalRef matches whatever the emit branch above produced.
-                let global_mangled = def.name;
-                for global in self.ctx.ir_globals.iter() {
-                    if global.id._value == def.id._value {
-                        global_mangled = global.mangled_name;
-                        break;
-                    }
-                }
-
-                let result = IrExpr::void_expr(ty);
-                result.tag = IrTag::GlobalRef;
-                result._data.global_ref = IrGlobalRef {
-                    id: def.id,
-                    mangled_name: global_mangled,
-                };
-                self.ctx.arena.alloc(result)
+                self.lower_static_ref(sd.unwrap(), &[])
             } else {
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
@@ -2162,13 +2106,13 @@ impl Mono {
                 ta[0] = ptr_ty;
                 ta as &[&IrTy]
             }
-        } else if ty.tag == IrTyTag::Struct && ty.struct_ref().type_args.len() > 0 && def.generic_params.len() == ty.struct_ref().type_args.len() {
-            ty.struct_ref().type_args
         } else {
-            // Fallback for non-generic structs, enums, etc: pass the whole type
-            let ta = self.ctx.arena.alloc_slice::<&IrTy>(1);
-            ta[0] = ty;
-            ta as &[&IrTy]
+            // Infer from the operands, as for an ordinary call. Generics that
+            // appear in no parameter fall back positionally to the receiver
+            // struct's own type args (an `impl Foo<T>` method's T).
+            let operand_ty = self.ctx.make_ptr_ty(ty, true);
+            let fallback: &[&IrTy] = if ty.tag == IrTyTag::Struct { ty.struct_ref().type_args } else { &[] };
+            self.infer_type_args_from_ir(def, &[operand_ty, operand_ty], fallback)
         };
 
         // For protocol methods, also bind Self in type_map to the underlying type
@@ -2179,7 +2123,7 @@ impl Mono {
         }
 
         let fn_idx = self.mono_function(def, type_args);
-        let ir_fn = &self.ctx.ir_functions[fn_idx];
+        let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
         let args = self.ctx.arena.alloc_slice::<&IrExpr>(2);
         args[0] = self.mk_ref(ir_lhs, true);
@@ -2406,7 +2350,7 @@ impl Mono {
         }
 
         let fn_idx = self.mono_function(def, method_type_args);
-        let ir_fn = &self.ctx.ir_functions[fn_idx];
+        let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
         // Lower call arguments, coercing to parameter types
         let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
@@ -2459,7 +2403,7 @@ impl Mono {
                 let type_args = self.ctx.arena.alloc_slice::<&IrTy>(1);
                 type_args[0] = ir_lhs.ty;
                 let fn_idx = self.mono_function(compare_def.unwrap(), type_args);
-                let ir_fn = &self.ctx.ir_functions[fn_idx];
+                let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
                 let ordering_ty = ir_fn.return_type;
 
                 let args = self.ctx.arena.alloc_slice::<&IrExpr>(2);
@@ -2773,29 +2717,38 @@ impl Mono {
             } else {
                 Option::none()
             };
-            // Use the larger/more complete type from the branches
-            // (e.g., Option::some(T) is the full type, Option::none() may be smaller)
-            let result_ty = if ir_else.is_some() && !ir_else.unwrap().ty.is_void() && !ir_else.unwrap().ty.is_never() {
-                // If else branch has a non-void type, prefer the one with more structure
-                let then_ty = ir_then.ty;
-                let else_ty = ir_else.unwrap().ty;
-                if then_ty.is_void() || then_ty.is_never() {
-                    else_ty
-                } else if then_ty.tag == IrTyTag::Struct && else_ty.tag == IrTyTag::Struct {
-                    // Prefer the type with the same or larger struct
-                    // Both should be the same generic type, but may differ if
-                    // one is a degenerate case (e.g., Option::none() vs Option::some(T))
-                    if else_ty.struct_ref().fields.len() >= then_ty.struct_ref().fields.len() {
-                        else_ty
+            // The branches must agree on a type (as in alumina-boot): a
+            // diverging branch takes the other's type; otherwise one branch
+            // must coerce to the other's type (e.g. `&[T; 0]` to `&[T]`, or
+            // `&mut T` to `&T`), and is coerced so that both arms produce a
+            // value of the same representation.
+            let result_ty = ir_then.ty;
+            if ir_else.is_some() {
+                let els = ir_else.unwrap();
+                if ir_then.ty.is_never() || (ir_then.ty.is_void() && !els.ty.is_never()) {
+                    result_ty = els.ty;
+                } else if !els.ty.is_never() && !els.ty.is_void() && els.ty != ir_then.ty {
+                    let els_coerced = self.try_coerce(els, ir_then.ty);
+                    if els_coerced as &void != null {
+                        ir_else = Option::some(els_coerced);
                     } else {
-                        then_ty
+                        let then_coerced = self.try_coerce(ir_then, els.ty);
+                        if then_coerced as &void != null {
+                            ir_then = then_coerced;
+                            result_ty = els.ty;
+                        } else {
+                            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                                expr.span,
+                                std::fmt::format!(
+                                    "mismatched types in if branches: `{}` and `{}`",
+                                    self.ir_type_name(ir_then.ty),
+                                    self.ir_type_name(els.ty),
+                                ).unwrap().as_slice(),
+                            ));
+                        }
                     }
-                } else {
-                    then_ty
                 }
-            } else {
-                ir_then.ty
-            };
+            }
             let result = IrExpr::void_expr(result_ty);
             result.tag = IrTag::If;
             result._data.if_data.cond = ir_cond;
@@ -3251,7 +3204,7 @@ impl Mono {
         )
     }
 
-    fn try_const_eval_with_diags(self: &mut Mono, expr: &IrExpr) -> (Option<ConstValue>, &[u8], &[u8], &[u8]) {
+    fn try_const_eval_with_diags(self: &mut Mono, expr: &IrExpr) -> const_eval::ConstEvalOutcome {
         const_eval::try_eval_with_diags(
             self.ctx.arena,
             self.ctx.id_gen,
@@ -4158,7 +4111,7 @@ impl Mono {
         }
 
         let fn_idx = self.mono_function(def, all_type_args);
-        let ir_fn = &self.ctx.ir_functions[fn_idx];
+        let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
         // Build call args: self_arg + args
         let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(1 + args.len());
@@ -4252,16 +4205,39 @@ impl Mono {
             }
 
             // Lower the index expression and determine whether it's a range
-            // (sub-slicing) or a scalar (element access).
-            let ir_index = self.lower_expr(expr.rhs());
+            // (sub-slicing) or a scalar (element access). Either way the
+            // index is a usize (for a range, its bounds are), as in
+            // alumina-boot.
+            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+            let ir_index = if expr.rhs().tag == ExprTag::Range {
+                self.range_bound_hint = Option::some(usize_ty);
+                self.lower_expr(expr.rhs())
+            } else {
+                self.lower_expr_coerced(expr.rhs(), usize_ty)
+            };
 
             // Coerce to indexable type (slice/array) via as_slice() if needed
             let indexee = self.coerce_to_indexable(derefed);
 
+            // Slices are indexed through the sysroot's `slice_index` /
+            // `slice_range_index` lang functions, which carry the bounds
+            // checks (enabled in debug mode). Arrays are indexed directly.
+            if indexee.ty.tag == IrTyTag::Slice {
+                let ptr_ty = self.ctx.make_ptr_ty(self.slice_elem_ty(indexee.ty), indexee.ty.is_const());
+                let lowered: Option<&IrExpr> = if self.is_range_ty(ir_index.ty) {
+                    self.call_lang_fn("slice_range_index", &[ptr_ty, ir_index.ty], &[indexee, ir_index], expr.span)
+                } else {
+                    self.call_lang_fn("slice_index", &[ptr_ty], &[indexee, ir_index], expr.span)
+                        .map(|=self, ptr: &IrExpr| -> &IrExpr { self.mk_deref(ptr, ptr.ty.inner()) })
+                };
+                if lowered.is_some() {
+                    return lowered.unwrap();
+                }
+            }
+
             if self.is_range_ty(ir_index.ty) {
                 // Range indexing (sub-slicing): extract lower/upper bounds from
                 // the appropriate fields of each range variant.
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
                 let range_struct_id = ir_index.ty.struct_ref().id._value;
                 let len_expr = self.get_indexee_len(indexee);
                 let zero_lit = self.mk_int_lit(usize_ty, 0u64);
@@ -4871,7 +4847,7 @@ impl Mono {
                 }
 
                 let fn_idx = self.mono_function(fn_def, method_type_args);
-                let ir_fn = &self.ctx.ir_functions[fn_idx];
+                let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
                 let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
 
                 // Build a typed FnRef expr, then cast to opaque fn().
@@ -4918,6 +4894,7 @@ impl Mono {
             is_const: true,
             is_extern: false,
             attributes: &[],
+            const_failure: Option::none(),
         });
 
         // Build IrTag::GlobalRef referring to the just-emitted global, then
@@ -5192,7 +5169,7 @@ impl Mono {
                 ta as &[&IrTy]
             };
             let fn_idx = self.mono_function(def, type_args);
-            let ir_fn = &self.ctx.ir_functions[fn_idx];
+            let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
             let args = self.ctx.arena.alloc_slice::<&IrExpr>(1);
             args[0] = self.mk_ref(val, true);
             let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
@@ -5446,6 +5423,46 @@ impl Mono {
                 }
             }
         }
+    }
+
+    /// Call the lang-item function `name` (e.g. `slice_index`) with explicit
+    /// type args. None if the sysroot does not define it.
+    fn call_lang_fn(self: &mut Mono, name: &[u8], type_args: &[&IrTy], args: &[&IrExpr], span: Span) -> Option<&IrExpr> {
+        let fn_id = self.ctx.get_lang_item(name)?;
+        let def = self.ctx.fn_defs.get(&fn_id)?;
+        let fn_idx = self.mono_function(def, type_args);
+        let ir_fn = self.ctx.ir_functions[fn_idx];
+        if ir_fn.params.len() != args.len() {
+            return Option::none();
+        }
+        let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(args.len());
+        for i in 0usize..args.len() {
+            ir_args[i] = self.check_and_coerce(args[i], ir_fn.params[i].ty, span);
+        }
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        Option::some(self.mk_call(fn_ref, ir_args, ir_fn.return_type))
+    }
+
+    /// Infer `def`'s type arguments by unifying its parameter types with the
+    /// (already lowered) argument types. Generics that appear in no parameter
+    /// fall back positionally to `fallback`, and otherwise stay unbound (void).
+    fn infer_type_args_from_ir(self: &mut Mono, def: &FnDef, arg_tys: &[&IrTy], fallback: &[&IrTy]) -> &[&IrTy] {
+        let n = def.generic_params.len();
+        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
+        let found = self.ctx.arena.alloc_slice::<bool>(n);
+        for i in 0usize..n {
+            inferred[i] = self.ctx.void_ty;
+            found[i] = false;
+        }
+        for i in 0usize..std::cmp::min(def.params.len(), arg_tys.len()) {
+            self.unify_type_for_inference(def.params[i].ty, arg_tys[i], inferred, found, def.generic_params);
+        }
+        for i in 0usize..std::cmp::min(n, fallback.len()) {
+            if !found[i] {
+                inferred[i] = fallback[i];
+            }
+        }
+        inferred
     }
 
     // Infer type arguments for a generic function call from the argument types.
@@ -5864,7 +5881,7 @@ impl Mono {
         // void-return but kept the i32 binding on the call site — codegen
         // then named the void call's result and the verifier rejected it.
         let fn_idx = self.mono_function(def, type_args);
-        let ir_fn = &self.ctx.ir_functions[fn_idx];
+        let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
         let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
         Option::some(self.mk_call(fn_ref, ir_args, ir_fn.return_type))
     }
@@ -6398,7 +6415,7 @@ impl Mono {
 
         // Monomorphize the method with type args (for generic impls + turbofish)
         let fn_idx = self.mono_function(def, combined_type_args);
-        let ir_fn = &self.ctx.ir_functions[fn_idx];
+        let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
         // Build args: &obj as first arg, then the call args
         let total_args = 1usize + expr.args().len();
@@ -6656,69 +6673,139 @@ impl Mono {
     // expression with those bindings, and for consts inlines the const-evaluated
     // value. Snapshot/restore mirrors mono_function's so nested instantiations
     // don't leak bindings into the caller.
-    fn instantiate_generic_const(self: &mut Mono, def: &StaticDef, expr: &Expr) -> &IrExpr {
-        // Resolve type args (with defaults for missing slots).
-        let resolved = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
-        for i in 0usize..def.generic_params.len() {
-            if i < expr.type_args().len() {
-                resolved[i] = self.resolve_type(expr.type_args()[i]);
-            } else if def.generic_params[i].default_ty.is_some() {
-                resolved[i] = self.resolve_type(def.generic_params[i].default_ty.unwrap());
-            } else {
-                resolved[i] = self.ctx.void_ty;
-            }
+    /// A reference to a static or const item, instantiating a generic one
+    /// with `type_args`. Every distinct instantiation is a single global,
+    /// emitted on first use: its address is stable and, for statics, writes
+    /// through one reference are seen through all others.
+    fn lower_static_ref(self: &mut Mono, def: &StaticDef, type_args: &[&IrTy]) -> &IrExpr {
+        let type_args = self.complete_type_args(def.generic_params, type_args);
+        let cache_key = hash_mono_key(def.id, type_args);
+        let cached = self.ctx.static_cache.get(&cache_key);
+        let global_idx = if cached.is_some() {
+            cached.unwrap()
+        } else {
+            self.emit_static(def, type_args, cache_key)
+        };
+        let global = self.ctx.ir_globals[global_idx];
+
+        let result = IrExpr::void_expr(global.ty);
+        result.tag = IrTag::GlobalRef;
+        result._data.global_ref = IrGlobalRef { id: global.id, mangled_name: global.mangled_name };
+        self.ctx.arena.alloc(result)
+    }
+
+    /// Emit the global for one instantiation of a static or const item and
+    /// return its index in `ir_globals`.
+    fn emit_static(self: &mut Mono, def: &StaticDef, type_args: &[&IrTy], cache_key: u64) -> usize {
+        let is_extern = def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Extern });
+        let link_name = def.attributes.iter()
+            .find(|a: Attribute| -> bool { a.tag == AttrTag::LinkName })
+            .map(|a: Attribute| -> &[u8] { a.str_val() });
+        let keep_name = def.attributes.iter().any(|a: Attribute| -> bool {
+            a.tag == AttrTag::Export || a.tag == AttrTag::NoMangle
+        });
+
+        // Each instantiation of a generic item is its own global.
+        let id = if def.generic_params.is_empty() { def.id } else { self.ctx.id_gen.next_id() };
+        let mangled = if link_name.is_some() {
+            link_name.unwrap()
+        } else if is_extern || keep_name {
+            def.name
+        } else {
+            // Per-def mangling — two fn-local `const X` in different fns
+            // would otherwise collide on def.name.
+            self.ctx.mangle_global_name(def.name, id._value)
+        };
+
+        // The initializer is lowered like a function body of its own: with
+        // the item's generic params bound, and none of the referencing
+        // function's state (locals, return type, type hints) visible.
+        let outer_type_map = self.type_map;
+        let prev_local_types = self.local_types;
+        let prev_local_defs = self.local_defs;
+        let prev_return_type = self.return_type;
+        let prev_expected_type = self.expected_type;
+        self.type_map = outer_type_map.clone();
+        self.local_types = HashMap::new();
+        self.local_defs = Vector::new();
+        self.expected_type = self.ctx.void_ty;
+        for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
+            self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
         }
 
-        // Snapshot the generic-param bindings we're about to overwrite so nested
-        // calls in the init expr don't leave stale bindings on exit.
-        let saved_vals = self.ctx.arena.alloc_slice::<&IrTy>(def.generic_params.len());
-        let saved_had = self.ctx.arena.alloc_slice::<bool>(def.generic_params.len());
-        for i in 0usize..def.generic_params.len() {
-            let key = def.generic_params[i].id._value;
-            let prev = self.type_map.get(&key);
-            if prev.is_some() {
-                saved_vals[i] = prev.unwrap();
-                saved_had[i] = true;
-            } else {
-                saved_had[i] = false;
-            }
-            self.type_map.insert(key, resolved[i]);
+        let ty = def.ty.map(|&self, t: &Ty| -> &IrTy { self.resolve_type(t) }).unwrap_or(self.ctx.void_ty);
+
+        // With a declared type, register the global before lowering the
+        // initializer, so that an initializer referring to the item itself
+        // (e.g. taking its own address) resolves to the same global.
+        let idx = self.ctx.ir_globals.len();
+        self.ctx.ir_globals.push(IrGlobal {
+            id: id,
+            name: def.name,
+            mangled_name: mangled,
+            ty: ty,
+            init: Option::none(),
+            is_const: def.is_const,
+            is_extern: is_extern,
+            attributes: def.attributes,
+            const_failure: Option::none(),
+        });
+        if !ty.is_void() {
+            self.ctx.static_cache.insert(cache_key, idx);
         }
 
-        // Lower the init expression. For consts, also try const-eval so the value
-        // is inlined at every use site (no per-instantiation global).
-        let ty = if def.ty.is_some() {
-            self.resolve_type(def.ty.unwrap())
-        } else {
-            self.ctx.void_ty
-        };
-        let init_ir = if !ty.is_void() {
-            self.lower_expr_coerced(def.init.unwrap(), ty)
-        } else {
-            self.lower_expr(def.init.unwrap())
-        };
-        let result = if def.is_const {
-            let (cv, _panic, _warn, _note) = self.try_const_eval_with_diags(init_ir);
-            if cv.is_some() {
-                self.constvalue_to_ir(cv.unwrap(), init_ir.ty)
+        if def.init.is_some() {
+            let init_expr = def.init.unwrap();
+            let init_ir = if ty.is_void() {
+                self.lower_expr(init_expr)
+            } else {
+                self.lower_expr_coerced(init_expr, ty)
+            };
+            // Without a declared type, the item's type is the initializer's.
+            if ty.is_void() {
+                ty = init_ir.ty;
+                self.ctx.ir_globals[idx].ty = ty;
+                self.ctx.static_cache.insert(cache_key, idx);
+            }
+            // Consts are evaluated here, so that codegen gets a literal and
+            // other constants can use the value. Codegen may still manage to
+            // fold what the evaluator cannot (e.g. addresses of globals); if
+            // not, it reports the failure recorded here.
+            self.ctx.ir_globals[idx].init = Option::some(if def.is_const {
+                let outcome = self.try_const_eval_with_diags(init_ir);
+                let span = init_expr.span;
+                if !outcome.warning_msg.is_empty() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, outcome.warning_msg));
+                }
+                if !outcome.note_msg.is_empty() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, outcome.note_msg));
+                }
+                if !outcome.panic_msg.is_empty() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, outcome.panic_msg));
+                }
+                if outcome.value.is_some() {
+                    self.ctx.const_values.insert(id._value, outcome.value.unwrap());
+                    self.constvalue_to_ir(outcome.value.unwrap(), ty)
+                } else {
+                    self.ctx.ir_globals[idx].const_failure = outcome.failure;
+                    init_ir
+                }
             } else {
                 init_ir
-            }
+            });
         } else {
-            init_ir
-        };
-
-        // Restore type_map.
-        for i in 0usize..def.generic_params.len() {
-            let key = def.generic_params[i].id._value;
-            if saved_had[i] {
-                self.type_map.insert(key, saved_vals[i]);
-            } else {
-                self.type_map.remove(&key);
-            }
+            self.ctx.static_cache.insert(cache_key, idx);
         }
 
-        result
+        self.type_map.free();
+        self.local_types.free();
+        self.local_defs.free();
+        self.type_map = outer_type_map;
+        self.local_types = prev_local_types;
+        self.local_defs = prev_local_defs;
+        self.return_type = prev_return_type;
+        self.expected_type = prev_expected_type;
+        idx
     }
 
     fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {
@@ -6767,7 +6854,11 @@ impl Mono {
             if expr.tag == ExprTag::TurbofishValue && expr.lhs().tag == ExprTag::StaticRef {
                 let sd_opt = self.ctx.static_defs.get(&expr.lhs().id()._value);
                 if sd_opt.is_some() && sd_opt.unwrap().generic_params.len() > 0 {
-                    return self.instantiate_generic_const(sd_opt.unwrap(), expr);
+                    let type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args().len());
+                    for i in 0usize..expr.type_args().len() {
+                        type_args[i] = self.resolve_type(expr.type_args()[i]);
+                    }
+                    return self.lower_static_ref(sd_opt.unwrap(), type_args);
                 }
             }
 
@@ -6842,7 +6933,7 @@ impl Mono {
 
                     // Monomorphize the function with type args
                     let fn_idx = self.mono_function(def, call_ta);
-                    let ir_fn = &self.ctx.ir_functions[fn_idx];
+                    let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
                     // Turbofish value (func::<T> as value): produce Fn type, not a call
                     if expr.tag == ExprTag::TurbofishValue {
@@ -7001,7 +7092,7 @@ impl Mono {
                         }
                         if call_ta.len() > 0usize {
                             let fn_idx = self.mono_function(def, call_ta);
-                            let ir_fn = &self.ctx.ir_functions[fn_idx];
+                            let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
                             let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                             for i in 0usize..expr.args().len() {
@@ -7062,7 +7153,7 @@ impl Mono {
                             self.type_map.insert(self_param_opt.unwrap(), self_ty);
                         }
                         let fn_idx = self.mono_function(def, &[]);
-                        let ir_fn = &self.ctx.ir_functions[fn_idx];
+                        let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
                         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
                         for i in 0usize..expr.args().len() {

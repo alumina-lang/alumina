@@ -41,79 +41,96 @@ deliberately out of scope for aluminac (alumina-boot emits C and
 dispatches through them; aluminac uses LLVM intrinsics). LLVM stackless
 coroutines is a separate future project, not tracked here.
 
-## THE headline opportunity: per-call / global mono-context isolation
+## Beyond parity (effort started 2026-09-23)
 
-This is the single deepest remaining defect and it gates the majority
-of the remaining work (items 3, 6, and part of 4 below). It has been
-observed and deferred across many sessions as "the broader per-call
-mono-context architectural debt".
+Goal: make aluminac meaningfully better than alumina-boot (diagnostics,
+robust mono without "unpopulated symbol"-style failures, cross-compilation,
+idiomatic Alumina code), while it stays compilable by alumina-boot and the
+sysroot needs few `#[cfg(boot)]`s. alumina-boot remains the default
+reference; aluminac rejects what boot accepts only for boot bugs or where
+boot misreads the language (record such cases here).
 
-**Symptom family.** A monomorphized value comes back as garbage that
-characteristically looks like a small integer / line number / id, or
-an uninitialized fill pattern (`0xAAAA`, `0xFFFF` = 65535). Concrete
-historical instances:
+### Done
 
-- `test_dyn` (`sysroot/std/typing.alu`, currently `#[cfg(boot)]`):
-  `let b: &mut dyn iter::Iterator<Self,i32> = &iter::repeat(42); …
-  b.next()` returns `some(1065)` instead of `some(42)` (panic at
-  `typing.alu:1066`).
-- `test_fuse` / `test_flatten_2` (`std/iter.alu`): `Option<()>`
-  debug-fmt rendered as `some((65535, 65535))`. These two were
-  **resolved** as a side effect of this effort's union/`mk_if`/
-  empty-StructLit fixes — now ungated and passing. Kept here because
-  the *mechanism* is the same family and `test_dyn` survives it.
+- **Mono-context isolation (the former headline, `test_dyn`).** Root causes:
+  `mono_function` lowered every body against the caller's shared
+  `type_map` (new bindings leaked out, unrelated ones leaked in) and kept
+  the caller's `expected_type` hint / loop stack; `mono_struct` and type
+  aliases bound params into the shared map and never removed them; struct
+  type args were never completed with defaults, so `HashMap<K, V>` and
+  `HashMap<K, V, DefaultHash>` were distinct types (receiver unification
+  then failed and inference fell back to unhinted arguments). Now each
+  instantiation gets its own context (own generic params, protocol
+  Self/generics the caller binds, and the enclosing context for local
+  fns/closures only), and type args are canonicalized. `test_dyn`
+  ungated. Regression: `tests/aluminac/mono_context_isolation.alu`.
+- Code that relied on the leaks now infers properly: operator-overload
+  method generics are unified from the operands (`infer_type_args_from_ir`);
+  bare generic struct literals are inferred without first monomorphizing
+  the struct with unbound params.
+- **if/else branch types** are unified like alumina-boot (a diverging arm
+  takes the other's type, otherwise one arm is coerced to the other's
+  type, else "mismatched types"). Previously the arm with "more struct
+  fields" won and the other arm was *reinterpreted* (an `&[]` arm read a
+  garbage slice length).
+- **Slice indexing goes through `#[lang(slice_index)]` /
+  `#[lang(slice_range_index)]`** like alumina-boot, so `--debug` builds
+  are bounds-checked (they never were). Slice range bounds are lowered as
+  usize (explicit `range_bound_hint`, not the leaky `expected_type`).
+- **Generic statics/consts** are one global per instantiation
+  (`lower_static_ref` / `emit_static`, `static_cache`). They used to be
+  inlined values: a generic static lost writes, and slicing a generic
+  const array (`Type::variants()`) returned a dangling pointer.
+- **Consts that cannot be evaluated are an error** that points at the
+  sub-expression the evaluator gave up on (`ConstEvalFailure`), instead of
+  a silently zero-initialized global. The const evaluator now handles
+  slice fields on string constants reached through variables.
+- **Macro resolution matches alumina-boot**: unresolved macros are an
+  error (they used to be silently dropped — several tests "passed"
+  vacuously that way); there is no global by-name fallback (unqualified
+  `cfg!` etc. resolved from anywhere); macro invocations/references in a
+  macro body resolve at the definition site (hygiene), by stored id.
+- **Targets / cfg**: `aluminac::target::Target` (parsed once from the
+  triple; `arm64-apple-*` is AArch64) drives cfg keys, LLVM backend init
+  and ABI decisions; `aluminac::cfg::CfgSet` has alumina-boot's key/value
+  semantics (bare `key` predicates, `target_family`, `output_type`);
+  `#[cfg_attr]` and file-level `#![cfg]` work; malformed cfg predicates are
+  errors. New CLI: `--target <triple>`, `-d/--debug` (cfg `debug`, as in
+  alumina-boot; the Makefile passes it with `-g`), real errors for unknown
+  options / missing values.
+- The `ir_functions` use-after-free (element pointer held across pushes).
+- macOS (arm64, Homebrew LLVM 21) bootstraps; `make bootstrap` compares
+  the IR emitted by stage 2 and 3 (linked binaries are not reproducible on
+  macOS).
+- Stdlib: `HashMap::contains`, `Command::status`, `Type::variant_name`.
+- Test runner: compile-fail tests can require `// EXPECTED_ERROR: text`.
 
-**Crucial diagnostic distinction (verified 2026-05-16):** this is
-**NOT runtime test ordering**. `test_dyn`'s faithful standalone body
-(shape: `b:&mut dyn Iterator<Self,i32>` = `&iter::repeat(42)`, alias
-`a`, `size_hint`, `next×2`, reassign `&iter::once(10)`, `next×2`)
-**passes** standalone. But `build/debug/stdlib-aluminac-tests --filter
-test_dyn` (compiles the *whole* stdlib, runs only the 5 `test_dyn*`
-tests) still **fails**. So a *sibling* monomorphization merely
-**present in the same compiled binary** corrupts `test_dyn`'s
-`iter::repeat`-backed `Iterator` vtable. It is compile-time global
-mono state, not runtime ordering.
+### Backlog (found along the way)
 
-**Independent corroboration:** the atomics refactor (item 6) — inlining
-each `Atomic<T>` method via statement-level `#[cfg]` returns, which
-compiles cleanly under *both* compilers — **re-triggers** this:
-`make test-std-aluminac` → `test_flatten_2` SIGSEGV. Merely changing
-the mono shape of the `Atomic` methods perturbs global mono enough to
-re-break the canary. This proves item 6 is gated on this root.
-
-**Where to look.** aluminac's monomorphizer almost certainly reuses or
-aliases a cache/table keyed insufficiently, so a later mono overwrites
-or shadows an earlier one. Prime suspects, in rough priority:
-
-1. The **dyn vtable build** at `src/aluminac/mono/lower.alu` ~line
-   3821. This site historically had four branches matching
-   `def.generic_params.len()` against
-   `impl_args.len() + proto_non_self_count`; a fifth was nearly added
-   before realizing the real cause is upstream asymmetry in
-   `pass2.alu`'s two FnDef-building paths producing asymmetric
-   `generic_params` shapes. The right fix is one uniform construction,
-   not another branch. Start here for `test_dyn`.
-2. `make_fn_ty` / `ir_functions` lookups — a prior id-vs-mangled_name
-   ambiguity bug lived here (resolved earlier for a different
-   symptom). Re-audit whether vtable/method lookups can still collide
-   by id when mangled names differ (or vice versa).
-3. The mono `type_map` lifecycle and the const evaluator's
-   `ConstEvaluator.variables` / `remapped` / `const_values`
-   (`src/aluminac/const_eval.alu`). The `Option<()>` /
-   `assert_eq_helper<Option<()>>` formatter-state-leak symptom points
-   at per-call mono context not being reset/keyed per instantiation.
-
-**Suggested next concrete step:** a minimal 2-test repro. Take
-`test_dyn`'s body plus exactly one sibling
-(`test_dyn_multi_protocol` / `_empty_protocol` / `_if_coercion` /
-`_if_coercion_switch`, all using Foo/Bar/Quux/Frob defined in the
-`typing.alu` tests module) compiled into one program; find which
-sibling's presence flips `b.next()` to garbage. The 4 siblings pass
-individually; only `test_dyn` (the generic-iterator-adapter dyn) is
-corrupted by their co-presence. That isolates the keying bug.
-
-Reproduce and bisect; do not trust narrative — several status entries
-about this debt were wrong over the project's life.
+- **Strictness gaps vs alumina-boot** (aluminac accepts invalid code):
+  protocol bounds are not fully checked (`unified_sysroot_basic`'s `Point`
+  lacked `not_equals`); `use std::io::ErrorKind` resolved although
+  `ErrorKind` lives in `std::io::unix`; `coerce_int` inserts implicit casts
+  between *any* builtin types (incl. float→int); `resolve_type` maps an
+  unbound placeholder to `void` silently; an undefined variable reported
+  nothing and an undefined function "expression is not callable".
+- Codegen turns a missing function/global into a warning + `undef`; these
+  are internal errors.
+- Const-eval gaps (now reported, not silent): array-to-slice casts, slices
+  of slices, pointer arithmetic into arrays.
+- Mono lowers call arguments twice (once for inference without hints, once
+  for real); inference should be driven by expected types like
+  alumina-boot's type hints.
+- `--cfg threading` does not compile under aluminac
+  (`ThreadHandle::free`), and `make test-std-aluminac` does not pass the
+  flags alumina-boot's `test-std` gets (threading, coroutines, ...).
+- macOS: 13 `std::net` tests fail (aluminac-compiled only);
+  `warning: codegen: field index out of bounds` at `std/fmt/mod.alu:525`.
+- aluminac's test runner prints test names with the first two
+  characters cut (`d::net::…` for `std::net::…`).
+- Cross-compilation: `--target` exists, but ABI lowering only knows
+  x86_64 SysV / AAPCS64 (Apple arm64 variadics differ), there is no
+  per-target sysroot/linker story, and only x86_64/aarch64 parse.
 
 ## Remaining `#[cfg(boot)]` gated tests (the cleanup queue)
 
@@ -173,9 +190,7 @@ different mechanism and both paths are fully implemented:
 
 ### TODO — backlog
 
-3. **`test_dyn` (typing.alu)** — flagship instance of the mono-context
-   headline. `#[cfg(boot)]`-gated with a precise in-source comment.
-   Gated on the mono-context investigation above.
+3. ~~`test_dyn` (typing.alu)~~ — fixed by mono-context isolation, ungated.
 4. **Three distinct deeper feature gaps** (probed 2026-05-16, each
    still independently fails):
    - `std/typing.alu` `test_type` / `element_types`: needs

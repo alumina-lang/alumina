@@ -57,10 +57,28 @@ for src in "$TESTDIR"/*.alu; do
     fi
 
     # Compile
-    if ! $ALUMINAC "$src" -o "$out" $extra_flags 2>/dev/null; then
+    if ! compile_output=$($ALUMINAC "$src" -o "$out" $extra_flags 2>&1); then
         if [[ "$name" == *"compile_fail"* ]]; then
-            echo "ok (expected compile failure)"
-            PASS=$((PASS + 1))
+            # Every `// EXPECTED_ERROR: <text>` line must appear in the
+            # compiler's output, so a test cannot pass by failing for an
+            # unrelated reason.
+            missing=""
+            while IFS= read -r expected; do
+                expected="${expected#// EXPECTED_ERROR: }"
+                if [[ "$compile_output" != *"$expected"* ]]; then
+                    missing="$expected"
+                    break
+                fi
+            done < <(grep '^// EXPECTED_ERROR: ' "$src" || true)
+            if [ -n "$missing" ]; then
+                echo "FAIL (missing expected error: $missing)"
+                FAIL=$((FAIL + 1))
+                FAILURES="$FAILURES\n  $name: missing expected error: $missing"
+                echo "$compile_output" | head -5 | sed 's/^/    /'
+            else
+                echo "ok (expected compile failure)"
+                PASS=$((PASS + 1))
+            fi
         else
             echo "FAIL (compile error)"
             FAIL=$((FAIL + 1))

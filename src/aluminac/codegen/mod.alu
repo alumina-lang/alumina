@@ -10,7 +10,8 @@ use aluminac_common::arena::Arena;
 use diagnostics::DiagnosticContext;
 use std::collections::HashMap;
 use std::option::Option;
-use std::string::starts_with;
+use std::ffi::CString;
+use aluminac::target::{Target, Arch};
 
 // Codegen context - holds all state needed during LLVM IR generation
 struct CodegenCtx {
@@ -65,10 +66,8 @@ struct CodegenCtx {
     // Pointer size in bytes
     pointer_size: u32,
 
-    // Whether the target is x86_64 (for ABI-specific byval lowering).
-    // On other targets (e.g. aarch64), large structs are passed by-value at
-    // the LLVM IR level and the backend handles the indirect-arg ABI.
-    is_x86_64: bool,
+    // The compilation target (drives ABI-specific lowering).
+    target: Target,
 
     // Optimization level
     opt_level: main::OptLevel,
@@ -82,33 +81,42 @@ struct CodegenCtx {
 }
 
 impl CodegenCtx {
-    fn new(arena: &mut Arena, diag: &mut DiagnosticContext, module_name: &[u8], debug_enabled: bool, opt_level: main::OptLevel) -> CodegenCtx {
-        // Initialize LLVM targets
-        llvm::initialize_native_target();
+    fn new(
+        arena: &mut Arena,
+        diag: &mut DiagnosticContext,
+        module_name: &[u8],
+        target: &Target,
+        debug_enabled: bool,
+        opt_level: main::OptLevel,
+    ) -> CodegenCtx {
+        target.initialize_llvm();
 
         let context = LLVMContextCreate();
 
-        // Create a null-terminated module name
-        let name_buf = arena.alloc_slice::<u8>(module_name.len() + 1);
-        module_name.copy_to_nonoverlapping(&name_buf[0]);
-        name_buf[module_name.len()] = 0u8;
-        let module = LLVMModuleCreateWithNameInContext(
-            &name_buf[0] as &libc::c_char,
-            context
-        );
-
+        let module_name = CString::from_slice(module_name);
+        defer module_name.free();
+        let module = LLVMModuleCreateWithNameInContext(module_name.ptr, context);
         let builder = LLVMCreateBuilderInContext(context);
 
-        // Set up target
-        let triple = LLVMGetDefaultTargetTriple();
-        LLVMSetTarget(module, triple);
+        LLVMSetTarget(module, target.triple.ptr);
 
-        let target: LLVMTargetRef = std::mem::zeroed::<LLVMTargetRef>();
+        let llvm_target: LLVMTargetRef = std::mem::zeroed::<LLVMTargetRef>();
         let error: &mut libc::c_char = null;
-        LLVMGetTargetFromTriple(triple, &target, &error);
+        if LLVMGetTargetFromTriple(target.triple.ptr, &llvm_target, &error) != 0 {
+            let message = CString::from_raw(error);
+            defer LLVMDisposeMessage(error);
+            diag.emit(diagnostics::CodeDiagnostic::generic_error(
+                Span::empty(),
+                std::fmt::format!("LLVM cannot target `{}`: {}", target, message).unwrap().as_slice(),
+            ));
+        }
 
-        let cpu = LLVMGetHostCPUName();
-        let features = LLVMGetHostCPUFeatures();
+        // Tune for the host CPU only when compiling for the host; a cross
+        // target gets the architecture's generic baseline.
+        let cpu = if target.is_host { LLVMGetHostCPUName() } else { CString::from_slice("generic").ptr as &mut libc::c_char };
+        let features = if target.is_host { LLVMGetHostCPUFeatures() } else { CString::from_slice("").ptr as &mut libc::c_char };
+        defer LLVMDisposeMessage(cpu);
+        defer LLVMDisposeMessage(features);
 
         let codegen_opt = switch opt_level {
             main::OptLevel::O0 => LLVMCodeGenOptLevel::None,
@@ -120,8 +128,8 @@ impl CodegenCtx {
         };
 
         let target_machine = LLVMCreateTargetMachine(
-            target,
-            triple,
+            llvm_target,
+            target.triple.ptr,
             cpu,
             features,
             codegen_opt,
@@ -135,14 +143,6 @@ impl CodegenCtx {
         let dl_str = LLVMCopyStringRepOfTargetData(target_data);
         LLVMSetDataLayout(module, dl_str);
         LLVMDisposeMessage(dl_str);
-
-        // Detect target arch from the triple ("x86_64-..." vs "aarch64-...")
-        let triple_str = std::ffi::CString::from_raw(triple).as_slice();
-        let is_x86_64 = triple_str.starts_with("x86_64");
-
-        LLVMDisposeMessage(triple);
-        LLVMDisposeMessage(cpu);
-        LLVMDisposeMessage(features);
 
         // Common types
         let void_type = LLVMVoidTypeInContext(context);
@@ -230,7 +230,7 @@ impl CodegenCtx {
             ptr_type: ptr_type,
             isize_type: i64_type,  // TODO: use pointer size to pick correct width
             pointer_size: pointer_size,
-            is_x86_64: is_x86_64,
+            target: *target,
             opt_level: opt_level,
             debug_enabled: debug_enabled,
             di_builder: di_builder,
@@ -488,7 +488,7 @@ impl CodegenCtx {
     /// attribute (clang emits a plain pointer parameter), and adding `byval`
     /// there produces the wrong call sequence against C callees.
     fn uses_byval_attr(self: &CodegenCtx) -> bool {
-        self.is_x86_64
+        self.target.arch == Arch::X86_64
     }
 
     /// Whether an extern C return type needs explicit sret lowering.
@@ -502,7 +502,7 @@ impl CodegenCtx {
     /// `void` and a leading `ptr sret` parameter, and call sites alloca a
     /// buffer and reload the value after the call.
     fn needs_sret(self: &mut CodegenCtx, llvm_ret_ty: LLVMTypeRef) -> bool {
-        if self.is_x86_64 {
+        if self.target.arch == Arch::X86_64 {
             return false;
         }
         if LLVMGetTypeKind(llvm_ret_ty) != LLVMTypeKind::Struct {
@@ -897,7 +897,12 @@ impl CodegenCtx {
             return existing.unwrap();
         }
 
+        // A zero-sized global (e.g. a reflection descriptor) still needs a
+        // sized LLVM type: use the empty struct.
         let ty = self.llvm_type(ir_global.ty);
+        if LLVMGetTypeKind(ty) == LLVMTypeKind::Void {
+            ty = LLVMStructTypeInContext(self.context, null, 0, 0i32);
+        }
         let name = self.null_terminate(ir_global.mangled_name);
         let global = LLVMAddGlobal(self.module, ty, &name[0] as &libc::c_char);
 
@@ -1457,11 +1462,12 @@ fn generate(
     diag: &mut DiagnosticContext,
     unit: &CompilationUnit,
     module_name: &[u8],
+    target: &Target,
     test_mode: bool,
     debug_enabled: bool,
     opt_level: main::OptLevel,
 ) -> CodegenCtx {
-    let ctx = CodegenCtx::new(arena, diag, module_name, debug_enabled, opt_level);
+    let ctx = CodegenCtx::new(arena, diag, module_name, target, debug_enabled, opt_level);
 
 
     // Phase 1: Declare all struct types (forward declarations)
@@ -1511,7 +1517,9 @@ fn generate(
 
     // Phase 5: Initialize globals with constant values
     for global_def in unit.globals.iter_ref() {
-        if global_def.init.is_some() && !global_def.is_extern {
+        // A zero-sized global has nothing to initialize (and its value has
+        // no LLVM representation).
+        if global_def.init.is_some() && !global_def.is_extern && !global_def.ty.is_zero_sized() {
             let init_expr = global_def.init.unwrap();
             let const_val = ctx.gen_const_init(init_expr);
             if (const_val as usize) != 0 {
@@ -1519,6 +1527,23 @@ fn generate(
                 let global = ctx.global_decls.get(&hash);
                 if global.is_some() {
                     LLVMSetInitializer(global.unwrap(), const_val);
+                }
+            } else if global_def.is_const {
+                // Neither the const evaluator nor the constant folder could
+                // produce a value. Leaving the zero initializer in place would
+                // silently miscompile every use of the constant.
+                ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
+                    init_expr.span,
+                    std::fmt::format!("cannot evaluate constant `{}` at compile time", global_def.name).unwrap().as_slice(),
+                ));
+                if global_def.const_failure.is_some() {
+                    let failure = global_def.const_failure.unwrap();
+                    let message = if failure.function.is_empty() {
+                        std::fmt::format!("evaluation is not supported for this {} expression", failure.what)
+                    } else {
+                        std::fmt::format!("evaluation is not supported for this {} expression (in `{}`)", failure.what, failure.function)
+                    };
+                    ctx.diag.emit(diagnostics::CodeDiagnostic::generic_note(failure.span, message.unwrap().as_slice()));
                 }
             }
         }

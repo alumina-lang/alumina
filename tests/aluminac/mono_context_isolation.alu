@@ -1,0 +1,52 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: generic bindings and type hints leaked between unrelated
+// monomorphizations. `insert(key, Option::none())` inside `add_flag` must
+// infer `V = Option<&[u8]>` from the receiver, whatever else was lowered
+// before it. It used to pick up `Option<void>` (and so a second, differently
+// laid out HashMap instantiation) depending on the order in which sibling
+// functions were instantiated, so a flag inserted after a value was lost.
+// `HashMap<K, V>` and `HashMap<K, V, DefaultHash>` must also be one type.
+use std::collections::HashMap;
+
+struct Flags {
+    entries: HashMap<&[u8], Option<&[u8]>>,
+}
+
+impl Flags {
+    fn add(self: &mut Flags, key: &[u8], value: &[u8]) {
+        self.entries.insert(key, Option::some(value));
+    }
+
+    fn add_flag(self: &mut Flags, key: &[u8]) {
+        self.entries.insert(key, Option::none());
+    }
+
+    fn add_spec(self: &mut Flags, spec: &[u8]) {
+        let eq = spec.iter().find_index(|c: u8| -> bool { c == '=' });
+        if eq.is_some() {
+            self.add(spec[..eq.unwrap()], spec[eq.unwrap() + 1..]);
+        } else {
+            self.add_flag(spec);
+        }
+    }
+
+    fn has(self: &Flags, key: &[u8]) -> bool {
+        self.entries.contains(&key)
+    }
+}
+
+fn main() -> i32 {
+    let flags = Flags { entries: HashMap::new() };
+    defer flags.entries.free();
+
+    flags.add("os", "macos");
+    flags.add_spec("feature");
+    flags.add_spec("level=3");
+
+    if !flags.has("os") { return 1; }
+    if !flags.has("feature") { return 2; }
+    if !flags.has("level") { return 3; }
+    if flags.entries.get(&("feature" as &[u8])).unwrap().is_some() { return 4; }
+    if flags.entries.get(&("level" as &[u8])).unwrap().unwrap() != "3" { return 5; }
+    0
+}

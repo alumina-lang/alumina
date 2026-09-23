@@ -1,0 +1,43 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: generic statics and consts were inlined as values at each
+// use. A generic static is one variable per instantiation (writes must
+// persist), and slicing a generic const array must not hand out a pointer
+// to a temporary (`Type::variants()` returned a dangling slice).
+use std::typing::Type;
+
+static COUNTER<T>: i32;
+
+fn bump<T>() -> i32 {
+    COUNTER::<T> += 1;
+    COUNTER::<T>
+}
+
+const PRIMES<T> = [2 as T, 3 as T, 5 as T];
+
+fn primes<T>() -> &[T] {
+    (PRIMES::<T>)[..]
+}
+
+enum Color {
+    Red = 1,
+    Green = 5,
+}
+
+fn main() -> i32 {
+    bump::<u8>();
+    bump::<u8>();
+    bump::<u16>();
+    if COUNTER::<u8> != 2 { return 1; }
+    if COUNTER::<u16> != 1 { return 2; }
+
+    let p = primes::<u64>();
+    if p.len() != 3 || p[2] != 5 { return 3; }
+
+    let ty: Type<Color> = Type::new();
+    let variants = ty.variants();
+    if variants.len() != 2 || variants[1].name() != "Green" || variants[1].value() != Color::Green {
+        return 4;
+    }
+    if ty.variant_name(Color::Green) != Option::some("Green") { return 5; }
+    0
+}

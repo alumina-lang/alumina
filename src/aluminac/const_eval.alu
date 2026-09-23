@@ -82,6 +82,26 @@ impl ConstEvalError {
     }
 }
 
+/// Where the evaluator first gave up on an expression it cannot evaluate,
+/// so that "cannot evaluate at compile time" can point at the culprit.
+struct ConstEvalFailure {
+    /// The innermost enclosing source span (synthesized IR has none).
+    span: Span,
+    /// The kind of IR node that could not be evaluated.
+    what: &[u8],
+    /// The function being evaluated when it happened ("" at the top level).
+    function: &[u8],
+}
+
+/// Everything a constant evaluation produced.
+struct ConstEvalOutcome {
+    value: Option<ConstValue>,
+    panic_msg: &[u8],
+    warning_msg: &[u8],
+    note_msg: &[u8],
+    failure: Option<ConstEvalFailure>,
+}
+
 struct ConstEvaluator {
     arena: &mut Arena,
     // Variable storage: shared across call frames via pointer
@@ -111,6 +131,8 @@ struct ConstEvaluator {
     // current `if in_const_context()`-gated usage.
     warning_msg: &[u8],
     note_msg: &[u8],
+    failure: Option<ConstEvalFailure>,
+    current_fn: &[u8],
 }
 
 impl ConstEvaluator {
@@ -139,6 +161,8 @@ impl ConstEvaluator {
             panic_msg: "",
             warning_msg: "",
             note_msg: "",
+            failure: Option::none(),
+            current_fn: "",
         }
     }
 
@@ -205,6 +229,15 @@ impl ConstEvaluator {
                 }
             }
             Result::ok(ConstValue::make_uninitialized())
+        } else if val.tag == CValTag::Bytes {
+            // The fat-pointer fields of a string/byte-string slice: the data
+            // pointer (a Bytes value doubles as a pointer into the bytes)
+            // and the length.
+            switch field_idx {
+                0 => Result::ok(val),
+                1 => Result::ok(ConstValue::make_int((val.bytes().len() - val.bytes_offset()) as u64, BuiltinType::USize)),
+                _ => Result::err(ConstEvalError::unsupported()),
+            }
         } else {
             Result::err(ConstEvalError::unsupported())
         }
@@ -245,6 +278,30 @@ impl ConstEvaluator {
     }
 
     fn eval_inner(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, ConstEvalError> {
+        let result = self.eval_node(expr);
+        if result.is_err() && result.unwrap_err().code == CECode::Unsupported {
+            self.note_unsupported(expr);
+        }
+        result
+    }
+
+    /// Record the innermost expression that could not be evaluated, and
+    /// the innermost source span around it.
+    fn note_unsupported(self: &mut ConstEvaluator, expr: &IrExpr) {
+        if self.failure.is_none() {
+            self.failure = Option::some(ConstEvalFailure {
+                span: expr.span,
+                what: std::typing::Type::new::<IrTag>().variant_name(expr.tag).unwrap_or("expression"),
+                function: self.current_fn,
+            });
+        } else if self.failure.unwrap().span.is_empty() && !expr.span.is_empty() {
+            let failure = self.failure.unwrap();
+            failure.span = expr.span;
+            self.failure = Option::some(failure);
+        }
+    }
+
+    fn eval_node(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, ConstEvalError> {
         if !self.step() {
             return Result::err(ConstEvalError::too_many_iters());
         }
@@ -968,28 +1025,11 @@ impl ConstEvaluator {
             return Result::ok(ConstValue::make_lvalue(new_lv));
         }
 
-        // Direct field access on a struct value
-        if base.tag == CValTag::Struct {
-            return self.access_field(base, expr.field_idx());
-        }
         // Tuple field access (field_idx used as index)
         if base.tag == CValTag::Tuple {
             return self.access_tuple_index(base, expr.field_idx() as usize);
         }
-        // Slice fat-pointer fields on a string/byte-string Bytes value:
-        // mono lowers `slice[i]` as `Index(slice._ptr, i)`, which we eval as
-        // FieldAccess(SLICE_DATA_FIELD=0) → byte pointer, then Index → byte.
-        // Also serve `_len` for completeness.
-        if base.tag == CValTag::Bytes {
-            if expr.field_idx() == 0u32 {
-                return Result::ok(base);
-            } else if expr.field_idx() == 1u32 {
-                let len = base.bytes().len() - base.bytes_offset();
-                return Result::ok(ConstValue::make_int(len as u64, BuiltinType::USize));
-            }
-        }
-
-        Result::err(ConstEvalError::unsupported())
+        self.access_field(base, expr.field_idx())
     }
 
     // ========== Index ==========
@@ -1243,10 +1283,15 @@ impl ConstEvaluator {
             panic_msg: "",
             warning_msg: "",
             note_msg: "",
+            failure: Option::none(),
+            current_fn: f.name,
         };
 
         // Evaluate function body
         let result = child.eval(f.body.unwrap());
+        if self.failure.is_none() {
+            self.failure = child.failure;
+        }
 
         // Propagate remaining steps back
         self.steps_remaining = child.steps_remaining;
@@ -1516,12 +1561,17 @@ fn try_eval_with_diags(
     const_values: &HashMap<usize, ConstValue>,
     pointer_size: usize,
     expr: &IrExpr,
-) -> (Option<ConstValue>, &[u8], &[u8], &[u8]) {
+) -> ConstEvalOutcome {
     let vars: HashMap<usize, ConstValue> = HashMap::new();
     let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
     let result = evaluator.eval(expr);
-    let val = if result.is_ok() { Option::some(result.unwrap()) } else { Option::none() };
-    (val, evaluator.panic_msg, evaluator.warning_msg, evaluator.note_msg)
+    ConstEvalOutcome {
+        value: result.get(),
+        panic_msg: evaluator.panic_msg,
+        warning_msg: evaluator.warning_msg,
+        note_msg: evaluator.note_msg,
+        failure: evaluator.failure,
+    }
 }
 
 /// Materialize a ConstValue back into an IrExpr for embedding in IR.

@@ -505,6 +505,7 @@ impl ExprParser {
                 let e = self.make_expr(ExprTag::MacroInvocation, span);
                 e._data.macro_expr.str_val = self.ctx.intern_str(name);
                 e._data.macro_expr.args = &[];
+                e._data.macro_expr.macro_id = item.kind.id()._value;
                 return self.ctx.alloc_expr(e);
             } else {
                 let e = self.make_expr(ExprTag::Local, span);
@@ -738,6 +739,7 @@ impl ExprParser {
                 let e = self.make_expr(ExprTag::MacroInvocation, span);
                 e._data.macro_expr.str_val = item.name;
                 e._data.macro_expr.args = &[];
+                e._data.macro_expr.macro_id = item.kind.id()._value;
                 return self.ctx.alloc_expr(e);
             } else {
                 let e = self.make_expr(ExprTag::Local, span);
@@ -1816,6 +1818,17 @@ impl ExprParser {
     // Macro handling
     // ============================================================
 
+    /// The macro a macro reference or stored invocation (a
+    /// `MacroInvocation` expression) denotes: the one it resolved to where
+    /// it was written, else the one its name resolves to here.
+    fn resolve_macro_ref(self: &ExprParser, e: &Expr) -> Option<MacroEntry> {
+        if e._data.macro_expr.macro_id != 0 {
+            self.ctx.resolve_macro_by_id(e._data.macro_expr.macro_id)
+        } else {
+            self.ctx.resolve_macro(self.scope_idx, e.str_val())
+        }
+    }
+
     fn parse_macro_invocation(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let name_node = child_by!(node, FieldKind::Macro);
         let args_node = child_by!(node, FieldKind::Arguments);
@@ -1863,9 +1876,19 @@ impl ExprParser {
             empty
         };
 
-        // When pre-parsing a macro body, store as ExprTag::MacroInvocation without expanding
+        // When pre-parsing a macro body, store as ExprTag::MacroInvocation
+        // without expanding. The invoked macro is resolved here, in the
+        // macro's definition scope (macros are hygienic): at expansion time
+        // the name would be looked up from the call site instead.
         if self.ctx.in_macro_body {
+            if macro_item_id == 0 && name_param_idx.is_none() {
+                let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+                if resolved.is_some() && resolved.unwrap().kind.tag == scope::NamedItemTag::Macro {
+                    macro_item_id = resolved.unwrap().kind.id()._value;
+                }
+            }
             let e = self.make_expr(ExprTag::MacroInvocation, span);
+            e._data.macro_expr.macro_id = macro_item_id;
             e._data.macro_expr.str_val = name;
             e._data.macro_expr.args = args;
             e._data.macro_expr.flag = true;  // Mark as actual invocation (not bare macro reference)
@@ -1894,16 +1917,14 @@ impl ExprParser {
             return self.do_expand_macro(entry, args, span);
         }
 
-        // Unresolved macro at expansion time. Cannot diagnose here: some
-        // call sites land in unreachable `else when` branches that are
-        // dropped at mono time (e.g. `compile_fail!(...)` inside a
-        // type-guarded fallback), so a parse-time error would fire false
-        // positives. Mono's `lower_expr` default case diagnoses if the
-        // unresolved invocation actually reaches lowering.
-        let e = self.make_expr(ExprTag::MacroInvocation, span);
-        e._data.macro_expr.str_val = name;
-        e._data.macro_expr.args = args;
-        self.ctx.alloc_expr(e)
+        // Name resolution does not depend on which `when` branch survives
+        // monomorphization, so an unresolved macro is an error right away
+        // (as in alumina-boot). It used to be silently dropped.
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
+            span,
+            std::fmt::format!("could not resolve the path `{}`", name).unwrap().as_slice(),
+        ));
+        self.alloc_void(span)
     }
 
     // Expand a builtin macro (one with the #[builtin] attribute).
@@ -1920,15 +1941,14 @@ impl ExprParser {
         };
         switch name {
         "cfg" => {
-            // cfg!(flag) -> bool literal
-            if !args.is_empty() && args[0].tag == ExprTag::StringLit {
-                let flag = args[0].str_val();
-                let e = self.make_expr(ExprTag::BoolLit, span);
-                e._data.lit.bool_val = self.ctx.has_cfg(flag);
-                return self.ctx.alloc_expr(e);
-            }
+            // cfg!("key") -> whether the cfg key is set (with any value)
             let e = self.make_expr(ExprTag::BoolLit, span);
-            e._data.lit.bool_val = false;
+            if args.len() == 1 && args[0].tag == ExprTag::StringLit {
+                e._data.lit.bool_val = self.ctx.cfg.has(args[0].str_val());
+            } else {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, "`cfg!` expects a single string literal"));
+                e._data.lit.bool_val = false;
+            }
             self.ctx.alloc_expr(e)
         }
         "line" => {
@@ -2056,6 +2076,9 @@ impl ExprParser {
             let e = self.make_expr(ExprTag::MacroInvocation, span);
             e._data.macro_expr.str_val = macro_name;
             e._data.macro_expr.args = bound_args;
+            if macro_ref.tag == ExprTag::MacroInvocation {
+                e._data.macro_expr.macro_id = macro_ref._data.macro_expr.macro_id;
+            }
             self.ctx.alloc_expr(e)
         }
         "reduce" => {
@@ -2078,7 +2101,7 @@ impl ExprParser {
                 }
                 call_args[prev_bound.len()] = accumulator;
                 call_args[prev_bound.len() + 1] = args[i];
-                let macro_entry = self.ctx.resolve_macro(self.scope_idx, macro_name);
+                let macro_entry = self.resolve_macro_ref(macro_ref);
                 if macro_entry.is_some() {
                     let entry = macro_entry.unwrap();
                     accumulator = self.do_expand_macro(entry, call_args, span);
@@ -2222,7 +2245,7 @@ impl ExprParser {
             }
 
             // Look up and expand the macro using pre-parsed body
-            let macro_entry = self.ctx.resolve_macro(self.scope_idx, wrapper_name);
+            let macro_entry = self.resolve_macro_ref(wrapper_expr);
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
                 return self.do_expand_macro(entry, all_args, span);
@@ -2458,7 +2481,7 @@ impl ExprParser {
                         for i in 0usize..expanded_args.len() {
                             combined[prev_bound.len() + i] = expanded_args[i];
                         }
-                        let macro_entry = self.ctx.resolve_macro(self.scope_idx, real_name);
+                        let macro_entry = self.resolve_macro_ref(macro_ref);
                         if macro_entry.is_some() {
                             let entry = macro_entry.unwrap();
                             if entry.is_builtin {
@@ -2479,8 +2502,9 @@ impl ExprParser {
                 return self.alloc_void(expr.span);
             }
 
-            // Look up the macro via scope resolution
-            let macro_entry = self.ctx.resolve_macro(self.scope_idx, expr.str_val());
+            // The macro resolved at its definition site (see
+            // parse_macro_invocation), else by name.
+            let macro_entry = self.resolve_macro_ref(expr);
             if macro_entry.is_some() {
                 let entry = macro_entry.unwrap();
                 if entry.is_builtin {

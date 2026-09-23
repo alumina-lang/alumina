@@ -10,6 +10,8 @@ use aluminac_common::arena::Arena;
 use aluminac::ast::*;
 use aluminac::scope::*;
 use aluminac::diagnostics::DiagnosticContext;
+use aluminac::cfg::CfgSet;
+use aluminac::target::Target;
 use tree_sitter::{Parser, Tree, TSLanguage};
 use std::collections::Vector;
 use std::option::Option;
@@ -45,7 +47,9 @@ struct CompilerOptions {
     test_mode: bool,
     debug_info: bool,
     sysroot: &[u8],
-    cfg_flags: Vector<&[u8]>,
+    cfg: CfgSet,
+    /// Target triple given with `--target`; the host when absent.
+    target_triple: Option<&[u8]>,
     extra_link_args: &[u8],
 }
 
@@ -60,7 +64,8 @@ impl CompilerOptions {
             test_mode: false,
             debug_info: false,
             sysroot: "",
-            cfg_flags: Vector::new(),
+            cfg: CfgSet::new(),
+            target_triple: Option::none(),
             extra_link_args: "",
         }
     }
@@ -68,6 +73,7 @@ impl CompilerOptions {
 
 struct Compiler {
     arena: Arena,
+    target: Target,
     id_gen: IdGen,
     diag: DiagnosticContext,
     scopes: ScopeArena,
@@ -83,9 +89,10 @@ struct SourceEntry {
 }
 
 impl Compiler {
-    fn new(options: CompilerOptions) -> Compiler {
+    fn new(options: CompilerOptions, target: Target) -> Compiler {
         Compiler {
             arena: Arena::new(),
+            target: target,
             id_gen: IdGen::new(),
             diag: DiagnosticContext::new(),
             scopes: ScopeArena::new(),
@@ -297,9 +304,6 @@ impl Compiler {
         let parser = Parser::new();
         let _ = parser.set_language(tree_sitter_alumina());
 
-        // Build cfg flags slice from options
-        let cfg_flags = self.arena.alloc_slice_copy::<&[u8]>(self.options.cfg_flags.as_slice());
-
         // Two-phase parsing: first register all names across all files (Pass 1),
         // then parse all function bodies (Pass 2). This ensures cross-module
         // references resolve correctly regardless of file processing order.
@@ -342,7 +346,7 @@ impl Compiler {
                 &self.id_gen,
                 &self.diag,
                 file_scope,
-                cfg_flags,
+                &self.options.cfg,
             );
 
             trees.push(tree);
@@ -408,6 +412,7 @@ impl Compiler {
             &self.diag,
             &unit,
             "alumina_module",
+            &self.target,
             self.options.test_mode,
             self.options.debug_info,
             self.options.optimize,
@@ -488,62 +493,28 @@ impl Compiler {
     }
 
     fn link(self: &mut Compiler, obj_file: &[u8], output: &[u8]) -> bool {
-        // Use cc to link
-        // Build command: cc [-g] -o <output> <obj_file> -lm [extra_link_args]
-        let extra = self.options.extra_link_args;
-        let debug_extra = if self.options.debug_info { 3usize } else { 0usize }; // " -g"
-        let cmd_len = 6usize + output.len() + 1usize + obj_file.len() + 4usize + 1usize + extra.len() + debug_extra;
-        let cmd = self.arena.alloc_slice::<u8>(cmd_len + 1usize);
-        let pos: usize = 0;
-
-        let prefix = "cc -o ";
-        prefix.copy_to_nonoverlapping(&cmd[pos]);
-        pos += prefix.len();
-
-        output.copy_to_nonoverlapping(&cmd[pos]);
-        pos += output.len();
-
-        cmd[pos] = ' ';
-        pos += 1;
-
-        obj_file.copy_to_nonoverlapping(&cmd[pos]);
-        pos += obj_file.len();
-
-        let suffix = " -lm";
-        suffix.copy_to_nonoverlapping(&cmd[pos]);
-        pos += suffix.len();
-
+        // Link through the system C compiler driver, via the shell so that
+        // `cc` is found on PATH and `--link-args` may carry several
+        // space-separated arguments.
+        let cmd = std::fmt::format!("cc -o {} {} -lm", output, obj_file).unwrap();
+        defer cmd.free();
+        if !self.target.is_host {
+            std::fmt::write!(&cmd, " --target={}", self.target).unwrap();
+        }
         if self.options.debug_info {
-            let dbg_flag = " -g";
-            dbg_flag.copy_to_nonoverlapping(&cmd[pos]);
-            pos += dbg_flag.len();
+            cmd.extend_from_slice(" -g");
+        }
+        if !self.options.extra_link_args.is_empty() {
+            std::fmt::write!(&cmd, " {}", self.options.extra_link_args).unwrap();
         }
 
-        if !extra.is_empty() {
-            cmd[pos] = ' ';
-            pos += 1;
-            extra.copy_to_nonoverlapping(&cmd[pos]);
-            pos += extra.len();
-        }
+        let link_ok = std::process::Command::new(Path::new("/bin/sh"))
+            .args(&["-c", cmd.as_slice()])
+            .status()
+            .map(|status: std::process::ExitStatus| -> bool { status.success() })
+            .unwrap_or(false);
 
-        // Run the link command through the shell. libc::system(cmd) is exactly
-        // `/bin/sh -c cmd`; Command uses execv (no PATH search), so invoke the
-        // shell explicitly to keep PATH resolution of `cc` and the existing
-        // space-separated argument handling.
-        let sh_args = ["-c", cmd[0..pos]];
-        let proc = std::process::Command::new(Path::new("/bin/sh"));
-        proc.args(sh_args[..]);
-        let spawn_res = proc.spawn();
-        let link_ok = if spawn_res.is_ok() {
-            let wait_res = spawn_res.unwrap().wait();
-            wait_res.is_ok() && wait_res.unwrap().success()
-        } else {
-            false
-        };
-
-        // Clean up temp file
         let _ = std::fs::remove_file(Path::new(obj_file));
-
         link_ok
     }
 
@@ -623,7 +594,8 @@ impl Compiler {
     }
 
     fn free(self: &mut Compiler) {
-        self.options.cfg_flags.free();
+        self.options.cfg.free();
+        self.target.free();
         self.scopes.free();
         self.diag.free();
         self.source_files.free();
@@ -641,89 +613,72 @@ struct SourceArg {
     file_path: &[u8],
 }
 
+/// Report a command line error and exit.
+fn usage_error(message: &[u8], arg: &[u8]) -> ! {
+    eprintln!("error: {} `{}` (see --help)", message, arg);
+    exit(1i32)
+}
+
 fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
     let options = CompilerOptions::default();
     let files: Vector<SourceArg> = Vector::new();
 
     let i: usize = 1; // skip program name
+    // The value of an option that takes one (`-o <file>`).
+    macro value($flag) {
+        i += 1;
+        if i >= args.len() {
+            usage_error("missing value for", $flag);
+        }
+        args[i]
+    }
+
     while i < args.len() {
         let arg = args[i];
-
-        if arg == "-o" {
-            i += 1;
-            if i < args.len() {
-                options.output_file = args[i];
-            }
-        } else if arg == "-S" {
-            options.output_format = OutputFormat::Assembly;
-        } else if arg == "-c" {
-            options.output_format = OutputFormat::Object;
-        } else if arg == "--emit-llvm" {
-            options.output_format = OutputFormat::LlvmIr;
-        } else if arg == "--emit-bc" {
-            options.output_format = OutputFormat::Bitcode;
-        } else if arg == "-O0" {
-            options.optimize = OptLevel::O0;
-        } else if arg == "-O" || arg == "-O1" {
-            options.optimize = OptLevel::O1;
-        } else if arg == "-O2" {
-            options.optimize = OptLevel::O2;
-        } else if arg == "-O3" {
-            options.optimize = OptLevel::O3;
-        } else if arg == "-Os" {
-            options.optimize = OptLevel::Os;
-        } else if arg == "-g" {
-            options.debug_info = true;
-        } else if arg == "--dump-ir" {
-            options.dump_ir = true;
-        } else if arg == "--no-verify" {
-            options.verify_ir = false;
-        } else if arg == "--link-args" {
-            i += 1;
-            if i < args.len() {
-                options.extra_link_args = args[i];
-            }
-        } else if arg == "--sysroot" {
-            i += 1;
-            if i < args.len() {
-                options.sysroot = args[i];
-            }
-        } else if arg == "--cfg" {
-            i += 1;
-            if i < args.len() {
-                options.cfg_flags.push(args[i]);
-            }
-        } else if arg == "--test" {
-            options.test_mode = true;
-            // `--test` implies `--cfg test` so source-level
-            // `#[cfg(all(test, ...))]` gates evaluate correctly.
-            // Mirrors alumina-boot which auto-adds the same flag.
-            let has_test = options.cfg_flags.iter().any(|e: &[u8]| -> bool { e == "test" });
-            if !has_test {
-                options.cfg_flags.push("test");
-            }
-        } else if arg == "--help" || arg == "-h" {
-            print_usage();
-            exit(0i32);
-        } else if !arg.is_empty() && arg[0] != '-' {
-            // Check for module::path=file.alu format
-            let eq_pos = arg.iter().find_index(|e: u8| -> bool { e == '=' });
-            if eq_pos.is_some() {
-                let idx = eq_pos.unwrap();
-                files.push(SourceArg {
-                    module_path: arg[0..idx],
-                    file_path: arg[idx + 1..arg.len()],
+        switch arg {
+            "-o" => options.output_file = value!(arg),
+            "-S" => options.output_format = OutputFormat::Assembly,
+            "-c" => options.output_format = OutputFormat::Object,
+            "--emit-llvm" => options.output_format = OutputFormat::LlvmIr,
+            "--emit-bc" => options.output_format = OutputFormat::Bitcode,
+            "-O0" => options.optimize = OptLevel::O0,
+            "-O", "-O1" => options.optimize = OptLevel::O1,
+            "-O2" => options.optimize = OptLevel::O2,
+            "-O3" => options.optimize = OptLevel::O3,
+            "-Os" => options.optimize = OptLevel::Os,
+            "-g" => options.debug_info = true,
+            // Debug mode, as in alumina-boot: enables `cfg(debug)` code such
+            // as bounds checks and debug assertions.
+            "-d", "--debug" => options.cfg.add_flag("debug"),
+            "--dump-ir" => options.dump_ir = true,
+            "--no-verify" => options.verify_ir = false,
+            "--link-args" => options.extra_link_args = value!(arg),
+            "--sysroot" => options.sysroot = value!(arg),
+            "--target" => options.target_triple = Option::some(value!(arg)),
+            "--cfg" => options.cfg.add_spec(value!(arg)),
+            "--test" => {
+                // `--test` implies `--cfg test`, as in alumina-boot.
+                options.test_mode = true;
+                options.cfg.add_flag("test");
+            },
+            "-h", "--help" => {
+                print_usage();
+                exit(0i32);
+            },
+            _ => {
+                if arg.is_empty() || arg[0] == '-' {
+                    usage_error("unknown option", arg);
+                }
+                // `module::path=file.alu` or a bare file (root module).
+                let eq_pos = arg.iter().find_index(|e: u8| -> bool { e == '=' });
+                files.push(if eq_pos.is_some() {
+                    let idx = eq_pos.unwrap();
+                    SourceArg { module_path: arg[..idx], file_path: arg[idx + 1..] }
+                } else {
+                    SourceArg { module_path: "", file_path: arg }
                 });
-            } else {
-                files.push(SourceArg {
-                    module_path: "",
-                    file_path: arg,
-                });
-            }
-        } else {
-            eprintln!("unknown option");
+            },
         }
-
         i += 1;
     }
 
@@ -731,134 +686,61 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
 }
 
 fn print_usage() {
-    eprintln!("Usage: aluminac [options] <source-files...>\nOptions:\n  -o <file>     Output file (default: a.out)\n  -S            Emit assembly\n  -c            Emit object file\n  -g            Emit DWARF debug info (line tables)\n  --emit-llvm   Emit LLVM IR\n  --emit-bc     Emit LLVM bitcode\n  --dump-ir     Dump LLVM IR to stderr\n  --sysroot     Path to sysroot\n  -O/-O1/-O2/-O3/-Os  Enable optimizations\n  --help, -h    Show this help");
-}
-
-/// Auto-populate ABI-derived cfg flags so that `#[cfg(target_arch = "...")]`
-/// in source files (notably src/aluminac/llvm.alu) evaluates correctly when
-/// aluminac is the compiler. alumina-boot sets these from the host
-/// environment automatically; aluminac historically relied on the user
-/// passing `--cfg`, which bricks the bootstrap on aarch64 because the
-/// target-specific LLVM initializer is gated on this cfg.
-fn populate_host_cfgs(options: &mut CompilerOptions) {
-    let triple_raw = aluminac::llvm::LLVMGetDefaultTargetTriple();
-    let triple = std::ffi::CString::from_raw(triple_raw).as_slice();
-
-    let arch: &[u8] = "";
-    if triple.starts_with("x86_64") {
-        arch = "target_arch=x86_64";
-    } else if triple.starts_with("aarch64") {
-        arch = "target_arch=aarch64";
-    }
-    if !arch.is_empty() && !already_has_key(&options.cfg_flags, "target_arch") {
-        options.cfg_flags.push(arch);
-    }
-
-    // Pick target_os out of the triple — typically of form arch-vendor-os-env.
-    // We only need to recognize the OSes sysroot/libc/mod.alu cares about.
-    let os: &[u8] = "";
-    if triple.contains("linux") {
-        os = "target_os=linux";
-    } else if triple.contains("darwin") {
-        os = "target_os=macos";
-    } else if triple.contains("android") {
-        os = "target_os=android";
-    } else if triple.contains("freebsd") {
-        os = "target_os=freebsd";
-    } else if triple.contains("netbsd") {
-        os = "target_os=netbsd";
-    } else if triple.contains("openbsd") {
-        os = "target_os=openbsd";
-    } else if triple.contains("windows") {
-        os = "target_os=windows";
-    }
-    if !os.is_empty() && !already_has_key(&options.cfg_flags, "target_os") {
-        options.cfg_flags.push(os);
-    }
-
-    // target_pointer_width — needed by sysroot's `count_ones`/etc. when-arms
-    // that branch on `usize`. Default to 64 on the supported architectures.
-    // Stored unquoted; eval_cfg_meta_item strips quotes from source values.
-    let ptr_width: &[u8] = "";
-    if triple.starts_with("x86_64") || triple.starts_with("aarch64") {
-        ptr_width = "target_pointer_width=64";
-    } else if triple.starts_with("i686") || triple.starts_with("i386") {
-        ptr_width = "target_pointer_width=32";
-    }
-
-    // target_env — sysroot/libc/bindings.alu's c_char and friends branch on
-    // `target_env = "gnu"` / `"musl"`. Without this, those typedefs fail to
-    // resolve and downstream uses silently become void.
-    let env: &[u8] = "";
-    if triple.contains("gnu") {
-        env = "target_env=gnu";
-    } else if triple.contains("musl") {
-        env = "target_env=musl";
-    } else if triple.contains("android") {
-        env = "target_env=";
-    } else if triple.contains("darwin") || triple.contains("macos") {
-        // Apple platforms have no separate target_env; sysroot's cfgs
-        // for macos don't gate on target_env so leave it unset.
-        env = "";
-    }
-    if !env.is_empty() && !already_has_key(&options.cfg_flags, "target_env") {
-        options.cfg_flags.push(env);
-    }
-
-    // target_endian — sysroot's `to_le` / `to_be` / etc. branch on this. Both
-    // x86_64 and aarch64 (Linux) are little-endian; aarch64-be exists but is
-    // not a target we currently support. Note the value is stored unquoted
-    // here — eval_cfg_meta_item strips the quotes from source-level
-    // `target_endian = "little"` before matching.
-    let endian: &[u8] = "target_endian=little";
-    if !endian.is_empty() && !already_has_key(&options.cfg_flags, "target_endian") {
-        options.cfg_flags.push(endian);
-    }
-    if !ptr_width.is_empty() && !already_has_key(&options.cfg_flags, "target_pointer_width") {
-        options.cfg_flags.push(ptr_width);
-    }
-
-    aluminac::llvm::LLVMDisposeMessage(triple_raw);
-}
-
-fn already_has_key(flags: &Vector<&[u8]>, key: &[u8]) -> bool {
-    for i in 0usize..flags.len() {
-        let f = flags[i];
-        if f.len() > key.len() && f[key.len()] == '=' {
-            let same = true;
-            for j in 0usize..key.len() {
-                if f[j] != key[j] { same = false; break; }
-            }
-            if same { return true; }
-        }
-    }
-    false
+    eprint!("{}", std::concat!(
+        "Usage: aluminac [options] <[module::path=]file.alu...>\n",
+        "Options:\n",
+        "  -o <file>           Output file (default: a.out)\n",
+        "  -c                  Emit an object file\n",
+        "  -S                  Emit assembly\n",
+        "  --emit-llvm         Emit LLVM IR\n",
+        "  --emit-bc           Emit LLVM bitcode\n",
+        "  -O/-O1/-O2/-O3/-Os  Optimization level (default: -O0)\n",
+        "  -g                  Emit DWARF debug info\n",
+        "  -d, --debug         Debug mode (enables cfg(debug), e.g. bounds checks)\n",
+        "  --sysroot <dir>     Path to the standard library\n",
+        "  --target <triple>   Target triple (default: the host)\n",
+        "  --cfg <key[=value]> Set a conditional compilation key\n",
+        "  --test              Build the unit test runner\n",
+        "  --link-args <args>  Extra arguments for the linker\n",
+        "  --dump-ir           Dump LLVM IR to stderr\n",
+        "  --no-verify         Skip LLVM IR verification\n",
+        "  -h, --help          Show this help\n",
+    ));
 }
 
 fn main(args: &[&[u8]]) -> i32 {
     let (options, files) = parse_args(args);
-    populate_host_cfgs(&options);
+    defer files.free();
 
-    let compiler = Compiler::new(options);
+    let target_result = if options.target_triple.is_some() {
+        Target::parse(options.target_triple.unwrap())
+    } else {
+        Target::host()
+    };
+    if target_result.is_err() {
+        eprintln!("error: invalid target `{}`: {}", options.target_triple.unwrap_or("<host>"), target_result.unwrap_err());
+        return 1i32;
+    }
+    let target = target_result.unwrap();
+
+    // Compiler-provided cfg keys, as in alumina-boot. Keys given with
+    // `--cfg` take precedence.
+    target.add_cfgs(&options.cfg);
+    options.cfg.add_default("output_type", "executable");
+
+    let compiler = Compiler::new(options, target);
+    defer compiler.free();
 
     // Load sysroot files first (they go into module scopes like "std::mem", etc.)
     if !compiler.load_sysroot() {
-        files.free();
-        compiler.free();
         return 1i32;
     }
 
-    for i in 0usize..files.len() {
-        if !compiler.add_source_file(files[i].file_path, files[i].module_path) {
-            files.free();
-            compiler.free();
+    for file in files {
+        if !compiler.add_source_file(file.file_path, file.module_path) {
             return 1i32;
         }
     }
 
-    let success = compiler.compile();
-    files.free();
-    compiler.free();
-
-    if success { 0i32 } else { 1i32 }
+    if compiler.compile() { 0i32 } else { 1i32 }
 }

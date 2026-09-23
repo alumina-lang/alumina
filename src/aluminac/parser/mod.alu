@@ -7,15 +7,16 @@
 use ast::*;
 use scope::*;
 use diagnostics::DiagnosticContext;
+use aluminac::cfg::CfgSet;
 use aluminac_common::arena::Arena;
 use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
 use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
 use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 
 use std::collections::{HashMap, Vector};
-use std::option::Option;
+use std::option::{Option, try};
 use std::result::Result;
-use std::string::starts_with;
+use std::string::{starts_with, split};
 
 struct ParseError {
     message: &[u8],
@@ -41,7 +42,7 @@ struct ParseContext {
     diag: &mut DiagnosticContext,
     source: &[u8],
     file_id: u32,
-    cfg_flags: &[&[u8]],
+    cfg: &CfgSet,
 
     // Items collected during pass 1, processed in pass 2
     pending_functions: Vector<PendingFunction>,
@@ -188,7 +189,7 @@ impl ParseContext {
         diag: &mut DiagnosticContext,
         source: &[u8],
         file_id: u32,
-        cfg_flags: &[&[u8]],
+        cfg: &CfgSet,
     ) -> ParseContext {
         ParseContext {
             arena: arena,
@@ -197,7 +198,7 @@ impl ParseContext {
             diag: diag,
             source: source,
             file_id: file_id,
-            cfg_flags: cfg_flags,
+            cfg: cfg,
             pending_functions: Vector::new(),
             pending_structs: Vector::new(),
             pending_enums: Vector::new(),
@@ -241,27 +242,21 @@ impl ParseContext {
         self.arena.alloc(ty) as &Ty
     }
 
-    // Resolve a macro by name: first try scope resolution, then fall back to name-to-id map.
-    // Returns the MacroEntry if found.
+    /// Resolve a macro by name or path (`name`, `a::b::name`, `::a::name`)
+    /// through the scope system, as any other item.
     fn resolve_macro(self: &mut ParseContext, scope_idx: u32, name: &[u8]) -> Option<MacroEntry> {
-        // Try scope-based resolution first (handles use aliases and shadowing)
-        let resolved = self.scopes.resolve(scope_idx, name);
-        if resolved.is_some() {
-            let item = resolved.unwrap();
-            if item.kind.tag == scope::NamedItemTag::Macro {
-                let id = item.kind.id()._value;
-                let entry = self.macro_defs.get(&id);
-                if entry.is_some() {
-                    return entry;
-                }
+        let segments: Vector<&[u8]> = Vector::new();
+        defer segments.free();
+        for segment in name.split("::") {
+            if !segment.is_empty() {
+                segments.push(segment);
             }
         }
-        // Fallback: use name-to-id map (for builtins or when scope doesn't have the entry)
-        let id = self.macro_name_to_id.get(&name);
-        if id.is_some() {
-            return self.macro_defs.get(&id.unwrap());
+        let item = self.scopes.resolve_path(scope_idx, segments.as_slice())?;
+        if item.kind.tag != scope::NamedItemTag::Macro {
+            return Option::none();
         }
-        Option::none()
+        self.macro_defs.get(&item.kind.id()._value)
     }
 
     // Resolve a macro by item ID directly
@@ -279,117 +274,91 @@ impl ParseContext {
         buf
     }
 
-    fn has_cfg(self: &ParseContext, flag: &[u8]) -> bool {
-        for i in 0usize..self.cfg_flags.len() {
-            if self.cfg_flags[i] == flag {
-                return true;
-            }
-        }
-        false
-    }
-
-    // Evaluate a cfg condition from a meta_item node. Shared between pass1
-    // (item-level #[cfg(...)]) and expression-statement attribute filtering.
-    fn eval_cfg_meta_item(self: &mut ParseContext, node: Node) -> bool {
-        let kind = NODE_KINDS[node.symbol() as usize];
-        if kind != NodeKind::MetaItem {
-            return false;
-        }
-        let name_node = child_by!(node, FieldKind::Name);
-        if name_node.is_none() {
-            return false;
-        }
-        let name = self.node_text(name_node.unwrap());
-        let args_node = child_by!(node, FieldKind::Arguments);
-        let value_node = child_by!(node, FieldKind::Value);
-        if value_node.is_some() {
-            let value_text = self.node_text(value_node.unwrap());
-            if value_text.len() >= 2 && value_text[0] == '"' {
-                value_text = value_text[1..value_text.len() - 1];
-            }
-            let match_buf = self.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
-            let key = std::fmt::format_in!(match_buf, "{}={}", name, value_text).unwrap();
-            return self.has_cfg(key);
-        }
-        if name == "cfg" {
-            if args_node.is_none() { return false; }
-            return self.eval_cfg_arguments_single(args_node.unwrap());
-        } else if name == "not" {
-            if args_node.is_none() { return false; }
-            return !self.eval_cfg_arguments_single(args_node.unwrap());
-        } else if name == "all" {
-            if args_node.is_none() { return true; }
-            return self.eval_cfg_arguments_all(args_node.unwrap());
-        } else if name == "any" {
-            if args_node.is_none() { return false; }
-            return self.eval_cfg_arguments_any(args_node.unwrap());
-        }
-        if args_node.is_some() {
-            return false;
-        }
-        self.has_cfg(name)
-    }
-
-    fn eval_cfg_arguments_single(self: &mut ParseContext, node: Node) -> bool {
-        let cursor = node.walk();
+    /// The arguments of a meta item (`name(arg, ...)`), or none if the meta
+    /// item has no argument list.
+    fn meta_args(self: &mut ParseContext, meta: Node) -> Option<&[Node]> {
+        let args = child_by!(meta, FieldKind::Arguments)?;
+        let cursor = args.walk();
         defer cursor.free();
-        for child in children_by!(node, FieldKind::Argument, &cursor) {
-            let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::MetaItem {
-                return self.eval_cfg_meta_item(child);
-            }
+
+        let nodes: Vector<Node> = Vector::new();
+        defer nodes.free();
+        for child in children_by!(args, FieldKind::Argument, &cursor) {
+            nodes.push(child);
         }
-        false
+        Option::some(self.arena.alloc_slice_copy(nodes.as_slice()) as &[Node])
     }
 
-    fn eval_cfg_arguments_all(self: &mut ParseContext, node: Node) -> bool {
-        let cursor = node.walk();
-        defer cursor.free();
-        for child in children_by!(node, FieldKind::Argument, &cursor) {
-            let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::MetaItem {
-                if !self.eval_cfg_meta_item(child) {
+    /// Evaluate the condition of a `#[cfg(predicate)]` attribute, given the
+    /// `cfg(...)` meta item itself.
+    fn eval_cfg_attribute(self: &mut ParseContext, meta: Node) -> bool {
+        let args = self.meta_args(meta);
+        if args.is_none() || args.unwrap().len() != 1 {
+            self.error(meta, "`cfg` expects exactly one predicate");
+            return false;
+        }
+        self.eval_cfg(args.unwrap()[0])
+    }
+
+    /// Evaluate a cfg predicate: `key`, `key = "value"`, or a combination
+    /// with `all(...)`, `any(...)` and `not(...)`. Malformed predicates are
+    /// reported and evaluate to false.
+    fn eval_cfg(self: &mut ParseContext, node: Node) -> bool {
+        if NODE_KINDS[node.symbol() as usize] != NodeKind::MetaItem {
+            self.error(node, "expected a cfg predicate");
+            return false;
+        }
+        let name = self.node_text(child_by!(node, FieldKind::Name).unwrap());
+        let args = self.meta_args(node);
+        if args.is_none() {
+            let value_node = child_by!(node, FieldKind::Value);
+            let expected: Option<&[u8]> = if value_node.is_some() {
+                let text = self.node_text(value_node.unwrap());
+                if NODE_KINDS[value_node.unwrap().symbol() as usize] == NodeKind::StringLiteral {
+                    Option::some(unescape_string(text[1..text.len() - 1], self.arena) as &[u8])
+                } else {
+                    Option::some(text)
+                }
+            } else {
+                Option::none()
+            };
+            return self.cfg.matches(name, expected);
+        }
+
+        let args = args.unwrap();
+        switch name {
+            "all" => args.iter().all(|&self, arg: Node| -> bool { self.eval_cfg(arg) }),
+            "any" => args.iter().any(|&self, arg: Node| -> bool { self.eval_cfg(arg) }),
+            "not" => {
+                if args.len() != 1 {
+                    self.error(node, "`not` expects exactly one predicate");
                     return false;
                 }
-            }
+                !self.eval_cfg(args[0])
+            },
+            _ => {
+                self.error(node, "unknown cfg predicate (expected `all`, `any` or `not`)");
+                false
+            },
         }
-        true
     }
 
-    fn eval_cfg_arguments_any(self: &mut ParseContext, node: Node) -> bool {
-        let cursor = node.walk();
-        defer cursor.free();
-        for child in children_by!(node, FieldKind::Argument, &cursor) {
-            let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::MetaItem {
-                if self.eval_cfg_meta_item(child) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    // Check whether the `attributes` field on an expression_statement (or
-    // any other node with a similar attribute layout) contains a
-    // `#[cfg(...)]` whose condition evaluates to false. Returns true if
-    // the statement should be excluded from lowering.
+    /// Whether the attributes on a statement contain a `#[cfg(...)]` that
+    /// excludes the statement.
     fn stmt_cfg_suppresses(self: &mut ParseContext, attrs_node: Node) -> bool {
         let cursor = attrs_node.walk();
         defer cursor.free();
         for attr in attrs_node.children(&cursor) {
-            let attr_kind = NODE_KINDS[attr.symbol() as usize];
-            if attr_kind != NodeKind::AttributeItem { continue; }
+            if NODE_KINDS[attr.symbol() as usize] != NodeKind::AttributeItem {
+                continue;
+            }
             let meta = child_by!(attr, FieldKind::Inner);
-            if meta.is_none() { continue; }
-            let meta_node = meta.unwrap();
-            let name_node = child_by!(meta_node, FieldKind::Name);
-            if name_node.is_none() { continue; }
-            let name = self.node_text(name_node.unwrap());
-            if name != "cfg" { continue; }
-            let args_node = child_by!(meta_node, FieldKind::Arguments);
-            if args_node.is_none() { continue; }
-            if !self.eval_cfg_arguments_single(args_node.unwrap()) {
+            if meta.is_none() {
+                continue;
+            }
+            let name_node = child_by!(meta.unwrap(), FieldKind::Name);
+            if name_node.is_some() && self.node_text(name_node.unwrap()) == "cfg"
+                && !self.eval_cfg_attribute(meta.unwrap()) {
                 return true;
             }
         }
@@ -630,31 +599,6 @@ fn hex_digit(c: u8) -> u8 {
 // Main entry points for parsing
 // ============================================================
 
-fn parse_file(
-    root: Node,
-    source: &[u8],
-    file_id: u32,
-    arena: &mut Arena,
-    scopes: &mut ScopeArena,
-    id_gen: &mut IdGen,
-    diag: &mut DiagnosticContext,
-    root_scope: u32,
-    cfg_flags: &[&[u8]],
-) -> &[Item] {
-    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg_flags);
-    defer ctx.free();
-
-    // Pass 1: build scopes
-    let pass1 = pass1::Pass1::new(&ctx, root_scope);
-    pass1.run(root);
-
-    // Pass 2: construct AST
-    let pass2 = pass2::Pass2::new(&ctx);
-    pass2.run(root);
-
-    arena.alloc_slice_copy::<Item>(ctx.items.as_slice())
-}
-
 // Two-phase parsing: run all Pass1s across all files first to register all names
 // in scopes, then run all Pass2s to parse bodies (which may reference any name).
 // This fixes cross-module references where file B references a name defined in file A
@@ -669,9 +613,9 @@ fn parse_file_pass1(
     id_gen: &mut IdGen,
     diag: &mut DiagnosticContext,
     root_scope: u32,
-    cfg_flags: &[&[u8]],
+    cfg: &CfgSet,
 ) -> ParseContext {
-    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg_flags);
+    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg);
 
     // Pass 1: build scopes and register all names
     let pass1 = pass1::Pass1::new(&ctx, root_scope);

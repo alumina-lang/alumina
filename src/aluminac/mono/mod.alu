@@ -49,7 +49,8 @@ struct MonoCtx {
     ir_enums: Vector<IrEnumRef>,
 
     // Track emitted globals to avoid duplicates
-    emitted_globals: HashSet<usize>,
+    // (static item, type args) mono key -> index into ir_globals
+    static_cache: HashMap<u64, usize>,
 
     // Cached const-evaluated values for const globals
     const_values: HashMap<usize, ConstValue>,
@@ -162,7 +163,7 @@ impl MonoCtx {
             ir_globals: Vector::new(),
             ir_structs: Vector::new(),
             ir_enums: Vector::new(),
-            emitted_globals: HashSet::new(),
+            static_cache: HashMap::new(),
             const_values: HashMap::new(),
             fn_cache: HashMap::new(),
             struct_cache: HashMap::new(),
@@ -519,7 +520,7 @@ impl MonoCtx {
         self.ir_globals.free();
         self.ir_structs.free();
         self.ir_enums.free();
-        self.emitted_globals.free();
+        self.static_cache.free();
         self.const_values.free();
         self.fn_cache.free();
         self.struct_cache.free();
@@ -576,43 +577,6 @@ fn monomorphize(
                 mono.mono_function(fn_def, &[]);
                 mono.free();
             }
-        } else if item.tag == ItemTag::Static {
-            // Process statics - only process extern statics eagerly
-            // Other statics will be processed on demand when referenced
-            let sd = item.static_def();
-            let is_extern = false;
-            for attr in sd.attributes {
-                if attr.tag == AttrTag::Extern {
-                    is_extern = true;
-                }
-            }
-            if !is_extern {
-                continue;
-            }
-            ctx.emitted_globals.insert(sd.id._value);
-            let mono = Mono::new(&ctx);
-            let ty = sd.ty.map(|&mono, v: &Ty| -> &IrTy { mono.resolve_type(v) }).unwrap_or(ctx.void_ty);
-
-            let init: Option<&IrExpr> = sd.init.map(|&mono, v: &Expr| -> &IrExpr { mono.lower_expr(v) });
-
-            let is_extern = false;
-            for attr in sd.attributes {
-                if attr.tag == AttrTag::Extern {
-                    is_extern = true;
-                }
-            }
-
-            ctx.ir_globals.push(IrGlobal {
-                id: sd.id,
-                name: sd.name,
-                mangled_name: sd.name,
-                ty: ty,
-                init: init,
-                is_const: sd.is_const,
-                is_extern: is_extern,
-                attributes: sd.attributes,
-            });
-            mono.free();
         }
     }
 

@@ -17,14 +17,14 @@ else ifdef FAST_DEBUG
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
-	ALUMINAC_FLAGS += -g
+	ALUMINAC_FLAGS += -g --debug
 else ifdef PROFILING
 	BUILD_DIR = $(BUILD_ROOT)/profiling
 	CARGO_FLAGS += --profile profiling
 	CARGO_TARGET_DIR = target/profiling
 	CFLAGS += -g3 -fPIE -rdynamic -O3
 	ALUMINA_FLAGS += --debug
-	ALUMINAC_FLAGS += -g
+	ALUMINAC_FLAGS += -g --debug
 else ifdef COVERAGE
 	CC ?= clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
@@ -32,7 +32,7 @@ else ifdef COVERAGE
 	CARGO_TARGET_DIR = target/coverage
 	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
 	ALUMINA_FLAGS += --debug
-	ALUMINAC_FLAGS += -g
+	ALUMINAC_FLAGS += -g --debug
 	export RUSTFLAGS += -Cinstrument-coverage
 	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
@@ -41,7 +41,7 @@ else
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
 	ALUMINA_FLAGS += --debug
-	ALUMINAC_FLAGS += -g
+	ALUMINAC_FLAGS += -g --debug
 endif
 
 LDFLAGS ?= -lm
@@ -238,14 +238,23 @@ $(STDLIB_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES)
 	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --cfg test_std --sysroot $(SYSROOT_ALUMINAC) \
 		-o $@
 
+# The bootstrap fixpoint: stage 2 and stage 3 must emit byte-identical LLVM IR
+# for the compiler itself. (Comparing the linked binaries is not meaningful on
+# every platform, e.g. the macOS linker stamps a UUID and object file paths.)
+$(ALUMINAC_S2).ll: $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
+	$(ALUMINAC_S2) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) --emit-llvm -o $@ $(ALUMINAC_INPUTS)
+
+$(ALUMINAC_S3).ll: $(ALUMINAC_S3) $(BOOTSTRAP_DEPS)
+	$(ALUMINAC_S3) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) --emit-llvm -o $@ $(ALUMINAC_INPUTS)
+
 .PHONY: bootstrap
-bootstrap: $(ALUMINAC_S3)
+bootstrap: $(ALUMINAC_S2).ll $(ALUMINAC_S3).ll
 	@echo "Comparing stage 2 and stage 3 outputs..."
-	@cmp --silent $(ALUMINAC_S2) $(ALUMINAC_S3) && echo "Bootstrap successful: stage 2 and stage 3 outputs are identical." || (echo "Bootstrap failed: stage 2 and stage 3 outputs differ." && exit 1)
+	@cmp --silent $(ALUMINAC_S2).ll $(ALUMINAC_S3).ll && echo "Bootstrap successful: stage 2 and stage 3 outputs are identical." || (echo "Bootstrap failed: stage 2 and stage 3 outputs differ." && exit 1)
 
 .PHONY: clean-bootstrap
 clean-bootstrap:
-	rm -f $(ALUMINAC_S1) $(ALUMINAC_S1).c $(ALUMINAC_S2) $(ALUMINAC_S3) $(BUILD_DIR)/aluminac
+	rm -f $(ALUMINAC_S1) $(ALUMINAC_S1).c $(ALUMINAC_S2) $(ALUMINAC_S3) $(ALUMINAC_S2).ll $(ALUMINAC_S3).ll $(BUILD_DIR)/aluminac
 
 ## --------------------------------Tools -------------------------------
 

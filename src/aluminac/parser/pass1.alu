@@ -14,7 +14,7 @@ use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
 use tree_sitter::{Node, TSFieldId, TSTreeCursor};
 
 use std::collections::{HashMap, Vector};
-use std::option::Option;
+use std::option::{Option, try};
 
 struct Pass1 {
     ctx: &mut ParseContext,
@@ -128,169 +128,12 @@ impl Pass1 {
         defer cursor.free();
         for child in node.children(&cursor) {
             let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::AttributeItem {
-                // attribute_item -> inner: meta_item -> name, arguments
-                let inner_node = child_by!(child, FieldKind::Inner);
-                if inner_node.is_none() {
-                    continue;
-                }
-                let meta = inner_node.unwrap();
-                let name_node = child_by!(meta, FieldKind::Name);
-                if name_node.is_some() {
-                    let name = self.ctx.node_text(name_node.unwrap());
-                    switch name {
-                        "inline" => {
-                            // #[inline] = hint. #[inline(always)] / #[inline(never)] /
-                            // #[inline(ir)] override with the explicit kind.
-                            let args_node = child_by!(meta, FieldKind::Arguments);
-                            let mode: &[u8] = if args_node.is_none() {
-                                ""
-                            } else {
-                                let raw = self.ctx.node_text(args_node.unwrap());
-                                let inner = raw;
-                                if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
-                                    inner = inner[1..inner.len() - 1];
-                                }
-                                while !inner.is_empty() && (inner[0] == ' ' || inner[0] == '\t') {
-                                    inner = inner[1..];
-                                }
-                                while !inner.is_empty() && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
-                                    inner = inner[0..inner.len() - 1];
-                                }
-                                inner
-                            };
-                            if mode == "always" {
-                                attrs.push(Attribute::always_inline());
-                            } else if mode == "never" {
-                                attrs.push(Attribute::never_inline());
-                            } else if mode == "ir" {
-                                attrs.push(Attribute::inline_ir());
-                            } else {
-                                attrs.push(Attribute::inline_attr());
-                            }
-                        }
-                        "cold" => attrs.push(Attribute::cold()),
-                        "export" => attrs.push(Attribute::export()),
-                        "test" => {
-                            // Aluminac retains a dedicated AttrTag::Test for
-                            // marking test-mode root-monos, but also stores a
-                            // Custom("test") so reflection / attributed lookups
-                            // see it like alumina-boot does (`#[test]` is just
-                            // a Custom attribute on the alumina-boot side).
-                            attrs.push(Attribute::test());
-                            attrs.push(Attribute::custom(self.ctx.intern_str("test")));
-                        }
-                        "thread_local" => attrs.push(Attribute::thread_local()),
-                        "static_ctor" => attrs.push(Attribute::static_ctor()),
-                        "no_return" => attrs.push(Attribute::no_return()),
-                        "transparent" => attrs.push(Attribute::transparent()),
-                        "must_use" => attrs.push(Attribute::must_use()),
-                        "no_mangle" => attrs.push(Attribute::no_mangle()),
-                        "const_only" => attrs.push(Attribute::const_only()),
-                        "no_const" => attrs.push(Attribute::no_const()),
-                        "const" => {
-                            // alumina-boot syntax: `#[const(always)]` maps to
-                            // `const_only`, `#[const(never)]` maps to `no_const`.
-                            // Either form should round-trip the attribute on
-                            // the function so downstream queries
-                            // (`has_attribute`) match alumina-boot's behavior.
-                            let args_node = child_by!(meta, FieldKind::Arguments);
-                            if args_node.is_some() {
-                                let raw = self.ctx.node_text(args_node.unwrap());
-                                let inner = raw;
-                                if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
-                                    inner = inner[1..inner.len() - 1];
-                                }
-                                while !inner.is_empty() && (inner[0] == ' ' || inner[0] == '\t') {
-                                    inner = inner[1..];
-                                }
-                                while !inner.is_empty() && (inner[inner.len() - 1] == ' ' || inner[inner.len() - 1] == '\t') {
-                                    inner = inner[0..inner.len() - 1];
-                                }
-                                if inner == "always" {
-                                    attrs.push(Attribute::const_only());
-                                } else if inner == "never" {
-                                    attrs.push(Attribute::no_const());
-                                } else {
-                                    // Unknown mode — store as Custom for
-                                    // diagnostics tooling instead of dropping.
-                                    attrs.push(Attribute::custom(self.ctx.intern_str("const")));
-                                }
-                            } else {
-                                // Bare `#[const]` — store as Custom.
-                                attrs.push(Attribute::custom(self.ctx.intern_str("const")));
-                            }
-                        }
-                        "tuple_call" => attrs.push(Attribute::tuple_call()),
-                        "packed" => {
-                            // #[packed] (no arg) defaults to alignment 1.
-                            // #[packed(N)] sets alignment to N.
-                            let args_node = child_by!(meta, FieldKind::Arguments);
-                            if args_node.is_some() {
-                                let val_text = self.ctx.node_text(args_node.unwrap());
-                                let val = parse_usize(val_text);
-                                if val == 0 { val = 1; }
-                                attrs.push(Attribute::packed(val));
-                            } else {
-                                attrs.push(Attribute::packed(1));
-                            }
-                        }
-                        "builtin" => attrs.push(Attribute::builtin()),
-                        "returns_twice" => attrs.push(Attribute::returns_twice()),
-                        "test_main" => attrs.push(Attribute::test_main()),
-                        "cfg" => {
-                            if !self.eval_cfg_meta_item(meta) {
-                                self.skip_item = true;
-                            }
-                        }
-                        "align" => {
-                            let args_node = child_by!(meta, FieldKind::Arguments);
-                            if args_node.is_some() {
-                                let val_text = self.ctx.node_text(args_node.unwrap());
-                                let val = parse_usize(val_text);
-                                attrs.push(Attribute::align(val));
-                            }
-                        }
-                        "link_name" => {
-                            let args_node = child_by!(meta, FieldKind::Arguments);
-                            if args_node.is_some() {
-                                let link_name = self.ctx.node_text(args_node.unwrap());
-                                // Strip outer parens and one pair of surrounding quotes:
-                                // raw text is `("strlen")`.
-                                let inner = link_name;
-                                if inner.len() >= 2 && inner[0] == '(' && inner[inner.len() - 1] == ')' {
-                                    inner = inner[1..inner.len() - 1];
-                                }
-                                if inner.len() >= 2 && inner[0] == '"' && inner[inner.len() - 1] == '"' {
-                                    inner = inner[1..inner.len() - 1];
-                                }
-                                attrs.push(Attribute::link_name(self.ctx.intern_str(inner)));
-                            }
-                        }
-                        "lang" => {
-                            let args_node = child_by!(meta, FieldKind::Arguments);
-                            if args_node.is_some() {
-                                let lang_name = self.ctx.node_text(args_node.unwrap());
-                                if lang_name.len() >= 2 && lang_name[0] == '(' && lang_name[lang_name.len() - 1] == ')' {
-                                    lang_name = lang_name[1..lang_name.len() - 1];
-                                }
-                                attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
-                            }
-                        }
-                        // Anything else falls through to a Custom attribute so
-                        // tools (and the `has_attribute` intrinsic) can find it
-                        // by name. We deliberately ignore attribute names that
-                        // are reserved for diagnostics-only contexts (e.g. the
-                        // sysroot's `#[allow(...)]` and `#[docs(...)]` which
-                        // alumina-boot warns on but doesn't store on items).
-                        _ => {
-                            if name != "allow" && name != "docs" && name != "deny"
-                                && name != "warn" && name != "cfg_attr" {
-                                attrs.push(Attribute::custom(self.ctx.intern_str(name)));
-                            }
-                        }
-                    }
-                }
+            if kind != NodeKind::AttributeItem && kind != NodeKind::TopLevelAttributeItem {
+                continue;
+            }
+            let meta = child_by!(child, FieldKind::Inner);
+            if meta.is_some() {
+                self.parse_attribute(meta.unwrap(), &attrs);
             }
         }
 
@@ -300,109 +143,149 @@ impl Pass1 {
         self.ctx.arena.alloc_slice_copy::<Attribute>(attrs.as_slice())
     }
 
-    // Evaluate a cfg condition from a meta_item node.
-    // For #[cfg(condition)], this is called on the inner meta_item (the one with name="cfg").
-    // Returns true if the condition is satisfied.
-    fn eval_cfg_meta_item(self: &mut Pass1, node: Node) -> bool {
-        let kind = NODE_KINDS[node.symbol() as usize];
-
-        // If it's a string literal (inside meta_arguments), this shouldn't happen
-        // at the top level, but guard against it.
-        if kind != NodeKind::MetaItem {
-            return false;
+    /// The single bare-word argument of an attribute, e.g. `always` in
+    /// `#[inline(always)]`.
+    fn word_arg(self: &mut Pass1, meta: Node) -> Option<&[u8]> {
+        let args = self.ctx.meta_args(meta)?;
+        if args.len() != 1 || NODE_KINDS[args[0].symbol() as usize] != NodeKind::MetaItem {
+            return Option::none();
         }
+        Option::some(self.ctx.node_text(child_by!(args[0], FieldKind::Name)?))
+    }
 
-        let name_node = child_by!(node, FieldKind::Name);
+    /// The single literal argument of an attribute, e.g. `"strlen"` in
+    /// `#[link_name("strlen")]` (unescaped) or `8` in `#[align(8)]`.
+    fn literal_arg(self: &mut Pass1, meta: Node) -> Option<&[u8]> {
+        let args = self.ctx.meta_args(meta)?;
+        if args.len() != 1 {
+            return Option::none();
+        }
+        let text = self.ctx.node_text(args[0]);
+        switch NODE_KINDS[args[0].symbol() as usize] {
+            NodeKind::StringLiteral => Option::some(unescape_string(text[1..text.len() - 1], self.ctx.arena) as &[u8]),
+            NodeKind::IntegerLiteral => Option::some(text),
+            _ => Option::none(),
+        }
+    }
+
+    /// Lower one attribute (given its meta item) into `attrs`. A `#[cfg]`
+    /// that does not hold marks the current item as skipped instead.
+    fn parse_attribute(self: &mut Pass1, meta: Node, attrs: &mut Vector<Attribute>) {
+        let name_node = child_by!(meta, FieldKind::Name);
         if name_node.is_none() {
-            return false;
+            return;
         }
         let name = self.ctx.node_text(name_node.unwrap());
-
-        let args_node = child_by!(node, FieldKind::Arguments);
-
-        // Check for key = "value" form
-        let value_node = child_by!(node, FieldKind::Value);
-        if value_node.is_some() {
-            // key = "value" form: check if cfg flag matches the value
-            let value_text = self.ctx.node_text(value_node.unwrap());
-            // Strip quotes from string literal
-            if value_text.len() >= 2 && value_text[0] == '"' {
-                value_text = value_text[1..value_text.len() - 1];
-            }
-            // Look for a cfg flag of the form "key=value"
-            // Build "key=value" string and check against has_cfg
-            let match_buf = self.ctx.arena.alloc_slice::<u8>(name.len() + 1 + value_text.len());
-            let key = std::fmt::format_in!(match_buf, "{}={}", name, value_text).unwrap();
-            return self.ctx.has_cfg(key);
-        }
-
-        // Compound forms: cfg(...), not(...), all(...), any(...)
-        if name == "cfg" {
-            if args_node.is_none() { return false; }
-            return self.eval_cfg_arguments_single(args_node.unwrap());
-        } else if name == "not" {
-            if args_node.is_none() { return false; }
-            return !self.eval_cfg_arguments_single(args_node.unwrap());
-        } else if name == "all" {
-            if args_node.is_none() { return true; } // empty all() = true
-            return self.eval_cfg_arguments_all(args_node.unwrap());
-        } else if name == "any" {
-            if args_node.is_none() { return false; } // empty any() = false
-            return self.eval_cfg_arguments_any(args_node.unwrap());
-        }
-
-        // Simple flag: check presence
-        if args_node.is_some() {
-            // Unknown compound form, treat as false
-            return false;
-        }
-        self.ctx.has_cfg(name)
-    }
-
-    // Evaluate a meta_arguments node expecting exactly one argument (for cfg() and not())
-    fn eval_cfg_arguments_single(self: &mut Pass1, node: Node) -> bool {
-        let cursor = node.walk();
-        defer cursor.free();
-        for child in children_by!(node, FieldKind::Argument, &cursor) {
-            let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::MetaItem {
-                return self.eval_cfg_meta_item(child);
-            }
-        }
-        false
-    }
-
-    // Evaluate a meta_arguments node with AND semantics (for all())
-    fn eval_cfg_arguments_all(self: &mut Pass1, node: Node) -> bool {
-        let cursor = node.walk();
-        defer cursor.free();
-        for child in children_by!(node, FieldKind::Argument, &cursor) {
-            let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::MetaItem {
-                if !self.eval_cfg_meta_item(child) {
-                    return false;
+        switch name {
+            "cfg" => {
+                if !self.ctx.eval_cfg_attribute(meta) {
+                    self.skip_item = true;
                 }
             }
-        }
-        true
-    }
-
-    // Evaluate a meta_arguments node with OR semantics (for any())
-    fn eval_cfg_arguments_any(self: &mut Pass1, node: Node) -> bool {
-        let cursor = node.walk();
-        defer cursor.free();
-        for child in children_by!(node, FieldKind::Argument, &cursor) {
-            let kind = NODE_KINDS[child.symbol() as usize];
-            if kind == NodeKind::MetaItem {
-                if self.eval_cfg_meta_item(child) {
-                    return true;
+            "cfg_attr" => {
+                // #[cfg_attr(predicate, attr, ...)]: the trailing attributes
+                // apply only when the predicate holds.
+                let args = self.ctx.meta_args(meta).unwrap_or(&[]);
+                if args.len() < 2 {
+                    self.ctx.error(meta, "`cfg_attr` expects a predicate followed by at least one attribute");
+                    return;
+                }
+                if self.ctx.eval_cfg(args[0]) {
+                    for attr in args[1..] {
+                        if NODE_KINDS[attr.symbol() as usize] == NodeKind::MetaItem {
+                            self.parse_attribute(attr, attrs);
+                        } else {
+                            self.ctx.error(attr, "expected an attribute");
+                        }
+                    }
                 }
             }
+            "inline" => {
+                // #[inline] is a hint; #[inline(always)] / #[inline(never)] /
+                // #[inline(ir)] select the kind explicitly.
+                let mode = self.word_arg(meta);
+                attrs.push(switch mode.unwrap_or("") {
+                    "always" => Attribute::always_inline(),
+                    "never" => Attribute::never_inline(),
+                    "ir" => Attribute::inline_ir(),
+                    _ => Attribute::inline_attr(),
+                });
+            }
+            "cold" => attrs.push(Attribute::cold()),
+            "export" => attrs.push(Attribute::export()),
+            "test" => {
+                // Aluminac retains a dedicated AttrTag::Test for marking
+                // test-mode root-monos, but also stores a Custom("test") so
+                // reflection / attributed lookups see it like alumina-boot
+                // does (`#[test]` is just a Custom attribute there).
+                attrs.push(Attribute::test());
+                attrs.push(Attribute::custom(self.ctx.intern_str("test")));
+            }
+            "thread_local" => attrs.push(Attribute::thread_local()),
+            "static_ctor" => attrs.push(Attribute::static_ctor()),
+            "no_return" => attrs.push(Attribute::no_return()),
+            "transparent" => attrs.push(Attribute::transparent()),
+            "must_use" => attrs.push(Attribute::must_use()),
+            "no_mangle" => attrs.push(Attribute::no_mangle()),
+            "const_only" => attrs.push(Attribute::const_only()),
+            "no_const" => attrs.push(Attribute::no_const()),
+            "const" => {
+                // alumina-boot syntax: `#[const(always)]` maps to
+                // `const_only`, `#[const(never)]` to `no_const`. Anything
+                // else is stored as Custom("const") for `has_attribute`.
+                attrs.push(switch self.word_arg(meta).unwrap_or("") {
+                    "always" => Attribute::const_only(),
+                    "never" => Attribute::no_const(),
+                    _ => Attribute::custom(self.ctx.intern_str("const")),
+                });
+            }
+            "tuple_call" => attrs.push(Attribute::tuple_call()),
+            "packed" => {
+                // #[packed] defaults to alignment 1; #[packed(N)] sets it to N.
+                let val = self.literal_arg(meta).map(parse_usize).unwrap_or(1);
+                attrs.push(Attribute::packed(if val == 0 { 1 } else { val }));
+            }
+            "builtin" => attrs.push(Attribute::builtin()),
+            "returns_twice" => attrs.push(Attribute::returns_twice()),
+            "test_main" => attrs.push(Attribute::test_main()),
+            "align" => {
+                let val = self.literal_arg(meta);
+                if val.is_some() {
+                    attrs.push(Attribute::align(parse_usize(val.unwrap())));
+                } else {
+                    self.ctx.error(meta, "`align` expects an integer argument");
+                }
+            }
+            "link_name" => {
+                let link_name = self.literal_arg(meta);
+                if link_name.is_some() {
+                    attrs.push(Attribute::link_name(self.ctx.intern_str(link_name.unwrap())));
+                } else {
+                    self.ctx.error(meta, "`link_name` expects a string argument");
+                }
+            }
+            "lang" => {
+                let lang_name = self.word_arg(meta);
+                if lang_name.is_some() {
+                    attrs.push(Attribute::lang(self.ctx.intern_str(lang_name.unwrap())));
+                }
+            }
+            // Lint levels and documentation attributes only affect
+            // diagnostics and are not stored on items (as in alumina-boot).
+            "allow", "deny", "warn", "docs" => {}
+            // Anything else is a Custom attribute, so tools (and the
+            // `has_attribute` intrinsic) can find it by name.
+            _ => attrs.push(Attribute::custom(self.ctx.intern_str(name))),
         }
-        false
     }
 
     fn visit_source_file_p1(self: &mut Pass1, node: Node) {
+        // File-level attributes (`#![cfg(...)]`) apply to the whole file.
+        let _ = self.parse_attributes(node);
+        if self.skip_item {
+            self.skip_item = false;
+            return;
+        }
         self.visit_children_by_field(node, FieldKind::Body);
     }
 

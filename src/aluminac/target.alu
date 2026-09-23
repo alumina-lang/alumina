@@ -1,0 +1,288 @@
+//! Compilation target description.
+//!
+//! Everything target-dependent in aluminac (the cfg keys a program sees,
+//! which LLVM backend to initialize and the C calling-convention details)
+//! is derived from a single [Target], parsed once from an LLVM target
+//! triple. Nothing else in the compiler should sniff triple strings.
+
+use std::string::{split, starts_with};
+use std::fmt::{Formatter, Result as FmtResult, write};
+use std::ffi::CString;
+use aluminac::cfg::CfgSet;
+use aluminac::llvm;
+
+/// Instruction set architecture.
+enum Arch {
+    X86_64,
+    AArch64,
+}
+
+impl Arch {
+    /// Parse the architecture component of a triple. Apple toolchains spell
+    /// AArch64 as `arm64` (and `arm64e` for pointer authentication).
+    fn parse(component: &[u8]) -> Option<Arch> {
+        switch component {
+            "x86_64", "amd64" => Option::some(Arch::X86_64),
+            "aarch64", "arm64", "arm64e" => Option::some(Arch::AArch64),
+            _ => Option::none(),
+        }
+    }
+
+    /// The value of `target_arch`, spelled the way alumina-boot (and Rust)
+    /// spell it.
+    fn name(self: Arch) -> &[u8] {
+        switch self {
+            Arch::X86_64 => "x86_64",
+            Arch::AArch64 => "aarch64",
+            _ => unreachable!(),
+        }
+    }
+
+    fn pointer_width(self: Arch) -> usize {
+        64
+    }
+}
+
+/// Operating system.
+enum Os {
+    Linux,
+    Android,
+    MacOs,
+    FreeBsd,
+    NetBsd,
+    OpenBsd,
+    Windows,
+}
+
+impl Os {
+    /// Parse an OS component of a triple (`linux`, `darwin24.1.0`,
+    /// `macosx14.0`, ...). Version suffixes are ignored.
+    fn parse(component: &[u8]) -> Option<Os> {
+        if component.starts_with("linux") {
+            Option::some(Os::Linux)
+        } else if component.starts_with("darwin") || component.starts_with("macos") {
+            Option::some(Os::MacOs)
+        } else if component.starts_with("freebsd") {
+            Option::some(Os::FreeBsd)
+        } else if component.starts_with("netbsd") {
+            Option::some(Os::NetBsd)
+        } else if component.starts_with("openbsd") {
+            Option::some(Os::OpenBsd)
+        } else if component.starts_with("windows") || component.starts_with("win32") {
+            Option::some(Os::Windows)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// The value of `target_os`.
+    fn name(self: Os) -> &[u8] {
+        switch self {
+            Os::Linux => "linux",
+            Os::Android => "android",
+            Os::MacOs => "macos",
+            Os::FreeBsd => "freebsd",
+            Os::NetBsd => "netbsd",
+            Os::OpenBsd => "openbsd",
+            Os::Windows => "windows",
+            _ => unreachable!(),
+        }
+    }
+
+    /// The value of `target_family`.
+    fn family(self: Os) -> &[u8] {
+        if self == Os::Windows { "windows" } else { "unix" }
+    }
+
+    fn is_apple(self: Os) -> bool {
+        self == Os::MacOs
+    }
+}
+
+/// C library / ABI environment. Apple and Android targets have none,
+/// matching alumina-boot, where `target_env` is set to the empty string.
+enum Env {
+    None,
+    Gnu,
+    Musl,
+}
+
+impl Env {
+    fn parse(component: &[u8]) -> Option<Env> {
+        if component.starts_with("gnu") {
+            Option::some(Env::Gnu)
+        } else if component.starts_with("musl") {
+            Option::some(Env::Musl)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// The value of `target_env`.
+    fn name(self: Env) -> &[u8] {
+        switch self {
+            Env::None => "",
+            Env::Gnu => "gnu",
+            Env::Musl => "musl",
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Why a target triple was rejected.
+enum TargetError {
+    UnsupportedArch,
+    UnsupportedOs,
+}
+
+impl TargetError {
+    fn fmt<F: Formatter<F>>(self: &TargetError, f: &mut F) -> FmtResult {
+        switch *self {
+            TargetError::UnsupportedArch => write!(f, "unsupported architecture (supported: x86_64, aarch64)"),
+            TargetError::UnsupportedOs => write!(f, "unsupported operating system"),
+            _ => unreachable!(),
+        }
+    }
+}
+
+struct Target {
+    /// The triple as it is handed to LLVM.
+    triple: CString,
+    arch: Arch,
+    os: Os,
+    env: Env,
+    /// Whether this is the machine the compiler runs on, i.e. whether the
+    /// host CPU (and its features) may be targeted.
+    is_host: bool,
+}
+
+impl Target {
+    /// Parse an LLVM target triple (`arch-vendor-os[-env]`, e.g.
+    /// `x86_64-unknown-linux-gnu`, `arm64-apple-darwin24.1.0`,
+    /// `aarch64-linux-android`). The vendor component is optional.
+    fn parse(triple: &[u8]) -> Result<Target, TargetError> {
+        let components = triple.split("-");
+        let arch = components
+            .next()
+            .and_then(Arch::parse)
+            .ok_or(TargetError::UnsupportedArch)?;
+
+        // The OS is the first remaining component that names one; the
+        // environment, if any, follows it. Scanning rather than indexing
+        // tolerates both `arch-vendor-os-env` and vendor-less
+        // `arch-os-env` spellings.
+        let os: Option<Os> = Option::none();
+        let env = Env::None;
+        for component in components {
+            if os.is_none() {
+                os = Os::parse(component);
+            } else if component.starts_with("android") {
+                // `aarch64-linux-android`: Linux kernel, but `target_os` is
+                // "android" (as in Rust and alumina-boot), with no env.
+                os = Option::some(Os::Android);
+            } else {
+                env = Env::parse(component).unwrap_or(env);
+            }
+        }
+
+        let os = os.ok_or(TargetError::UnsupportedOs)?;
+        let host = CString::from_raw(llvm::LLVMGetDefaultTargetTriple());
+        defer host.free();
+
+        Result::ok(Target {
+            triple: CString::from_slice(triple),
+            arch: arch,
+            os: os,
+            env: env,
+            is_host: host.as_slice() == triple,
+        })
+    }
+
+    /// The target LLVM builds for by default: the host.
+    fn host() -> Result<Target, TargetError> {
+        let triple = CString::from_raw(llvm::LLVMGetDefaultTargetTriple());
+        defer triple.free();
+        Target::parse(triple.as_slice())
+    }
+
+    fn pointer_width(self: &Target) -> usize {
+        self.arch.pointer_width()
+    }
+
+    /// Register the `target_*` cfg keys, using the same keys and spellings
+    /// as alumina-boot. Keys that are already present (e.g. passed
+    /// explicitly with `--cfg`) are left alone.
+    fn add_cfgs(self: &Target, cfg: &mut CfgSet) {
+        cfg.add_default("target_arch", self.arch.name());
+        cfg.add_default("target_os", self.os.name());
+        cfg.add_default("target_family", self.os.family());
+        cfg.add_default("target_env", self.env.name());
+        cfg.add_default("target_endian", "little");
+        cfg.add_default("target_pointer_width", switch self.pointer_width() {
+            64 => "64",
+            32 => "32",
+            _ => unreachable!(),
+        });
+    }
+
+    /// Initialize the LLVM backend for this target's architecture.
+    fn initialize_llvm(self: &Target) {
+        switch self.arch {
+            Arch::X86_64 => {
+                llvm::LLVMInitializeX86TargetInfo();
+                llvm::LLVMInitializeX86Target();
+                llvm::LLVMInitializeX86TargetMC();
+                llvm::LLVMInitializeX86AsmPrinter();
+                llvm::LLVMInitializeX86AsmParser();
+            },
+            Arch::AArch64 => {
+                llvm::LLVMInitializeAArch64TargetInfo();
+                llvm::LLVMInitializeAArch64Target();
+                llvm::LLVMInitializeAArch64TargetMC();
+                llvm::LLVMInitializeAArch64AsmPrinter();
+                llvm::LLVMInitializeAArch64AsmParser();
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Target, f: &mut F) -> FmtResult {
+        write!(f, "{}", self.triple)
+    }
+
+    fn free(self: &mut Target) {
+        self.triple.free();
+    }
+}
+
+#[cfg(all(test, test_aluminac))]
+mod tests {
+    #[test]
+    fn test_parse_linux() {
+        let t = Target::parse("x86_64-unknown-linux-gnu").unwrap();
+        assert!(t.arch == Arch::X86_64);
+        assert!(t.os == Os::Linux);
+        assert!(t.env == Env::Gnu);
+    }
+
+    #[test]
+    fn test_parse_apple() {
+        let t = Target::parse("arm64-apple-darwin24.1.0").unwrap();
+        assert!(t.arch == Arch::AArch64);
+        assert!(t.os == Os::MacOs);
+        assert!(t.env == Env::None);
+    }
+
+    #[test]
+    fn test_parse_android() {
+        let t = Target::parse("aarch64-linux-android").unwrap();
+        assert!(t.os == Os::Android);
+        assert!(t.env == Env::None);
+    }
+
+    #[test]
+    fn test_parse_errors() {
+        assert!(Target::parse("riscv64-unknown-linux-gnu").is_err());
+        assert!(Target::parse("x86_64-unknown-plan9").is_err());
+    }
+}
