@@ -396,6 +396,20 @@ impl ConstEvaluator {
         result
     }
 
+    /// Evaluate an expression at the top level: its value (see `eval_top`),
+    /// and what else the evaluation produced.
+    fn outcome(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstEvalOutcome {
+        let result = self.eval_top(expr);
+        ConstEvalOutcome {
+            value: result.get(),
+            heap: self.heap,
+            panic_msg: self.panic_msg,
+            warning_msg: self.warning_msg,
+            note_msg: self.note_msg,
+            failure: self.failure,
+        }
+    }
+
     /// The bytes of a constant string (a `&[u8]` value).
     fn extract_string(self: &mut ConstEvaluator, val: ConstValue) -> Option<&[u8]> {
         if val.tag == CValTag::Bytes {
@@ -2014,203 +2028,4 @@ impl ConstEvaluator {
             ConstValue::make_void()
         }
     }
-}
-
-// ========== Convenience functions for mono.alu integration ==========
-
-/// Try to const-evaluate an expression to a u64 value.
-/// This is the main entry point used by mono for enum variants, array sizes, etc.
-fn try_eval_u64(
-    arena: &mut Arena,
-    id_gen: &mut IdGen,
-    ir_functions: &[IrFunction],
-    ir_globals: &[IrGlobal],
-    const_values: &HashMap<usize, ConstValue>,
-    pointer_size: usize,
-    expr: &IrExpr,
-) -> Option<u64> {
-    let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval_top(expr);
-    if result.is_ok() {
-        result.unwrap().as_u64()
-    } else {
-        Option::none()
-    }
-}
-
-/// Try to const-evaluate an expression to a bool value.
-fn try_eval_bool(
-    arena: &mut Arena,
-    id_gen: &mut IdGen,
-    ir_functions: &[IrFunction],
-    ir_globals: &[IrGlobal],
-    const_values: &HashMap<usize, ConstValue>,
-    pointer_size: usize,
-    expr: &IrExpr,
-) -> Option<bool> {
-    let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval_top(expr);
-    if result.is_ok() {
-        result.unwrap().as_bool()
-    } else {
-        Option::none()
-    }
-}
-
-/// The value of a condition at run time, if it can be known when compiling
-/// (with a small budget: this is tried for every condition).
-fn try_eval_bool_at_run_time(
-    arena: &mut Arena,
-    id_gen: &mut IdGen,
-    ir_functions: &[IrFunction],
-    ir_globals: &[IrGlobal],
-    const_values: &HashMap<usize, ConstValue>,
-    pointer_size: usize,
-    expr: &IrExpr,
-) -> Option<bool> {
-    let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    evaluator.run_time = true;
-    evaluator.steps_remaining = 10000;
-    let result = evaluator.eval_top(expr);
-    if result.is_ok() {
-        result.unwrap().as_bool()
-    } else {
-        Option::none()
-    }
-}
-
-/// Try to const-evaluate an expression to a full ConstValue.
-fn try_eval(
-    arena: &mut Arena,
-    id_gen: &mut IdGen,
-    ir_functions: &[IrFunction],
-    ir_globals: &[IrGlobal],
-    const_values: &HashMap<usize, ConstValue>,
-    pointer_size: usize,
-    expr: &IrExpr,
-) -> Option<ConstValue> {
-    let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval_top(expr);
-    if result.is_ok() {
-        Option::some(result.unwrap())
-    } else {
-        Option::none()
-    }
-}
-
-/// Like `try_eval` but also reports any const_panic / const_warning /
-/// const_note messages the evaluator captured. Empty strings mean nothing
-/// of that severity fired during this eval.
-fn try_eval_with_diags(
-    arena: &mut Arena,
-    id_gen: &mut IdGen,
-    ir_functions: &[IrFunction],
-    ir_globals: &[IrGlobal],
-    const_values: &HashMap<usize, ConstValue>,
-    pointer_size: usize,
-    expr: &IrExpr,
-) -> ConstEvalOutcome {
-    let vars: HashMap<usize, ConstValue> = HashMap::new();
-    let evaluator = ConstEvaluator::new(arena, &vars, id_gen, ir_functions, ir_globals, const_values, pointer_size);
-    let result = evaluator.eval_top(expr);
-    ConstEvalOutcome {
-        value: result.get(),
-        heap: evaluator.heap,
-        panic_msg: evaluator.panic_msg,
-        warning_msg: evaluator.warning_msg,
-        note_msg: evaluator.note_msg,
-        failure: evaluator.failure,
-    }
-}
-
-/// Materialize a ConstValue back into an IrExpr for embedding in IR.
-fn materialize_to_ir(
-    arena: &mut Arena,
-    val: ConstValue,
-    ty: &IrTy,
-    void_ty: &IrTy,
-) -> Option<&IrExpr> {
-    if val.tag == CValTag::Int {
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::IntLit;
-        r._data.lit.int_val = val.int_val();
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Bool {
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::BoolLit;
-        r._data.lit.bool_val = val.int_val() != 0u64;
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Float {
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::FloatLit;
-        r._data.lit.float_val = val.float_val();
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Void {
-        let r = IrExpr::void_expr(void_ty);
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Bytes {
-        // Materialize as a string literal
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::StringLit;
-        if val.bytes_offset() > 0 {
-            // Slice the bytes
-            let remaining = val.bytes().len() - val.bytes_offset();
-            let buf = arena.alloc_slice::<u8>(remaining);
-            for i in 0usize..remaining {
-                buf[i] = val.bytes()[val.bytes_offset() + i];
-            }
-            r._data.lit.str_val = buf;
-        } else {
-            r._data.lit.str_val = val.bytes();
-        }
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Tuple {
-        let items = arena.alloc_slice::<&IrExpr>(val.elems().len());
-        if ty.tag == IrTyTag::Tuple {
-            for i in 0usize..val.elems().len() {
-                let elem_ty = if i < ty.elems().len() { ty.elems()[i] } else { void_ty };
-                items[i] = materialize_to_ir(arena, val.elems()[i], elem_ty, void_ty)?;
-            }
-        } else {
-            for i in 0usize..val.elems().len() {
-                items[i] = materialize_to_ir(arena, val.elems()[i], void_ty, void_ty)?;
-            }
-        }
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::TupleLit;
-        r._data.block.items = items;
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Array {
-        let items = arena.alloc_slice::<&IrExpr>(val.elems().len());
-        let elem_ty = if ty.tag == IrTyTag::Array { ty.inner() } else { void_ty };
-        for i in 0usize..val.elems().len() {
-            items[i] = materialize_to_ir(arena, val.elems()[i], elem_ty, void_ty)?;
-        }
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::ArrayLit;
-        r._data.block.items = items;
-        return Option::some(arena.alloc(r) as &IrExpr);
-    } else if val.tag == CValTag::Struct {
-        let items = arena.alloc_slice::<&IrExpr>(val.fields().len());
-        for i in 0usize..val.fields().len() {
-            let field_ty = void_ty;
-            if ty.tag == IrTyTag::Struct || ty.tag == IrTyTag::Closure {
-                let fidx = val.fields()[i].field_idx as usize;
-                if fidx < ty.struct_ref().fields.len() {
-                    field_ty = ty.struct_ref().fields[fidx].ty;
-                }
-            }
-            items[i] = materialize_to_ir(arena, val.fields()[i].value, field_ty, void_ty)?;
-        }
-        let r = IrExpr::void_expr(ty);
-        r.tag = IrTag::StructLit;
-        r._data.struct_lit.items = items;
-        r._data.struct_lit.ir_ty = ty;
-        return Option::some(arena.alloc(r) as &IrExpr);
-    }
-    Option::none()
 }

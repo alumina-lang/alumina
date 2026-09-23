@@ -1148,7 +1148,7 @@ impl Mono {
             if def.variants[i].value.is_none() {
                 if bits < 64 && taken_values.len() as u64 >= (1u64 << bits) {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.variants[i].span,
-                        std::fmt::format!("too many enum variants for underlying type `{}`", self.ir_type_name(underlying)).unwrap().as_slice()));
+                        std::fmt::format!("too many enum variants for underlying type `{}`", self.type_name(underlying)).unwrap().as_slice()));
                     break;
                 }
                 // Find next value not already taken
@@ -1654,8 +1654,8 @@ impl Mono {
                 span,
                 std::fmt::format!(
                     "branches have incompatible types: `{}` and `{}`",
-                    self.ir_type_name(result_ty),
-                    self.ir_type_name(branch.ty),
+                    self.type_name(result_ty),
+                    self.type_name(branch.ty),
                 ).unwrap().as_slice(),
             ));
             if !unit_note.is_empty() && (result_ty.is_void() || branch.ty.is_void()) {
@@ -2112,7 +2112,7 @@ impl Mono {
                     span,
                     std::fmt::format!(
                         "integer literal out of range ({}{} does not fit into {})",
-                        if negative { "-" } else { "" }, value, self.ir_type_name(ty),
+                        if negative { "-" } else { "" }, value, self.type_name(ty),
                     ).unwrap().as_slice(),
                 ));
             }
@@ -3099,8 +3099,8 @@ impl Mono {
             std::fmt::format!(
                 "cannot apply `{}` to `{}` and `{}`",
                 op.symbol(),
-                self.ir_type_name(lhs),
-                self.ir_type_name(rhs),
+                self.type_name(lhs),
+                self.type_name(rhs),
             ).unwrap().as_slice(),
         ));
     }
@@ -3373,7 +3373,7 @@ impl Mono {
             if !valid {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
                     expr.span,
-                    std::fmt::format!("cannot apply unary `{}` to `{}`", op.symbol(), self.ir_type_name(ty))
+                    std::fmt::format!("cannot apply unary `{}` to `{}`", op.symbol(), self.type_name(ty))
                         .unwrap().as_slice(),
                 ));
             }
@@ -3941,59 +3941,39 @@ impl Mono {
         }
     }
 
-    // ========== Const Evaluator ==========
-    // Delegates to the full const evaluator in const_eval.alu
+    // ========== Constant evaluation (see const_eval.alu) ==========
 
-    fn try_const_eval_u64(self: &mut Mono, expr: &IrExpr) -> Option<u64> {
-        const_eval::try_eval_u64(
-            self.ctx.arena,
-            self.ctx.id_gen,
-            self.ctx.ir_functions.as_slice(),
-            self.ctx.ir_globals.as_slice(),
-            &self.ctx.const_values,
-            self.ctx.pointer_size,
-            expr,
-        )
+    /// Evaluate an expression at compile time, as if in a constant context
+    /// or (`at_run_time`) with the values it would have at run time.
+    fn evaluate(self: &mut Mono, expr: &IrExpr, at_run_time: bool) -> const_eval::ConstEvalOutcome {
+        let evaluator = self.const_evaluator(self.ctx.arena.alloc(HashMap::new::<usize, ConstValue>()));
+        if at_run_time {
+            // (This is tried for every condition: a small budget.)
+            evaluator.run_time = true;
+            evaluator.steps_remaining = 10000;
+        }
+        evaluator.outcome(expr)
     }
 
+    fn try_const_eval(self: &mut Mono, expr: &IrExpr) -> Option<ConstValue> {
+        self.evaluate(expr, false).value
+    }
+
+    fn try_const_eval_u64(self: &mut Mono, expr: &IrExpr) -> Option<u64> {
+        self.try_const_eval(expr).and_then(|v: ConstValue| -> Option<u64> { v.as_u64() })
+    }
+
+    fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
+        self.try_const_eval(expr).and_then(|v: ConstValue| -> Option<bool> { v.as_bool() })
+    }
+
+    /// A condition's value at run time, if it is known when compiling.
     fn try_bool_at_run_time(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
         // (Most conditions are not constant; this saves trying.)
         if !expr.may_be_constant() {
             return Option::none();
         }
-        const_eval::try_eval_bool_at_run_time(
-            self.ctx.arena,
-            self.ctx.id_gen,
-            self.ctx.ir_functions.as_slice(),
-            self.ctx.ir_globals.as_slice(),
-            &self.ctx.const_values,
-            self.ctx.pointer_size,
-            expr,
-        )
-    }
-
-    fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
-        const_eval::try_eval_bool(
-            self.ctx.arena,
-            self.ctx.id_gen,
-            self.ctx.ir_functions.as_slice(),
-            self.ctx.ir_globals.as_slice(),
-            &self.ctx.const_values,
-            self.ctx.pointer_size,
-            expr,
-        )
-    }
-
-    fn try_const_eval(self: &mut Mono, expr: &IrExpr) -> Option<ConstValue> {
-        const_eval::try_eval(
-            self.ctx.arena,
-            self.ctx.id_gen,
-            self.ctx.ir_functions.as_slice(),
-            self.ctx.ir_globals.as_slice(),
-            &self.ctx.const_values,
-            self.ctx.pointer_size,
-            expr,
-        )
+        self.evaluate(expr, true).value.and_then(|v: ConstValue| -> Option<bool> { v.as_bool() })
     }
 
     /// A const evaluator over the current IR, with the given variable store.
@@ -4007,18 +3987,6 @@ impl Mono {
             self.ctx.ir_globals.as_slice(),
             &self.ctx.const_values,
             self.ctx.pointer_size,
-        )
-    }
-
-    fn try_const_eval_with_diags(self: &mut Mono, expr: &IrExpr) -> const_eval::ConstEvalOutcome {
-        const_eval::try_eval_with_diags(
-            self.ctx.arena,
-            self.ctx.id_gen,
-            self.ctx.ir_functions.as_slice(),
-            self.ctx.ir_globals.as_slice(),
-            &self.ctx.const_values,
-            self.ctx.pointer_size,
-            expr,
         )
     }
 
@@ -4525,113 +4493,19 @@ impl Mono {
     /// The name of a type as written in source code (as alumina-boot's
     /// `type_name`), e.g. `(Option<i32>, &mut [u8])`; for diagnostics and
     /// `std::typing::type_name`.
+    /// A type, formatted as its name.
+    fn type_name(self: &Mono, ty: &IrTy) -> mono::names::TypeName {
+        mono::names::TypeName { ty: ty, ctx: self.ctx }
+    }
+
+    /// A type's name (as a string that lives as long as the IR).
     fn ir_type_name(self: &mut Mono, ty: &IrTy) -> &[u8] {
         if ty.tag == IrTyTag::Builtin {
             return ty.builtin().name();
         }
-        let buf = std::string::StringBuf::new();
-        defer buf.free();
-        self.write_type_name(&buf, ty);
-        self.ctx.arena.alloc_slice_copy(buf.as_slice())
-    }
-
-    fn write_type_list(self: &mut Mono, buf: &mut std::string::StringBuf, tys: &[&IrTy], separator: &[u8]) {
-        for (i, ty) in tys.iter().enumerate() {
-            if i > 0 {
-                buf.extend_from_slice(separator);
-            }
-            self.write_type_name(buf, ty);
-        }
-    }
-
-    fn write_type_name(self: &mut Mono, buf: &mut std::string::StringBuf, ty: &IrTy) {
-        switch ty.tag {
-            IrTyTag::Builtin => buf.extend_from_slice(ty.builtin().name()),
-            IrTyTag::Void => buf.extend_from_slice("()"),
-            IrTyTag::Never => buf.extend_from_slice("!"),
-            IrTyTag::Pointer => {
-                buf.extend_from_slice(if ty.is_const() { "&" } else { "&mut " });
-                self.write_type_name(buf, ty.inner());
-            }
-            IrTyTag::Slice => {
-                buf.extend_from_slice(if ty.is_const() { "&[" } else { "&mut [" });
-                self.write_type_name(buf, ty.inner());
-                buf.push(']');
-            }
-            IrTyTag::Array => {
-                buf.push('[');
-                self.write_type_name(buf, ty.inner());
-                std::fmt::write!(buf, "; {}]", ty.array_size()).unwrap();
-            }
-            IrTyTag::Tuple => {
-                buf.push('(');
-                self.write_type_list(buf, ty.elems(), ", ");
-                buf.push(')');
-            }
-            IrTyTag::FnPointer => {
-                buf.extend_from_slice("fn(");
-                self.write_type_list(buf, ty.elems(), ", ");
-                buf.push(')');
-                if !ty.ret_ty().is_void() {
-                    buf.extend_from_slice(" -> ");
-                    self.write_type_name(buf, ty.ret_ty());
-                }
-            }
-            IrTyTag::Struct => {
-                let s = ty.struct_ref();
-                let args = s.type_args;
-                // `&dyn P` / `&mut dyn (P + Q)` is the lang(dyn) struct over
-                // the protocols and the pointer type.
-                let dyn_id = self.ctx.get_lang_item("dyn");
-                if dyn_id.is_some() && s.id._value == dyn_id.unwrap() && args.len() == 2
-                    && args[0].tag == IrTyTag::Tuple && args[1].tag == IrTyTag::Pointer {
-                    let protos = args[0].elems();
-                    buf.extend_from_slice(if args[1].is_const() { "&dyn " } else { "&mut dyn " });
-                    if protos.len() > 1 { buf.push('('); }
-                    self.write_type_list(buf, protos, " + ");
-                    if protos.len() > 1 { buf.push(')'); }
-                    return;
-                }
-                buf.extend_from_slice(s.name);
-                if !args.is_empty() {
-                    buf.push('<');
-                    self.write_type_list(buf, args, ", ");
-                    buf.push('>');
-                }
-            }
-            IrTyTag::Closure => buf.extend_from_slice(ty.struct_ref().name),
-            IrTyTag::Enum => buf.extend_from_slice(ty.enum_ref().name),
-            IrTyTag::Fn => {
-                // The function's name and the type arguments of this
-                // instance (whose IrFunction is matched by mangled name).
-                let fn_ref = ty.fn_item_ref();
-                for func in self.ctx.ir_functions.iter() {
-                    if func.id._value == fn_ref.id._value && func.mangled_name == fn_ref.mangled_name {
-                        buf.extend_from_slice(func.name);
-                        if !func.type_args.is_empty() {
-                            buf.push('<');
-                            self.write_type_list(buf, func.type_args, ", ");
-                            buf.push('>');
-                        }
-                        return;
-                    }
-                }
-                buf.extend_from_slice(fn_ref.mangled_name);
-            }
-            IrTyTag::Protocol => {
-                let name = self.ctx.protocol_defs.get(&ty.proto_id())
-                    .map(|p: &ProtocolDef| -> &[u8] { p.name })
-                    .unwrap_or("<protocol>");
-                buf.extend_from_slice(name);
-                let args = ty.proto_type_args();
-                if !args.is_empty() {
-                    buf.push('<');
-                    self.write_type_list(buf, args, ", ");
-                    buf.push('>');
-                }
-            }
-            _ => buf.extend_from_slice("<unknown>"),
-        }
+        let name = std::fmt::format!("{}", self.type_name(ty)).unwrap();
+        defer name.free();
+        self.ctx.arena.alloc_slice_copy(name.as_slice())
     }
 
     // Lower "when" (static if) expression: evaluate condition at compile time
@@ -5208,7 +5082,7 @@ impl Mono {
             if ir_inner.ty.same_as(ir_ty) && !ir_ty.is_never() && expr.ty().is_concrete()
                 && self.type_map.is_empty() && !self.tentative {
                 self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "unnecessary_cast",
-                    std::fmt::format!("unnecessary cast (value is already `{}`)", self.ir_type_name(ir_ty)).unwrap().as_slice()));
+                    std::fmt::format!("unnecessary cast (value is already `{}`)", self.type_name(ir_ty)).unwrap().as_slice()));
             }
             self.lower_cast(ir_inner, ir_ty, expr.span)
         } else if expr.tag == ExprTag::TypeCheck {
@@ -5265,7 +5139,7 @@ impl Mono {
         if !valid {
             self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
                 span,
-                std::fmt::format!("cannot cast `{}` into `{}`", self.ir_type_name(from), self.ir_type_name(ty))
+                std::fmt::format!("cannot cast `{}` into `{}`", self.type_name(from), self.type_name(ty))
                     .unwrap().as_slice(),
             ));
         }
@@ -8027,7 +7901,7 @@ impl Mono {
             // fold what the evaluator cannot (e.g. addresses of globals); if
             // not, it reports the failure recorded here.
             self.ctx.ir_globals[idx].init = Option::some(if def.is_const {
-                let outcome = self.try_const_eval_with_diags(init_ir);
+                let outcome = self.evaluate(init_ir, false);
                 let span = init_expr.span;
                 if !outcome.warning_msg.is_empty() {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, outcome.warning_msg));
@@ -8712,7 +8586,7 @@ impl Mono {
             a.tag == AttrTag::Custom && a.str_val() == "diag::must_use"
         }) {
             self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "unused_must_use",
-                std::fmt::format!("unused `{}` that must be used", self.ir_type_name(stmt.ty)).unwrap().as_slice()));
+                std::fmt::format!("unused `{}` that must be used", self.type_name(stmt.ty)).unwrap().as_slice()));
         }
         // (Also functions marked `#[must_use]`, an aluminac extension.)
         if stmt.tag == IrTag::Call && stmt.call_target().tag == CallKind::Direct && !stmt.ty.is_void() {

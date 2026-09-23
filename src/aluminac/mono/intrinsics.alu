@@ -73,29 +73,24 @@ fn lower_const_eval(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrEx
     // const_eval<T>(expr) -> T: evaluate expression at compile time
     if !expr.args().is_empty() {
         let ir_expr = m.lower_expr(expr.args()[0]);
-        let outcome = m.try_const_eval_with_diags(ir_expr);
+        let outcome = m.evaluate(ir_expr, false);
         if !outcome.warning_msg.is_empty() {
             m.emit_diag(diagnostics::CodeDiagnostic::generic_warning(expr.span, outcome.warning_msg));
         }
         if !outcome.note_msg.is_empty() {
             m.emit_diag(diagnostics::CodeDiagnostic::generic_note(expr.span, outcome.note_msg));
         }
-        if outcome.value.is_some() && outcome.value.unwrap().contains_pointer() {
-            m.adopt_baked(outcome.heap);
-            if m.only_baked_pointers(outcome.value.unwrap()) {
-                return m.constvalue_to_ir(outcome.value.unwrap(), ir_expr.ty);
-            }
-        }
         if outcome.value.is_some() {
-            let materialized = const_eval::materialize_to_ir(
-                m.ctx.arena, outcome.value.unwrap(), ir_expr.ty, m.ctx.void_ty,
-            );
-            if materialized.is_some() {
-                return materialized.unwrap();
+            let value = outcome.value.unwrap();
+            if value.contains_pointer() {
+                m.adopt_baked(outcome.heap);
+                if !m.only_baked_pointers(value) {
+                    // (A pointer into the evaluator's memory: evaluated
+                    // again at run time.)
+                    return ir_expr;
+                }
             }
-            // (A value the IR cannot hold, e.g. a pointer into the
-            // evaluator's memory: evaluated again at run time.)
-            return ir_expr;
+            return m.constvalue_to_ir(value, ir_expr.ty);
         }
         // `const_eval` must be evaluable (as alumina-boot).
         if !outcome.panic_msg.is_empty() {
@@ -113,16 +108,7 @@ fn lower_is_const_evaluable(m: &mut Mono, expr: &Expr) -> &IrExpr {
     // is_const_evaluable<T>(expr) -> bool: check if expression can be const-evaluated
     if !expr.args().is_empty() {
         let ir_expr = m.lower_expr(expr.args()[0]);
-        let val = const_eval::try_eval(
-            m.ctx.arena,
-            m.ctx.id_gen,
-            m.ctx.ir_functions.as_slice(),
-            m.ctx.ir_globals.as_slice(),
-            &m.ctx.const_values,
-            m.ctx.pointer_size,
-            ir_expr,
-        );
-        return m.mk_bool_lit(val.is_some());
+        return m.mk_bool_lit(m.try_const_eval(ir_expr).is_some());
     }
     m.mk_bool_lit(false)
 }

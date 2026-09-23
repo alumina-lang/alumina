@@ -1,0 +1,103 @@
+// The names of types in diagnostics and `std::typing::type_name`, as they
+// are written in source code (e.g. `&mut [Option<i32>]`, `&dyn (A + B)`).
+
+use mono::*;
+use ast::*;
+use ir::*;
+use std::fmt::{Formatter, Result, write};
+
+/// A type, formatted as its name (see `Mono::type_name`).
+struct TypeName {
+    ty: &IrTy,
+    ctx: &MonoCtx,
+}
+
+impl TypeName {
+    fn of(self: &TypeName, ty: &IrTy) -> TypeName {
+        TypeName { ty: ty, ctx: self.ctx }
+    }
+
+    fn write_list<F: Formatter<F>>(self: &TypeName, f: &mut F, tys: &[&IrTy], separator: &[u8]) -> Result {
+        for (i, ty) in tys.iter().enumerate() {
+            if i > 0 {
+                f.write_str(separator)?;
+            }
+            self.of(ty).fmt(f)?;
+        }
+        Result::ok(())
+    }
+
+    /// `<A, B>`, if there are type arguments.
+    fn write_args<F: Formatter<F>>(self: &TypeName, f: &mut F, args: &[&IrTy]) -> Result {
+        if args.is_empty() {
+            return Result::ok(());
+        }
+        f.write_str("<")?;
+        self.write_list(f, args, ", ")?;
+        f.write_str(">")
+    }
+
+    fn fmt<F: Formatter<F>>(self: &TypeName, f: &mut F) -> Result {
+        let ty = self.ty;
+        switch ty.tag {
+            IrTyTag::Builtin => f.write_str(ty.builtin().name()),
+            IrTyTag::Void => f.write_str("()"),
+            IrTyTag::Never => f.write_str("!"),
+            IrTyTag::Pointer => write!(f, "{}{}", if ty.is_const() { "&" } else { "&mut " }, self.of(ty.inner())),
+            IrTyTag::Slice => write!(f, "{}[{}]", if ty.is_const() { "&" } else { "&mut " }, self.of(ty.inner())),
+            IrTyTag::Array => write!(f, "[{}; {}]", self.of(ty.inner()), ty.array_size()),
+            IrTyTag::Tuple => {
+                f.write_str("(")?;
+                self.write_list(f, ty.elems(), ", ")?;
+                f.write_str(")")
+            }
+            IrTyTag::FnPointer => {
+                f.write_str("fn(")?;
+                self.write_list(f, ty.elems(), ", ")?;
+                f.write_str(")")?;
+                if ty.ret_ty().is_void() {
+                    Result::ok(())
+                } else {
+                    write!(f, " -> {}", self.of(ty.ret_ty()))
+                }
+            }
+            IrTyTag::Struct => {
+                let s = ty.struct_ref();
+                let args = s.type_args;
+                // `&dyn P` / `&mut dyn (P + Q)` is the lang(dyn) struct over
+                // the protocols and the pointer type.
+                if self.ctx.is_lang_item(s.id._value, "dyn") && args.len() == 2
+                    && args[0].tag == IrTyTag::Tuple && args[1].tag == IrTyTag::Pointer {
+                    let protos = args[0].elems();
+                    f.write_str(if args[1].is_const() { "&dyn " } else { "&mut dyn " })?;
+                    if protos.len() > 1 { f.write_str("(")?; }
+                    self.write_list(f, protos, " + ")?;
+                    return if protos.len() > 1 { f.write_str(")") } else { Result::ok(()) };
+                }
+                f.write_str(s.name)?;
+                self.write_args(f, args)
+            }
+            IrTyTag::Closure => f.write_str(ty.struct_ref().name),
+            IrTyTag::Enum => f.write_str(ty.enum_ref().name),
+            IrTyTag::Fn => {
+                // The function's name and the type arguments of this instance.
+                let fn_ref = ty.fn_item_ref();
+                let idx = self.ctx.fn_indices.get(&fn_ref.mangled_name);
+                if idx.is_none() {
+                    return f.write_str(fn_ref.mangled_name);
+                }
+                let func = &self.ctx.ir_functions[idx.unwrap()];
+                f.write_str(func.name)?;
+                self.write_args(f, func.type_args)
+            }
+            IrTyTag::Protocol => {
+                let name = self.ctx.protocol_defs.get(&ty.proto_id())
+                    .map(|p: &ProtocolDef| -> &[u8] { p.name })
+                    .unwrap_or("<protocol>");
+                f.write_str(name)?;
+                self.write_args(f, ty.proto_type_args())
+            }
+            _ => f.write_str("<unknown>"),
+        }
+    }
+}
