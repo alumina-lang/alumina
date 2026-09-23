@@ -1,0 +1,21 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `use a::{b as c}` imports `a::b` (the path is relative to the list's
+// prefix). It used to resolve `b` in the importing scope instead, so
+// `use std::fmt::{Result as FmtResult}` was the prelude's generic `Result`.
+
+use std::fmt::{Result as FmtResult, Formatter};
+use std::mem::{size_of as sz};
+
+fn f<F: Formatter<F>>(fmt: &mut F) -> FmtResult {
+    fmt.write_str("ok")
+}
+
+fn main() -> i32 {
+    let buf = std::string::StringBuf::new();
+    defer buf.free();
+    if f(&buf).is_err() || buf.as_slice() != "ok" { return 1; }
+    if sz::<u32>() != 4 { return 2; }
+    let r: FmtResult = Result::ok(());
+    if std::typing::type_name::<typeof(r)>() != "Result<(), Error>" { return 3; }
+    0
+}

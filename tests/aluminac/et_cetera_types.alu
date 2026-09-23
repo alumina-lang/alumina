@@ -1,0 +1,38 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `T...` in a tuple type or a parameter list splices in the elements of the
+// tuple T (as in alumina-boot), and `F: Fn(Args...) -> Ret` infers Args and
+// Ret from the callable F -- e.g. `as_callback` on a closure. (Spreads used
+// to parse as an unresolved type, and the callback's return type as `()`.)
+
+fn apply<Args, Ret, F: Fn(Args...) -> Ret>(f: F, args: Args) -> Ret {
+    f.invoke(args)
+}
+
+fn prepend<T: std::builtins::Tuple>(head: u8, tail: T) -> (u8, T...) {
+    (head, tail...)
+}
+
+fn add(a: i32, b: i32) -> i32 { a + b }
+
+fn main() -> i32 {
+    let t: (i32, (u8, u16)...) = (1, 2, 3);
+    if t.2 != 3u16 { return 1; }
+    if std::mem::size_of::<(u8, ()...)>() != 1 { return 2; }
+
+    let p: fn((i32, i32)...) -> i32 = add;
+    if p(2, 3) != 5 { return 3; }
+
+    if apply(add, (4, 5)) != 9 { return 4; }
+    let r = apply(|x: u64| -> u64 { x * 2 }, (21u64,));
+    if r != 42u64 { return 5; }
+
+    let x = prepend(7, (1i64, true));
+    if x.0 != 7u8 || x.1 != 1i64 || !x.2 { return 6; }
+
+    let offset = 100;
+    let add_offset = |&offset, x: i32| -> i32 { offset + x };
+    let (state, callback) = add_offset.as_callback();
+    if callback(state, 5) != 105 { return 7; }
+
+    0
+}

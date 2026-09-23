@@ -59,6 +59,30 @@ enum BuiltinType {
 }
 
 impl BuiltinType {
+    /// The type's name in source code (`()` for void).
+    fn name(self: &BuiltinType) -> &[u8] {
+        switch *self {
+            BuiltinType::Void => "()",
+            BuiltinType::Never => "!",
+            BuiltinType::Bool => "bool",
+            BuiltinType::U8 => "u8",
+            BuiltinType::U16 => "u16",
+            BuiltinType::U32 => "u32",
+            BuiltinType::U64 => "u64",
+            BuiltinType::U128 => "u128",
+            BuiltinType::I8 => "i8",
+            BuiltinType::I16 => "i16",
+            BuiltinType::I32 => "i32",
+            BuiltinType::I64 => "i64",
+            BuiltinType::I128 => "i128",
+            BuiltinType::USize => "usize",
+            BuiltinType::ISize => "isize",
+            BuiltinType::F32 => "f32",
+            BuiltinType::F64 => "f64",
+            _ => "<unknown>",
+        }
+    }
+
     fn is_integer(self: &BuiltinType) -> bool {
         let v = *self as i32;
         (v >= 2i32 && v <= 13i32) // U8..ISize
@@ -143,6 +167,7 @@ enum TyTag {
     DerefOf = 13i32,    // *T in type position — pointee of T
     Dyn = 14i32,        // &dyn Proto — fat pointer with vtable; resolves to lang(dyn) struct
     TupleIndexOf = 15i32, // T.N in type position — Nth element of tuple type T
+    EtCetera = 16i32,   // T... in a tuple or parameter list — the elements of tuple T
 }
 
 struct _TyPointerData { inner: &Ty, is_const: bool }
@@ -173,7 +198,8 @@ impl Ty {
     fn builtin(self: &Ty) -> BuiltinType { self._data.builtin }
     fn id(self: &Ty) -> Id { self._data.id }
     fn inner(self: &Ty) -> &Ty {
-        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf || self.tag == TyTag::Dyn { self._data.pointer.inner }
+        if self.tag == TyTag::Pointer || self.tag == TyTag::Slice || self.tag == TyTag::DerefOf
+            || self.tag == TyTag::Dyn || self.tag == TyTag::EtCetera { self._data.pointer.inner }
         else if self.tag == TyTag::Array || self.tag == TyTag::TupleIndexOf { self._data.array.inner }
         else if self.tag == TyTag::Generic { self._data.generic.inner }
         else { self._data.when.inner } // When
@@ -215,6 +241,11 @@ impl Ty {
     }
     fn array_ty_with_expr(elem: &Ty, size_expr: &Expr) -> Ty {
         Ty { tag: TyTag::Array, _data: _TyData { when: _TyWhenData { inner: elem, ret_ty: null, typeof_expr: size_expr } } }
+    }
+    /// `T...`: the elements of the tuple `T`, spliced into a tuple type or
+    /// a parameter list.
+    fn et_cetera_ty(inner: &Ty) -> Ty {
+        Ty { tag: TyTag::EtCetera, _data: _TyData { pointer: _TyPointerData { inner: inner, is_const: false } } }
     }
     fn tuple_ty(elems: &[&Ty]) -> Ty {
         Ty { tag: TyTag::Tuple, _data: _TyData { elems: elems } }
@@ -293,6 +324,62 @@ enum UnOp {
     BitNot = 2i32,
 }
 
+impl BinOp {
+    fn symbol(self: &BinOp) -> &[u8] {
+        switch *self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Rem => "%",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "^",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
+            _ => unreachable!(),
+        }
+    }
+
+    fn is_comparison(self: &BinOp) -> bool {
+        switch *self {
+            BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge => true,
+            _ => false,
+        }
+    }
+
+    fn is_equality(self: &BinOp) -> bool {
+        *self == BinOp::Eq || *self == BinOp::Ne
+    }
+
+    fn is_shift(self: &BinOp) -> bool {
+        *self == BinOp::Shl || *self == BinOp::Shr
+    }
+
+    fn is_logical(self: &BinOp) -> bool {
+        *self == BinOp::And || *self == BinOp::Or
+    }
+}
+
+impl UnOp {
+    fn symbol(self: &UnOp) -> &[u8] {
+        switch *self {
+            UnOp::Neg => "-",
+            UnOp::Not => "!",
+            UnOp::BitNot => "~",
+            _ => unreachable!(),
+        }
+    }
+}
+
 enum AssignOp {
     Assign = 0i32,
     AddAssign = 1i32,
@@ -305,6 +392,25 @@ enum AssignOp {
     BitXorAssign = 8i32,
     ShlAssign = 9i32,
     ShrAssign = 10i32,
+}
+
+impl AssignOp {
+    /// The operator of a compound assignment (`+` for `+=`, ...).
+    fn bin_op(self: &AssignOp) -> Option<BinOp> {
+        switch *self {
+            AssignOp::AddAssign => Option::some(BinOp::Add),
+            AssignOp::SubAssign => Option::some(BinOp::Sub),
+            AssignOp::MulAssign => Option::some(BinOp::Mul),
+            AssignOp::DivAssign => Option::some(BinOp::Div),
+            AssignOp::RemAssign => Option::some(BinOp::Rem),
+            AssignOp::BitAndAssign => Option::some(BinOp::BitAnd),
+            AssignOp::BitOrAssign => Option::some(BinOp::BitOr),
+            AssignOp::BitXorAssign => Option::some(BinOp::BitXor),
+            AssignOp::ShlAssign => Option::some(BinOp::Shl),
+            AssignOp::ShrAssign => Option::some(BinOp::Shr),
+            _ => Option::none(),
+        }
+    }
 }
 
 struct FieldInit {
@@ -997,6 +1103,25 @@ struct IrTy {
     _data: _IrTyData,
 }
 
+fn same_types(a: &[&IrTy], b: &[&IrTy]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (i, ty) in a.iter().enumerate() {
+        if !ty.same_as(b[i]) {
+            return false;
+        }
+    }
+    true
+}
+
+fn hash_types<H: std::hash::Hasher<H>>(tys: &[&IrTy], hasher: &mut H) {
+    tys.len().hash(hasher);
+    for ty in tys {
+        ty.hash_structure(hasher);
+    }
+}
+
 impl IrTy {
     // Accessors
     fn builtin(self: &IrTy) -> BuiltinType { self._data.builtin }
@@ -1024,6 +1149,69 @@ impl IrTy {
     }
     fn enum_ref(self: &IrTy) -> IrEnumRef { self._data.enum_ref }
     fn closure_fn(self: &IrTy) -> IrFnRef { self._data.closure.closure_fn }
+
+    /// Whether two types are the same type (types are not all interned, so
+    /// this compares their structure).
+    fn same_as(self: &IrTy, other: &IrTy) -> bool {
+        if self == other {
+            return true;
+        }
+        if self.tag != other.tag {
+            return false;
+        }
+        switch self.tag {
+            IrTyTag::Builtin => self.builtin() == other.builtin(),
+            IrTyTag::Pointer, IrTyTag::Slice =>
+                self.is_const() == other.is_const() && self.inner().same_as(other.inner()),
+            IrTyTag::Array => self.array_size() == other.array_size() && self.inner().same_as(other.inner()),
+            IrTyTag::Tuple => same_types(self.elems(), other.elems()),
+            IrTyTag::FnPointer => same_types(self.elems(), other.elems()) && self.ret_ty().same_as(other.ret_ty()),
+            IrTyTag::Struct => {
+                let (a, b) = (self.struct_ref(), other.struct_ref());
+                a.id._value == b.id._value && same_types(a.type_args, b.type_args)
+            }
+            IrTyTag::Closure => self.closure_fn().mangled_name == other.closure_fn().mangled_name,
+            IrTyTag::Enum => self.enum_ref().id._value == other.enum_ref().id._value,
+            IrTyTag::Fn => self.fn_item_ref().mangled_name == other.fn_item_ref().mangled_name,
+            IrTyTag::Protocol =>
+                self.proto_id() == other.proto_id() && same_types(self.proto_type_args(), other.proto_type_args()),
+            // Void, Never
+            _ => true,
+        }
+    }
+
+    /// Hash the type's structure, consistently with `same_as`.
+    fn hash_structure<H: std::hash::Hasher<H>>(self: &IrTy, hasher: &mut H) {
+        (self.tag as i32).hash(hasher);
+        switch self.tag {
+            IrTyTag::Builtin => (self.builtin() as i32).hash(hasher),
+            IrTyTag::Pointer, IrTyTag::Slice => {
+                self.is_const().hash(hasher);
+                self.inner().hash_structure(hasher);
+            }
+            IrTyTag::Array => {
+                self.array_size().hash(hasher);
+                self.inner().hash_structure(hasher);
+            }
+            IrTyTag::Tuple => hash_types(self.elems(), hasher),
+            IrTyTag::FnPointer => {
+                hash_types(self.elems(), hasher);
+                self.ret_ty().hash_structure(hasher);
+            }
+            IrTyTag::Struct => {
+                self.struct_ref().id._value.hash(hasher);
+                hash_types(self.struct_ref().type_args, hasher);
+            }
+            IrTyTag::Closure => self.closure_fn().mangled_name.hash(hasher),
+            IrTyTag::Enum => self.enum_ref().id._value.hash(hasher),
+            IrTyTag::Fn => self.fn_item_ref().mangled_name.hash(hasher),
+            IrTyTag::Protocol => {
+                self.proto_id().hash(hasher);
+                hash_types(self.proto_type_args(), hasher);
+            }
+            _ => {}
+        }
+    }
 
     fn mk_builtin(bt: BuiltinType) -> IrTy {
         IrTy { tag: IrTyTag::Builtin, _data: _IrTyData { builtin: bt } }

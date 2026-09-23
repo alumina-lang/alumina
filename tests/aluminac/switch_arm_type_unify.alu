@@ -9,7 +9,7 @@
 //
 // Surfaced as the runtime panic in `Forked::spawn`'s ChildStdio::new
 // (see PORTING_STATUS std/process entry); that was a downstream
-// symptom of this codegen bug. Fix lives in `lower_switch_as_if_else`:
+// symptom of this codegen bug. Fix lives in `lower_switch`:
 // pre-pass to determine the unified arm type, then propagate it via
 // `expected_type` into each arm's lowering.
 
@@ -18,7 +18,7 @@ enum Kind { Piped, Inherit }
 fn make_pair(k: Kind) -> (Option<i32>, Option<i32>) {
     let pair = switch k {
         Kind::Piped => (Option::some(7i32), Option::some(8i32)),
-        Kind::Inherit => (Option::none(), Option::none()),
+        _ => (Option::none(), Option::none()),
     };
     pair
 }

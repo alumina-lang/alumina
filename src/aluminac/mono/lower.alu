@@ -54,6 +54,19 @@ struct Mono {
     // picking up the OUTER caller's expected_type / return_type — see
     // the comment in `infer_type_args` for context.
     inside_arg_inference: bool,
+    // True while lowering an expression only to learn its type (for
+    // inference); it is lowered again for real, so diagnostics are
+    // dropped (as alumina-boot's `tentative` mode). Functions instantiated
+    // meanwhile are lowered for real (see enter_fn).
+    tentative: bool,
+    // Lambdas lowered in the current function body, by their AST node: a
+    // lambda's type does not depend on its context, so lowering it again
+    // (e.g. for real after tentatively) must give the same closure type.
+    lambda_cache: HashMap<usize, &IrExpr>,
+    // Hints for untyped `let`s of locals that are the value of a block with
+    // a hint, by local id: in `{ let x = ...; x }` expected to be `T`, `x`
+    // is expected to be `T` (as in alumina-boot).
+    local_type_hints: HashMap<usize, &IrTy>,
     // Type for the bounds of the range literal about to be lowered, set by
     // the one context that dictates it (slice indexing) and consumed by the
     // range lowering itself.
@@ -76,6 +89,8 @@ struct FnState {
     return_type: &IrTy,
     expected_type: &IrTy,
     inside_arg_inference: bool,
+    tentative: bool,
+    lambda_cache: HashMap<usize, &IrExpr>,
     loop_contexts: Vector<LoopContext>,
     const_replacements: HashMap<usize, ConstValue>,
     inference_incomplete: bool,
@@ -86,12 +101,16 @@ struct LoopContext {
     // a break-with-value lowered through this context (`has_value` flips
     // to true and the type is committed).
     result_slot_id: Id,
-    // Unified break-value type. Starts as Void; on the first break with a
-    // value, set to the value's IR type. Subsequent breaks should produce
+    // Unified break-value type. Starts as the loop's type hint; on the
+    // first break with a value, set to the value's IR type. Subsequent breaks should produce
     // the same type — aluminac's inference is too weak to unify divergent
     // shapes here, so the first break wins.
     break_value_ty: &IrTy,
     has_value: bool,
+    // Only `loop` can break with a value (`while` and `for` are `()`).
+    allows_value: bool,
+    // Whether any `break` targets the loop; a `loop` without one is `!`.
+    has_break: bool,
 }
 
 impl Mono {
@@ -110,6 +129,9 @@ impl Mono {
             bound_check_depth: 0usize,
             loop_contexts: Vector::new(),
             inside_arg_inference: false,
+            tentative: false,
+            lambda_cache: HashMap::new(),
+            local_type_hints: HashMap::new(),
             range_bound_hint: Option::none(),
             inference_incomplete: false,
         }
@@ -124,6 +146,8 @@ impl Mono {
             return_type: self.return_type,
             expected_type: self.expected_type,
             inside_arg_inference: self.inside_arg_inference,
+            tentative: self.tentative,
+            lambda_cache: self.lambda_cache,
             loop_contexts: self.loop_contexts,
             const_replacements: self.const_replacements,
             inference_incomplete: self.inference_incomplete,
@@ -133,6 +157,8 @@ impl Mono {
         self.return_type = return_type;
         self.expected_type = self.ctx.void_ty;
         self.inside_arg_inference = false;
+        self.tentative = false;
+        self.lambda_cache = HashMap::new();
         self.loop_contexts = Vector::new();
         self.const_replacements = HashMap::new();
         self.inference_incomplete = false;
@@ -147,11 +173,14 @@ impl Mono {
         self.local_defs.free();
         self.loop_contexts.free();
         self.const_replacements.free();
+        self.lambda_cache.free();
         self.local_types = saved.local_types;
         self.local_defs = saved.local_defs;
         self.return_type = saved.return_type;
         self.expected_type = saved.expected_type;
         self.inside_arg_inference = saved.inside_arg_inference;
+        self.tentative = saved.tentative;
+        self.lambda_cache = saved.lambda_cache;
         self.loop_contexts = saved.loop_contexts;
         self.const_replacements = saved.const_replacements;
         self.inference_incomplete = saved.inference_incomplete;
@@ -169,6 +198,9 @@ impl Mono {
     // compilation so deep instantiation chains don't repeat on every
     // cascading error.
     fn emit_diag(self: &mut Mono, diag: diagnostics::CodeDiagnostic) {
+        if self.tentative {
+            return;
+        }
         let first_error = !self.ctx.diag.has_errors;
         self.ctx.diag.emit(diag);
         if first_error {
@@ -367,7 +399,8 @@ impl Mono {
             TyTag::Array => {
                 let inner_ty = self.resolve_type(ty.inner());
                 let size: usize = if ty.typeof_expr() as &void as usize != 0 {
-                    let ir_size = self.lower_expr(ty.typeof_expr());
+                    let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+                    let ir_size = self.lower_expr_hinted(ty.typeof_expr(), usize_ty);
                     let val = self.try_const_eval_u64(ir_size);
                     if val.is_some() {
                         val.unwrap() as usize
@@ -380,19 +413,19 @@ impl Mono {
                 self.ctx.make_array_ty(inner_ty, size)
             }
             TyTag::Tuple => {
-                let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems().len());
-                for i in 0usize..ty.elems().len() {
-                    resolved[i] = self.resolve_type(ty.elems()[i]);
-                }
+                let resolved = self.resolve_type_list(ty.elems());
                 self.ctx.make_tuple_ty(resolved)
             }
             TyTag::FnPointer => {
-                let resolved_params = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems().len());
-                for i in 0usize..ty.elems().len() {
-                    resolved_params[i] = self.resolve_type(ty.elems()[i]);
-                }
+                let resolved_params = self.resolve_type_list(ty.elems());
                 let resolved_ret = self.resolve_type(ty.ret_ty());
                 self.ctx.make_fn_ptr_ty(resolved_params, resolved_ret)
+            }
+            TyTag::EtCetera => {
+                // Only valid in a list (see resolve_type_list).
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    Span::empty(), "`...` types are only allowed in tuples and parameter lists"));
+                self.ctx.void_ty
             }
             TyTag::Named => {
                 let item_ref = ItemRef { id: ty.id() };
@@ -527,59 +560,27 @@ impl Mono {
             return self.expected_type;
         }
 
-        // Hint 1: function return type matches the same struct
-        if self.return_type.tag == IrTyTag::Struct {
-            if self.return_type.struct_ref().id._value == struct_id
-                && self.return_type.struct_ref().type_args.len() > 0 {
-                return self.return_type;
-            }
-        }
-
-        // Hint 2: field-based type inference from the struct literal's field values
+        // Otherwise, infer them from the field values (which are lowered
+        // again for real with their fields' types as hints).
         let struct_def = sd.unwrap();
-        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(struct_def.generic_params.len());
-        let inferred_count = 0usize;
-        for i in 0usize..struct_def.generic_params.len() {
+        let n = struct_def.generic_params.len();
+        let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
+        let found = self.ctx.arena.alloc_slice::<bool>(n);
+        for i in 0usize..n {
             inferred[i] = self.ctx.void_ty;
+            found[i] = false;
         }
-
-        for fi in 0usize..expr.field_inits().len() {
-            let field_name = expr.field_inits()[fi].name;
-            // Find matching field in struct definition
-            for di in 0usize..struct_def.fields.len() {
-                if struct_def.fields[di].name == field_name {
-                    let field_ast_ty = struct_def.fields[di].ty;
-                    let value_ir = self.lower_expr(expr.field_inits()[fi].value);
-                    let value_ty = value_ir.ty;
-                    // Try to match field type against value type to infer generic params
-                    // Handle &mut T pattern: field is Pointer(Placeholder), value is Pointer(concrete)
-                    if field_ast_ty.tag == TyTag::Pointer && field_ast_ty.inner().tag == TyTag::Placeholder {
-                        let target_ty = if value_ty.tag == IrTyTag::Pointer { value_ty.inner() } else { value_ty };
-                        for gi in 0usize..struct_def.generic_params.len() {
-                            if struct_def.generic_params[gi].id._value == field_ast_ty.inner().id()._value {
-                                inferred[gi] = target_ty;
-                                inferred_count += 1usize;
-                                break;
-                            }
-                        }
-                    }
-                    // Handle direct Placeholder: field is Placeholder, value is concrete
-                    if field_ast_ty.tag == TyTag::Placeholder {
-                        for gi in 0usize..struct_def.generic_params.len() {
-                            if struct_def.generic_params[gi].id._value == field_ast_ty.id()._value {
-                                inferred[gi] = value_ty;
-                                inferred_count += 1usize;
-                                break;
-                            }
-                        }
-                    }
+        for init in expr.field_inits() {
+            for field in struct_def.fields {
+                if field.name == init.name {
+                    let value_ty = self.lower_expr_tentative(init.value).ty;
+                    self.unify_type_for_inference(field.ty, value_ty, inferred, found, struct_def.generic_params);
                     break;
                 }
             }
         }
-
-        if inferred_count > 0 {
-            return self.mono_struct(struct_def, inferred);
+        if found.iter().any(|f: bool| -> bool { f }) {
+            return self.mono_struct(struct_def, self.default_missing_type_args(struct_def.generic_params, inferred, found));
         }
 
         self.resolve_type(ast_ty)
@@ -629,77 +630,14 @@ impl Mono {
                 if attr.tag == AttrTag::Lang {
                     let lang = attr.str_val();
                     if lang == "typeop_arguments_of" && type_args.len() >= 1 {
-                        let f = type_args[0];
-                        let fn_id_for_args: usize = 0;
-                        let have_fn = false;
-                        if f.tag == IrTyTag::Fn {
-                            fn_id_for_args = f.fn_item_ref().id._value;
-                            have_fn = true;
-                        } else if f.tag == IrTyTag::Closure {
-                            // Closure's first IR-fn parameter is the env pointer; the
-                            // user-visible argument tuple skips it.
-                            fn_id_for_args = f.closure_fn().id._value;
-                            have_fn = true;
-                        }
-                        if have_fn {
-                            // Match on (id, mangled_name) — multiple monos of
-                            // the same source function share `id`, so we need
-                            // the mangled_name to pick the specific one the
-                            // type-arg `f` actually points at.
-                            let target_mangled = if f.tag == IrTyTag::Closure {
-                                f.closure_fn().mangled_name
-                            } else {
-                                f.fn_item_ref().mangled_name
-                            };
-                            for func in self.ctx.ir_functions.iter() {
-                                if func.id._value == fn_id_for_args
-                                    && func.mangled_name == target_mangled {
-                                    let params = func.params;
-                                    let skip: usize = if f.tag == IrTyTag::Closure { 1 } else { 0 };
-                                    let n = if params.len() >= skip { params.len() - skip } else { 0 };
-                                    let elems = self.ctx.arena.alloc_slice::<&IrTy>(n);
-                                    for j in 0usize..n {
-                                        elems[j] = params[j + skip].ty;
-                                    }
-                                    return self.ctx.make_tuple_ty(elems);
-                                }
-                            }
-                        } else if f.tag == IrTyTag::FnPointer {
-                            // FnPointer stores params in elems and return type separately.
-                            let params = f.elems();
-                            let elems = self.ctx.arena.alloc_slice::<&IrTy>(params.len());
-                            for j in 0usize..params.len() {
-                                elems[j] = params[j];
-                            }
-                            return self.ctx.make_tuple_ty(elems);
+                        let sig = self.callable_signature(type_args[0]);
+                        if sig.is_some() {
+                            return self.ctx.make_tuple_ty(sig.unwrap().0);
                         }
                     } else if lang == "typeop_return_type_of" && type_args.len() >= 1 {
-                        let f = type_args[0];
-                        let fn_id_for_ret: usize = 0;
-                        let have_fn = false;
-                        if f.tag == IrTyTag::Fn {
-                            fn_id_for_ret = f.fn_item_ref().id._value;
-                            have_fn = true;
-                        } else if f.tag == IrTyTag::Closure {
-                            fn_id_for_ret = f.closure_fn().id._value;
-                            have_fn = true;
-                        }
-                        if have_fn {
-                            // Same (id, mangled_name) rule as typeop_arguments_of —
-                            // see comment there.
-                            let target_mangled = if f.tag == IrTyTag::Closure {
-                                f.closure_fn().mangled_name
-                            } else {
-                                f.fn_item_ref().mangled_name
-                            };
-                            for func in self.ctx.ir_functions.iter() {
-                                if func.id._value == fn_id_for_ret
-                                    && func.mangled_name == target_mangled {
-                                    return func.return_type;
-                                }
-                            }
-                        } else if f.tag == IrTyTag::FnPointer {
-                            return f.ret_ty();
+                        let sig = self.callable_signature(type_args[0]);
+                        if sig.is_some() {
+                            return sig.unwrap().1;
                         }
                     } else if lang == "typeop_function_pointer_of" && type_args.len() >= 1 {
                         // function_pointer_of<Args: Tuple, Ret = ()>: produce fn(Args...) -> Ret.
@@ -853,6 +791,22 @@ impl Mono {
     ///
     /// A bare name with no type arguments at all is left alone: it means the
     /// arguments are to be inferred (e.g. a struct literal `Foo { .. }`).
+    /// Fill the type arguments that inference did not find with their
+    /// defaults (which can refer to the earlier parameters).
+    fn default_missing_type_args(self: &mut Mono, params: &[GenericParam], inferred: &mut [&IrTy], found: &[bool]) -> &[&IrTy] {
+        let outer_type_map = self.type_map;
+        self.type_map = outer_type_map.clone();
+        for (i, param) in params.iter().enumerate() {
+            if !found[i] && param.default_ty.is_some() {
+                inferred[i] = self.resolve_type(param.default_ty.unwrap());
+            }
+            self.type_map.insert(param.id._value, inferred[i]);
+        }
+        self.type_map.free();
+        self.type_map = outer_type_map;
+        inferred
+    }
+
     fn complete_type_args(self: &mut Mono, params: &[GenericParam], type_args: &[&IrTy]) -> &[&IrTy] {
         if type_args.len() == 0 || type_args.len() >= params.len() {
             return type_args;
@@ -1296,9 +1250,104 @@ impl Mono {
         idx
     }
 
-    // Lower an AST expression to IR, stamping the source span onto the result
+    fn mk_void(self: &mut Mono) -> &IrExpr {
+        let v = IrExpr::void_expr(self.ctx.void_ty);
+        v.tag = IrTag::Void;
+        self.ctx.arena.alloc(v)
+    }
+
+    /// The type of an expression with several branches (`if`, `switch`),
+    /// which must agree on it (as in alumina-boot): diverging branches take
+    /// any type, and otherwise a branch must coerce to the others' type
+    /// (e.g. `&[T; 0]` to `&[T]`, or `&mut T` to `&T`), in which case it is
+    /// coerced in place, so that all of them produce the same representation.
+    /// `unit_note` explains where an implicit `()` branch comes from.
+    fn unify_branches(self: &mut Mono, branches: &mut [&IrExpr], span: Span, unit_note: &[u8]) -> &IrTy {
+        let result_ty = self.ctx.never_ty;
+        for (i, branch) in branches.iter().enumerate() {
+            if branch.ty.is_never() || branch.ty == result_ty {
+                continue;
+            }
+            if result_ty.is_never() {
+                result_ty = branch.ty;
+                continue;
+            }
+            let coerced = self.try_coerce(branch, result_ty);
+            if coerced as &void != null {
+                branches[i] = coerced;
+                continue;
+            }
+            // Maybe the earlier branches coerce to this one's type instead.
+            let all_coerce = true;
+            for earlier in branches[..i] {
+                if !earlier.ty.is_never() && self.try_coerce(earlier, branch.ty) as &void == null {
+                    all_coerce = false;
+                }
+            }
+            if all_coerce {
+                result_ty = branch.ty;
+                for j in 0usize..i {
+                    if !branches[j].ty.is_never() {
+                        branches[j] = self.try_coerce(branches[j], result_ty);
+                    }
+                }
+                continue;
+            }
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                span,
+                std::fmt::format!(
+                    "branches have incompatible types: `{}` and `{}`",
+                    self.ir_type_name(result_ty),
+                    self.ir_type_name(branch.ty),
+                ).unwrap().as_slice(),
+            ));
+            if !unit_note.is_empty() && (result_ty.is_void() || branch.ty.is_void()) {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, unit_note));
+            }
+            break;
+        }
+        result_ty
+    }
+
+    /// Lower the body of a `while` or `for` loop (whose `break`s have no
+    /// value).
+    fn lower_loop_body(self: &mut Mono, body: &Expr) -> &IrExpr {
+        self.loop_contexts.push(LoopContext {
+            result_slot_id: Id { _value: 0 },
+            break_value_ty: self.ctx.void_ty,
+            has_value: false,
+            allows_value: false,
+            has_break: false,
+        });
+        let result = self.lower_expr(body);
+        self.loop_contexts.pop();
+        result
+    }
+
+    /// Lower an expression only to learn its type (see `tentative`).
+    fn lower_expr_tentative(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let saved = self.tentative;
+        self.tentative = true;
+        let result = self.lower_expr(expr);
+        self.tentative = saved;
+        result
+    }
+
+    /// Lower an expression without a type hint.
     fn lower_expr(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        self.lower_expr_hinted(expr, self.ctx.void_ty)
+    }
+
+    /// Lower an expression with a type hint (as alumina-boot's `type_hint`):
+    /// the type the context expects it to have, which steers inference and
+    /// literal types, but is not enforced. The hint is `expected_type` while
+    /// the expression itself is lowered; its subexpressions get only the
+    /// hints it passes on to them.
+    fn lower_expr_hinted(self: &mut Mono, expr: &Expr, hint: &IrTy) -> &IrExpr {
+        let saved_hint = self.expected_type;
+        self.expected_type = hint;
         let result = self.lower_expr_inner(expr);
+        self.expected_type = saved_hint;
         // Stamp the AST span onto the IR expression
         if expr.span.start != 0u32 || expr.span.end != 0u32 {
             let m = result as &void as &mut IrExpr;
@@ -1329,32 +1378,7 @@ impl Mono {
                 self.lower_call(expr),
             ExprTag::Block, ExprTag::Let, ExprTag::Defer =>
                 self.lower_block(expr),
-            ExprTag::TupleLit => {
-                let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
-                let elem_types = self.ctx.arena.alloc_slice::<&IrTy>(expr.args().len());
-                // Propagate expected element types into the per-component
-                // lowering so that integer / float literals pick up the right
-                // type (e.g. `(u32_val, 1)` returning `(u32, usize)` should
-                // see the second arm as usize, not the i32 default).
-                let expected_tuple: &IrTy = self.expected_type;
-                let n = expr.args().len();
-                let has_tuple_hint = expected_tuple as &void as usize != 0usize
-                    && expected_tuple.tag == IrTyTag::Tuple
-                    && expected_tuple.elems().len() == n;
-                for i in 0usize..n {
-                    ir_elems[i] = if has_tuple_hint {
-                        self.lower_expr_coerced(expr.args()[i], expected_tuple.elems()[i])
-                    } else {
-                        self.lower_expr(expr.args()[i])
-                    };
-                    elem_types[i] = ir_elems[i].ty;
-                }
-                let tuple_ty = self.ctx.make_tuple_ty(elem_types);
-                let result = IrExpr::void_expr(tuple_ty);
-                result.tag = IrTag::TupleLit;
-                result._data.block.items = ir_elems;
-                self.ctx.arena.alloc(result)
-            }
+            ExprTag::TupleLit => self.lower_tuple_lit(expr),
             ExprTag::ArrayLit => {
                 // Propagate the expected element type into per-element
                 // lowering so call inference can solve generics from the
@@ -1375,7 +1399,8 @@ impl Mono {
                     expected_elem_ty = self.expected_type.inner().inner();
                 }
                 let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
-                let elem_ty = self.ctx.void_ty;
+                // (An empty array's element type is the hint's.)
+                let elem_ty = expected_elem_ty;
                 for i in 0usize..expr.args().len() {
                     if !expected_elem_ty.is_void() {
                         ir_elems[i] = self.lower_expr_coerced(expr.args()[i], expected_elem_ty);
@@ -1620,12 +1645,9 @@ impl Mono {
         // struct-lit field would see the flag still true (the parent's
         // arg-walk left it set) and refuse to bind mem::uninitialized's T
         // from the field's type — instead it'd default to void.
-        let saved_expected = self.expected_type;
         let saved_in_arg_inf = self.inside_arg_inference;
-        self.expected_type = expected_ty;
         self.inside_arg_inference = false;
-        let lowered = self.lower_expr(expr);
-        self.expected_type = saved_expected;
+        let lowered = self.lower_expr_hinted(expr, expected_ty);
         self.inside_arg_inference = saved_in_arg_inf;
         let coerced = self.coerce_int(lowered, expected_ty);
         self.coerce_to_type(coerced, expected_ty)
@@ -1633,10 +1655,6 @@ impl Mono {
 
     // Wrap an IR expression in an implicit cast if types differ
     fn coerce_int(self: &mut Mono, ir: &IrExpr, expected: &IrTy) -> &IrExpr {
-        if ir.ty.tag == IrTyTag::Builtin && expected.tag == IrTyTag::Builtin && ir.ty != expected {
-            // Both are builtin types but differ - insert an implicit cast
-            return self.mk_cast(ir, expected);
-        }
         // Coerce null literal to expected pointer type
         if ir.tag == IrTag::NullLit && expected.tag == IrTyTag::Pointer && ir.ty != expected {
             let result = IrExpr::void_expr(expected);
@@ -1691,6 +1709,8 @@ impl Mono {
         if expr.tag == ExprTag::IntLit {
             let ty = if expr.type_suffix().is_some() {
                 self.ctx.intern_builtin_ty(expr.type_suffix().unwrap())
+            } else if self.expected_type.tag == IrTyTag::Builtin && self.expected_type.builtin().is_integer() {
+                self.expected_type
             } else {
                 self.ctx.intern_builtin_ty(BuiltinType::I32) // default int type
             };
@@ -1698,6 +1718,9 @@ impl Mono {
         } else if expr.tag == ExprTag::FloatLit {
             let ty = if expr.type_suffix().is_some() {
                 self.ctx.intern_builtin_ty(expr.type_suffix().unwrap())
+            } else if self.expected_type.tag == IrTyTag::Builtin
+                && (self.expected_type.builtin() == BuiltinType::F32 || self.expected_type.builtin() == BuiltinType::F64) {
+                self.expected_type
             } else {
                 self.ctx.intern_builtin_ty(BuiltinType::F64)
             };
@@ -1716,8 +1739,12 @@ impl Mono {
             result._data.lit.str_val = expr.str_val();
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::NullLit {
-            let void_ty = self.ctx.void_ty;
-            let ptr_ty = self.ctx.make_ptr_ty(void_ty, false);
+            // `null` is a pointer of the expected type, `&mut void` by default.
+            let ptr_ty = if self.expected_type.tag == IrTyTag::Pointer {
+                self.expected_type
+            } else {
+                self.ctx.make_ptr_ty(self.ctx.void_ty, false)
+            };
             let result = IrExpr::void_expr(ptr_ty);
             result.tag = IrTag::NullLit;
             self.ctx.arena.alloc(result)
@@ -2010,7 +2037,7 @@ impl Mono {
         for p in 0usize..num_explicit {
             if p >= args.len() { break; }
             let param_ty = def.params[p + 1].ty;
-            let arg_ty = self.lower_expr(args[p]).ty;
+            let arg_ty = self.lower_expr_tentative(args[p]).ty;
             self.unify_type_for_inference(param_ty, arg_ty, inferred, found, synthetic);
         }
 
@@ -2217,7 +2244,12 @@ impl Mono {
                         had_params[gi] = false;
                     }
                 }
-                concrete_ty = self.resolve_type(alias.target);
+                // As in alumina-boot, `Alias::f` is the target's `f` with its
+                // generic parameters inferred afresh: the alias's arguments
+                // are not applied (so with `type Result<T> = Result<T, Error>`,
+                // `Result::ok(())` can still be a `Result<(), fmt::Error>`).
+                let target = if alias.target.tag == TyTag::Generic { alias.target.inner() } else { alias.target };
+                concrete_ty = self.resolve_type(target);
                 // Restore saved type_map entries
                 for gi in 0usize..alias.generic_params.len() {
                     if had_params[gi] {
@@ -2437,7 +2469,8 @@ impl Mono {
             _ => "",
         };
         if !lang_name.is_empty() && self.ctx.get_lang_item(lang_name).is_some() {
-            let rhs = self.coerce_to_type(ir_rhs, ir_lhs.ty);
+            // (As in alumina-boot, the right operand must coerce to the left's type.)
+            let rhs = self.check_and_coerce(ir_rhs, ir_lhs.ty, ir_rhs.span);
             return self.call_lang_fn(
                 lang_name,
                 &[ir_lhs.ty],
@@ -2509,143 +2542,79 @@ impl Mono {
         Option::none()
     }
 
-    // Desugar a switch on a non-integer type into an if-else chain with == comparisons.
-    // This is used for types like strings, structs, etc. that can't use LLVM's switch instruction.
-    // Produces: { let __tmp = value; if __tmp == pat1 || __tmp == pat2 { body1 } else if ... else { default } }
-    fn lower_switch_as_if_else(self: &mut Mono, ir_value: &IrExpr, arms: &[SwitchArm]) -> &IrExpr {
-        // Create a temp variable to evaluate the discriminant once
+    /// Lower a switch (as alumina-boot, sugar for a chain of `==` tests in
+    /// arm order):
+    ///     { let _switch = value; if _switch == p1 || _switch == p2 { a1 } else if ... else { default } }
+    /// A missing default arm is `()`, and the arms must agree on a type.
+    fn lower_switch(self: &mut Mono, ir_value: &IrExpr, arms: &[SwitchArm], span: Span) -> &IrExpr {
+        // Evaluate the value once.
         let tmp_id = self.ctx.id_gen.next_id();
         self.local_defs.push(IrLocalDef { id: tmp_id, ty: ir_value.ty, name: "_switch", span: Span::empty() });
         let ir_let = self.mk_let(tmp_id, ir_value.ty, ir_value);
         let tmp_read = self.mk_local(tmp_id, ir_value.ty);
 
-        // Separate default arm from non-default arms.
-        //
-        // Per alumina-boot's semantics (src/alumina-boot/src/ast/expressions.rs's
-        // visit_switch_expression, around line 1250), a missing default arm
-        // desugars to an implicit `ExprKind::Void` — i.e. the unit value `()`.
-        // Type unification of arm bodies with `()` is what produces alumina-boot's
-        // "branches have incompatible types (i32, ())" error when the user
-        // omits a default on a value-producing switch. So we always pass a
-        // concrete `else_expr` down the chain: either the user's default body
-        // or a synthesized Void IrExpr.
-        // If the switch is in an rvalue position with a known expected_type
-        // (e.g. `let p: &dyn Foo = switch i { 0 => &Quux{}, 1 => &Frob{}, ... }`),
-        // propagate it to each arm so coercion (notably dyn vtable build) runs
-        // per-arm. Mirrors the same fix in the If branch above.
+        // Arms get the switch's hint or, lacking one, the first arm's type
+        // (as `else` gets the `then` branch's). With a `&dyn` hint, each arm
+        // is coerced to it, since the arms' pointees usually differ.
         let outer_expected = self.expected_type;
-        let propagate_to_arms = !outer_expected.is_void()
-            && !outer_expected.is_never()
-            && outer_expected.tag == IrTyTag::Struct
-            && {
-                let dyn_id = self.ctx.get_lang_item("dyn");
-                dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
-            };
-
-        // Pre-pass: lower the first non-default arm's body to determine the
-        // arms' unified result type. Subsequent arms get this type propagated
-        // as expected_type so e.g. a `Kind::Inherit => (Option::none(), Option::none())`
-        // arm doesn't mono `Option::none<void>()` and bitcast-blast the
-        // pad bits when paired with a `Kind::Piped => (Option::some(7i32), ...)`
-        // arm — the bug that gated `std/process` unification at runtime.
-        // Mirrors the if-arm expected_type propagation a few lines above.
-        let unified_arm_ty: &IrTy = self.ctx.void_ty;
-        for arm in arms.iter() {
-            if arm.pattern.len() > 0 {
-                // Probe the first arm's type (without committing to its IR —
-                // we re-lower below for ordering / propagation reasons).
-                let probe = self.lower_expr(arm.body);
-                if !probe.ty.is_void() && !probe.ty.is_never() {
-                    unified_arm_ty = probe.ty;
-                }
-                break;
-            }
-        }
-
-        let default_body: &IrExpr = self.ctx.arena.alloc(IrExpr::void_expr(self.ctx.void_ty));
-        for arm in arms.iter() {
-            if arm.pattern.len() == 0 {
-                default_body = if propagate_to_arms {
-                    self.lower_expr_coerced(arm.body, outer_expected)
-                } else if !unified_arm_ty.is_void() {
-                    self.lower_expr_coerced(arm.body, unified_arm_ty)
-                } else {
-                    self.lower_expr(arm.body)
-                };
-            }
-        }
-
-        // Count non-default arms
-        let non_default_count: usize = 0;
-        for arm in arms.iter() {
-            if arm.pattern.len() > 0 {
-                non_default_count += 1;
-            }
-        }
-
-        // Process arms in reverse order to build nested if-else with
-        // `default_body` as the deepest else.
-        let else_expr: Option<&IrExpr> = Option::some(default_body);
-        let arm_idx: usize = non_default_count;
-        while arm_idx > 0 {
-            arm_idx -= 1;
-
-            // Find the arm_idx'th non-default arm
-            let actual_i: usize = 0;
-            let count: usize = 0;
-            for (i, arm) in arms.iter().enumerate() {
-                if arm.pattern.len() > 0 {
-                    if count == arm_idx {
-                        actual_i = i;
-                    }
-                    count += 1;
-                }
-            }
-
-            let arm = &arms[actual_i];
-            let arm_body = if propagate_to_arms {
+        let dyn_id = self.ctx.get_lang_item("dyn");
+        let coerce_to_dyn = outer_expected.tag == IrTyTag::Struct
+            && dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap();
+        let hint = outer_expected;
+        let bodies: Vector<&IrExpr> = Vector::new();
+        defer bodies.free();
+        let default_idx: Option<usize> = Option::none();
+        for (i, arm) in arms.iter().enumerate() {
+            let body = if coerce_to_dyn {
                 self.lower_expr_coerced(arm.body, outer_expected)
-            } else if !unified_arm_ty.is_void() {
-                self.lower_expr_coerced(arm.body, unified_arm_ty)
             } else {
-                self.lower_expr(arm.body)
+                self.lower_expr_hinted(arm.body, hint)
             };
-
-            // Build condition: tmp == pat[0] || tmp == pat[1] || ...
-            let cond: &IrExpr = null;
-            for (j, pat) in arm.pattern.iter().enumerate() {
-                let pat_val = self.lower_expr(pat);
-
-                // Build the == comparison, using operator overload for non-primitive types
-                let eq_expr: &IrExpr = if ir_value.ty.tag == IrTyTag::Struct || ir_value.ty.tag == IrTyTag::Slice {
-                    let overload = self.try_operator_overload(BinOp::Eq, tmp_read, pat_val);
-                    if overload.is_some() {
-                        overload.unwrap()
-                    } else {
-                        self.mk_binary(BinOp::Eq, tmp_read, pat_val, self.ctx.bool_ty)
-                    }
-                } else {
-                    self.mk_binary(BinOp::Eq, tmp_read, pat_val, self.ctx.bool_ty)
-                };
-
-                if j == 0 {
-                    cond = eq_expr;
-                } else {
-                    cond = self.mk_binary(BinOp::Or, cond, eq_expr, self.ctx.bool_ty);
-                }
+            if hint.is_void() && !body.ty.is_never() {
+                hint = body.ty;
             }
-
-            else_expr = Option::some(self.mk_if(cond, arm_body, else_expr));
+            bodies.push(body);
+            if arm.pattern.is_empty() {
+                default_idx = Option::some(i);
+            }
         }
-
-        // Wrap in block: { let __tmp = value; <if-else chain> }
-        let chain = if else_expr.is_some() {
-            else_expr.unwrap()
+        if default_idx.is_none() {
+            default_idx = Option::some(bodies.len());
+            bodies.push(self.mk_void());
+        }
+        let has_default = default_idx.unwrap() < arms.len();
+        let result_ty = self.unify_branches(bodies.as_slice_mut(), span, if has_default {
+            ""
         } else {
-            let v = IrExpr::void_expr(self.ctx.void_ty);
-            v.tag = IrTag::Void;
-            self.ctx.arena.alloc(v) as &IrExpr
-        };
+            "a `switch` without a default arm (`_ =>`) has type `()`"
+        });
+
+        // Build the chain from the innermost `else` (the default) outwards.
+        let chain = bodies[default_idx.unwrap()];
+        let i = arms.len();
+        while i > 0 {
+            i -= 1;
+            let arm = &arms[i];
+            if arm.pattern.is_empty() {
+                continue;
+            }
+            // cond: _switch == p1 || _switch == p2 || ...
+            let cond: &IrExpr = null;
+            for pat in arm.pattern {
+                // Patterns are compared with the value, so they get its type as hint.
+                let pat_val = self.lower_expr_hinted(pat, ir_value.ty);
+                let is_aggregate = ir_value.ty.tag == IrTyTag::Struct || ir_value.ty.tag == IrTyTag::Slice;
+                let overload = if is_aggregate {
+                    self.try_operator_overload(BinOp::Eq, tmp_read, pat_val)
+                } else {
+                    Option::none()
+                };
+                let eq = overload.unwrap_or(self.mk_binary(BinOp::Eq, tmp_read, pat_val, self.ctx.bool_ty));
+                cond = if cond as &void == null { eq } else { self.mk_binary(BinOp::Or, cond, eq, self.ctx.bool_ty) };
+            }
+            chain = self.mk_if(cond, bodies[i], Option::some(chain));
+            (chain as &mut IrExpr).ty = result_ty;
+        }
 
         let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
         block_stmts[0] = ir_let;
@@ -2653,58 +2622,296 @@ impl Mono {
         self.mk_block(block_stmts)
     }
 
+    /// The type hint for the right operand of `op` (as in alumina-boot).
+    fn operand_hint(self: &mut Mono, op: BinOp, lhs_ty: &IrTy) -> &IrTy {
+        if op.is_shift() {
+            self.ctx.intern_builtin_ty(BuiltinType::USize)
+        } else if (op == BinOp::Add || op == BinOp::Sub) && lhs_ty.tag == IrTyTag::Pointer {
+            self.ctx.intern_builtin_ty(BuiltinType::ISize)
+        } else {
+            lhs_ty
+        }
+    }
+
+    /// The result type of a builtin binary operation (as alumina-boot's
+    /// `typecheck_binary`), or none if the operands don't support it, in
+    /// which case comparisons can still go through the operator protocols.
+    /// There are no implicit conversions: integer and float operands have
+    /// the same type, except for shift amounts.
+    fn binary_result_ty(self: &mut Mono, op: BinOp, lhs: &IrTy, rhs: &IrTy, span: Span) -> Option<&IrTy> {
+        let result = if op.is_comparison() { self.ctx.bool_ty } else { lhs };
+        switch lhs.tag {
+            IrTyTag::Builtin => {
+                if rhs.tag != IrTyTag::Builtin { return Option::none(); }
+                let (l, r) = (lhs.builtin(), rhs.builtin());
+                if op.is_shift() {
+                    return if l.is_integer() && r.is_integer() { Option::some(lhs) } else { Option::none() };
+                }
+                if l != r {
+                    return Option::none();
+                }
+                let valid = if l.is_integer() {
+                    !op.is_logical()
+                } else if l.is_float() {
+                    op.is_comparison() || op == BinOp::Add || op == BinOp::Sub || op == BinOp::Mul || op == BinOp::Div
+                } else if l == BuiltinType::Bool {
+                    op.is_logical() || op.is_equality() || op == BinOp::BitXor
+                } else {
+                    false
+                };
+                if valid { Option::some(result) } else { Option::none() }
+            }
+            IrTyTag::Pointer => {
+                if rhs.tag == IrTyTag::Pointer {
+                    if lhs.inner() != rhs.inner() {
+                        Option::none()
+                    } else if op.is_comparison() {
+                        Option::some(result)
+                    } else if op == BinOp::Sub && lhs.is_const() == rhs.is_const() {
+                        if lhs.inner().is_zero_sized() {
+                            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                                span, "pointer difference on zero-sized types is meaningless"));
+                        }
+                        Option::some(self.ctx.intern_builtin_ty(BuiltinType::ISize))
+                    } else {
+                        Option::none()
+                    }
+                } else if (op == BinOp::Add || op == BinOp::Sub) && rhs.tag == IrTyTag::Builtin
+                    && (rhs.builtin() == BuiltinType::ISize || rhs.builtin() == BuiltinType::USize) {
+                    if lhs.inner().is_zero_sized() {
+                        self.emit_diag(diagnostics::CodeDiagnostic::generic_warning(
+                            span, "pointer offset on zero-sized types is a no-op"));
+                    }
+                    Option::some(lhs)
+                } else {
+                    Option::none()
+                }
+            }
+            // Enums, function pointers and unit values compare for equality.
+            IrTyTag::Enum => {
+                let same = rhs.tag == IrTyTag::Enum && lhs.enum_ref().id._value == rhs.enum_ref().id._value;
+                if same && op.is_equality() { Option::some(result) } else { Option::none() }
+            }
+            IrTyTag::FnPointer, IrTyTag::Void => {
+                if lhs == rhs && op.is_equality() { Option::some(result) } else { Option::none() }
+            }
+            _ => Option::none(),
+        }
+    }
+
+    fn report_invalid_binop(self: &mut Mono, op: BinOp, lhs: &IrTy, rhs: &IrTy, span: Span) {
+        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+            span,
+            std::fmt::format!(
+                "cannot apply `{}` to `{}` and `{}`",
+                op.symbol(),
+                self.ir_type_name(lhs),
+                self.ir_type_name(rhs),
+            ).unwrap().as_slice(),
+        ));
+    }
+
+    /// Lower a tuple literal. Its elements get the expected tuple's element
+    /// types as hints (so e.g. `(x, 1)` expected to be `(u32, usize)` has a
+    /// `usize` literal), and a `t...` element splices in the elements of the
+    /// tuple `t` (evaluated once, in order).
+    fn lower_tuple_lit(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let hint = self.expected_type;
+        let has_spread = expr.args().iter().any(|e: &Expr| -> bool { e.tag == ExprTag::EtCetera });
+        let hints_apply = hint.tag == IrTyTag::Tuple && hint.elems().len() == expr.args().len() && !has_spread;
+
+        let stmts: Vector<&IrExpr> = Vector::new();
+        defer stmts.free();
+        let elems: Vector<&IrExpr> = Vector::new();
+        defer elems.free();
+        for (i, arg) in expr.args().iter().enumerate() {
+            if arg.tag != ExprTag::EtCetera {
+                elems.push(if hints_apply {
+                    self.lower_expr_coerced(arg, hint.elems()[i])
+                } else {
+                    self.lower_expr(arg)
+                });
+                continue;
+            }
+            let spread = self.lower_expr(arg.lhs());
+            switch spread.ty.tag {
+                IrTyTag::Tuple => {
+                    let tmp_id = self.ctx.id_gen.next_id();
+                    self.local_defs.push(IrLocalDef { id: tmp_id, ty: spread.ty, name: "_spread", span: arg.span });
+                    stmts.push(self.mk_let(tmp_id, spread.ty, spread));
+                    for (j, elem_ty) in spread.ty.elems().iter().enumerate() {
+                        elems.push(self.mk_field(self.mk_local(tmp_id, spread.ty), j as u32, elem_ty));
+                    }
+                }
+                // `()...` spreads to nothing, but is still evaluated.
+                IrTyTag::Void => stmts.push(spread),
+                _ => {
+                    let name = self.ir_type_name(spread.ty);
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        arg.span,
+                        std::fmt::format!("`...` of `{}`: only tuples can be spread", name).unwrap().as_slice(),
+                    ));
+                }
+            }
+        }
+
+        let items = self.ctx.arena.alloc_slice_copy::<&IrExpr>(elems.as_slice());
+        let elem_types = self.ctx.arena.alloc_slice::<&IrTy>(items.len());
+        for (i, item) in items.iter().enumerate() {
+            elem_types[i] = item.ty;
+        }
+        let result = IrExpr::void_expr(self.ctx.make_tuple_ty(elem_types));
+        result.tag = IrTag::TupleLit;
+        result._data.block.items = items;
+        let tuple = self.ctx.arena.alloc(result) as &IrExpr;
+        if stmts.is_empty() {
+            return tuple;
+        }
+        stmts.push(tuple);
+        self.mk_block(self.ctx.arena.alloc_slice_copy::<&IrExpr>(stmts.as_slice()))
+    }
+
+    /// The parameter types (without a closure's environment) and the return
+    /// type of a function item, closure or function pointer.
+    fn callable_signature(self: &Mono, ty: &IrTy) -> Option<(&[&IrTy], &IrTy)> {
+        let fn_ref = switch ty.tag {
+            IrTyTag::FnPointer => return Option::some((ty.elems(), ty.ret_ty())),
+            IrTyTag::Fn => ty.fn_item_ref(),
+            IrTyTag::Closure => ty.closure_fn(),
+            _ => return Option::none(),
+        };
+        // Instances of a function share its id, so match the mangled name too.
+        for func in self.ctx.ir_functions.iter() {
+            if func.id._value == fn_ref.id._value && func.mangled_name == fn_ref.mangled_name {
+                let skip: usize = if ty.tag == IrTyTag::Closure { 1 } else { 0 };
+                let params = self.ctx.arena.alloc_slice::<&IrTy>(func.params.len() - skip);
+                for (i, param) in func.params[skip..].iter().enumerate() {
+                    params[i] = param.ty;
+                }
+                return Option::some((params as &[&IrTy], func.return_type));
+            }
+        }
+        Option::none()
+    }
+
+    /// `F: Fn(A...) -> R` with F inferred as a callable: its signature gives
+    /// A and R.
+    fn infer_from_callable_bounds(
+        self: &mut Mono,
+        generic_params: &[GenericParam],
+        inferred: &mut [&IrTy],
+        found: &mut [bool],
+    ) {
+        for (h, param) in generic_params.iter().enumerate() {
+            if !found[h] { continue; }
+            for bound in param.bounds {
+                if bound.tag == TyTag::FnPointer {
+                    self.unify_type_for_inference(bound, inferred[h], inferred, found, generic_params);
+                }
+            }
+        }
+    }
+
+    /// Unify a tuple's or parameter list's types with the actual ones; a
+    /// `T...` spread takes the actual types it covers as the tuple `T`.
+    fn unify_type_list_for_inference(
+        self: &mut Mono,
+        param_tys: &[&Ty],
+        arg_tys: &[&IrTy],
+        inferred: &mut [&IrTy],
+        found: &mut [bool],
+        generic_params: &[GenericParam],
+    ) {
+        let spread = param_tys.iter().find_index(|t: &Ty| -> bool { t.tag == TyTag::EtCetera });
+        if spread.is_none() {
+            if param_tys.len() != arg_tys.len() { return; }
+            for (i, param_ty) in param_tys.iter().enumerate() {
+                self.unify_type_for_inference(param_ty, arg_tys[i], inferred, found, generic_params);
+            }
+            return;
+        }
+        let at = spread.unwrap();
+        let after = param_tys.len() - at - 1;
+        if arg_tys.len() < at + after { return; }
+        let spread_end = arg_tys.len() - after;
+        for i in 0usize..at {
+            self.unify_type_for_inference(param_tys[i], arg_tys[i], inferred, found, generic_params);
+        }
+        let covered = self.ctx.make_tuple_ty(arg_tys[at..spread_end]);
+        self.unify_type_for_inference(param_tys[at].inner(), covered, inferred, found, generic_params);
+        for i in 0usize..after {
+            self.unify_type_for_inference(param_tys[at + 1 + i], arg_tys[spread_end + i], inferred, found, generic_params);
+        }
+    }
+
+    /// Resolve the types of a tuple or parameter list, splicing in the
+    /// elements of `T...` spreads (`T` must be a tuple; `()` spreads to
+    /// nothing).
+    fn resolve_type_list(self: &mut Mono, tys: &[&Ty]) -> &[&IrTy] {
+        let resolved: Vector<&IrTy> = Vector::new();
+        defer resolved.free();
+        for ty in tys {
+            if ty.tag != TyTag::EtCetera {
+                resolved.push(self.resolve_type(ty));
+                continue;
+            }
+            let spread = self.resolve_type(ty.inner());
+            switch spread.tag {
+                IrTyTag::Tuple => resolved.extend_from_slice(spread.elems()),
+                IrTyTag::Void => {},
+                _ => {
+                    let name = self.ir_type_name(spread);
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        Span::empty(),
+                        std::fmt::format!("`{}...`: only tuples can be spread", name).unwrap().as_slice(),
+                    ));
+                }
+            }
+        }
+        self.ctx.arena.alloc_slice_copy::<&IrTy>(resolved.as_slice())
+    }
+
     // Lower binary/unary/assignment ops: ExprTag::Binary, ExprTag::Unary, ExprTag::Assign, EXPR_COMPOUND_ASSIGN
     fn lower_binop(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Binary {
-            // If the LHS is an unsuffixed integer literal and the RHS is a typed
-            // expression, lower the RHS first so we can coerce the literal to the
-            // RHS's type. Otherwise `10 * m` where m: u64 defaults `10` to i32 and
-            // then casts m down to i32, truncating values beyond i32::MAX.
-            // Surfaced by ryu's parse64 mantissa accumulation
-            // (`m10 = 10 * m10 + ...`).
-            let lhs_is_untyped_int = expr.lhs().tag == ExprTag::IntLit
-                && expr.lhs().type_suffix().is_none();
-            let rhs_is_untyped_int = expr.rhs().tag == ExprTag::IntLit
-                && expr.rhs().type_suffix().is_none();
-            let ir_lhs: &IrExpr;
-            let ir_rhs: &IrExpr;
-            if lhs_is_untyped_int && !rhs_is_untyped_int {
-                ir_rhs = self.lower_expr(expr.rhs());
-                ir_lhs = self.lower_expr_coerced(expr.lhs(), ir_rhs.ty);
+            let op = expr.bin_op();
+            // Hints as in alumina-boot: arithmetic operands have the result's
+            // type, comparison operands have no expected type, and the right
+            // operand has the left one's type (except for shift amounts and
+            // pointer offsets).
+            let lhs_hint = if op.is_comparison() {
+                self.ctx.void_ty
+            } else if op.is_logical() {
+                self.ctx.bool_ty
             } else {
-                ir_lhs = self.lower_expr(expr.lhs());
-                ir_rhs = self.lower_expr_coerced(expr.rhs(), ir_lhs.ty);
+                self.expected_type
+            };
+            let ir_lhs = self.lower_expr_hinted(expr.lhs(), lhs_hint);
+            let ir_rhs = self.lower_expr_hinted(expr.rhs(), self.operand_hint(op, ir_lhs.ty));
+            let fallback_ty = if op.is_comparison() || op.is_logical() { self.ctx.bool_ty } else { ir_lhs.ty };
+            if ir_lhs.ty.is_never() || ir_rhs.ty.is_never() {
+                return self.mk_binary(op, ir_lhs, ir_rhs, fallback_ty);
             }
 
-            // For comparison operators on struct types, try operator overloading
-            let is_comparison = expr.bin_op() == BinOp::Eq
-                || expr.bin_op() == BinOp::Ne
-                || expr.bin_op() == BinOp::Lt
-                || expr.bin_op() == BinOp::Le
-                || expr.bin_op() == BinOp::Gt
-                || expr.bin_op() == BinOp::Ge;
-            // Tuples dispatch via the lang `tuple` impl (sysroot mixes in
-            // Comparable<Tup>); Eq/Ne falls back to the codegen unrolling at
-            // gen_binary if no `equals` / `not_equals` is mixed in.
-            if is_comparison && (ir_lhs.ty.tag == IrTyTag::Struct || ir_lhs.ty.tag == IrTyTag::Slice || ir_lhs.ty.tag == IrTyTag::Tuple) {
-                let overload = self.try_operator_overload(expr.bin_op(), ir_lhs, ir_rhs);
+            let result_ty = self.binary_result_ty(op, ir_lhs.ty, ir_rhs.ty, expr.span);
+            if result_ty.is_some() {
+                return self.mk_binary(op, ir_lhs, ir_rhs, result_ty.unwrap());
+            }
+            // Comparisons of other types go through the operator protocols
+            // (`Equatable`, `Comparable`).
+            let lhs_tag = ir_lhs.ty.tag;
+            if op.is_comparison() && (lhs_tag == IrTyTag::Struct || lhs_tag == IrTyTag::Slice || lhs_tag == IrTyTag::Tuple) {
+                let overload = self.try_operator_overload(op, ir_lhs, ir_rhs);
                 if overload.is_some() {
                     return overload.unwrap();
                 }
             }
-
-            let result_ty = switch expr.bin_op() {
-                BinOp::Eq => self.ctx.bool_ty,
-                BinOp::Ne => self.ctx.bool_ty,
-                BinOp::Lt => self.ctx.bool_ty,
-                BinOp::Le => self.ctx.bool_ty,
-                BinOp::Gt => self.ctx.bool_ty,
-                BinOp::Ge => self.ctx.bool_ty,
-                BinOp::And => self.ctx.bool_ty,
-                BinOp::Or => self.ctx.bool_ty,
-                _ => ir_lhs.ty,
-            };
-            self.mk_binary(expr.bin_op(), ir_lhs, ir_rhs, result_ty)
+            // Otherwise, arrays and tuples compare element-wise.
+            if (lhs_tag == IrTyTag::Array || lhs_tag == IrTyTag::Tuple) && op.is_equality() && ir_lhs.ty == ir_rhs.ty {
+                return self.mk_binary(op, ir_lhs, ir_rhs, self.ctx.bool_ty);
+            }
+            self.report_invalid_binop(op, ir_lhs.ty, ir_rhs.ty, expr.span);
+            self.mk_binary(op, ir_lhs, ir_rhs, fallback_ty)
         } else if expr.tag == ExprTag::Unary {
             // A negated integer literal is a negative literal (as in
             // alumina-boot): `-128i8` is in range although `128i8` is not.
@@ -2719,11 +2926,24 @@ impl Mono {
                 };
                 return self.mk_checked_int_lit(ty, lit.int_val_u128(), true, expr.span);
             }
-            let ir_operand = self.lower_expr(expr.lhs());
-            let result_ty = switch expr.un_op() {
-                UnOp::Not => self.ctx.bool_ty,
-                _ => ir_operand.ty,
-            };
+            let op = expr.un_op();
+            let hint = if op == UnOp::Not { self.ctx.bool_ty } else { self.expected_type };
+            let ir_operand = self.lower_expr_hinted(expr.lhs(), hint);
+            let ty = ir_operand.ty;
+            let valid = ty.is_never() || (ty.tag == IrTyTag::Builtin && switch op {
+                UnOp::Not => ty.builtin() == BuiltinType::Bool,
+                UnOp::BitNot => ty.builtin().is_integer(),
+                UnOp::Neg => (ty.builtin().is_integer() && ty.builtin().is_signed()) || ty.builtin().is_float(),
+                _ => false,
+            });
+            if !valid {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    expr.span,
+                    std::fmt::format!("cannot apply unary `{}` to `{}`", op.symbol(), self.ir_type_name(ty))
+                        .unwrap().as_slice(),
+                ));
+            }
+            let result_ty = ty;
             let result = IrExpr::void_expr(result_ty);
             result.tag = IrTag::Unary;
             result._data.un.un_op = expr.un_op();
@@ -2731,23 +2951,17 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Assign {
             let ir_lhs = self.lower_expr(expr.lhs());
-            // For compound assignment, desugar to binary + assign (RHS type differs from LHS)
-            if expr.assign_op() != AssignOp::Assign {
-                let ir_rhs = self.lower_expr(expr.rhs());
-                let bin_op = switch expr.assign_op() {
-                    AssignOp::AddAssign => BinOp::Add,
-                    AssignOp::SubAssign => BinOp::Sub,
-                    AssignOp::MulAssign => BinOp::Mul,
-                    AssignOp::DivAssign => BinOp::Div,
-                    AssignOp::RemAssign => BinOp::Rem,
-                    AssignOp::BitAndAssign => BinOp::BitAnd,
-                    AssignOp::BitOrAssign => BinOp::BitOr,
-                    AssignOp::BitXorAssign => BinOp::BitXor,
-                    AssignOp::ShlAssign => BinOp::Shl,
-                    AssignOp::ShrAssign => BinOp::Shr,
-                    _ => BinOp::Add,
-                };
-                let binop_expr = self.mk_binary(bin_op, ir_lhs, ir_rhs, ir_lhs.ty);
+            // Compound assignment: typechecked as the binary operation
+            // (as alumina-boot's `lower_assign_op`).
+            let compound = expr.assign_op().bin_op();
+            if compound.is_some() {
+                let op = compound.unwrap();
+                let ir_rhs = self.lower_expr_hinted(expr.rhs(), self.operand_hint(op, ir_lhs.ty));
+                if !ir_lhs.ty.is_never() && !ir_rhs.ty.is_never()
+                    && self.binary_result_ty(op, ir_lhs.ty, ir_rhs.ty, expr.span).is_none() {
+                    self.report_invalid_binop(op, ir_lhs.ty, ir_rhs.ty, expr.span);
+                }
+                let binop_expr = self.mk_binary(op, ir_lhs, ir_rhs, ir_lhs.ty);
                 return self.mk_assign(ir_lhs, binop_expr);
             }
             // Plain assignment: coerce and typecheck
@@ -2782,60 +2996,36 @@ impl Mono {
                     dyn_id.is_some() && outer_expected.struct_ref().id._value == dyn_id.unwrap()
                 };
 
+            // Both branches get the if's hint; lacking one, the else branch
+            // gets the then branch's type (as in alumina-boot).
             let ir_then = if propagate {
                 self.lower_expr_coerced(expr.lhs(), outer_expected)
             } else {
-                self.lower_expr(expr.lhs())
+                self.lower_expr_hinted(expr.lhs(), outer_expected)
             };
             let ir_else: Option<&IrExpr> = if expr.opt_expr().is_some() {
                 let else_expr = expr.opt_expr().unwrap();
                 let else_result = if propagate {
                     self.lower_expr_coerced(else_expr, outer_expected)
+                } else if !outer_expected.is_void() || ir_then.ty.is_never() {
+                    self.lower_expr_hinted(else_expr, outer_expected)
                 } else {
-                    // Set expected_type hint from then branch for else branch inference.
-                    let saved_expected = self.expected_type;
-                    if !ir_then.ty.is_void() && !ir_then.ty.is_never() {
-                        self.expected_type = ir_then.ty;
-                    }
-                    let r = self.lower_expr(else_expr);
-                    self.expected_type = saved_expected;
-                    r
+                    self.lower_expr_hinted(else_expr, ir_then.ty)
                 };
                 Option::some(else_result)
             } else {
                 Option::none()
             };
-            // The branches must agree on a type (as in alumina-boot): a
-            // diverging branch takes the other's type; otherwise one branch
-            // must coerce to the other's type (e.g. `&[T; 0]` to `&[T]`, or
-            // `&mut T` to `&T`), and is coerced so that both arms produce a
-            // value of the same representation.
-            let result_ty = ir_then.ty;
+            // The branches must agree on a type; a missing else is `()`.
+            let branches: [&IrExpr; 2] = [ir_then, ir_else.unwrap_or(self.mk_void())];
+            let result_ty = self.unify_branches(&branches, expr.span, if ir_else.is_some() {
+                ""
+            } else {
+                "an `if` without `else` has type `()`"
+            });
+            ir_then = branches[0];
             if ir_else.is_some() {
-                let els = ir_else.unwrap();
-                if ir_then.ty.is_never() || (ir_then.ty.is_void() && !els.ty.is_never()) {
-                    result_ty = els.ty;
-                } else if !els.ty.is_never() && !els.ty.is_void() && els.ty != ir_then.ty {
-                    let els_coerced = self.try_coerce(els, ir_then.ty);
-                    if els_coerced as &void != null {
-                        ir_else = Option::some(els_coerced);
-                    } else {
-                        let then_coerced = self.try_coerce(ir_then, els.ty);
-                        if then_coerced as &void != null {
-                            ir_then = then_coerced;
-                            result_ty = els.ty;
-                        } else {
-                            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
-                                expr.span,
-                                std::fmt::format!(
-                                    "mismatched types in if branches: `{}` and `{}`",
-                                    self.ir_type_name(ir_then.ty),
-                                    self.ir_type_name(els.ty),
-                                ).unwrap().as_slice(),
-                            ));
-                        }
-                    }
-                }
+                ir_else = Option::some(branches[1]);
             }
             let result = IrExpr::void_expr(result_ty);
             result.tag = IrTag::If;
@@ -2845,7 +3035,7 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::While {
             let ir_cond = self.lower_expr(expr.cond());
-            let ir_body = self.lower_expr(expr.lhs());
+            let ir_body = self.lower_loop_body(expr.lhs());
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::While;
             result._data.if_data.cond = ir_cond;
@@ -2868,13 +3058,17 @@ impl Mono {
             let slot_id = self.ctx.id_gen.next_id();
             self.loop_contexts.push(LoopContext {
                 result_slot_id: slot_id,
-                break_value_ty: self.ctx.void_ty,
+                // Until the first break commits it, the loop's hint.
+                break_value_ty: self.expected_type,
                 has_value: false,
+                allows_value: true,
+                has_break: false,
             });
             let ir_body = self.lower_expr(expr.lhs());
             let ctx_popped = self.loop_contexts.pop().unwrap();
 
-            let loop_expr = IrExpr::void_expr(self.ctx.void_ty);
+            // A loop that is never broken out of diverges.
+            let loop_expr = IrExpr::void_expr(if ctx_popped.has_break { self.ctx.void_ty } else { self.ctx.never_ty });
             loop_expr.tag = IrTag::Loop;
             loop_expr._data.single.lhs = ir_body;
             let loop_alloc = self.ctx.arena.alloc(loop_expr) as &IrExpr;
@@ -2946,7 +3140,7 @@ impl Mono {
             let ir_cond = self.mk_binary(cmp_op, self.mk_local(loop_var_id, iter_ty), self.mk_local(end_var_id, iter_ty), self.ctx.bool_ty);
 
             // Lower body
-            let ir_body = self.lower_expr(expr.rhs());
+            let ir_body = self.lower_loop_body(expr.rhs());
 
             // i = i + 1
             let ir_read_i2 = self.mk_local(loop_var_id, iter_ty);
@@ -2984,7 +3178,7 @@ impl Mono {
             // fs/mod.alu swap. Unifying through if-else removes the table
             // extraction entirely and patterns just get compared as values.
             let ir_value = self.lower_expr(expr.lhs());
-            self.lower_switch_as_if_else(ir_value, expr.switch_arms())
+            self.lower_switch(ir_value, expr.switch_arms(), expr.span)
         } else if expr.tag == ExprTag::Break {
             // `break value;` flows the value through the enclosing loop's
             // result slot. Without this, the value is evaluated for side
@@ -2993,6 +3187,14 @@ impl Mono {
             // lower to { _slot = value; break; } so the slot read after
             // the loop sees the right value. Mirrors alumina-boot's
             // `lower_break` (src/alumina-boot/src/ir/mono/mod.rs:4572).
+            if !self.loop_contexts.is_empty() {
+                let ctx = &self.loop_contexts[self.loop_contexts.len() - 1];
+                ctx.has_break = true;
+                if expr.opt_expr().is_some() && !ctx.allows_value {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        expr.span, "`break` with a value is only allowed in `loop`"));
+                }
+            }
             if expr.opt_expr().is_some() && self.loop_contexts.len() > 0 {
                 let ctx_idx = self.loop_contexts.len() - 1usize;
                 // Determine the break value type by lowering with the
@@ -3235,7 +3437,7 @@ impl Mono {
         let binding_stmts = self.make_for_loop_bindings(expr, ir_unwrap, elem_ty);
 
         // Lower the body
-        let ir_body = self.lower_expr(expr.rhs());
+        let ir_body = self.lower_loop_body(expr.rhs());
 
         // Loop body: { let _opt = _iter.next(); if is_none break; [bindings...]; body }
         let body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2 + binding_stmts.len() + 1);
@@ -3780,124 +3982,115 @@ impl Mono {
         layout::compute_type_align(ty, self.ctx.pointer_size)
     }
 
-    // Convert an IR type to a human-readable name string
+    /// The name of a type as written in source code (as alumina-boot's
+    /// `type_name`), e.g. `(Option<i32>, &mut [u8])`; for diagnostics and
+    /// `std::typing::type_name`.
     fn ir_type_name(self: &mut Mono, ty: &IrTy) -> &[u8] {
         if ty.tag == IrTyTag::Builtin {
-            switch ty.builtin() {
-                BuiltinType::Void => "()",
-                BuiltinType::Never => "!",
-                BuiltinType::Bool => "bool",
-                BuiltinType::U8 => "u8",
-                BuiltinType::U16 => "u16",
-                BuiltinType::U32 => "u32",
-                BuiltinType::U64 => "u64",
-                BuiltinType::U128 => "u128",
-                BuiltinType::I8 => "i8",
-                BuiltinType::I16 => "i16",
-                BuiltinType::I32 => "i32",
-                BuiltinType::I64 => "i64",
-                BuiltinType::I128 => "i128",
-                BuiltinType::USize => "usize",
-                BuiltinType::ISize => "isize",
-                BuiltinType::F32 => "f32",
-                BuiltinType::F64 => "f64",
-                _ => "<unknown>",
+            return ty.builtin().name();
+        }
+        let buf = std::string::StringBuf::new();
+        defer buf.free();
+        self.write_type_name(&buf, ty);
+        self.ctx.arena.alloc_slice_copy(buf.as_slice())
+    }
+
+    fn write_type_list(self: &mut Mono, buf: &mut std::string::StringBuf, tys: &[&IrTy], separator: &[u8]) {
+        for (i, ty) in tys.iter().enumerate() {
+            if i > 0 {
+                buf.extend_from_slice(separator);
             }
-        } else if ty.tag == IrTyTag::Pointer {
-            let inner_name = self.ir_type_name(ty.inner());
-            let is_const = ty.is_const();
-            let prefix: &[u8] = if is_const { "&" } else { "&mut " };
-            let buf = self.ctx.arena.alloc_slice::<u8>(prefix.len() + inner_name.len());
-            std::fmt::format_in!(buf, "{}{}", prefix, inner_name).unwrap()
-        } else if ty.tag == IrTyTag::Slice {
-            let elem_ty = if ty.elems().len() > 0 && ty.elems()[0].tag == IrTyTag::Pointer {
-                ty.elems()[0].inner()
-            } else { self.ctx.void_ty };
-            let inner_name = self.ir_type_name(elem_ty);
-            let buf = self.ctx.arena.alloc_slice::<u8>(3usize + inner_name.len());
-            std::fmt::format_in!(buf, "&[{}]", inner_name).unwrap()
-        } else if ty.tag == IrTyTag::Array {
-            let inner_name = self.ir_type_name(ty.inner());
-            // "[T; N]" — N is at most 20 decimal digits.
-            let buf = self.ctx.arena.alloc_slice::<u8>(inner_name.len() + 24usize);
-            std::fmt::format_in!(buf, "[{}; {}]", inner_name, ty.array_size()).unwrap()
-        } else if ty.tag == IrTyTag::Struct {
-            ty.struct_ref().name
-        } else if ty.tag == IrTyTag::Enum {
-            ty.enum_ref().name
-        } else if ty.tag == IrTyTag::Tuple {
-            // Just return "(...)"; full tuple formatting is complex
-            "(...)"
-        } else if ty.tag == IrTyTag::FnPointer {
-            "fn(...)"
-        } else if ty.tag == IrTyTag::Fn {
-            // Render `name<arg1, arg2, ...>` source-readably for the source
-            // type printer (`std::typing::type_name<f<u32>>()` should yield
-            // "f<u32>", not the mangled `_ALfNNN` form). Look up the IrFunction
-            // by (id, mangled_name) to recover the type_args this fn was mono'd
-            // with — multiple monos of the same source `id` share the IrFnRef's
-            // id, so the mangled_name disambiguates which mono we want.
-            let fn_ref = ty.fn_item_ref();
-            let src_name: &[u8] = fn_ref.mangled_name;
-            let src_type_args: &[&IrTy] = &[];
-            for func in self.ctx.ir_functions.iter() {
-                if func.id._value == fn_ref.id._value
-                    && func.mangled_name == fn_ref.mangled_name {
-                    src_name = func.name;
-                    src_type_args = func.type_args;
-                    break;
+            self.write_type_name(buf, ty);
+        }
+    }
+
+    fn write_type_name(self: &mut Mono, buf: &mut std::string::StringBuf, ty: &IrTy) {
+        switch ty.tag {
+            IrTyTag::Builtin => buf.extend_from_slice(ty.builtin().name()),
+            IrTyTag::Void => buf.extend_from_slice("()"),
+            IrTyTag::Never => buf.extend_from_slice("!"),
+            IrTyTag::Pointer => {
+                buf.extend_from_slice(if ty.is_const() { "&" } else { "&mut " });
+                self.write_type_name(buf, ty.inner());
+            }
+            IrTyTag::Slice => {
+                buf.extend_from_slice(if ty.is_const() { "&[" } else { "&mut [" });
+                self.write_type_name(buf, ty.inner());
+                buf.push(']');
+            }
+            IrTyTag::Array => {
+                buf.push('[');
+                self.write_type_name(buf, ty.inner());
+                std::fmt::write!(buf, "; {}]", ty.array_size()).unwrap();
+            }
+            IrTyTag::Tuple => {
+                buf.push('(');
+                self.write_type_list(buf, ty.elems(), ", ");
+                buf.push(')');
+            }
+            IrTyTag::FnPointer => {
+                buf.extend_from_slice("fn(");
+                self.write_type_list(buf, ty.elems(), ", ");
+                buf.push(')');
+                if !ty.ret_ty().is_void() {
+                    buf.extend_from_slice(" -> ");
+                    self.write_type_name(buf, ty.ret_ty());
                 }
             }
-            if src_type_args.len() == 0 {
-                src_name
-            } else {
-                // Build "name<arg1, arg2, ...>".
-                let arg_names = self.ctx.arena.alloc_slice::<&[u8]>(src_type_args.len());
-                let total = src_name.len() + 2usize; // "name<>"
-                for i in 0usize..src_type_args.len() {
-                    arg_names[i] = self.ir_type_name(src_type_args[i]);
-                    total += arg_names[i].len();
-                    if i > 0 { total += 2usize; } // ", "
+            IrTyTag::Struct => {
+                let s = ty.struct_ref();
+                let args = s.type_args;
+                // `&dyn P` / `&mut dyn (P + Q)` is the lang(dyn) struct over
+                // the protocols and the pointer type.
+                let dyn_id = self.ctx.get_lang_item("dyn");
+                if dyn_id.is_some() && s.id._value == dyn_id.unwrap() && args.len() == 2
+                    && args[0].tag == IrTyTag::Tuple && args[1].tag == IrTyTag::Pointer {
+                    let protos = args[0].elems();
+                    buf.extend_from_slice(if args[1].is_const() { "&dyn " } else { "&mut dyn " });
+                    if protos.len() > 1 { buf.push('('); }
+                    self.write_type_list(buf, protos, " + ");
+                    if protos.len() > 1 { buf.push(')'); }
+                    return;
                 }
-                let buf = self.ctx.arena.alloc_slice::<u8>(total);
-                src_name.copy_to_nonoverlapping(&buf[0]);
-                buf[src_name.len()] = '<';
-                let off = src_name.len() + 1usize;
-                for i in 0usize..arg_names.len() {
-                    if i > 0 {
-                        buf[off] = ',';
-                        buf[off + 1usize] = ' ';
-                        off += 2usize;
+                buf.extend_from_slice(s.name);
+                if !args.is_empty() {
+                    buf.push('<');
+                    self.write_type_list(buf, args, ", ");
+                    buf.push('>');
+                }
+            }
+            IrTyTag::Closure => buf.extend_from_slice(ty.struct_ref().name),
+            IrTyTag::Enum => buf.extend_from_slice(ty.enum_ref().name),
+            IrTyTag::Fn => {
+                // The function's name and the type arguments of this
+                // instance (whose IrFunction is matched by mangled name).
+                let fn_ref = ty.fn_item_ref();
+                for func in self.ctx.ir_functions.iter() {
+                    if func.id._value == fn_ref.id._value && func.mangled_name == fn_ref.mangled_name {
+                        buf.extend_from_slice(func.name);
+                        if !func.type_args.is_empty() {
+                            buf.push('<');
+                            self.write_type_list(buf, func.type_args, ", ");
+                            buf.push('>');
+                        }
+                        return;
                     }
-                    arg_names[i].copy_to_nonoverlapping(&buf[off]);
-                    off += arg_names[i].len();
                 }
-                buf[off] = '>';
-                buf as &[u8]
+                buf.extend_from_slice(fn_ref.mangled_name);
             }
-        } else if ty.tag == IrTyTag::Void {
-            "()"
-        } else if ty.tag == IrTyTag::Protocol {
-            let name = self.ctx.protocol_defs.get(&ty.proto_id())
-                .map(|p: &ProtocolDef| -> &[u8] { p.name })
-                .unwrap_or("<protocol>");
-            let args = ty.proto_type_args();
-            if args.is_empty() {
-                return name;
-            }
-            let buf = std::string::StringBuf::from_slice(name);
-            defer buf.free();
-            buf.push('<');
-            for i in 0usize..args.len() {
-                if i > 0 {
-                    buf.extend_from_slice(", ");
+            IrTyTag::Protocol => {
+                let name = self.ctx.protocol_defs.get(&ty.proto_id())
+                    .map(|p: &ProtocolDef| -> &[u8] { p.name })
+                    .unwrap_or("<protocol>");
+                buf.extend_from_slice(name);
+                let args = ty.proto_type_args();
+                if !args.is_empty() {
+                    buf.push('<');
+                    self.write_type_list(buf, args, ", ");
+                    buf.push('>');
                 }
-                buf.extend_from_slice(self.ir_type_name(args[i]));
             }
-            buf.push('>');
-            self.ctx.arena.alloc_slice_copy(buf.as_slice())
-        } else {
-            "<unknown>"
+            _ => buf.extend_from_slice("<unknown>"),
         }
     }
 
@@ -3910,11 +4103,12 @@ impl Mono {
         let cond_result = self.try_const_eval_bool(ir_cond);
         let cond_val = cond_result.unwrap_or(false);
 
+        // The chosen branch is the value, so it gets the hint.
         if cond_val {
-            self.lower_expr(expr.lhs())
+            self.lower_expr_hinted(expr.lhs(), self.expected_type)
         } else {
             if expr.opt_expr().is_some() {
-                self.lower_expr(expr.opt_expr().unwrap())
+                self.lower_expr_hinted(expr.opt_expr().unwrap(), self.expected_type)
             } else {
                 let r = IrExpr::void_expr(self.ctx.void_ty);
                 self.ctx.arena.alloc(r)
@@ -4028,6 +4222,8 @@ impl Mono {
 
             // Set the loop variable as a compile-time constant
             self.const_replacements.insert(loop_var_id, inner_val);
+            // Lambdas in the body can differ per iteration.
+            self.lambda_cache.clear();
 
             // Track local_defs before this iteration
             let iter_defs_start = self.local_defs.len();
@@ -4171,6 +4367,10 @@ impl Mono {
         let fn_def = self.ctx.fn_defs.get(&fn_id._value);
         let def = fn_def?;
 
+        // The protocol bindings are for instantiating this method only (see
+        // try_lower_method_call).
+        let caller_type_map = self.type_map.clone();
+
         // For mixin'd methods, resolve the mixin's type args.
         // The mixin type args contain Placeholder refs to the IMPL's generic params,
         // so we must map those impl param IDs to concrete types from the struct's type_args.
@@ -4248,6 +4448,8 @@ impl Mono {
         }
 
         let fn_idx = self.mono_function(def, all_type_args);
+        self.type_map.free();
+        self.type_map = caller_type_map;
         let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
         // Build call args: self_arg + args
@@ -4269,8 +4471,15 @@ impl Mono {
     // Lower memory operations: ExprTag::Ref, ExprTag::Deref, ExprTag::FieldAccess, ExprTag::TupleIndex, ExprTag::Index, ExprTag::Cast, ExprTag::TypeCheck
     fn lower_memory(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Ref {
-            let ir_inner = self.lower_expr(expr.lhs());
-            self.mk_ref(ir_inner, !expr.flag())
+            // `&x` expected to be `&T` has `x` expected to be `T`; `&[...]`
+            // expected to be a slice leaves the slice for the array literal.
+            let inner_hint = switch self.expected_type.tag {
+                IrTyTag::Pointer => self.expected_type.inner(),
+                IrTyTag::Slice => self.expected_type,
+                _ => self.ctx.void_ty,
+            };
+            let ir_inner = self.lower_expr_hinted(expr.lhs(), inner_hint);
+            self.mk_ref(ir_inner, self.is_const_place(ir_inner))
         } else if expr.tag == ExprTag::Deref {
             let ir_inner = self.lower_expr(expr.lhs());
             let pointee_ty = if ir_inner.ty.tag == IrTyTag::Pointer {
@@ -4490,6 +4699,8 @@ impl Mono {
         // and recover the protocol method's FnDef for its signature.
         let method_idx: usize = 0;
         let proto_method_def: Option<&FnDef> = Option::none();
+        let method_proto: &IrTy = self.ctx.void_ty;
+        let method_proto_def: &ProtocolDef = null;
         let cumulative: usize = 0;
         let elems = protos_tuple.elems();
         for proto_ty in elems.iter() {
@@ -4501,6 +4712,8 @@ impl Mono {
                 if proto.methods[mi].name == method_name {
                     method_idx = cumulative + mi;
                     proto_method_def = Option::some(&proto.methods[mi]);
+                    method_proto = proto_ty;
+                    method_proto_def = proto;
                     break;
                 }
             }
@@ -4539,6 +4752,16 @@ impl Mono {
         let n_params: usize = 1usize + n_call_args;
         let typed_param_tys = self.ctx.arena.alloc_slice::<&IrTy>(n_params);
         typed_param_tys[0] = void_ptr_ty;
+        // The signature is the protocol's with its parameters bound to the
+        // `dyn` protocol's arguments (e.g. `T = i32` in `Iterator<Self, i32>`).
+        let outer_type_map = self.type_map;
+        self.type_map = outer_type_map.clone();
+        let proto_args = method_proto.proto_type_args();
+        for (i, param) in method_proto_def.generic_params.iter().enumerate() {
+            if i < proto_args.len() {
+                self.type_map.insert(param.id._value, proto_args[i]);
+            }
+        }
         // Resolve the proto method's tail params using the current type_map.
         // proto_method.params[0] is `self: &Self` — skip; resolve the rest.
         for ai in 0usize..n_call_args {
@@ -4550,6 +4773,8 @@ impl Mono {
             }
         }
         let ret_ty = self.resolve_type(proto_method.return_type);
+        self.type_map.free();
+        self.type_map = outer_type_map;
         let typed_fn_ty = self.ctx.make_fn_ptr_ty(typed_param_tys, ret_ty);
 
         // Cast the opaque fn ptr to the typed signature.
@@ -4559,10 +4784,10 @@ impl Mono {
         let call_args = self.ctx.arena.alloc_slice::<&IrExpr>(n_params);
         call_args[0] = data_ptr;
         for ai in 0usize..n_call_args {
-            let arg = self.lower_expr(expr.args()[ai]);
             let dst_idx: usize = 1usize + ai;
+            let arg = self.lower_expr_hinted(expr.args()[ai], typed_param_tys[dst_idx]);
             if dst_idx < typed_param_tys.len() {
-                call_args[dst_idx] = self.coerce_to_type(arg, typed_param_tys[dst_idx]);
+                call_args[dst_idx] = self.check_and_coerce(arg, typed_param_tys[dst_idx], expr.args()[ai].span);
             } else {
                 call_args[dst_idx] = arg;
             }
@@ -4878,18 +5103,17 @@ impl Mono {
     /// Try to coerce `val` to `expected_ty`. Returns the coerced expression on success.
     /// Returns null (as &IrExpr) if the types are incompatible.
     fn try_coerce(self: &mut Mono, val: &IrExpr, expected_ty: &IrTy) -> &IrExpr {
-        // Exact match
-        if val.ty as &void == expected_ty as &void { return val; }
+        if val.ty.same_as(expected_ty) { return val; }
 
         // Bottom type matches anything
         if val.ty.tag == IrTyTag::Never { return val; }
 
-        // Void on either side = unknown/error, don't report further
-        if val.ty.is_void() || expected_ty.is_void() { return val; }
+        // `()` is a type like any other.
+        if val.ty.is_void() || expected_ty.is_void() { return 0usize as &IrExpr; }
 
-        // Same tag, assume compatible (struct identity etc. checked elsewhere)
-        if val.ty.tag == expected_ty.tag && val.ty.tag != IrTyTag::Pointer && val.ty.tag != IrTyTag::Slice {
-            return val;
+        // Distinct builtin types never convert implicitly (as in alumina-boot).
+        if val.ty.tag == IrTyTag::Builtin && expected_ty.tag == IrTyTag::Builtin {
+            return 0usize as &IrExpr;
         }
 
         // Coerce &[T; N] to &[T] (pointer to array → slice fat pointer)
@@ -4912,7 +5136,7 @@ impl Mono {
         // Coerce &mut T -> &T (mutable pointer to const pointer)
         if expected_ty.tag == IrTyTag::Pointer && val.ty.tag == IrTyTag::Pointer
             && expected_ty.is_const() && !val.ty.is_const()
-            && expected_ty.inner() == val.ty.inner() {
+            && expected_ty.inner().same_as(val.ty.inner()) {
             return self.mk_cast(val, expected_ty);
         }
 
@@ -4920,14 +5144,37 @@ impl Mono {
         if expected_ty.tag == IrTyTag::Slice && val.ty.tag == IrTyTag::Slice {
             let target_elem = self.slice_elem_ty(expected_ty);
             let val_elem = self.slice_elem_ty(val.ty);
-            if target_elem == val_elem && expected_ty != val.ty {
+            if target_elem.same_as(val_elem) && expected_ty.is_const() && !val.ty.is_const() {
                 return self.mk_cast(val, expected_ty);
             }
         }
 
-        // Same-tag pointers/slices that didn't match above
-        if val.ty.tag == expected_ty.tag {
-            return val;
+        // Coerce `&mut dyn P` to `&dyn P` (the lang(dyn) struct over the
+        // protocols and the data pointer type).
+        let dyn_id = self.ctx.get_lang_item("dyn");
+        if dyn_id.is_some() && expected_ty.tag == IrTyTag::Struct && val.ty.tag == IrTyTag::Struct
+            && expected_ty.struct_ref().id._value == dyn_id.unwrap()
+            && val.ty.struct_ref().id._value == dyn_id.unwrap() {
+            let (want, have) = (expected_ty.struct_ref().type_args, val.ty.struct_ref().type_args);
+            if want.len() == 2 && have.len() == 2 && want[0].same_as(have[0])
+                && want[1].is_const() && !have[1].is_const() {
+                // { let tmp = val; dyn { _ptr: tmp._ptr as &void, _vtable: tmp._vtable } }
+                let tmp_id = self.ctx.id_gen.next_id();
+                self.local_defs.push(IrLocalDef { id: tmp_id, ty: val.ty, name: "_dyn", span: val.span });
+                let fields = val.ty.struct_ref().fields;
+                let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                items[0] = self.mk_cast(self.mk_field(self.mk_local(tmp_id, val.ty), 0u32, fields[0].ty),
+                    expected_ty.struct_ref().fields[0].ty);
+                items[1] = self.mk_field(self.mk_local(tmp_id, val.ty), 1u32, fields[1].ty);
+                let lit = IrExpr::void_expr(expected_ty);
+                lit.tag = IrTag::StructLit;
+                lit._data.struct_lit.ir_ty = expected_ty;
+                lit._data.struct_lit.items = items;
+                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                stmts[0] = self.mk_let(tmp_id, val.ty, val);
+                stmts[1] = self.ctx.arena.alloc(lit);
+                return self.mk_block(stmts);
+            }
         }
 
         // Coerce Fn (function item ZST) to fn pointer
@@ -4995,23 +5242,6 @@ impl Mono {
         let result = self.try_coerce(val, expected_ty);
         if result as &void as usize != 0 {
             return result;
-        }
-
-        // Auto-take-ref before erroring: callee expects `&T` / `&mut T`,
-        // caller passed a value of T. Sysroot relies on this (e.g.
-        // `slice.copy_to_nonoverlapping(deque._data[0])` — same shape that
-        // alumina-boot accepts implicitly). Lives in check_and_coerce
-        // (call-site arg coercion) rather than the generic try_coerce
-        // path so it doesn't fire in arbitrary IR-equality contexts where
-        // taking address of a value would change semantics. Only fires
-        // when val is an lvalue we can address.
-        if expected_ty.tag == IrTyTag::Pointer && val.ty.tag != IrTyTag::Pointer
-            && expected_ty.inner() == val.ty {
-            if val.tag == IrTag::Local || val.tag == IrTag::Param
-                || val.tag == IrTag::FieldAccess || val.tag == IrTag::Index
-                || val.tag == IrTag::Deref {
-                return self.mk_ref(val, expected_ty.is_const());
-            }
         }
 
         let expected_name = self.ir_type_name(expected_ty);
@@ -5114,6 +5344,14 @@ impl Mono {
     fn coerce_to_indexable(self: &mut Mono, val: &IrExpr) -> &IrExpr {
         if val.ty.tag == IrTyTag::Slice || val.ty.tag == IrTyTag::Array {
             return val;
+        }
+        // As in alumina-boot: a collection is indexed as the slice that
+        // the sysroot's `slice_slicify` gives for a pointer to it (a `&mut`
+        // slice if the collection is a mutable place with `as_slice_mut`).
+        let ptr = self.mk_ref(val, self.is_const_place(val));
+        let slicified = self.call_lang_fn("slice_slicify", &[val.ty, ptr.ty], &[ptr], val.span);
+        if slicified.is_some() {
+            return slicified.unwrap();
         }
         // Try to find as_slice() method on this type
         let as_slice_def = self.find_method_in_scope(val.ty, "as_slice");
@@ -5332,10 +5570,18 @@ impl Mono {
                 }
             }
         } else if param_ty.tag == TyTag::Tuple && param_ty.elems().len() > 0 {
-            if arg_ty.tag == IrTyTag::Tuple && arg_ty.elems().len() >= param_ty.elems().len() {
-                for i in 0usize..param_ty.elems().len() {
-                    self.unify_type_for_inference(param_ty.elems()[i], arg_ty.elems()[i], inferred, found, generic_params);
-                }
+            // `()` collapses to void.
+            if arg_ty.tag == IrTyTag::Tuple {
+                self.unify_type_list_for_inference(param_ty.elems(), arg_ty.elems(), inferred, found, generic_params);
+            } else if arg_ty.is_void() {
+                self.unify_type_list_for_inference(param_ty.elems(), &[], inferred, found, generic_params);
+            }
+        } else if param_ty.tag == TyTag::FnPointer {
+            let sig = self.callable_signature(arg_ty);
+            if sig.is_some() {
+                let (params, ret) = sig.unwrap();
+                self.unify_type_list_for_inference(param_ty.elems(), params, inferred, found, generic_params);
+                self.unify_type_for_inference(param_ty.ret_ty(), ret, inferred, found, generic_params);
             }
         } else if param_ty.tag == TyTag::Dyn {
             // AST: `&dyn Proto<...>`. The IR side is the lang(dyn) struct
@@ -5730,10 +5976,8 @@ impl Mono {
         // arrived from*. The flag stays sticky through arbitrary
         // recursion depth.
         let num_params = def.params.len();
-        let saved_expected = self.expected_type;
         let saved_return = self.return_type;
         let saved_in_arg_inf = self.inside_arg_inference;
-        self.expected_type = self.ctx.void_ty;
         self.return_type = self.ctx.void_ty;
         self.inside_arg_inference = true;
         let saved_incomplete = self.inference_incomplete;
@@ -5742,7 +5986,7 @@ impl Mono {
             let param_ty = def.params[p].ty;
             let arg_expr = args[p];
             self.inference_incomplete = false;
-            let arg_ty = self.lower_expr(arg_expr).ty;
+            let arg_ty = self.lower_expr_tentative(arg_expr).ty;
             // The argument's own inference was incomplete (e.g. a bare
             // `Result::err(e)`, whose T needs a type hint): its type says
             // nothing about ours; the hint comes from our context instead.
@@ -5769,10 +6013,11 @@ impl Mono {
             }
             self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
         }
-        self.expected_type = saved_expected;
         self.return_type = saved_return;
         self.inside_arg_inference = saved_in_arg_inf;
         self.inference_incomplete = saved_incomplete;
+
+        self.infer_from_callable_bounds(def.generic_params, inferred, found);
 
         // Try to infer remaining generics from Fn bounds.
         // For F: Fn(A) -> R, if the actual argument for F is a lambda or function,
@@ -5830,7 +6075,7 @@ impl Mono {
                                 // a 1-byte Option payload, the bug behind
                                 // `xs.iter().map(closure).to_vector()`
                                 // returning garbage addresses.
-                                let arg_ir_ty = self.lower_expr(arg_expr).ty;
+                                let arg_ir_ty = self.lower_expr_tentative(arg_expr).ty;
                                 let ret_ty: &IrTy = self.ctx.void_ty;
                                 if arg_ir_ty.tag == IrTyTag::Closure {
                                     let cfn = arg_ir_ty.closure_fn();
@@ -5951,11 +6196,9 @@ impl Mono {
         if !all_found {
             // Try inferring from return type context
             let ret_ty_ast = def.return_type;
-            let hint_ty = if !self.expected_type.is_void() {
-                self.expected_type
-            } else {
-                self.return_type
-            };
+            // Only the hint: the enclosing function's return type says
+            // nothing about a call that is not its return value.
+            let hint_ty = self.expected_type;
             // Match: fn returns GenericType<T> (TyTag::Generic) and hint is a struct with type_args
             if ret_ty_ast.tag == TyTag::Generic && hint_ty.tag == IrTyTag::Struct && hint_ty.struct_ref().type_args.len() > 0 {
                 // TyTag::Generic has inner (base type) and elems (type args as AST types)
@@ -6107,13 +6350,9 @@ impl Mono {
         // otherwise (1..5).hash_of() and (&r).hash_of() would produce
         // different IR (& vs &&) and dispatch via different mono paths.
         if def.params.len() > 0 && def.params[0].ty.tag == TyTag::Pointer && ir_obj.ty.tag != IrTyTag::Pointer {
-            ir_args[0] = self.mk_ref(ir_obj, false);
+            ir_args[0] = self.mk_ref(ir_obj, self.is_const_place(ir_obj));
         } else {
             ir_args[0] = ir_obj;
-        }
-
-        for i in 0usize..expr.args().len() {
-            ir_args[1 + i] = self.lower_expr(expr.args()[i]);
         }
 
         // Monomorphize and call. Use `ir_fn.return_type` rather than
@@ -6128,6 +6367,14 @@ impl Mono {
         // then named the void call's result and the verifier rejected it.
         let fn_idx = self.mono_function(def, type_args);
         let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+        // The other arguments are expected to have the parameters' types.
+        for i in 0usize..expr.args().len() {
+            ir_args[1 + i] = if i + 1 < ir_fn.params.len() {
+                self.lower_expr_coerced(expr.args()[i], ir_fn.params[1 + i].ty)
+            } else {
+                self.lower_expr(expr.args()[i])
+            };
+        }
         let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
         Option::some(self.mk_call(fn_ref, ir_args, ir_fn.return_type))
     }
@@ -6324,6 +6571,12 @@ impl Mono {
             }
         }
 
+        // The protocol bindings below are for instantiating this method only:
+        // they must not leak into the caller's context (e.g. an `IteratorExt`
+        // `T` bound for an argument's `.map(...)` becoming the `T` of the
+        // outer `.chain(...)`), so the caller's type map is restored after.
+        let caller_type_map = self.type_map.clone();
+
         // For mixin'd methods, resolve the mixin's type args. The mixin
         // records `proto_args` for the protocol it injects (Self + protocol's
         // other generics, in declaration order). Bind those into `type_map`
@@ -6425,9 +6678,10 @@ impl Mono {
             for p in 0usize..num_explicit_params {
                 if p >= expr.args().len() { break; }
                 let param_ty = def.params[p + 1].ty;  // +1 to skip self
-                let arg_ty = self.lower_expr(expr.args()[p]).ty;
+                let arg_ty = self.lower_expr_tentative(expr.args()[p]).ty;
                 self.unify_type_for_inference(param_ty, arg_ty, inferred, found, def.generic_params);
             }
+            self.infer_from_callable_bounds(def.generic_params, inferred, found);
 
             // Fill remaining from combined_type_args where inference didn't produce a result
             for i in 0usize..num_generics {
@@ -6472,7 +6726,7 @@ impl Mono {
                                 }
                             } else {
                                 // General case: lower the arg and check if it's a function pointer, Fn item, or closure
-                                let arg_ir = self.lower_expr(arg_expr);
+                                let arg_ir = self.lower_expr_tentative(arg_expr);
                                 if arg_ir.ty.tag == IrTyTag::FnPointer {
                                     inferred[g] = arg_ir.ty.ret_ty();
                                     found_count += 1usize;
@@ -6531,7 +6785,7 @@ impl Mono {
                                             resolved_ret = self.resolve_type(fn_ref_def2.unwrap().return_type);
                                         }
                                     } else {
-                                        let arg_ir2 = self.lower_expr(arg_expr);
+                                        let arg_ir2 = self.lower_expr_tentative(arg_expr);
                                         if arg_ir2.ty.tag == IrTyTag::FnPointer {
                                             resolved_ret = arg_ir2.ty.ret_ty();
                                         } else if arg_ir2.ty.tag == IrTyTag::Fn {
@@ -6660,6 +6914,8 @@ impl Mono {
         // Monomorphize the method with type args (for generic impls + turbofish)
         let fn_idx = self.mono_function(def, combined_type_args);
         let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+        self.type_map.free();
+        self.type_map = caller_type_map;
 
         // Build args: &obj as first arg, then the call args
         let total_args = 1usize + expr.args().len();
@@ -6690,6 +6946,17 @@ impl Mono {
 
     // Lower call expressions: ExprTag::Call, ExprTag::StructLit
     fn lower_lambda(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let cache_key = expr as &void as usize;
+        let cached = self.lambda_cache.get(&cache_key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+        let result = self.lower_lambda_uncached(expr);
+        self.lambda_cache.insert(cache_key, result);
+        result
+    }
+
+    fn lower_lambda_uncached(self: &mut Mono, expr: &Expr) -> &IrExpr {
         let has_captures = expr.closure_bindings().len() > 0;
 
         // Create an anonymous function for the lambda
@@ -6801,8 +7068,8 @@ impl Mono {
         };
         self.ctx.ir_functions.push(placeholder);
 
-        // Lower body
-        let body = self.lower_expr(expr.lhs());
+        // Lower body; its value is expected to have the return type.
+        let body = self.lower_expr_hinted(expr.lhs(), ret_ty);
 
         self.ctx.ir_functions[idx].body = Option::some(body);
         self.ctx.ir_functions[idx].local_defs = self.leave_fn(saved_fn_state);
@@ -7105,7 +7372,7 @@ impl Mono {
                     if is_slice_new && expr.args().len() == 2 {
                         // #[lang(slice_new)] intrinsic: construct slice from (ptr, len)
                         let ir_ptr = self.lower_expr(expr.args()[0]);
-                        let ir_len = self.lower_expr(expr.args()[1]);
+                        let ir_len = self.lower_expr_coerced(expr.args()[1], self.ctx.usize_ty);
 
                         // Build proper IrTyTag::Slice type from the pointer's element type
                         let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
@@ -7205,7 +7472,7 @@ impl Mono {
                         }
                         if is_slice_new && expr.args().len() == 2 {
                             let ir_ptr = self.lower_expr(expr.args()[0]);
-                            let ir_len = self.lower_expr(expr.args()[1]);
+                            let ir_len = self.lower_expr_coerced(expr.args()[1], self.ctx.usize_ty);
                             let elem_ty = if ir_ptr.ty.tag == IrTyTag::Pointer {
                                 ir_ptr.ty.inner()
                             } else {
@@ -7344,9 +7611,15 @@ impl Mono {
 
             let ir_callee = self.lower_expr(expr.lhs());
             self.suppress_field_error = false;
+            // Arguments are expected to have the callee's parameter types.
+            let signature = self.callable_signature(ir_callee.ty);
             let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
             for i in 0usize..expr.args().len() {
-                ir_args[i] = self.lower_expr(expr.args()[i]);
+                ir_args[i] = if signature.is_some() && i < signature.unwrap().0.len() {
+                    self.lower_expr_coerced(expr.args()[i], signature.unwrap().0[i])
+                } else {
+                    self.lower_expr(expr.args()[i])
+                };
             }
 
             // Determine return type from callee
@@ -7509,9 +7782,25 @@ impl Mono {
     fn lower_block(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::Block {
             let n = expr.args().len();
+            let value_local: Option<usize> = Option::none();
+            if n > 0 && expr.args()[n - 1].tag == ExprTag::Local && !self.expected_type.is_void() {
+                let id = expr.args()[n - 1].id()._value;
+                if !self.local_type_hints.contains(&id) {
+                    self.local_type_hints.insert(id, self.expected_type);
+                    value_local = Option::some(id);
+                }
+            }
+            defer if value_local.is_some() {
+                self.local_type_hints.remove(&value_local.unwrap());
+            };
             let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(n);
             for i in 0usize..n {
-                ir_stmts[i] = self.lower_expr(expr.args()[i]);
+                // The block's value (its last item) gets the block's hint.
+                ir_stmts[i] = if i + 1 == n {
+                    self.lower_expr_hinted(expr.args()[i], self.expected_type)
+                } else {
+                    self.lower_expr(expr.args()[i])
+                };
                 if i + 1 < n {
                     self.check_must_use_dropped(ir_stmts[i], expr.args()[i].span);
                 }
@@ -7522,7 +7811,8 @@ impl Mono {
                 let resolved = self.resolve_type(expr.opt_ty().unwrap());
                 resolved
             } else if expr.opt_expr().is_some() {
-                let ir_init = self.lower_expr(expr.opt_expr().unwrap());
+                let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.void_ty);
+                let ir_init = self.lower_expr_hinted(expr.opt_expr().unwrap(), hint);
                 let inferred = ir_init.ty;
                 self.local_types.insert(expr.id()._value, inferred);
                 self.local_defs.push(IrLocalDef {
@@ -7601,6 +7891,29 @@ impl Mono {
     /// Whether `e` denotes a mutable place (an lvalue) whose address can be
     /// taken without materializing a copy. Globals are excluded, as a const
     /// lives in read-only memory.
+    /// Whether a place (lvalue) is immutable, so that `&place` is a `&T`
+    /// rather than a `&mut T` (as alumina-boot's `is_const`): places
+    /// reached through a `&T` and constants are. A temporary (the place of an
+    /// rvalue) is mutable.
+    fn is_const_place(self: &Mono, e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::Deref => e._data.single.lhs.ty.is_const(),
+            IrTag::FieldAccess => self.is_const_place(e._data.field.lhs),
+            IrTag::Index => {
+                let base = e._data.idx.lhs;
+                switch base.ty.tag {
+                    IrTyTag::Slice, IrTyTag::Pointer => base.ty.is_const(),
+                    _ => self.is_const_place(base),
+                }
+            }
+            IrTag::GlobalRef => {
+                let id = e._data.global_ref.id._value;
+                self.ctx.ir_globals.iter().any(|=id, g: IrGlobal| -> bool { g.id._value == id && g.is_const })
+            }
+            _ => false,
+        }
+    }
+
     fn is_place(e: &IrExpr) -> bool {
         switch e.tag {
             IrTag::Local, IrTag::Param, IrTag::Deref, IrTag::Index => true,
@@ -7633,7 +7946,7 @@ impl Mono {
             // Need to add refs
             let i = 0;
             while i < (0 - diff) {
-                result = self.mk_ref(result, false);
+                result = self.mk_ref(result, self.is_const_place(result));
                 i += 1;
             }
         } else {

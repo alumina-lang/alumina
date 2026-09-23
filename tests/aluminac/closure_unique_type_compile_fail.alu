@@ -1,0 +1,12 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_ERROR: type mismatch
+// Every lambda expression has its own type (as in alumina-boot), so a
+// function cannot return "the type of" another, identical-looking lambda.
+
+fn make_adder(by: i32) -> typeof(|=by, x: i32| -> i32 { x + by }) {
+    |=by, x: i32| -> i32 { x + by }
+}
+
+fn main() {
+    make_adder(1);
+}

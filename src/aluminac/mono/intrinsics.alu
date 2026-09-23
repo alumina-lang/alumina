@@ -146,13 +146,13 @@ fn lower_align_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr
 }
 
 fn lower_unreachable(m: &mut Mono) -> &IrExpr {
-    let result = IrExpr::void_expr(m.ctx.void_ty);
+    let result = IrExpr::void_expr(m.ctx.never_ty);
     result.tag = IrTag::Unreachable;
     m.ctx.arena.alloc(result)
 }
 
 fn lower_trap(m: &mut Mono) -> &IrExpr {
-    let result = IrExpr::void_expr(m.ctx.void_ty);
+    let result = IrExpr::void_expr(m.ctx.never_ty);
     result.tag = IrTag::Trap;
     m.ctx.arena.alloc(result)
 }
@@ -304,7 +304,7 @@ fn lower_const_panic(m: &mut Mono, expr: &Expr) -> &IrExpr {
     } else {
         ""
     };
-    let result = IrExpr::void_expr(m.ctx.void_ty);
+    let result = IrExpr::void_expr(m.ctx.never_ty);
     result.tag = IrTag::ConstPanic;
     result._data.codegen.str_val = msg;
     m.ctx.arena.alloc(result)

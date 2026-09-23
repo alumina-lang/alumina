@@ -51,7 +51,7 @@ impl Deque<T> {
     /// Create a deque from a slice, copying the elements.
     fn from_slice(slice: &[T]) -> Deque<T> {
         let deque = with_capacity::<T>(slice.len());
-        slice.copy_to_nonoverlapping(deque._data[0]);
+        slice.copy_to_nonoverlapping(deque._data._ptr);
         deque._head = 0;
         deque._tail = slice.len();
         deque
@@ -730,6 +730,19 @@ mod tests {
         deque.extend_front(&[5, 6, 7, 8].iter());
 
         assert_deque_eq!(deque, &[8, 7, 6, 5, 4, 3, 1, 2]);
+    }
+
+    #[test]
+    fn test_from_slice() {
+        let deque = Deque::from_slice(&[1, 2, 3]);
+        defer deque.free();
+        assert_eq!(deque.len(), 3);
+        assert_eq!(deque.pop_front(), Option::some(1));
+        assert_eq!(deque.pop(), Option::some(3));
+
+        let empty = Deque::from_slice::<i32>(&[]);
+        defer empty.free();
+        assert_eq!(empty.len(), 0);
     }
 
     #[test]

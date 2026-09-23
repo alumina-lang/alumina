@@ -727,7 +727,7 @@ impl Pass2 {
                 let cursor = node.walk();
                 defer cursor.free();
                 for child in children_by!(node, FieldKind::Element, &cursor) {
-                    elems.push(self.parse_type(child, scope_idx));
+                    elems.push(self.parse_list_type(child, scope_idx));
                 }
                 self.ctx.alloc_ty(Ty::tuple_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(elems.as_slice())))
             },
@@ -747,7 +747,7 @@ impl Pass2 {
                     defer cursor.free();
                     for child in params_node.unwrap().children(&cursor) {
                         if child.is_named() {
-                            param_types.push(self.parse_type(child, scope_idx));
+                            param_types.push(self.parse_list_type(child, scope_idx));
                         }
                     }
                 }
@@ -928,10 +928,25 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::EtCeteraOf => {
+                self.ctx.error(node, "`...` types are only allowed in tuples and parameter lists");
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             _ => {
                 // Fall back: unhandled type node kind
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+        }
+    }
+
+    /// An element of a tuple type or a parameter list, which can be a
+    /// `T...` spread of a tuple.
+    fn parse_list_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
+        if NODE_KINDS[node.symbol() as usize] == NodeKind::EtCeteraOf {
+            let inner = child_by!(node, FieldKind::Inner).unwrap();
+            self.ctx.alloc_ty(Ty::et_cetera_ty(self.parse_type(inner, scope_idx)))
+        } else {
+            self.parse_type(node, scope_idx)
         }
     }
 

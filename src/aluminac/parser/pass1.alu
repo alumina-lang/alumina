@@ -671,7 +671,12 @@ impl Pass1 {
                 let path_node = child_by!(node, FieldKind::Path);
                 let alias_node = child_by!(node, FieldKind::Alias);
                 if path_node.is_some() && alias_node.is_some() {
-                    let segments = self.collect_path_segments(path_node.unwrap());
+                    // In a use list (`use a::{b as c}`) the path is relative
+                    // to the list's prefix.
+                    let relative = self.collect_path_segments(path_node.unwrap());
+                    let segments = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + relative.len());
+                    prefix.copy_to_nonoverlapping(&segments[0]);
+                    relative.copy_to_nonoverlapping(&segments[prefix.len()]);
                     let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
                     self.ctx.scopes.add_item(self.current_scope, NamedItem {
                         name: alias,

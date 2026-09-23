@@ -630,20 +630,15 @@ impl MonoKey {
         if self.id != other.id || self.outer != other.outer || self.args.len() != other.args.len() {
             return false;
         }
-        for i in 0usize..self.args.len() {
-            if self.args[i] as &void != other.args[i] as &void {
-                return false;
-            }
-        }
-        true
+        // Types are compared by structure: not all of them are interned
+        // (e.g. enums), and an instance must not be created twice.
+        same_types(self.args, other.args)
     }
 
     fn hash<H: std::hash::Hasher<H>>(self: &MonoKey, hasher: &mut H) {
         self.id.hash(hasher);
         self.outer.hash(hasher);
-        for arg in self.args {
-            (arg as &void as usize).hash(hasher);
-        }
+        hash_types(self.args, hasher);
     }
 
     mixin std::cmp::Equatable<MonoKey>;

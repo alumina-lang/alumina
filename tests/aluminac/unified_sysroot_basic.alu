@@ -249,8 +249,8 @@ fn main() -> i32 {
     // expected types and non-empty values.
     let fname: &[u8] = file!();
     if fname.len() == 0usize { return 62; }
-    if line!() == 0u32 { return 63; }
-    if column!() == 0u32 { return 64; }
+    if line!() == 0 { return 63; }
+    if column!() == 0 { return 64; }
 
     // intrinsics::expect (the branch-prediction hint) is identity in
     // aluminac — the value passes through unchanged.
@@ -295,26 +295,26 @@ fn main() -> i32 {
     if tup_a != tup_b { return 88; }
     if tup_a == tup_c { return 89; }
 
-    // switch on a bool — synthetic default block keeps the LLVM phi well-formed.
+    // switch on a bool (a value-producing switch needs a default arm).
     let bv: bool = true;
     let bv_result = switch bv {
         true => 100i32,
-        false => 200i32,
+        _ => 200i32,
     };
     if bv_result != 100i32 { return 77; }
     let bv2: bool = false;
     let bv2_result = switch bv2 {
         true => 1i32,
-        false => 2i32,
+        _ => 2i32,
     };
     if bv2_result != 2i32 { return 78; }
 
-    // switch on enum (the synthetic default fix applies here too).
+    // switch on enum
     let c = Color::Green;
     let cv = switch c {
         Color::Red => 1i32,
         Color::Green => 2i32,
-        Color::Blue => 3i32,
+        _ => 3i32,
     };
     if cv != 2i32 { return 79; }
 

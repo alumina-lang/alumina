@@ -158,6 +158,51 @@ boot misreads the language (record such cases here).
   with an `undef` value.
 - All 557 stdlib tests pass under aluminac on macOS (with threading).
 
+- **Type checking is as strict as alumina-boot's.** Before, `try_coerce`
+  accepted any two types with the same tag (`Option<i32>` for
+  `Option<u8>`, `&i32` for `&u8`), `()` for anything, and inserted casts
+  between any builtin types, so wrong instantiations were silently
+  punned. Now:
+  - types are compared structurally (`IrTy::same_as`; not all IR types
+    are interned) and only alumina-boot's coercions remain (`&mut T` to
+    `&T`, `&mut [T]` to `&[T]`, `&[T; N]` to `&[T]`, fn item to fn
+    pointer, `&T` / `&mut dyn P` to `&dyn P`; no implicit `&` of a value);
+  - binary and unary operands are typechecked (`typecheck_binary`); shift
+    amounts may differ, pointers offset by `isize`/`usize` only;
+  - `if`/`switch` branches are unified by `unify_branches`, where a
+    missing `else`/default arm is `()` (with a note saying so); a `loop`
+    without `break` is `!`; `break` with a value only in `loop`;
+  - `&place` is `&T` only for immutable places (`is_const_place`, as
+    alumina-boot's `is_const`), and collections are indexed through
+    `#[lang(slice_slicify)]` (a mutable `Vector` gives `&mut [T]`).
+  This exposed (and the fixes cover) many latent inference bugs:
+  - **Type hints** are explicit (`lower_expr_hinted`) and flow as in
+    alumina-boot: block value, both branches, `when`, `switch` arms and
+    patterns, `loop` breaks, lambda bodies (return type), `&x`, operands,
+    empty array literals, the arguments of every kind of call (the
+    `slice_new` lang path lowered its length unhinted, so the entrypoint
+    glue built `argv` slices with `cast<usize, ()>`), and alumina-boot's
+    `local_type_hints` rule (`{ let x = ...; x }`). The enclosing
+    function's return type is no longer a fallback hint.
+  - Diagnostics from tentative lowering (for inference) are dropped
+    (`tentative`, per function), and a lambda is lowered once per function
+    instance (`lambda_cache`) — lowering it twice gave two closure types.
+  - Protocol generics bound for a method call no longer leak into the
+    caller's type map (an argument's `.map(...)` set the outer
+    `.chain(...)`'s `T`); dyn calls bind the protocol's parameters to the
+    `dyn` type's arguments; struct literal and `F: Fn(A...) -> R`
+    inference use full unification; `MonoKey` compares types
+    structurally (enum types were not interned, so `unwrap<u32, Error>`
+    was instantiated twice).
+  - `use a::{b as c}` resolved `b` in the importing scope, not in `a`.
+- **Spread types** `(A, T...)` and `fn(T...)`, and spreads in tuple
+  literals (`(x, t...)`), are supported; they used to parse as
+  unresolved types.
+- Type names in diagnostics and `type_name` match alumina-boot
+  (`(Option<i32>, &mut [u8])`, `fn(i32) -> u8`, `&dyn P<..>`).
+- Sysroot: `Deque::from_slice` passed `T` where `&mut T` was expected
+  (alumina-boot rejected it too, when instantiated).
+
 ### alumina-boot bugs found (aluminac deliberately differs)
 
 - `Ty::gcd` joins `&mut T` and `&T` to `&mut T` (its own `assignable_from`
@@ -167,6 +212,17 @@ boot misreads the language (record such cases here).
   `std::std::mem::size_of` and `libc::libc::X` compile (the latter was a
   typo in `std::sync`, now fixed). aluminac resolves each later segment in
   the module named so far only, and reports the path.
+
+### alumina-boot quirks aluminac follows (for now)
+
+- `Alias::f` is the alias target's `f` with fresh generic parameters: the
+  alias's own arguments are ignored (`type R = Result<i32, u8>;
+  R::err(1)` in a function returning `Result<i32, u16>` is a
+  `Result<i32, u16>`; `let x = R::ok(1)` needs a type hint). The sysroot
+  relies on it (`Result::ok(())` in `std::io::unix` means
+  `std::result::Result` under the `io::Result<T>` alias). Arguably a bug.
+- Names resolve through enclosing modules lexically (a child module sees
+  its parent's items).
 
 ### Cross-check divergences to resolve (2026-09-23 snapshot)
 
@@ -202,15 +258,15 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
 - **Strictness gaps vs alumina-boot** (aluminac accepts invalid code):
   protocol bounds are not fully checked (`unified_sysroot_basic`'s `Point`
   lacked `not_equals`); `use std::io::ErrorKind` resolved although
-  `ErrorKind` lives in `std::io::unix`; `coerce_int` inserts implicit casts
-  between *any* builtin types (incl. float→int); `resolve_type` maps an
-  unbound placeholder to `void` silently; an undefined variable reported
-  nothing and an undefined function "expression is not callable".
+  `ErrorKind` lives in `std::io::unix`; a generic parameter that cannot
+  be inferred (and has no default) silently becomes `()` instead of
+  "type hint required" (e.g. `let x = Result::ok(1)`).
 - Const-eval gaps (now reported, not silent): array-to-slice casts, slices
   of slices, pointer arithmetic into arrays.
-- Mono lowers call arguments twice (once for inference without hints, once
-  for real); inference should be driven by expected types like
-  alumina-boot's type hints.
+- Mono still lowers call arguments twice (tentatively for inference, then
+  for real) and has several ad-hoc inference paths (`Fn`-bound return
+  types, method vs function calls); one unification-based inference
+  driven by hints, as alumina-boot's `infer`, would replace them.
 - `make test-std-aluminac` still lacks `--cfg libbacktrace` and
   coroutines (aluminac has no stackful coroutines).
 - Duplicate `#[lang]` items are not rejected (a later one silently wins).
