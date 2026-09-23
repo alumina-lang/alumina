@@ -1,0 +1,25 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `#[inline(ir)]` functions are inlined during monomorphization (as in
+// alumina-boot), so `stack_alloc` allocates in its caller's frame. As an
+// ordinary function, its allocation was freed on return and the two slices
+// below overlapped.
+use std::mem::stack_alloc;
+
+fn fill(n: usize) -> i32 {
+    let a = stack_alloc::<i32>(n);
+    let b = stack_alloc::<i32>(n);
+    for i in 0usize..n {
+        a[i] = i as i32;
+        b[i] = 1000;
+    }
+    let sum = 0;
+    for i in 0usize..n {
+        sum += a[i];
+    }
+    sum
+}
+
+fn main() -> i32 {
+    if fill(100) != 4950 { return 1; }
+    0
+}

@@ -684,16 +684,39 @@ impl ConstEvaluator {
         if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Int {
             return self.pointer_int_bin_op(lhs, rhs, expr.bin_op());
         }
-        // The difference of (and comparisons between) pointers to elements
-        // of the same array.
-        if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Pointer
-            && lhs.lvalue().tag == CLVTag::Index && rhs.lvalue().tag == CLVTag::Index
-            && self.same_lvalue(lhs.lvalue().inner(), rhs.lvalue().inner()) {
-            let (a, b) = (lhs.lvalue().index() as u64, rhs.lvalue().index() as u64);
-            return switch expr.bin_op() {
-                BinOp::Sub => Result::ok(ConstValue::make_int(a - b, BuiltinType::ISize)),
-                _ => self.int_bin_op(ConstValue::make_int(a, BuiltinType::USize), ConstValue::make_int(b, BuiltinType::USize), expr.bin_op()),
+        // The difference of (and comparisons between) pointers to the same
+        // place or to elements of the same array.
+        if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Pointer {
+            let (a, b) = (lhs.lvalue(), rhs.lvalue());
+            let positions: Option<(u64, u64)> = if self.same_lvalue(a, b) {
+                Option::some((0u64, 0u64))
+            } else if a.tag == CLVTag::Index && b.tag == CLVTag::Index && self.same_lvalue(a.inner(), b.inner()) {
+                Option::some((a.index() as u64, b.index() as u64))
+            } else {
+                Option::none()
             };
+            if positions.is_some() {
+                let (i, j) = positions.unwrap();
+                return switch expr.bin_op() {
+                    BinOp::Sub => Result::ok(ConstValue::make_int(i - j, BuiltinType::ISize)),
+                    _ => self.int_bin_op(ConstValue::make_int(i, BuiltinType::USize), ConstValue::make_int(j, BuiltinType::USize), expr.bin_op()),
+                };
+            }
+            // (Pointers into different places differ, but are not ordered.)
+            switch expr.bin_op() {
+                BinOp::Eq => return Result::ok(ConstValue::make_bool(false)),
+                BinOp::Ne => return Result::ok(ConstValue::make_bool(true)),
+                _ => {}
+            }
+        }
+        // Functions are equal if they are the same function.
+        if lhs.tag == CValTag::FnPtr && rhs.tag == CValTag::FnPtr {
+            let same = lhs.fn_ref().mangled_name == rhs.fn_ref().mangled_name;
+            switch expr.bin_op() {
+                BinOp::Eq => return Result::ok(ConstValue::make_bool(same)),
+                BinOp::Ne => return Result::ok(ConstValue::make_bool(!same)),
+                _ => {}
+            }
         }
 
         Result::err(ConstEvalError::unsupported())
@@ -910,10 +933,14 @@ impl ConstEvaluator {
                 return Result::ok(ConstValue::make_bytes(lhs.bytes(), lhs.bytes_offset() - offset));
             }
         }
-        // Byte pointer - byte pointer (same provenance)
-        if rhs.tag == CValTag::Bytes && op == BinOp::Sub {
-            let diff = (lhs.bytes_offset() as i64) - (rhs.bytes_offset() as i64);
-            return Result::ok(ConstValue::make_int(diff as u64, BuiltinType::ISize));
+        // Byte pointer - byte pointer, and comparisons (into the same
+        // string, which, as in alumina-boot, is decided by value).
+        if rhs.tag == CValTag::Bytes && lhs.bytes() == rhs.bytes() {
+            let (a, b) = (lhs.bytes_offset() as u64, rhs.bytes_offset() as u64);
+            return switch op {
+                BinOp::Sub => Result::ok(ConstValue::make_int(a - b, BuiltinType::ISize)),
+                _ => self.int_bin_op(ConstValue::make_int(a, BuiltinType::USize), ConstValue::make_int(b, BuiltinType::USize), op),
+            };
         }
         Result::err(ConstEvalError::unsupported())
     }
@@ -1393,6 +1420,11 @@ impl ConstEvaluator {
     // ========== Ref/Deref ==========
 
     fn eval_ref(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, ConstEvalError> {
+        // `&*p` is `p` (which may point into a string's bytes, which are
+        // not places of their own).
+        if expr.lhs().tag == IrTag::Deref {
+            return self.eval(expr.lhs().lhs());
+        }
         let inner_r = self.eval_inner(expr.lhs());
         if inner_r.is_err() { return inner_r; }
         let inner = inner_r.unwrap();

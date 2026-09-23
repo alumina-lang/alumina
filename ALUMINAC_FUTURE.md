@@ -376,6 +376,26 @@ diagnostic's location, expansion or instantiation chain). Done so far:
   error does not cascade; types have no spans, so errors in them point at
   the enclosing expression (`Mono::type_span`).
 
+- **`#[inline(ir)]` is implemented** (`mono/inliner.alu`): calls are
+  replaced by the callee's body during mono, as in alumina-boot, with its
+  restrictions reported (variables, flow control, early returns). This is
+  about meaning, not speed: **`stack_alloc` allocated in its own frame**,
+  freed on return (two `stack_alloc`s in a function overlapped at -O0);
+  `test_const_stack_alloc` runs again.
+- Mono checks: `break`/`continue` outside loops, `return`/`defer` outside
+  function bodies, `defer`/`yield` in `defer`, argument counts (none were
+  checked; the LLVM IR was invalid), methods without parameters, closures
+  binding non-locals, addresses of intrinsics, `dyn` of non-protocols /
+  builtin protocols / non-dispatchable functions / another `dyn` (a `dyn`
+  now conforms to its protocols), protocols with generic functions used
+  other than as mixins, recursive protocol bounds; compilation stops after
+  syntax errors. Constant evaluation of pointer comparisons and
+  differences (same place, string bytes by value), `&*p`, function pointer
+  equality.
+- Remaining (5 of 112): alias cycles (`use a::b as c` loops), cyclic
+  static initialization and `typeof` cycles (unpopulated items), and the
+  lints (`warnings.alu`, `not_a_protocol`'s unused variable).
+
 ### Cross-check status
 
 `tests/aluminac/cross_check.sh`: every aluminac test behaves the same

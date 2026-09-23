@@ -1,0 +1,173 @@
+// `#[inline(ir)]`: calls of such functions are replaced by their bodies
+// during monomorphization, as in alumina-boot. This is not an optimization
+// (LLVM inlines as well as it can) but a matter of meaning: e.g.
+// `std::mem::stack_alloc` allocates in its caller's frame, which it could
+// not do as a function of its own (LLVM frees the dynamic allocas of an
+// inlined function when it returns).
+//
+// As in alumina-boot, the functions are simple: no local variables, loops,
+// `return`s or `defer`s; their parameters are bound to the arguments.
+
+use mono::*;
+use mono::lower::Mono;
+use ast::*;
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+
+/// Why a function body cannot be inlined.
+enum Refusal {
+    None,
+    EarlyReturn,
+    FlowControl,
+}
+
+impl Refusal {
+    fn message(self: &Refusal) -> &[u8] {
+        switch *self {
+            Refusal::EarlyReturn => "cannot IR-inline functions that can return early",
+            _ => "cannot IR-inline functions that use flow control",
+        }
+    }
+}
+
+/// A copy of a function body with its parameters replaced.
+struct Inliner {
+    arena: &mut aluminac_common::arena::Arena,
+    /// The expression each parameter (by id) stands for.
+    params: &HashMap<usize, &IrExpr>,
+    refusal: Refusal,
+}
+
+impl Inliner {
+    fn copy(self: &mut Inliner, e: &IrExpr) -> &IrExpr {
+        if self.refusal != Refusal::None {
+            return e;
+        }
+        switch e.tag {
+            // (Parameters are locals of the function.)
+            IrTag::Param, IrTag::Local => return self.params.get(&e._data.var.id._value).unwrap_or(e),
+            IrTag::Return => {
+                self.refusal = Refusal::EarlyReturn;
+                return e;
+            }
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::FnRef, IrTag::GlobalRef, IrTag::Void, IrTag::Zeroed,
+            IrTag::Unreachable, IrTag::Undef, IrTag::Trap, IrTag::InConstContext,
+            IrTag::TypeLayout, IrTag::InlineAsm => return e,
+            _ => {}
+        }
+        let c = *e;
+        switch e.tag {
+            IrTag::Binary => {
+                c._data.bin.lhs = self.copy(e._data.bin.lhs);
+                c._data.bin.rhs = self.copy(e._data.bin.rhs);
+            }
+            IrTag::Unary => c._data.un.lhs = self.copy(e._data.un.lhs),
+            IrTag::Assign => {
+                c._data.assign.lhs = self.copy(e._data.assign.lhs);
+                c._data.assign.rhs = self.copy(e._data.assign.rhs);
+            }
+            IrTag::FieldAccess => c._data.field.lhs = self.copy(e._data.field.lhs),
+            IrTag::Index => {
+                c._data.idx.lhs = self.copy(e._data.idx.lhs);
+                c._data.idx.rhs = self.copy(e._data.idx.rhs);
+            }
+            IrTag::Cast, IrTag::Transmute => c._data.cast.lhs = self.copy(e._data.cast.lhs),
+            IrTag::Ref, IrTag::Deref, IrTag::StackAlloc => c._data.single.lhs = self.copy(e._data.single.lhs),
+            IrTag::If => {
+                c._data.if_data.cond = self.copy(e._data.if_data.cond);
+                c._data.if_data.lhs = self.copy(e._data.if_data.lhs);
+                c._data.if_data.opt_expr = e._data.if_data.opt_expr.map(|&self, x: &IrExpr| -> &IrExpr { self.copy(x) });
+            }
+            IrTag::Switch => {
+                c._data.switch_data.lhs = self.copy(e._data.switch_data.lhs);
+                let arms = self.arena.alloc_slice_copy::<IrSwitchArm>(e._data.switch_data.switch_arms);
+                for arm in arms.iter_mut() {
+                    arm.body = self.copy(arm.body);
+                }
+                c._data.switch_data.switch_arms = arms;
+            }
+            IrTag::Call => {
+                c._data.call.items = self.copy_all(e._data.call.items);
+                if e._data.call.call_target.tag == CallKind::Indirect {
+                    c._data.call.call_target.callee = self.copy(e._data.call.call_target.callee);
+                }
+            }
+            IrTag::StructLit => c._data.struct_lit.items = self.copy_all(e._data.struct_lit.items),
+            IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit => c._data.block.items = self.copy_all(e._data.block.items),
+            IrTag::LlvmIntrinsic, IrTag::AtomicOp, IrTag::ConstPanic, IrTag::ConstWarning, IrTag::ConstNote,
+            IrTag::ConstAlloc, IrTag::ConstFree, IrTag::ConstBake => c._data.codegen.items = self.copy_all(e._data.codegen.items),
+            // Loops, `break`, `continue`, `defer`, `let` and anything else.
+            _ => {
+                self.refusal = Refusal::FlowControl;
+                return e;
+            }
+        }
+        self.arena.alloc(c)
+    }
+
+    fn copy_all(self: &mut Inliner, items: &[&IrExpr]) -> &[&IrExpr] {
+        let copies = self.arena.alloc_slice::<&IrExpr>(items.len());
+        for (i, item) in items.iter().enumerate() {
+            copies[i] = self.copy(item);
+        }
+        copies
+    }
+}
+
+/// Whether an argument can stand for a parameter as it is (it is a value
+/// with no effects, which the body can neither change nor observe twice).
+fn is_plain_value(e: &IrExpr) -> bool {
+    switch e.tag {
+        IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+        IrTag::FnRef, IrTag::Void, IrTag::Zeroed => true,
+        _ => false,
+    }
+}
+
+/// A call of an `#[inline(ir)]` function as its body, or the call itself
+/// if the function has none yet (a recursive call).
+fn inline_ir_call(m: &mut Mono, call: &IrExpr, f: &IrFunction, span: Span) -> &IrExpr {
+    if f.body.is_none() {
+        return call;
+    }
+    if !f.local_defs.is_empty() {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(f.span, "cannot IR-inline functions that use variables"));
+        return call;
+    }
+
+    // The arguments are evaluated first, in order (into temporaries,
+    // unless they are plain values).
+    let params: HashMap<usize, &IrExpr> = HashMap::new();
+    defer params.free();
+    let stmts: Vector<&IrExpr> = Vector::new();
+    defer stmts.free();
+    for (i, arg) in call.items().iter().enumerate() {
+        if i >= f.params.len() {
+            break;
+        }
+        let param = f.params[i];
+        if is_plain_value(arg) {
+            params.insert(param.id._value, arg);
+            continue;
+        }
+        let temp = m.ctx.id_gen.next_id();
+        m.local_defs.push(IrLocalDef { id: temp, ty: param.ty, name: param.name, span: span });
+        stmts.push(m.mk_let(temp, param.ty, arg));
+        params.insert(param.id._value, m.mk_local(temp, param.ty));
+    }
+
+    let inliner = Inliner { arena: m.ctx.arena, params: &params, refusal: Refusal::None };
+    let body = inliner.copy(f.body.unwrap());
+    if inliner.refusal != Refusal::None {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, inliner.refusal.message()));
+        return call;
+    }
+    if stmts.is_empty() {
+        return body;
+    }
+    stmts.push(body);
+    let block = m.mk_block(m.ctx.arena.alloc_slice_copy::<&IrExpr>(stmts.as_slice()));
+    (block as &mut IrExpr).ty = call.ty;
+    block
+}

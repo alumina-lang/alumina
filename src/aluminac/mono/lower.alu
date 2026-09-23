@@ -30,6 +30,8 @@ struct Mono {
     fn_scope: bool,
     // Whether a deferred expression is being lowered.
     in_defer: bool,
+    // The protocols whose parameters' bounds are being checked.
+    resolving_protocols: Vector<(usize, &[&IrTy])>,
     // The span of the expression (or item) being lowered, for errors in the
     // types it names (which have no spans of their own).
     type_span: Span,
@@ -145,6 +147,7 @@ impl Mono {
             type_span: Span::empty(),
             fn_scope: false,
             in_defer: false,
+            resolving_protocols: Vector::new(),
             suppress_field_error: false,
             const_replacements: HashMap::new(),
             current_fn_idx: 0usize,
@@ -557,6 +560,16 @@ impl Mono {
                 let void_ty = self.ctx.void_ty;
                 let ptr_ty = self.ctx.make_ptr_ty(void_ty, ty.is_const());
                 let protos_tuple: &IrTy;
+                let proto_asts: &[&Ty] = if inner_ast.tag == TyTag::Tuple {
+                    inner_ast.elems()
+                } else {
+                    self.ctx.arena.alloc_slice_copy::<&Ty>(&[inner_ast])
+                };
+                for proto_ast in proto_asts {
+                    if !self.check_dyn_protocol(self.resolve_type(proto_ast)) {
+                        return self.ctx.void_ty;
+                    }
+                }
                 if inner_ast.tag == TyTag::Tuple {
                     let n = inner_ast.elems().len();
                     let protos = self.ctx.arena.alloc_slice::<&IrTy>(n);
@@ -590,6 +603,64 @@ impl Mono {
             }
             TyTag::Unresolved => self.ctx.void_ty,
             _ => self.ctx.void_ty,
+        }
+    }
+
+    /// The protocols of a `dyn` type, or none for another type.
+    fn dyn_protocols(self: &Mono, ty: &IrTy) -> Option<&[&IrTy]> {
+        let dyn_id = self.ctx.get_lang_item("dyn");
+        if dyn_id.is_none() || ty.tag != IrTyTag::Struct || ty.struct_ref().id._value != dyn_id.unwrap()
+            || ty.struct_ref().type_args.len() != 2 || ty.struct_ref().type_args[0].tag != IrTyTag::Tuple {
+            return Option::none();
+        }
+        Option::some(ty.struct_ref().type_args[0].elems())
+    }
+
+    /// Whether a type can be one of a `dyn`'s protocols (as in
+    /// alumina-boot); reported if not.
+    fn check_dyn_protocol(self: &mut Mono, proto: &IrTy) -> bool {
+        if proto.tag != IrTyTag::Protocol {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span, "dyn requires a protocol"));
+            return false;
+        }
+        let def = self.ctx.protocol_defs.get(&proto.proto_id()).unwrap();
+        for attr in def.attributes {
+            if attr.tag == AttrTag::Lang && attr.str_val().len() > 6 && attr.str_val()[..6] == "proto_" {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                    "builtin protocols cannot be used with `dyn`"));
+                return false;
+            }
+        }
+        // Every function takes `self` by pointer, and `Self` appears nowhere
+        // else in its signature.
+        let self_id = if def.generic_params.len() > 0 { def.generic_params[0].id._value } else { 0usize };
+        for method in def.methods {
+            let dispatchable = method.params.len() > 0
+                && method.params[0].ty.tag == TyTag::Pointer
+                && method.params[0].ty.inner().tag == TyTag::Placeholder
+                && method.params[0].ty.inner().id()._value == self_id
+                && !method.params[1..].iter().any(|=self_id, p: FnParam| -> bool { Mono::mentions_placeholder(p.ty, self_id) })
+                && !Mono::mentions_placeholder(method.return_type, self_id);
+            if !dispatchable {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                    std::fmt::format!("signature of `{}` is incompatible with virtual dispatch", method.name).unwrap().as_slice()));
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether a (syntactic) type mentions the generic parameter `id`.
+    fn mentions_placeholder(ty: &Ty, id: usize) -> bool {
+        switch ty.tag {
+            TyTag::Placeholder => ty.id()._value == id,
+            TyTag::Pointer, TyTag::Slice, TyTag::Array => Mono::mentions_placeholder(ty.inner(), id),
+            TyTag::Tuple => ty.elems().iter().any(|=id, t: &Ty| -> bool { Mono::mentions_placeholder(t, id) }),
+            TyTag::FnPointer => ty.elems().iter().any(|=id, t: &Ty| -> bool { Mono::mentions_placeholder(t, id) })
+                || Mono::mentions_placeholder(ty.ret_ty(), id),
+            TyTag::Generic => Mono::mentions_placeholder(ty.inner(), id)
+                || ty.elems().iter().any(|=id, t: &Ty| -> bool { Mono::mentions_placeholder(t, id) }),
+            _ => false,
         }
     }
 
@@ -848,9 +919,26 @@ impl Mono {
         // can recover them after substitution.
         let proto_def = self.ctx.protocol_defs.get(&item_ref.id._value);
         if proto_def.is_some() {
+            let def = proto_def.unwrap();
+            // (As in alumina-boot, a protocol with generic functions is only
+            // a mixin, and bounds cannot lead back to the protocol.)
+            if def.methods.iter().any(|m: FnDef| -> bool { m.generic_params.len() > 0 }) {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.span,
+                    "protocols containing generic functions can only be used as mixins"));
+            }
+            if self.resolving_protocols.iter().any(|=item_ref, =type_args, p: (usize, &[&IrTy])| -> bool {
+                p.0 == item_ref.id._value && same_types(p.1, type_args)
+            }) {
+                let current = self.ctx.protocol_defs.get(&self.resolving_protocols[self.resolving_protocols.len() - 1].0).unwrap();
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(current.span,
+                    "recursive protocol bounds are not supported"));
+                return self.ctx.arena.alloc(IrTy::mk_protocol_with_args(item_ref.id._value, type_args));
+            }
             // The protocol's own parameters' bounds (e.g. `F: Formatter<F>`
             // in `Formattable<Self, F>`) must hold for the arguments.
-            let params = proto_def.unwrap().generic_params;
+            let params = def.generic_params;
+            self.resolving_protocols.push((item_ref.id._value, type_args));
+            defer self.resolving_protocols.pop();
             if !type_args.is_empty() {
                 let outer_type_map = self.type_map;
                 self.type_map = outer_type_map.clone();
@@ -1686,6 +1774,16 @@ impl Mono {
                 let call = self.lower_call(expr);
                 if expr.tag == ExprTag::Call && call.tag == IrTag::Call {
                     self.check_arg_count(call, expr);
+                    // `#[inline(ir)]` functions are called by their bodies.
+                    let target = call.call_target();
+                    if target.tag == CallKind::Direct {
+                        let idx = self.ctx.fn_indices.get(&target.fn_ref.mangled_name);
+                        if idx.is_some() && self.ctx.ir_functions[idx.unwrap()].attributes.iter()
+                            .any(|a: Attribute| -> bool { a.tag == AttrTag::InlineIr }) {
+                            let f = self.ctx.ir_functions[idx.unwrap()];
+                            return mono::inliner::inline_ir_call(self, call, &f, expr.span);
+                        }
+                    }
                 }
                 call
             }
@@ -4399,6 +4497,13 @@ impl Mono {
     }
 
     fn check_protocol_conformance(self: &mut Mono, ty: &IrTy, proto: &ProtocolDef) -> bool {
+        // A `dyn` conforms to its protocols (as in alumina-boot).
+        let dyn_protos = self.dyn_protocols(ty);
+        if dyn_protos.is_some() && dyn_protos.unwrap().iter().any(|=proto, p: &IrTy| -> bool {
+            p.tag == IrTyTag::Protocol && p.proto_id() == proto.id._value
+        }) {
+            return true;
+        }
         let scope_idx = self.method_scope(ty);
         if scope_idx == 0u32 {
             // No scope means no methods - can't conform unless protocol has no methods
@@ -5513,6 +5618,12 @@ impl Mono {
     /// protocol entries (caller should fall back to null vtable).
     fn build_dyn_vtable_ref(self: &mut Mono, impl_ty: &IrTy, protos_tuple: &IrTy) -> &IrExpr {
         if protos_tuple.tag != IrTyTag::Tuple {
+            return 0usize as &IrExpr;
+        }
+        if self.dyn_protocols(impl_ty).is_some() {
+            // (A `dyn` of a `dyn`: its functions would dispatch virtually.)
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                "indirect `dyn` pointers are not supported"));
             return 0usize as &IrExpr;
         }
         // Cache key: pointer-identity of protos_tuple + impl_ty.
