@@ -469,7 +469,14 @@ instances.
   a mixin protocol's generics inferred from the protocol's signature,
   cached per type/protocol; `protocol_signatures.alu`), and a `&mut self`
   method called through `&` is an error. (Missing `not_equals` and
-  `use std::io::ErrorKind` were already fixed.)
+  `use std::io::ErrorKind` were already fixed.) Also now errors (probing
+  every alumina-boot error kind): unknown struct literal fields, non-`bool`
+  `if`/`while` conditions, duplicate enum values (alumina-boot: internal
+  error), generic argument counts of types, too many `for` variables,
+  structs containing themselves (not through a pointer), `*T`/`T.N` of a
+  non-pointer/non-tuple, capturing closures as `fn` pointers
+  (`invalid_code_compile_fail.alu`); closures are `{{anonymous}}` in type
+  names, as in alumina-boot.
 - Mono still lowers call arguments twice (tentatively for inference, then
   for real) and has several ad-hoc inference paths (`Fn`-bound return
   types, method vs function calls); one unification-based inference

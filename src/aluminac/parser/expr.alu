@@ -557,10 +557,29 @@ impl ExprParser {
 
     /// Report a path that resolves to nothing (as alumina-boot words it).
     fn unresolved_path(self: &ExprParser, span: Span, path: &[u8]) -> &Expr {
-        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(
-            span,
-            std::fmt::format!("could not resolve the path `{}`", path).unwrap().as_slice(),
-        ));
+        // (Through an import that does not resolve, which is reported.)
+        let first = path[0..std::string::find_char(path, ':').unwrap_or(path.len())];
+        let item = self.ctx.scopes.resolve_raw(self.scope_idx, first);
+        if item.is_some() && item.unwrap().kind.tag == scope::NamedItemTag::UseAlias
+            && self.ctx.scopes.follow_use_alias(item.unwrap()).is_none() {
+            return self.alloc_void(span);
+        }
+        // (In a nested function, it may be a variable of the function around
+        // it, which it cannot use.)
+        let functions = 0usize;
+        let scope = Option::some(self.scope_idx);
+        while scope.is_some() {
+            if self.ctx.scopes.get(scope.unwrap()).kind == scope::ScopeKind::Function {
+                functions += 1;
+            }
+            scope = self.ctx.scopes.get(scope.unwrap()).parent;
+        }
+        let message = if functions > 1 && std::string::find_char(path, ':').is_none() {
+            std::fmt::format!("could not resolve the path `{}` (a nested function cannot use the variables of the one around it)", path)
+        } else {
+            std::fmt::format!("could not resolve the path `{}`", path)
+        };
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(span, message.unwrap().as_slice()));
         self.alloc_void(span)
     }
 

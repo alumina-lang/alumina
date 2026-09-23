@@ -497,6 +497,25 @@ impl Mono {
                 }
                 if ty.inner().tag == TyTag::Named {
                     let item_ref = ItemRef { id: ty.inner().id() };
+                    // (As many arguments as the item has parameters, or
+                    // fewer for defaulted ones.)
+                    let id = item_ref.id._value;
+                    let params: Option<&[GenericParam]> = if self.ctx.struct_defs.get(&id).is_some() {
+                        Option::some(self.ctx.struct_defs.get(&id).unwrap().generic_params)
+                    } else if self.ctx.protocol_defs.get(&id).is_some() {
+                        Option::some(self.ctx.protocol_defs.get(&id).unwrap().generic_params)
+                    } else if self.ctx.type_aliases.get(&id).is_some() {
+                        Option::some(self.ctx.type_aliases.get(&id).unwrap().generic_params)
+                    } else {
+                        Option::none()
+                    };
+                    if params.is_some() {
+                        self.check_generic_arity(params.unwrap(), resolved_args.len(), self.type_span);
+                        // (Extra ones were reported.)
+                        if resolved_args.len() > params.unwrap().len() {
+                            resolved_args = resolved_args[0..params.unwrap().len()];
+                        }
+                    }
                     self.resolve_named_type(item_ref, resolved_args)
                 } else {
                     self.resolve_type(ty.inner())
@@ -510,6 +529,11 @@ impl Mono {
                 if inner_ir.tag == IrTyTag::Pointer {
                     inner_ir.inner()
                 } else {
+                    // (`()` is a type not known yet.)
+                    if !inner_ir.is_void() {
+                        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
+                            std::fmt::format!("`{}` is not a pointer type", self.type_name(inner_ir)).unwrap().as_slice()));
+                    }
                     self.ctx.void_ty
                 }
             }
@@ -522,7 +546,8 @@ impl Mono {
                 let inner_ir = self.resolve_type(ty.inner());
                 let index = ty.typeof_expr();
                 if inner_ir.tag != IrTyTag::Tuple && !inner_ir.is_void() {
-                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(index.span, "only tuple types can be indexed"));
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(index.span,
+                        std::fmt::format!("`{}` is not a tuple type", self.type_name(inner_ir)).unwrap().as_slice()));
                     return self.ctx.void_ty;
                 }
                 let elems: &[&IrTy] = if inner_ir.tag == IrTyTag::Tuple { inner_ir.elems() } else { &[] };
@@ -1079,6 +1104,12 @@ impl Mono {
         let is_zst = true;
         for i in 0usize..def.fields.len() {
             let field_ty = self.resolve_type(def.fields[i].ty);
+            // (A field that contains the struct, not through a pointer.)
+            if contains_by_value(field_ty, result, 0) {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.fields[i].span,
+                    "type with infinite size (recursive type without indirection)"));
+                field_ty = self.ctx.void_ty;
+            }
             fields[i] = IrField {
                 name: def.fields[i].name,
                 ty: field_ty,
@@ -1140,7 +1171,17 @@ impl Mono {
                 let const_val = self.try_const_eval_u64(ir_expr);
                 if const_val.is_some() {
                     let v = const_val.unwrap();
-                    taken_values.insert(v);
+                    if !taken_values.insert(v) {
+                        // (The earlier variant with the value, which has one.)
+                        let other: &[u8] = "?";
+                        for j in 0usize..i {
+                            if def.variants[j].value.is_some() && variants[j].value == v {
+                                other = variants[j].name;
+                            }
+                        }
+                        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(val_expr.span,
+                            std::fmt::format!("duplicate enum value (also of `{}`)", other).unwrap().as_slice()));
+                    }
                     variants[i] = IrEnumVariant {
                         name: def.variants[i].name,
                         value: v,
@@ -3486,8 +3527,14 @@ impl Mono {
         }
     }
 
+    /// The condition of an `if` or `while` (a `bool`).
+    fn lower_condition(self: &mut Mono, cond: &Expr) -> &IrExpr {
+        let ir_cond = self.lower_expr_hinted(cond, self.ctx.bool_ty);
+        self.check_and_coerce(ir_cond, self.ctx.bool_ty, cond.span)
+    }
+
     fn lower_if(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let ir_cond = self.lower_expr(expr.cond());
+        let ir_cond = self.lower_condition(expr.cond());
         self.check_condition(ir_cond, expr.span, false);
 
         // If the if is in an rvalue position with a known expected_type
@@ -3550,7 +3597,7 @@ impl Mono {
     }
 
     fn lower_while(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let ir_cond = self.lower_expr(expr.cond());
+        let ir_cond = self.lower_condition(expr.cond());
         self.check_condition(ir_cond, expr.span, true);
         let ir_body = self.lower_loop_body(expr.lhs());
         let result = IrExpr::void_expr(self.ctx.void_ty);
@@ -4835,6 +4882,15 @@ impl Mono {
         self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "_tuple", span: Span::empty() });
 
         let n = expr.args().len();
+        let arity = switch elem_ty.tag {
+            IrTyTag::Tuple => elem_ty.elems().len(),
+            IrTyTag::Struct => elem_ty.struct_ref().fields.len(),
+            _ => 0usize,
+        };
+        if n > arity && !elem_ty.is_never() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+                std::fmt::format!("too many loop variables (iterator yields `{}`)", self.type_name(elem_ty)).unwrap().as_slice()));
+        }
         let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(1 + n);
         stmts[0] = self.mk_let(loop_var_id, elem_ty, elem_ir);
 
@@ -5930,6 +5986,11 @@ impl Mono {
             return result.unwrap();
         }
 
+        if val.ty.tag == IrTyTag::Closure && expected_ty.tag == IrTyTag::FnPointer {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span,
+                "anonymous functions that bind environment variables cannot be coerced to a function pointer"));
+            return self.alloc(IrExpr::void_expr(expected_ty));
+        }
         let expected_name = self.ir_type_name(expected_ty);
         let got_name = self.ir_type_name(val.ty);
         self.emit_diag(diagnostics::CodeDiagnostic::type_mismatch(
@@ -7847,7 +7908,8 @@ impl Mono {
         let idx = self.ctx.ir_functions.len();
         let placeholder = IrFunction {
             id: lambda_id,
-            name: if has_captures { "closure" } else { "lambda" },
+            // (As alumina-boot names anonymous functions.)
+            name: "{{anonymous}}",
             mangled_name: mangled,
             params: params,
             return_type: ret_ty,
@@ -8651,7 +8713,13 @@ impl Mono {
         let effects = false;
         for fi in expr.field_inits().iter_ref() {
             let i = fields.iter_ref().find_index(|=fi, f: &IrField| -> bool { f.name == fi.name });
-            if i.is_none() || initialized[i.unwrap()] {
+            if i.is_none() {
+                self.lower_expr(fi.value);
+                self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(
+                    fi.value.span, fi.name, self.ir_type_name(ir_ty)));
+                continue;
+            }
+            if initialized[i.unwrap()] {
                 continue;
             }
             let i = i.unwrap();
@@ -8791,10 +8859,17 @@ impl Mono {
     }
 
     fn lower_let(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        let var_ty = if expr.opt_ty().is_some() {
-            let resolved = self.resolve_type(expr.opt_ty().unwrap());
-            self.check_value_type(resolved, expr.span);
-            resolved
+        // (A declared type that was reported as erroneous, which stands as
+        // `()`, is the value's.)
+        let errors_before = self.ctx.diag.error_count();
+        let declared = expr.opt_ty().map(|&self, t: &Ty| -> &IrTy { self.resolve_type(t) });
+        if declared.is_some() && declared.unwrap().is_void() && self.ctx.diag.error_count() > errors_before
+            && expr.opt_expr().is_some() {
+            declared = Option::none();
+        }
+        let var_ty = if declared.is_some() {
+            self.check_value_type(declared.unwrap(), expr.span);
+            declared.unwrap()
         } else if expr.opt_expr().is_some() {
             let hint = self.local_type_hints.get(&expr.id()._value).unwrap_or(self.ctx.no_hint);
             let ir_init = self.lower_expr_hinted(expr.opt_expr().unwrap(), hint);
@@ -8956,6 +9031,23 @@ impl Mono {
         self.type_map.free();
         self.local_types.free();
         self.local_defs.free();
+    }
+}
+
+/// Whether a value of type `ty` contains one of type `target` (a struct
+/// type, which its instances share), in place rather than through a pointer.
+fn contains_by_value(ty: &IrTy, target: &IrTy, depth: usize) -> bool {
+    if ty as &void == target as &void {
+        return true;
+    }
+    if depth > 64 {
+        return false;
+    }
+    switch ty.tag {
+        IrTyTag::Array => contains_by_value(ty.inner(), target, depth + 1),
+        IrTyTag::Tuple => ty.elems().iter().any(|=target, =depth, e: &IrTy| -> bool { contains_by_value(e, target, depth + 1) }),
+        IrTyTag::Struct => ty.struct_ref().fields.iter().any(|=target, =depth, f: IrField| -> bool { contains_by_value(f.ty, target, depth + 1) }),
+        _ => false,
     }
 }
 

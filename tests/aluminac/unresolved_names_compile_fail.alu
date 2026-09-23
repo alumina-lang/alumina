@@ -1,0 +1,17 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// An import that does not resolve is reported once (its uses were reported
+// too), and a nested function using a variable of the one around it is
+// told why it cannot.
+// EXPECTED_ERROR_COUNT: 2
+// EXPECTED_ERROR: could not resolve the path `std::io::ErrorKind`
+// EXPECTED_ERROR: a nested function cannot use the variables of the one around it
+
+use std::io::ErrorKind;
+
+fn main() {
+    let _ = ErrorKind::NotFound;
+    let _ = ErrorKind::Other;
+    let x = 1;
+    fn inner() -> i32 { x }
+    let _ = inner();
+}
