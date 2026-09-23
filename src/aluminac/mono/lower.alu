@@ -248,10 +248,11 @@ impl Mono {
         if self.tentative {
             return;
         }
-        let first_error = !self.ctx.diag.has_errors;
+        // (A note of its own has no instantiation notes.)
+        let first_error = !self.ctx.diag.has_errors && diag.level != diagnostics::DiagLevel::Note;
         self.ctx.diag.emit(diag);
         for note in notes {
-            self.ctx.diag.emit(note);
+            self.ctx.diag.attach(note);
         }
         if first_error {
             self.ctx.emit_mono_stack_notes();

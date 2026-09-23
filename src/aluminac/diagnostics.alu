@@ -185,11 +185,14 @@ struct CodeDiagnostic {
     _data: _CodeDiagData,
     /// For a warning, its lint (e.g. `unused_variable`), if it has one.
     lint: &[u8],
+    /// Whether it is a note on the diagnostic before it (given or not with
+    /// it, see `DiagnosticContext::attach`).
+    attached: bool,
 }
 
 impl CodeDiagnostic {
     fn _new(level: DiagLevel, span: Span, kind: CodeDiagKind) -> CodeDiagnostic {
-        CodeDiagnostic { level: level, span: span, kind: kind, _data: std::mem::zeroed::<_CodeDiagData>(), lint: "" }
+        CodeDiagnostic { level: level, span: span, kind: kind, _data: std::mem::zeroed::<_CodeDiagData>(), lint: "", attached: false }
     }
 
     fn _new_named(level: DiagLevel, span: Span, kind: CodeDiagKind, name: &[u8]) -> CodeDiagnostic {
@@ -372,7 +375,7 @@ struct DiagnosticContext {
     overrides_applied: usize,
     /// The lint warnings given (see `emit`).
     lints_seen: std::collections::HashSet<u64>,
-    /// Whether the last diagnostic was dropped (so are its notes).
+    /// Whether the last diagnostic was dropped (so are its attached notes).
     dropped: bool,
     errors: std::collections::Vector<CodeDiagnostic>,
     has_errors: bool,
@@ -459,10 +462,13 @@ impl DiagnosticContext {
     }
 
     fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
-        if diag.level == DiagLevel::Note && self.dropped {
-            return;
+        if diag.attached {
+            if self.dropped {
+                return;
+            }
+        } else {
+            self.dropped = false;
         }
-        self.dropped = false;
         // A lint's warning is given once for a place (not for each instance
         // of generic code).
         if !diag.lint.is_empty() {
@@ -484,6 +490,12 @@ impl DiagnosticContext {
         self.errors.push(diag);
     }
 
+    /// A note on the diagnostic given last (given only with it).
+    fn attach(self: &mut DiagnosticContext, note: CodeDiagnostic) {
+        note.attached = true;
+        self.emit(note);
+    }
+
     fn emit_all(self: &DiagnosticContext) {
         let stderr = StdioStream::stderr();
         let f = std::io::BufferedWriter::new(&stderr, 4096);
@@ -502,10 +514,13 @@ impl DiagnosticContext {
         for i in 0usize..self.errors.len() {
             let diag = &self.errors[i];
             // (With the notes of an allowed warning.)
-            if diag.level == DiagLevel::Note && allowed {
-                continue;
+            if diag.attached {
+                if allowed {
+                    continue;
+                }
+            } else {
+                allowed = diag.level == DiagLevel::Allowed;
             }
-            allowed = diag.level == DiagLevel::Allowed;
             // Compare against the previous unsuppressed diagnostic.
             let cur_kind = diag.kind as i32;
             if i > 0usize

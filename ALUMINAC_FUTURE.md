@@ -546,28 +546,14 @@ different mechanism and both paths are fully implemented:
 ### TODO — backlog
 
 3. ~~`test_dyn` (typing.alu)~~ — fixed by mono-context isolation, ungated.
-4. **Three distinct deeper feature gaps** (probed 2026-05-16, each
-   still independently fails):
-   - `std/typing.alu` `test_type` / `element_types`: needs
-     **type-level tuple *range* slicing `Tup.(1..)` + splat in tuple
-     construction** (the `tuple_map_of<T,U>` typeop). This effort
-     added single-index type-level projection (`TyTag::TupleIndexOf`,
-     the `tuple_index_of` grammar node — `parser/pass2.alu`
-     `parse_type` + `mono/lower.alu` `resolve_type` + `ast.alu`);
-     extend to a range/splat form (check `node-types.json`).
-   - (`std::thread::tests::test_detach_panic_2` is timing-dependent: it
-    fails when a loaded machine takes over a second to end the process.)
-  - `std/fmt/mod.alu` `test_const_println`: const-eval doesn't fold
-     the `format!`/`_finish_format(...)` helper-call chain in a
-     `const { … }` block. Overlaps the deferred const-eval work.
-   - `std/fmt/mod.alu` `test_debug_formatter`: the `debug()` adapter
-     needs broader reflection (closure introspection, enum-as-integer
-     cast fmt, union-as-`<union>`, named-type display). This effort
-     added fn-type reflection (`Type::new::<fn>().name()`/
-     `.module_path()` via `IrTyTag::Fn` in
-     `lower_type_name`/`lower_module_path` +
-     `scope.alu::find_fn_container_scope_by_id`); isolate the first
-     failing `debug()` sub-case (`fmt!("{}", debug(42))`).
+4. ~~Deeper feature gaps~~: `std/typing.alu` `element_types` (type-level
+   `Tup.(1..)` and splats) and `std/fmt` `test_const_println` both work
+   (their `#[cfg(boot)]` gates were stale and are removed; a constant's
+   notes were hidden, see below). Remaining: `test_debug_formatter` (the
+   `debug()` adapter's reflection: closures, enums as integers, unions).
+   Standalone notes (a constant's `println!`) were dropped after an allowed
+   lint: notes on a diagnostic are now marked `attached` and only those go
+   with it.
 6. **atomics inline-dispatch refactor** — *gated on item 3*. Desired
    shape: statement-level `#[cfg(boot)] return …; #[cfg(not(boot))
    return …; intrinsics::unreachable()` inlined into each `Atomic<T>`
