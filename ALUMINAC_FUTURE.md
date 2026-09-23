@@ -612,11 +612,9 @@ derive-from-reaching-arm + single-predecessor-no-phi handling into
   Structured comparison vs `src/alumina-boot/src/ir/` const-eval if
   this becomes a priority (alumina-boot's interpreter is ~2000 LoC;
   aluminac's gaps: pointer-arena chasing, dyn dispatch, heap-bake).
-- **Fully-qualified macro paths.** `std::println!`/`std::eprintln!`
-  silently expand to **nothing** under aluminac (no output, no
-  error); unqualified prelude forms work. Real macro-path-resolution
-  gap; own slice + regression. Not parity-blocking (sysroot uses
-  unqualified forms) but a sharp edge.
+- **Fully-qualified macro paths.** `std::println!` is now an error
+  ("could not resolve the path"), as in alumina-boot (the macro lives in
+  `std::io`); no longer a silent no-op.
 - **`when cfg!` name-resolution asymmetry.** (See item 6.) Making
   aluminac and alumina-boot agree (ideally both elide non-selected
   `when cfg!` arms from name resolution) would unblock the cleaner
