@@ -318,6 +318,13 @@ impl Mono {
         self.ctx.arena.alloc(e) as &IrExpr
     }
 
+    /// A new temporary holding `value`: its `let`, and a use of it.
+    fn temporary(self: &mut Mono, name: &[u8], value: &IrExpr) -> (&IrExpr, &IrExpr) {
+        let id = self.ctx.id_gen.next_id();
+        self.local_defs.push(IrLocalDef { id: id, ty: value.ty, name: name, span: value.span });
+        (self.mk_let(id, value.ty, value), self.mk_local(id, value.ty))
+    }
+
     fn mk_let_uninit(self: &mut Mono, id: Id, ty: &IrTy) -> &IrExpr {
         let e = IrExpr::void_expr(self.ctx.void_ty);
         e.tag = IrTag::Let;
@@ -3418,17 +3425,15 @@ impl Mono {
                         self.report_invalid_binop(op, ir_lhs.ty, ir_rhs.ty, expr.span);
                     }
                     if ir_lhs.is_simple_place() {
-                        let binop_expr = self.mk_binary(op, ir_lhs, ir_rhs, ir_lhs.ty);
-                        return self.mk_assign(ir_lhs, binop_expr);
+                        return self.mk_assign(ir_lhs, self.mk_binary(op, ir_lhs, ir_rhs, ir_lhs.ty));
                     }
-                    // The place is evaluated once, before the right operand:
+                    // The place is evaluated once, before the right operand
+                    // (as alumina-boot's lang tests expect):
                     //     { let p = &place; *p = *p op rhs }
-                    let ptr = self.mk_ref(ir_lhs, false);
-                    let ptr_id = self.ctx.id_gen.next_id();
-                    self.local_defs.push(IrLocalDef { id: ptr_id, ty: ptr.ty, name: "_place", span: expr.span });
-                    let place = self.mk_deref(self.mk_local(ptr_id, ptr.ty), ir_lhs.ty);
+                    let (bind, ptr) = self.temporary("_place", self.mk_ref(ir_lhs, false));
+                    let place = self.mk_deref(ptr, ir_lhs.ty);
                     let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
-                    stmts[0] = self.mk_let(ptr_id, ptr.ty, ptr);
+                    stmts[0] = bind;
                     stmts[1] = self.mk_assign(place, self.mk_binary(op, place, ir_rhs, ir_lhs.ty));
                     return self.mk_block(stmts);
                 }
@@ -4997,7 +5002,12 @@ impl Mono {
         };
 
         // Coerce to indexable type (slice/array) via as_slice() if needed
-        let indexee = self.coerce_to_indexable(derefed);
+        // (an array is indexed by ranges as a slice, as in alumina-boot).
+        let indexee = if derefed.ty.tag == IrTyTag::Array && self.is_range_ty(ir_index.ty) {
+            self.slicify(derefed).unwrap_or(derefed)
+        } else {
+            self.coerce_to_indexable(derefed)
+        };
 
         // Slices are indexed through the sysroot's `slice_index` /
         // `slice_range_index` lang functions, which carry the bounds
@@ -5016,8 +5026,20 @@ impl Mono {
         }
 
         if self.is_range_ty(ir_index.ty) {
-            // Range indexing (sub-slicing): extract lower/upper bounds from
-            // the appropriate fields of each range variant.
+            // Range indexing (sub-slicing) without the sysroot's functions:
+            // the bounds from the fields of each range variant (the slice and
+            // the range evaluated once, in order).
+            let stmts: Vector<&IrExpr> = Vector::new();
+            defer stmts.free();
+            let indexee = indexee;
+            if indexee.ty.tag == IrTyTag::Slice && !indexee.is_pure() {
+                let (bind, value) = self.temporary("_slice", indexee);
+                stmts.push(bind);
+                indexee = value;
+            }
+            let (bind, range) = self.temporary("_range", ir_index);
+            stmts.push(bind);
+            let ir_index = range;
             let range_struct_id = ir_index.ty.struct_ref().id._value;
             let len_expr = self.get_indexee_len(indexee);
             let zero_lit = self.mk_int_lit(usize_ty, 0u64);
@@ -5045,27 +5067,12 @@ impl Mono {
                 let one_lit = self.mk_int_lit(usize_ty, 1u64);
                 ir_end = self.mk_binary(BinOp::Add, upper, one_lit, usize_ty);
             } else {
-                // Fallback: legacy Range<T> { lower, upper } shape.
-                // Aluminac sysroot uses this for `..` (no RangeFull lang item),
-                // emitting Range<usize>{0, MAX_USIZE} as a sentinel. Detect the
-                // sentinel and use the indexee's length.
+                // a..b — start = lower, end = upper.
                 ir_start = self.mk_cast(self.mk_field(ir_index, 0u32, ir_index.ty.struct_ref().fields[0].ty), usize_ty);
-                if ir_index.ty.struct_ref().fields.len() > 1 {
-                    let is_sentinel = false;
-                    if ir_index.tag == IrTag::StructLit {
-                        let upper_item = ir_index._data.struct_lit.items[1];
-                        if upper_item.tag == IrTag::IntLit && upper_item.int_val() == 18446744073709551615u64 {
-                            is_sentinel = true;
-                        }
-                    }
-                    if is_sentinel {
-                        ir_end = len_expr;
-                    } else {
-                        ir_end = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
-                    }
-                }
+                ir_end = self.mk_cast(self.mk_field(ir_index, 1u32, ir_index.ty.struct_ref().fields[1].ty), usize_ty);
             }
-            return self.lower_subslice_ir(indexee, ir_start, ir_end);
+            stmts.push(self.lower_subslice_ir(indexee, ir_start, ir_end));
+            return self.mk_block(self.ctx.arena.alloc_slice_copy::<&IrExpr>(stmts.as_slice()));
         }
 
         if indexee.ty.tag == IrTyTag::Slice {
@@ -5851,6 +5858,13 @@ impl Mono {
     /// Coerce a value to an indexable type (slice or array).
     /// If already a slice or array, returns as-is.
     /// Otherwise, tries to call as_slice() on the type.
+    /// `val` as a slice, through the sysroot's `slice_slicify` (a `&mut`
+    /// slice if `val` is a mutable place).
+    fn slicify(self: &mut Mono, val: &IrExpr) -> Option<&IrExpr> {
+        let ptr = self.mk_ref(val, self.is_const_place(val));
+        self.call_lang_fn("slice_slicify", &[val.ty, ptr.ty], &[ptr], val.span)
+    }
+
     fn coerce_to_indexable(self: &mut Mono, val: &IrExpr) -> &IrExpr {
         if val.ty.tag == IrTyTag::Slice || val.ty.tag == IrTyTag::Array {
             return val;
@@ -5858,8 +5872,7 @@ impl Mono {
         // As in alumina-boot: a collection is indexed as the slice that
         // the sysroot's `slice_slicify` gives for a pointer to it (a `&mut`
         // slice if the collection is a mutable place with `as_slice_mut`).
-        let ptr = self.mk_ref(val, self.is_const_place(val));
-        let slicified = self.call_lang_fn("slice_slicify", &[val.ty, ptr.ty], &[ptr], val.span);
+        let slicified = self.slicify(val);
         if slicified.is_some() {
             return slicified.unwrap();
         }
@@ -8453,34 +8466,59 @@ impl Mono {
             return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
         }
 
-        // Reorder field_inits to match struct definition order
-        let num_fields = if ir_ty.tag == IrTyTag::Struct { ir_ty.struct_ref().fields.len() } else { expr.field_inits().len() };
-        let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(num_fields);
-        for i in 0usize..num_fields {
-            if ir_ty.tag == IrTyTag::Struct {
-                // Find the field_init matching this struct field by name
-                let def_name = ir_ty.struct_ref().fields[i].name;
-                let field_ty = ir_ty.struct_ref().fields[i].ty;
-                let found = false;
-                for j in 0usize..expr.field_inits().len() {
-                    if expr.field_inits()[j].name == def_name {
-                        let fv = self.lower_expr_coerced(expr.field_inits()[j].value, field_ty);
-                        ir_fields[i] = self.check_and_coerce(fv, field_ty, expr.field_inits()[j].value.span);
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    // (Left uninitialized, as in alumina-boot.)
-                    self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "uninitialized_field",
-                        std::fmt::format!("field `{}` is not initialized", def_name).unwrap().as_slice()));
-                    ir_fields[i] = self.alloc(IrExpr::of(IrTag::Undef, field_ty));
-                }
-            } else {
-                ir_fields[i] = self.lower_expr(expr.field_inits()[i].value);
+        if ir_ty.tag != IrTyTag::Struct {
+            let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(expr.field_inits().len());
+            for (i, fi) in expr.field_inits().iter_ref().enumerate() {
+                ir_fields[i] = self.lower_expr(fi.value);
+            }
+            return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
+        }
+
+        // The initializers, as written (the first one for a field counts).
+        let fields = ir_ty.struct_ref().fields;
+        let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(fields.len());
+        let initialized = self.ctx.arena.alloc_slice::<bool>(fields.len());
+        let order: Vector<usize> = Vector::new();
+        defer order.free();
+        let in_order = true;
+        let effects = false;
+        for fi in expr.field_inits().iter_ref() {
+            let i = fields.iter_ref().find_index(|=fi, f: &IrField| -> bool { f.name == fi.name });
+            if i.is_none() || initialized[i.unwrap()] {
+                continue;
+            }
+            let i = i.unwrap();
+            let fv = self.lower_expr_coerced(fi.value, fields[i].ty);
+            ir_fields[i] = self.check_and_coerce(fv, fields[i].ty, fi.value.span);
+            initialized[i] = true;
+            in_order = in_order && (order.is_empty() || order[order.len() - 1] < i);
+            effects = effects || !ir_fields[i].is_pure();
+            order.push(i);
+        }
+        for (i, f) in fields.iter_ref().enumerate() {
+            if !initialized[i] {
+                // (Left uninitialized, as in alumina-boot.)
+                self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "uninitialized_field",
+                    std::fmt::format!("field `{}` is not initialized", f.name).unwrap().as_slice()));
+                ir_fields[i] = self.alloc(IrExpr::of(IrTag::Undef, f.ty));
             }
         }
-        self.alloc(IrExpr::struct_lit(ir_ty, ir_fields))
+        let lit = self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
+        if in_order || !effects {
+            return lit;
+        }
+        // Written out of order: evaluated as written, then put in place.
+        let stmts: Vector<&IrExpr> = Vector::new();
+        defer stmts.free();
+        for i in order {
+            if !ir_fields[i].is_plain_constant() {
+                let (bind, value) = self.temporary("_field", ir_fields[i]);
+                stmts.push(bind);
+                ir_fields[i] = value;
+            }
+        }
+        stmts.push(lit);
+        self.mk_block(self.ctx.arena.alloc_slice_copy::<&IrExpr>(stmts.as_slice()))
     }
 
     // Lower block-like expressions: ExprTag::Block, ExprTag::Let, ExprTag::Defer

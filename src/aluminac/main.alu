@@ -415,11 +415,13 @@ impl Compiler {
         );
 
         self.diag.apply_lint_overrides();
+        if self.options.verify_ir {
+            unit.check_evaluated_once(&self.diag);
+        }
         if self.diag.has_errors {
             self.diag.emit_all();
             return false;
         }
-
 
         // Code generation
         let ctx = aluminac::codegen::generate(
@@ -720,7 +722,7 @@ fn print_usage() {
         "  --test              Build the unit test runner\n",
         "  --link-args <args>  Extra arguments for the linker\n",
         "  --dump-ir           Dump LLVM IR to stderr\n",
-        "  --no-verify         Skip LLVM IR verification\n",
+        "  --no-verify         Skip IR verification (aluminac's and LLVM's)\n",
         "  -h, --help          Show this help\n",
     ));
 }

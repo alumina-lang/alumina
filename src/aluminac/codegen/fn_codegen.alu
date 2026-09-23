@@ -487,10 +487,11 @@ impl FnCodegen {
             self.gen_unary(expr.un_op(), expr.lhs(), expr.ty)
         }
         IrTag::Assign => {
+            // (The value first, then the place; a zero-sized value is not
+            // stored, but the place is still evaluated.)
             let rhs_val = self.gen_expr(expr.rhs());
-            let rhs_val_ty = LLVMTypeOf(rhs_val);
-            if LLVMGetTypeKind(rhs_val_ty) != LLVMTypeKind::Void {
-                let lhs_ptr = self.gen_lvalue(expr.lhs());
+            let lhs_ptr = self.gen_lvalue(expr.lhs());
+            if LLVMGetTypeKind(LLVMTypeOf(rhs_val)) != LLVMTypeKind::Void {
                 self.safe_store(rhs_val, lhs_ptr);
             }
             LLVMGetUndef(self.ctx.void_type)
@@ -543,7 +544,9 @@ impl FnCodegen {
             LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname())
         }
         IrTag::Index => {
-            let base_val = self.gen_expr(expr.lhs());
+            // The base (once; an array in memory), then the index.
+            let lhs_ty = expr.lhs().ty;
+            let base_val = if lhs_ty.tag == IrTyTag::Array { self.gen_lvalue(expr.lhs()) } else { self.gen_expr(expr.lhs()) };
             let index_val = self.gen_expr(expr.rhs());
             let elem_ty = self.ctx.llvm_type(expr.ty);
 
@@ -555,17 +558,14 @@ impl FnCodegen {
                 return LLVMGetUndef(self.ctx.ptr_type);
             }
 
-            // Check if base is a pointer or array
-            let lhs_ty = expr.lhs().ty;
             switch lhs_ty.tag {
                 IrTyTag::Array => {
-                    let base_ptr = self.gen_lvalue(expr.lhs());
                     let arr_ty = self.ctx.llvm_type(lhs_ty);
                     let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
                     indices[0] = LLVMConstInt(self.ctx.i64_type, 0u64, 0i32);
                     indices[1] = index_val;
                     let elem_ptr = LLVMBuildInBoundsGEP2(
-                        self.ctx.builder, arr_ty, base_ptr,
+                        self.ctx.builder, arr_ty, base_val,
                         &indices[0], 2, self.temp_cname()
                     );
                     LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
@@ -704,7 +704,7 @@ impl FnCodegen {
         IrTag::StructLit => {
             let llvm_ty = self.ctx.llvm_type(expr.ir_ty());
             if self.is_void_type(llvm_ty) {
-                return LLVMGetUndef(self.ctx.void_type);
+                return self.gen_for_effect(expr.items());
             }
 
             // Create an alloca, store fields, load result
@@ -778,7 +778,7 @@ impl FnCodegen {
         IrTag::ArrayLit => {
             let llvm_ty = self.ctx.llvm_type(expr.ty);
             if self.is_void_type(llvm_ty) {
-                return LLVMGetUndef(self.ctx.void_type);
+                return self.gen_for_effect(expr.items());
             }
             // For empty arrays, return undef - avoids crashes with recursive element types
             if expr.items().len() == 0usize {
@@ -1142,10 +1142,13 @@ impl FnCodegen {
                         self.temp_cname()
                     );
                 }
+                // (No fields in memory, but the pointer is still evaluated.)
+                self.gen_expr(expr.lhs());
                 return LLVMGetUndef(self.ctx.ptr_type);
             }
 
             if obj_kind != LLVMTypeKind::Struct {
+                self.gen_lvalue(expr.lhs());
                 return LLVMGetUndef(self.ctx.ptr_type);
             }
             let obj_ptr = self.gen_lvalue(expr.lhs());
@@ -1177,6 +1180,9 @@ impl FnCodegen {
             )
         }
         IrTag::Index => {
+            // The base, then the index.
+            let lhs_ty = expr.lhs().ty;
+            let base = if lhs_ty.tag == IrTyTag::Array { self.gen_lvalue(expr.lhs()) } else { self.gen_expr(expr.lhs()) };
             let index_val = self.gen_expr(expr.rhs());
             // Coerce index to integer if it's void
             let safe_index = if LLVMGetTypeKind(LLVMTypeOf(index_val)) == LLVMTypeKind::Void {
@@ -1184,40 +1190,36 @@ impl FnCodegen {
             } else {
                 index_val
             };
-            let lhs_ty = expr.lhs().ty;
             switch lhs_ty.tag {
                 IrTyTag::Array => {
-                    let base_ptr = self.gen_lvalue(expr.lhs());
                     let arr_ty = self.ctx.llvm_type(lhs_ty);
                     let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
                     indices[0] = LLVMConstInt(self.ctx.i64_type, 0u64, 0i32);
                     indices[1] = safe_index;
                     LLVMBuildInBoundsGEP2(
-                        self.ctx.builder, arr_ty, base_ptr,
+                        self.ctx.builder, arr_ty, base,
                         &indices[0], 2, self.temp_cname()
                     )
                 }
                 IrTyTag::Pointer => {
-                    let base_val = self.gen_expr(expr.lhs());
                     let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
                     // Protect against void element type
                     let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
                     let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
                     indices[0] = safe_index;
                     LLVMBuildInBoundsGEP2(
-                        self.ctx.builder, safe_elem, base_val,
+                        self.ctx.builder, safe_elem, base,
                         &indices[0], 1, self.temp_cname()
                     )
                 }
                 IrTyTag::Slice => {
                     // Slice lvalue indexing: extract data pointer, then GEP
-                    let base_val = self.gen_expr(expr.lhs());
                     let slice_llvm = self.ctx.llvm_type(lhs_ty);
                     let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
                     // Protect against void element type
                     let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
                     let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
-                    LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
+                    LLVMBuildStore(self.ctx.builder, base, slice_alloca);
                     let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
                     let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
                     let typed_ptr = LLVMBuildBitCast(
@@ -1310,13 +1312,11 @@ impl FnCodegen {
             _ => {},
         }
 
-        // Unit type `()` collapses to IrTyTag::Void in aluminac (see
-        // make_tuple_ty). `() == ()` is always true and `() != ()` always
-        // false. Handle this BEFORE evaluating the operands — the safety
-        // net below would otherwise short-circuit to undef as soon as it
-        // sees a Void-typed value (which is correct for arithmetic but not
-        // for equality on the unit type).
+        // `() == ()` is true and `() != ()` false (once the operands have
+        // been evaluated, for their effects).
         if (op == BinOp::Eq || op == BinOp::Ne) && lhs.ty.tag == IrTyTag::Void {
+            self.gen_expr(lhs);
+            self.gen_expr(rhs);
             return LLVMConstInt(self.ctx.i8_type, if op == BinOp::Eq { 1u64 } else { 0u64 }, 0i32);
         }
 
@@ -1611,13 +1611,11 @@ impl FnCodegen {
         } else {
             // CallKind::Indirect
             let callee_val = self.gen_expr(target.callee);
-            // If callee is void/undef, skip the call
+            // (Calls of function items are direct: this is a bug.)
             if LLVMGetTypeKind(LLVMTypeOf(callee_val)) == LLVMTypeKind::Void {
-                let res_ty = self.ctx.llvm_type(result_ty);
-                if self.is_void_type(res_ty) {
-                    return LLVMGetUndef(self.ctx.void_type);
-                }
-                return LLVMGetUndef(res_ty);
+                self.internal_error(diagnostics::CodeDiagnostic::codegen_unhandled_node(
+                    target.callee.span, "indirect call through a zero-sized value"));
+                return LLVMGetUndef(self.ctx.llvm_type(result_ty));
             }
             callee_val
         };
@@ -2387,6 +2385,15 @@ impl FnCodegen {
         } else {
             LLVMConstInt(self.ctx.i1_type, 0u64, 0i32)
         }
+    }
+
+    /// Evaluate `items` in order for their effects only (the parts of a
+    /// value that has no representation).
+    fn gen_for_effect(self: &mut FnCodegen, items: &[&IrExpr]) -> LLVMValueRef {
+        for item in items {
+            self.gen_expr(item);
+        }
+        LLVMGetUndef(self.ctx.void_type)
     }
 
     fn is_void_type(self: &FnCodegen, ty: LLVMTypeRef) -> bool {

@@ -660,7 +660,8 @@ impl IrExpr {
     fn is_pure(self: &IrExpr) -> bool {
         switch self.tag {
             IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
-            IrTag::Local, IrTag::Param, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void, IrTag::Zeroed => true,
+            IrTag::Local, IrTag::Param, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void, IrTag::Zeroed,
+            IrTag::Undef => true,
             IrTag::Binary, IrTag::Index, IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Ref,
             IrTag::Deref, IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block, IrTag::If =>
                 self.children().all(IrExpr::is_pure),
@@ -1049,4 +1050,37 @@ struct CompilationUnit {
     globals: &mut [IrGlobal],
     structs: &mut [IrStructRef],
     enums: &mut [IrEnumRef],
+}
+
+impl CompilationUnit {
+    /// Report expressions with effects that appear more than once in a
+    /// function (they would be evaluated as many times): only values
+    /// without effects may be shared, so this is a compiler bug.
+    fn check_evaluated_once(self: &CompilationUnit, diag: &mut diagnostics::DiagnosticContext) {
+        let seen: HashSet<usize> = HashSet::new();
+        defer seen.free();
+        for f in self.functions.iter_ref() {
+            if f.body.is_some() {
+                seen.clear();
+                check_expr_evaluated_once(f.body.unwrap(), &seen, diag);
+            }
+        }
+    }
+}
+
+fn check_expr_evaluated_once(e: &IrExpr, seen: &mut HashSet<usize>, diag: &mut diagnostics::DiagnosticContext) {
+    // (Leaves stand for an evaluation where they appear: the `#[inline(ir)]`
+    // copies of a body share them.)
+    let leaf = switch e.tag {
+        IrTag::Unreachable, IrTag::Trap, IrTag::InConstContext, IrTag::TypeLayout, IrTag::InlineAsm => true,
+        _ => false,
+    };
+    if !seen.insert(e as usize) && !leaf && !e.is_pure() {
+        diag.emit(diagnostics::CodeDiagnostic::generic_error(diag.written_span(e.span),
+            "internal compiler error: an expression with effects is evaluated more than once"));
+        return;
+    }
+    for child in e.children() {
+        check_expr_evaluated_once(child, seen, diag);
+    }
 }

@@ -31,7 +31,8 @@ from aluminac (it is buggy by definition until proven otherwise).
 alumina-boot emits C (not LLVM IR), so an "IR-level diff between the
 two compilers" is not a valid debugging strategy.
 
-Hosts: bootstrap works on x86_64 and aarch64 Linux. ABI-sensitive
+Hosts: bootstrap works on x86_64 and aarch64 Linux and on arm64 macOS
+(the supported platforms for now; not Intel macOS, riscv64 or Windows). ABI-sensitive
 codegen in `src/aluminac/codegen/` runtime-detects host arch from the
 LLVM target triple (`CodegenCtx::is_x86_64` / `needs_sret` /
 `uses_byval_attr`); check both when touching those paths.
@@ -572,29 +573,34 @@ different mechanism and both paths are fully implemented:
    declared and would fail to name-resolve under alumina-boot in a
    non-selected `when cfg!` arm).
 
-## Codegen / mono audit class (focused pass)
+## Codegen / mono audit class: operands evaluated once, in order
 
-Recurring family resolved several times this effort: an expression
-that is ZST / void / never-typed is short-circuited in codegen or mono
-**without evaluating its side-effecting base or control flow**. Fixed
-instances: `IrTag::FieldAccess` returning `undef` for a ZST field
-without evaluating `expr.lhs()` (broke `HashMap<K,()>` `?`-early-
-return); empty-StructLit const init (`&fields[0]` on a 0-len slice);
-`mk_if` result type collapsing to `never` when a sibling switch arm
-diverged (the std/net `SocketAddr::new` union miscompile); zero-sized
-aggregate member layout using an `i8` placeholder (HashSet stride).
+Done (2026-09-23). Found with probes that log every operand's evaluation
+(compared with alumina-boot) and fixed:
+- `f()[i]` on an array evaluated `f()` twice (codegen evaluated the base
+  as a value and again as a place), for every array type;
+- `arr[a..b]` evaluated the range once per bound (aluminac sliced arrays
+  by hand; they now go through `slice_slicify` and `slice_range_index` as
+  in alumina-boot, which also bounds-checks them in debug mode);
+- `() == ()` was folded without evaluating either side;
+- assigning to a zero-sized place, and field places whose container has
+  no LLVM fields, skipped evaluating the place;
+- struct literals were evaluated in declaration order, not as written;
+- struct/array literals of LLVM-void type skipped their elements, and an
+  indirect call through a value-less callee dropped the call (now an
+  internal error).
 
-**Opportunity:** sweep `src/aluminac/codegen/fn_codegen.alu` and
-`src/aluminac/mono/lower.alu` for every `is_void_type` /
-`is_zero_sized` / "Fn is a ZST" / void-result early `undef`
-short-circuit (~20 sites); verify each still evaluates operands/base
-for effect before discarding. Known un-acted asymmetry: `gen_switch`
-derives the phi/result type from the reaching arm when
-`llvm_type(result_ty)` is void; `gen_if` does not (bails to
-`LLVMGetUndef(void)`). The `mk_if` IR-level fix removed the immediate
-trigger but the asymmetry is latent — port `gen_switch`'s
-derive-from-reaching-arm + single-predecessor-no-phi handling into
-`gen_if`, with a regression.
+**Guard:** `CompilationUnit::check_evaluated_once` (on unless
+`--no-verify`) reports any expression with effects that appears twice in
+a function's IR, i.e. would be evaluated twice. It is clean over aluminac,
+the std/lang/library tests and the feature suite.
+
+Deliberate differences from alumina-boot (whose order comes from C and is
+partly unspecified): alumina-boot evaluates zero-sized struct/tuple
+elements before the others and drops the receiver's effects in
+`f().len()` on arrays; aluminac evaluates as written. Compound assignment
+evaluates the place first (alumina-boot's lang tests expect it; its
+`=` evaluates the value first, as aluminac's).
 
 ## Other architectural opportunities (non-blocking)
 
