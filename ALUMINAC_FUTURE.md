@@ -243,6 +243,27 @@ boot misreads the language (record such cases here).
   a `use`. Looks accidental, but the lang tests rely on it. (aluminac used
   to approximate it with the modules named by `use`s in scope.)
 
+### Examples under aluminac
+
+All of `examples/` except `coroutines` (no coroutines in aluminac) and the
+network one compile with aluminac and print what alumina-boot's builds
+print (modulo randomness and thread interleaving). Fixed for them:
+- **Statics with non-constant initializers were silently zero** (e.g.
+  `static X: i32 = f();`). Now, as in alumina-boot, such initializers run
+  at startup in dependency order (a synthesized `#[static_ctor]`, before
+  other constructors); only plain constants initialize the global directly
+  (folding e.g. a loop that also updates another static would lose that).
+- The const evaluator: a pointer to an array cast to a pointer to its
+  elements (array-to-slice coercion) points to the first element; pointer
+  differences; slice fields; ptr-to-ptr casts were misread as ptr-to-int.
+  (`examples/constants.alu` fills an array through an iterator at compile
+  time.)
+- A generic function used as a value is instantiated from its expected
+  function pointer type, or (beyond alumina-boot, whose example asks for a
+  type hint here) from a generic parameter's `Fn(...)` bound.
+- `&&[T]` was collapsed to `&[T]`; range literals take `T` from a
+  `Range<T>` hint; type-level `T.(expr)` / `T.(a..b)`.
+
 ### alumina-boot's lang tests under aluminac
 
 `tests/lang/lang.alu` (alumina-boot's language test suite) needs, beyond

@@ -842,16 +842,13 @@ impl Pass2 {
                 let index_node = child_by!(node, FieldKind::Index);
                 if !inner_node.is_none() && !index_node.is_none() {
                     let inner_ty = self.parse_type(inner_node.unwrap(), scope_idx);
-                    // Unwrap tuple_index_expression -> its Field child
-                    // (an integer literal) -> usize.
+                    // The index: an integer literal, or `(expr)` (a constant
+                    // or a range).
                     let idx_holder = index_node.unwrap();
                     let idx_field = child_by!(idx_holder, FieldKind::Field);
-                    let idx: usize = if idx_field.is_none() {
-                        parse_usize(self.ctx.node_text(idx_holder))
-                    } else {
-                        parse_usize(self.ctx.node_text(idx_field.unwrap()))
-                    };
-                    return self.ctx.alloc_ty(Ty::tuple_index_of_ty(inner_ty, idx));
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let index = expr_parser.parse_expr(idx_field.unwrap_or(idx_holder));
+                    return self.ctx.alloc_ty(Ty::tuple_index_of_ty(inner_ty, index));
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },

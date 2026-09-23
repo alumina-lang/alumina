@@ -390,11 +390,7 @@ impl Mono {
                 resolved.unwrap_or(self.ctx.void_ty)
             }
             TyTag::Pointer => {
-                // Special case: &[T] and &mut [T] are fat pointers (slice type)
-                if ty.inner().tag == TyTag::Slice {
-                    let elem_ty = self.resolve_type(ty.inner().inner());
-                    return self.ctx.make_slice_ty(elem_ty, ty.is_const());
-                }
+                // (`&[T]` is a `TyTag::Slice` itself; this is `&&[T]`.)
                 let inner_ty = self.resolve_type(ty.inner());
                 self.ctx.make_ptr_ty(inner_ty, ty.is_const())
             }
@@ -465,15 +461,33 @@ impl Mono {
                 // with `generic_args_of<...>` (which resolves to an IR
                 // Tuple), so `std::typing::type_of<Type<X>>` =
                 // `generic_args_of<Type<X>>.0` recovers `X`.
+                // `T.(a..b)` is the tuple of the elements in the range.
                 let inner_ir = self.resolve_type(ty.inner());
-                let idx = ty.array_size();
-                if inner_ir.tag == IrTyTag::Tuple {
-                    let elems = inner_ir.elems();
-                    if idx < elems.len() {
-                        return elems[idx];
-                    }
+                let index = ty.typeof_expr();
+                if inner_ir.tag != IrTyTag::Tuple && !inner_ir.is_void() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(index.span, "only tuple types can be indexed"));
+                    return self.ctx.void_ty;
                 }
-                self.ctx.void_ty
+                let elems: &[&IrTy] = if inner_ir.tag == IrTyTag::Tuple { inner_ir.elems() } else { &[] };
+                if index.tag == ExprTag::Range {
+                    let bounds = self.tuple_range_bounds(index, elems.len());
+                    return if bounds.is_some() {
+                        self.ctx.make_tuple_ty(elems[bounds.unwrap().0..bounds.unwrap().1])
+                    } else {
+                        self.ctx.void_ty
+                    };
+                }
+                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+                let idx = self.try_const_eval_u64(self.lower_expr_coerced(index, usize_ty));
+                if idx.is_none() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(index.span, "tuple index must be a constant"));
+                    return self.ctx.void_ty;
+                }
+                if idx.unwrap() as usize >= elems.len() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(index.span));
+                    return self.ctx.void_ty;
+                }
+                elems[idx.unwrap() as usize]
             }
             TyTag::Dyn => {
                 // `&dyn Proto` (or `&dyn (A + B + ...)`) — resolve to the
@@ -1544,10 +1558,15 @@ impl Mono {
                 let has_upper = expr.rhs() as &void as usize != 0;
                 let is_inclusive = expr.flag();
 
-                // The bounds' type, when the context dictates it (usize when
-                // indexing a slice, as in alumina-boot).
+                // The bounds' type, when the context dictates it: usize when
+                // indexing a slice, or `T` when a `Range<T>` (etc.) is expected
+                // (as in alumina-boot).
                 let bound_hint = self.range_bound_hint;
                 self.range_bound_hint = Option::none();
+                if bound_hint.is_none() && self.is_range_ty(self.expected_type)
+                    && self.expected_type.struct_ref().type_args.len() > 0 {
+                    bound_hint = Option::some(self.expected_type.struct_ref().type_args[0]);
+                }
                 let raw_lower = if !has_lower {
                     null as &IrExpr
                 } else if bound_hint.is_some() {
@@ -1900,7 +1919,34 @@ impl Mono {
                         let _ = self.bind_proto_generics(def, resolved);
                     }
                 }
-                let fn_idx = self.mono_function(def, &[]);
+                // A generic function taken as a value is instantiated with the
+                // type arguments its expected signature implies (as in
+                // alumina-boot), e.g. `say` passed as a `fn(&[u8])`.
+                let type_args: &[&IrTy] = &[];
+                if !def.generic_params.is_empty() {
+                    let n = def.generic_params.len();
+                    let inferred = self.ctx.arena.alloc_slice::<&IrTy>(n);
+                    let found = self.ctx.arena.alloc_slice::<bool>(n);
+                    for i in 0usize..n {
+                        inferred[i] = self.ctx.void_ty;
+                        found[i] = false;
+                    }
+                    let sig = self.callable_signature(self.expected_type);
+                    if sig.is_some() && sig.unwrap().0.len() == def.params.len() {
+                        let (param_tys, ret_ty) = sig.unwrap();
+                        for (i, param) in def.params.iter().enumerate() {
+                            self.unify_type_for_inference(param.ty, param_tys[i], inferred, found, def.generic_params);
+                        }
+                        self.unify_type_for_inference(def.return_type, ret_ty, inferred, found, def.generic_params);
+                    }
+                    type_args = self.default_missing_type_args(def.generic_params, inferred, found);
+                    for (i, param) in def.generic_params.iter().enumerate() {
+                        if !found[i] && param.default_ty.is_none() {
+                            return self.type_hint_required(expr.span);
+                        }
+                    }
+                }
+                let fn_idx = self.mono_function(def, type_args);
                 let ir_fn = self.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
 
                 // Build Fn type (ZST representing this specific function)
@@ -2895,6 +2941,46 @@ impl Mono {
             }
         }
         Option::none()
+    }
+
+    /// A callable argument for `F: Fn(A...) -> R` that cannot be typed on its
+    /// own (e.g. a generic function) is lowered with the bound, resolved with
+    /// the arguments inferred so far, as its hint; its type is then F.
+    fn infer_callables_from_bounds(self: &mut Mono, def: &FnDef, args: &[&Expr], inferred: &mut [&IrTy], found: &mut [bool]) {
+        for (g, param) in def.generic_params.iter().enumerate() {
+            if found[g] { continue; }
+            let arg_idx = def.params.iter().find_index(|=param, p: FnParam| -> bool {
+                p.ty.tag == TyTag::Placeholder && p.ty.id()._value == param.id._value
+            });
+            if arg_idx.is_none() || arg_idx.unwrap() >= args.len() { continue; }
+            for bound in param.bounds {
+                if bound.tag != TyTag::FnPointer { continue; }
+                let outer_type_map = self.type_map;
+                self.type_map = outer_type_map.clone();
+                for (i, other) in def.generic_params.iter().enumerate() {
+                    if found[i] {
+                        self.type_map.insert(other.id._value, inferred[i]);
+                    }
+                }
+                let hint = self.resolve_type(bound);
+                self.type_map.free();
+                self.type_map = outer_type_map;
+
+                let saved = self.tentative;
+                self.tentative = true;
+                let saved_incomplete = self.inference_incomplete;
+                self.inference_incomplete = false;
+                let arg_ty = self.lower_expr_hinted(args[arg_idx.unwrap()], hint).ty;
+                let incomplete = self.inference_incomplete;
+                self.inference_incomplete = saved_incomplete;
+                self.tentative = saved;
+                if !incomplete && !arg_ty.is_void() {
+                    inferred[g] = arg_ty;
+                    found[g] = true;
+                    break;
+                }
+            }
+        }
     }
 
     /// `F: Fn(A...) -> R` with F inferred as a callable: its signature gives
@@ -4847,13 +4933,8 @@ impl Mono {
         self.mk_block(stmts)
     }
 
-    /// `t.(a..b)`: the tuple of `t`'s elements in the (constant) range.
-    fn lower_tuple_slice(self: &mut Mono, tuple: &IrExpr, range: &Expr, span: Span) -> &IrExpr {
-        if tuple.ty.tag != IrTyTag::Tuple && !tuple.ty.is_void() {
-            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, "only tuples can be sliced with `.(range)`"));
-            return self.mk_void();
-        }
-        let elems: &[&IrTy] = if tuple.ty.tag == IrTyTag::Tuple { tuple.ty.elems() } else { &[] };
+    /// The (constant) bounds of a tuple slice `.(a..b)` over `len` elements.
+    fn tuple_range_bounds(self: &mut Mono, range: &Expr, len: usize) -> Option<(usize, usize)> {
         let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
         let bound = |&self, =usize_ty, e: &Expr| -> Option<usize> {
             let v = self.try_const_eval_u64(self.lower_expr_coerced(e, usize_ty));
@@ -4862,17 +4943,32 @@ impl Mono {
             }
             v.map(|v: u64| -> usize { v as usize })
         };
-        let lower = if range.lhs() as &void != null { bound(range.lhs()).unwrap_or(0) } else { 0 };
+        let lower = if range.lhs() as &void != null { bound(range.lhs())? } else { 0 };
         let upper = if range.rhs() as &void == null {
-            elems.len()
+            len
         } else {
-            let b = bound(range.rhs()).unwrap_or(0);
+            let b = bound(range.rhs())?;
             if range.flag() { b + 1 } else { b }
         };
-        if lower > upper || upper > elems.len() {
-            self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(span));
+        if lower > upper || upper > len {
+            self.emit_diag(diagnostics::CodeDiagnostic::tuple_index_oob(range.span));
+            return Option::none();
+        }
+        Option::some((lower, upper))
+    }
+
+    /// `t.(a..b)`: the tuple of `t`'s elements in the (constant) range.
+    fn lower_tuple_slice(self: &mut Mono, tuple: &IrExpr, range: &Expr, span: Span) -> &IrExpr {
+        if tuple.ty.tag != IrTyTag::Tuple && !tuple.ty.is_void() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, "only tuples can be sliced with `.(range)`"));
             return self.mk_void();
         }
+        let elems: &[&IrTy] = if tuple.ty.tag == IrTyTag::Tuple { tuple.ty.elems() } else { &[] };
+        let bounds = self.tuple_range_bounds(range, elems.len());
+        if bounds.is_none() {
+            return self.mk_void();
+        }
+        let (lower, upper) = bounds.unwrap();
 
         // { let tmp = t; (tmp.lower, ..., tmp.(upper - 1)) }
         let tmp_id = self.ctx.id_gen.next_id();
@@ -6234,6 +6330,7 @@ impl Mono {
         self.inside_arg_inference = saved_in_arg_inf;
 
         self.infer_from_callable_bounds(def.generic_params, inferred, found);
+        self.infer_callables_from_bounds(def, args, inferred, found);
 
         // Try to infer remaining generics from Fn bounds.
         // For F: Fn(A) -> R, if the actual argument for F is a lambda or function,
@@ -7467,6 +7564,7 @@ impl Mono {
             self.ctx.static_cache.insert(cache_key.stored(self.ctx.arena), idx);
         }
 
+        let runtime_init: Option<&IrExpr> = Option::none();
         if def.init.is_some() {
             let init_expr = def.init.unwrap();
             let init_ir = if ty.is_void() {
@@ -7503,17 +7601,48 @@ impl Mono {
                     self.ctx.ir_globals[idx].const_failure = outcome.failure;
                     init_ir
                 }
+            } else if is_extern || Mono::is_plain_constant(init_ir)
+                || def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::ThreadLocal }) {
+                init_ir
             } else {
+                // Any other static initializer runs at startup (as in
+                // alumina-boot), after those of the statics it uses, which
+                // were emitted while it was lowered. (Folding it at compile
+                // time would lose its effects, e.g. on other statics.)
+                runtime_init = Option::some(init_ir);
                 init_ir
             });
+            if runtime_init.is_some() {
+                self.ctx.ir_globals[idx].init = Option::none();
+            }
         } else {
             self.ctx.static_cache.insert(cache_key.stored(self.ctx.arena), idx);
         }
 
         self.type_map.free();
         self.type_map = outer_type_map;
-        self.leave_fn(saved_fn_state);
+        let locals = self.leave_fn(saved_fn_state);
+        if runtime_init.is_some() {
+            self.ctx.static_inits.push(StaticInit { global: idx, init: runtime_init.unwrap(), locals: locals });
+        }
         idx
+    }
+
+    /// Whether a static's initializer is a constant that the global can be
+    /// initialized with directly: literals, aggregates and arithmetic of them,
+    /// and addresses of globals and functions.
+    fn is_plain_constant(e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::Void, IrTag::Zeroed, IrTag::Undef, IrTag::FnRef => true,
+            IrTag::Cast => Mono::is_plain_constant(e._data.cast.lhs),
+            IrTag::Unary => Mono::is_plain_constant(e._data.un.lhs),
+            IrTag::Binary => Mono::is_plain_constant(e._data.bin.lhs) && Mono::is_plain_constant(e._data.bin.rhs),
+            IrTag::Ref => e._data.single.lhs.tag == IrTag::GlobalRef,
+            IrTag::StructLit => e._data.struct_lit.items.iter().all(|i: &IrExpr| -> bool { Mono::is_plain_constant(i) }),
+            IrTag::TupleLit, IrTag::ArrayLit => e._data.block.items.iter().all(|i: &IrExpr| -> bool { Mono::is_plain_constant(i) }),
+            _ => false,
+        }
     }
 
     fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {

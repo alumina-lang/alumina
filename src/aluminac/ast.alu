@@ -253,8 +253,10 @@ impl Ty {
     // `T.N` in type position: the Nth element of the tuple type `inner`
     // (reuses the array data slot — inner + a usize). Resolved in
     // mono/lower.alu's resolve_type.
-    fn tuple_index_of_ty(inner: &Ty, index: usize) -> Ty {
-        Ty { tag: TyTag::TupleIndexOf, _data: _TyData { array: _TyArrayData { inner: inner, array_size: index } } }
+    /// `T.N` / `T.(expr)`: the element (or, for a range, the sub-tuple) of
+    /// the tuple type `T`; the index is `typeof_expr()`.
+    fn tuple_index_of_ty(inner: &Ty, index: &Expr) -> Ty {
+        Ty { tag: TyTag::TupleIndexOf, _data: _TyData { when: _TyWhenData { inner: inner, ret_ty: null, typeof_expr: index } } }
     }
     fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
         Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret } } }

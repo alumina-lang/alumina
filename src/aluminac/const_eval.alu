@@ -229,6 +229,9 @@ impl ConstEvaluator {
                 }
             }
             Result::ok(ConstValue::make_uninitialized())
+        } else if val.tag == CValTag::Tuple {
+            // Tuples, and slices (a (pointer, length) pair).
+            self.access_tuple_index(val, field_idx as usize)
         } else if val.tag == CValTag::Bytes {
             // The fat-pointer fields of a string/byte-string slice: the data
             // pointer (a Bytes value doubles as a pointer into the bytes)
@@ -474,6 +477,17 @@ impl ConstEvaluator {
         if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Int {
             return self.pointer_int_bin_op(lhs, rhs, expr.bin_op());
         }
+        // The difference of (and comparisons between) pointers to elements
+        // of the same array.
+        if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Pointer
+            && lhs.lvalue().tag == CLVTag::Index && rhs.lvalue().tag == CLVTag::Index
+            && self.same_lvalue(lhs.lvalue().inner(), rhs.lvalue().inner()) {
+            let (a, b) = (lhs.lvalue().index() as u64, rhs.lvalue().index() as u64);
+            return switch expr.bin_op() {
+                BinOp::Sub => Result::ok(ConstValue::make_int(a - b, BuiltinType::ISize)),
+                _ => self.int_bin_op(ConstValue::make_int(a, BuiltinType::USize), ConstValue::make_int(b, BuiltinType::USize), expr.bin_op()),
+            };
+        }
 
         Result::err(ConstEvalError::unsupported())
     }
@@ -697,6 +711,19 @@ impl ConstEvaluator {
         Result::err(ConstEvalError::unsupported())
     }
 
+    /// Whether two lvalues denote the same place.
+    fn same_lvalue(self: &ConstEvaluator, a: &ConstLValue, b: &ConstLValue) -> bool {
+        if a.tag != b.tag {
+            return false;
+        }
+        switch a.tag {
+            CLVTag::Variable, CLVTag::Alloc, CLVTag::ConstItem => a.id()._value == b.id()._value,
+            CLVTag::Field => a.field_idx() == b.field_idx() && self.same_lvalue(a.inner(), b.inner()),
+            CLVTag::Index, CLVTag::TupleIndex => a.index() == b.index() && self.same_lvalue(a.inner(), b.inner()),
+            _ => false,
+        }
+    }
+
     fn pointer_int_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, ConstEvalError> {
         if lhs.lvalue().tag == CLVTag::Index {
             let offset = lhs.lvalue().index();
@@ -835,14 +862,26 @@ impl ConstEvaluator {
             return Result::ok(ConstValue::make_float(fval, target_bt));
         }
 
-        // Pointer casts (ptr -> ptr, fn -> fn_ptr, int -> ptr, ptr -> int)
+        // Pointer casts (ptr -> ptr, fn -> fn_ptr, int -> ptr, ptr -> int).
+        // (`irty_to_builtin` gives usize for a pointer type, so check the
+        // target type itself.)
+        let to_pointer = expr.ir_ty().tag == IrTyTag::Pointer || expr.ir_ty().tag == IrTyTag::FnPointer;
         if inner.tag == CValTag::Pointer {
-            if target_bt.is_integer() {
+            if !to_pointer && target_bt.is_integer() {
                 // ptr -> int: unsupported in general
                 return Result::err(ConstEvalError::unsupported());
             }
-            // ptr -> ptr: just change the type
-            return Result::ok(ConstValue::make_pointer(inner.lvalue(), inner.pointee_ty()));
+            // A pointer to an array cast to a pointer to its elements (as in
+            // an array-to-slice coercion) points to the first element.
+            let from = inner.pointee_ty();
+            if to_pointer && expr.ir_ty().tag == IrTyTag::Pointer && from.tag == IrTyTag::Array
+                && from.inner().same_as(expr.ir_ty().inner()) {
+                let first = self.arena.alloc(ConstLValue::mk_index(inner.lvalue(), 0));
+                return Result::ok(ConstValue::make_pointer(first, expr.ir_ty().inner()));
+            }
+            // Otherwise, ptr -> ptr only changes the type.
+            let pointee = if expr.ir_ty().tag == IrTyTag::Pointer { expr.ir_ty().inner() } else { from };
+            return Result::ok(ConstValue::make_pointer(inner.lvalue(), pointee));
         }
         if inner.tag == CValTag::FnPtr {
             return Result::ok(inner);

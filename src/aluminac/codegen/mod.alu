@@ -1582,16 +1582,22 @@ fn generate(
     {
         let ctor_fns: std::collections::Vector<LLVMValueRef> = std::collections::Vector::new();
         defer ctor_fns.free();
+        let ctor_priorities: std::collections::Vector<u64> = std::collections::Vector::new();
+        defer ctor_priorities.free();
 
         for fn_def in unit.functions.iter_ref() {
-            for attr in fn_def.attributes.iter() {
-                if attr.tag == AttrTag::StaticCtor {
-                    let key = fn_def.mangled_name;
-                    let decl = ctx.fn_decls.get(&key);
-                    if decl.is_some() {
-                        ctor_fns.push(decl.unwrap());
-                    }
-                }
+            if !fn_def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::StaticCtor }) {
+                continue;
+            }
+            let decl = ctx.fn_decls.get(&fn_def.mangled_name);
+            if decl.is_some() {
+                ctor_fns.push(decl.unwrap());
+                // The statics' initializers run before other constructors
+                // (which may use them).
+                let is_static_init = fn_def.attributes.iter().any(|a: Attribute| -> bool {
+                    a.tag == AttrTag::Custom && a.str_val() == "alumina_static_init"
+                });
+                ctor_priorities.push(if is_static_init { 101u64 } else { 65535u64 });
             }
         }
         if ctor_fns.len() > 0 {
@@ -1611,7 +1617,7 @@ fn generate(
             let ctor_entries = ctx.arena.alloc_slice::<LLVMValueRef>(ctor_fns.len());
             for (i, ctor_fn) in ctor_fns.iter().enumerate() {
                 let entry_vals = ctx.arena.alloc_slice::<LLVMValueRef>(3);
-                entry_vals[0] = LLVMConstInt(i32_ty, 65535u64, 0i32); // priority
+                entry_vals[0] = LLVMConstInt(i32_ty, ctor_priorities[i], 0i32);
                 entry_vals[1] = LLVMConstBitCast(ctor_fn, void_fn_ptr_ty);
                 entry_vals[2] = LLVMConstNull(i8_ptr_ty);
                 ctor_entries[i] = LLVMConstStructInContext(ctx.context, &entry_vals[0], 3, 0i32);

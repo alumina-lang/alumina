@@ -46,6 +46,10 @@ struct MonoCtx {
     // (static item, type args) mono key -> index into ir_globals
     static_cache: HashMap<MonoKey, usize>,
 
+    // The initializers of statics that are not plain constants, which run at
+    // startup (see `emit_static`), in dependency order.
+    static_inits: Vector<StaticInit>,
+
     // Cached const-evaluated values for const globals
     const_values: HashMap<usize, ConstValue>,
 
@@ -163,6 +167,7 @@ impl MonoCtx {
             ir_structs: Vector::new(),
             ir_enums: Vector::new(),
             static_cache: HashMap::new(),
+            static_inits: Vector::new(),
             const_values: HashMap::new(),
             fn_cache: HashMap::new(),
             struct_cache: HashMap::new(),
@@ -508,6 +513,7 @@ impl MonoCtx {
         self.ir_structs.free();
         self.ir_enums.free();
         self.static_cache.free();
+        self.static_inits.free();
         self.const_values.free();
         self.fn_cache.free();
         self.struct_cache.free();
@@ -594,6 +600,8 @@ fn monomorphize(
         }
     }
 
+    ctx.emit_static_initializer();
+
     // Build compilation unit
     let cu = CompilationUnit {
         functions: arena.alloc_slice_copy::<IrFunction>(ctx.ir_functions.as_slice()),
@@ -610,6 +618,61 @@ fn monomorphize(
 // ============================================================
 // Helper functions
 // ============================================================
+
+/// A static's initializer that runs at startup.
+struct StaticInit {
+    global: usize,
+    init: &IrExpr,
+    locals: &[IrLocalDef],
+}
+
+impl MonoCtx {
+    /// A static constructor that initializes the statics whose initializers
+    /// are not plain constants, as alumina-boot does: in dependency order (a
+    /// static's dependencies were emitted while its initializer was lowered).
+    fn emit_static_initializer(self: &mut MonoCtx) {
+        if self.static_inits.is_empty() {
+            return;
+        }
+        let stmts = self.arena.alloc_slice::<&IrExpr>(self.static_inits.len() + 1);
+        let locals: Vector<IrLocalDef> = Vector::new();
+        defer locals.free();
+        for (i, init) in self.static_inits.iter().enumerate() {
+            let global = self.ir_globals[init.global];
+            let target = IrExpr::void_expr(global.ty);
+            target.tag = IrTag::GlobalRef;
+            target._data.global_ref = IrGlobalRef { id: global.id, mangled_name: global.mangled_name };
+            let assign = IrExpr::void_expr(self.void_ty);
+            assign.tag = IrTag::Assign;
+            assign._data.assign.lhs = self.arena.alloc(target);
+            assign._data.assign.rhs = init.init;
+            stmts[i] = self.arena.alloc(assign);
+            locals.extend_from_slice(init.locals);
+        }
+        stmts[self.static_inits.len()] = self.arena.alloc(IrExpr::void_expr(self.void_ty));
+        let body = IrExpr::void_expr(self.void_ty);
+        body.tag = IrTag::Block;
+        body._data.block.items = stmts;
+
+        let attributes = self.arena.alloc_slice::<Attribute>(2);
+        attributes[0] = Attribute::static_ctor();
+        attributes[1] = Attribute::custom("alumina_static_init");
+        self.ir_functions.push(IrFunction {
+            id: self.id_gen.next_id(),
+            name: "static_init",
+            mangled_name: "__alumina_static_init",
+            params: &[],
+            return_type: self.void_ty,
+            body: Option::some(self.arena.alloc(body) as &IrExpr),
+            local_defs: self.arena.alloc_slice_copy::<IrLocalDef>(locals.as_slice()),
+            attributes: attributes,
+            is_variadic: false,
+            abi: Option::none(),
+            span: Span::empty(),
+            type_args: &[],
+        });
+    }
+}
 
 /// Identity of one instantiation of a generic item, keying the mono caches:
 /// the item, its type arguments (compared by identity, IR types being

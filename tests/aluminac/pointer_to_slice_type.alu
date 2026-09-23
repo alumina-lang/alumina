@@ -1,0 +1,12 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `&&[T]` is a pointer to a slice (aluminac collapsed it to `&[T]`).
+
+fn main() -> i32 {
+    let s: &[u8] = "hi";
+    let v = &s as &void;
+    let t = *(v as &&[u8]);
+    if t != "hi" { return 1; }
+    if std::typing::type_name::<&&[u8]>() != "&&[u8]" { return 2; }
+    if std::mem::size_of::<&&[u8]>() != std::mem::size_of::<usize>() { return 3; }
+    0
+}

@@ -1,0 +1,25 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// The const evaluator handles arrays coerced to slices (a pointer to the
+// array becomes a pointer to its first element), pointer arithmetic on it
+// (slice indexing), and slice fields -- e.g. filling an array through an
+// iterator at compile time.
+
+const FILLED: [usize; 4] = {
+    let ret: [usize; 4];
+    (0..4).map(|x: i32| -> usize { x as usize * 3 }).fill_slice(&ret);
+    ret
+};
+
+const VIA_SLICE: usize = {
+    let arr = [5usize, 6, 7];
+    let s: &[usize] = &arr;
+    s[1] + s.len()
+};
+
+fn main() -> i32 {
+    if FILLED[3] != 9 { return 1; }
+    if VIA_SLICE != 9 { return 2; }
+    let tup = (1, "a", true);
+    if !tup.(FILLED[1] - 1) { return 3; }
+    0
+}

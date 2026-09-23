@@ -1,0 +1,29 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A static whose initializer is not a plain constant is initialized at
+// startup, after the statics it uses (as in alumina-boot). aluminac used to
+// leave such statics zero-initialized.
+
+static A: i32 = three();
+static B: i32 = A + 1;
+static C: i32 = loop {
+    if D > 100 {
+        break D;
+    }
+    D *= 2;
+};
+static D: i32 = B;
+static NAME<T>: &[u8] = std::typing::type_name::<T>();
+static PLAIN: [u8; 3] = [1, 2, 3];
+
+fn three() -> i32 { 3 }
+
+fn main() -> i32 {
+    if A != 3 || B != 4 { return 1; }
+    // C's initializer doubled D until it exceeded 100.
+    if C != 128 || D != 128 { return 2; }
+    if NAME::<u16> != "u16" || NAME::<Option<i8>> != "Option<i8>" { return 3; }
+    NAME::<u16> = "changed";
+    if NAME::<u16> != "changed" || NAME::<u32> != "u32" { return 4; }
+    if PLAIN[2] != 3 { return 5; }
+    0
+}

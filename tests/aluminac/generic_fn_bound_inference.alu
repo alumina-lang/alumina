@@ -1,0 +1,14 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// BOOT_DIVERGES: alumina-boot cannot infer a generic function argument from an `Fn` bound ("type hint required"; see examples/first_class_functions.alu)
+// A generic function passed for `F: Fn(T) -> T` is instantiated from the
+// bound, with `T` inferred from the other arguments.
+
+fn twice_bound<T, F: Fn(T) -> T>(f: F, x: T) -> T { f(f(x)) }
+
+fn inc<T: std::builtins::Integer>(x: T) -> T { x + (1 as T) }
+
+fn main() -> i32 {
+    if twice_bound(inc, 10u8) != 12u8 { return 1; }
+    if twice_bound(inc, -5i64) != -3i64 { return 2; }
+    0
+}
