@@ -222,6 +222,8 @@ boot misreads the language (record such cases here).
   typo in `std::sync`, now fixed). aluminac resolves each later segment in
   the module named so far only, and reports the path.
 
+- `intrinsics::fields` lays out union fields like struct fields (offsets
+  0, 4, 12 for `union U { a: i32, b: f64, c: u8 }`); aluminac gives 0.
 - Duplicate `#[lang]` items are accepted (one silently wins); aluminac
   reports them (`duplicate_lang_item_compile_fail.alu`).
 
@@ -236,34 +238,20 @@ boot misreads the language (record such cases here).
 - Names resolve through enclosing modules lexically (a child module sees
   its parent's items).
 
-### Cross-check divergences to resolve (2026-09-23 snapshot)
+### Cross-check status
 
-aluminac-only by design: `atomic_intrinsics`, `llvm_intrinsics`,
-`lang_items`. The rest are aluminac leniencies (invalid tests to fix, and
-aluminac checks to add) or possible alumina-boot bugs to confirm:
-- generic arity unchecked ("N generic parameters expected"): `cmp_enhanced`,
-  `fmt_extended`, `fn_bounds_test`, `iter_sum`, `mem_extended`,
-  `proto_meta`, `proto_same_base_as`, `vector_iter`;
-- protocol conformance (bounds / mixins) unchecked:
-  `builtin_protocol_conformance`, `operator_overload`, `switch_nonint`,
-  `unified_sysroot_basic`, `mixin_own_generics`;
-- name resolution too permissive: `never_named` (`never` is not a name),
-  `range_equatable` (`RangeFull`), `tuple_return_infer` (`zeroed`),
-  `method_arg_slice_empty_inference` (`std::mem::Pointer`), and
-  `std::io::ErrorKind`;
-- integer literal range unchecked: `bit_twiddle` (171 as i8);
-- implicit coercions: `char_literal_expected_type` (`Option<u8>` as
-  `Option<u16>`), `collections_extended` (`i32` as `&mut i32`),
-  `default_type_arg` (`A` as `&A`), `closure_features` (distinct closure
-  types), `switch_arm_type_unify` (`()` arm vs tuple arm);
-- field vs method precedence: `iter_adapters`;
-- misc: `nested_items` (impl without type), `typing_extended`,
-  `typeop_args_return`, `dyn_fmt_byte_slice` (boot: cyclic dependency);
-- possible alumina-boot bugs: `mixin_features` / `mixin_self_subst`
-  (boot ICE "unbound placeholder"), `protocol_conformance` (boot-compiled
-  binary segfaults), `bit_twiddle_const` (boot cannot const-eval);
-- runtime disagreement: `fields_intrinsic` (exit 23),
-  `protocol_bound_strict` (exit 1), `link_name_attr` (C compile error).
+`tests/aluminac/cross_check.sh`: every aluminac test behaves the same
+under alumina-boot, except those marked `// BOOT_DIVERGES: reason`
+(aluminac-only intrinsics, freestanding tests with their own lang items,
+and the alumina-boot bugs above). Invalid tests found along the way were
+fixed (partial turbofish, `value as &T`, shadowed generics, duplicate
+lang items, a `max` field shadowing `IteratorExt::max`, ...).
+
+Also matched to alumina-boot in this pass: a field takes precedence over
+a method of the same name; `Type::<T>::method()` is rejected (generic
+arguments go on the function); protocol types check their parameters'
+bounds (`Formattable<T, F>` needs `F: Formatter<F>`), as do struct
+instances.
 
 ### Backlog (found along the way)
 
@@ -281,6 +269,13 @@ aluminac checks to add) or possible alumina-boot bugs to confirm:
   coroutines (aluminac has no stackful coroutines).
 - One unresolved path yields several cascading errors in mono ("expression
   is not callable" ×N, "could not resolve field on ()").
+- Bound errors for struct/protocol type arguments have no source span
+  (`StructDef`/`ProtocolDef` carry none); only the instantiation notes
+  locate them.
+- Protocol conformance of a method with a generic parameter that its
+  signature does not determine (e.g. a method `<T>` shadowing the impl's
+  `T`): alumina-boot says "does not match" (type hint would be needed),
+  aluminac lets it match.
 - Cross-compilation: `--target` exists, but ABI lowering only knows
   x86_64 SysV / AAPCS64 (Apple arm64 variadics differ), there is no
   per-target sysroot/linker story, and only x86_64/aarch64 parse.

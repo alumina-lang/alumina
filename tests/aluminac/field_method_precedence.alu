@@ -1,0 +1,21 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A field takes precedence over a method of the same name (as in
+// alumina-boot): `s.f(x)` calls the value of the field `f`, and the method
+// is reachable as `Type::f(&s, x)`.
+
+struct S {
+    f: fn(i32) -> i32,
+}
+
+impl S {
+    fn f(self: &S, x: i32) -> i32 { x + 100 }
+}
+
+fn double(x: i32) -> i32 { x * 2 }
+
+fn main() -> i32 {
+    let s = S { f: double };
+    if s.f(21) != 42 { return 1; }
+    if S::f(&s, 1) != 101 { return 2; }
+    0
+}

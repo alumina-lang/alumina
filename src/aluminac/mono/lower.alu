@@ -771,6 +771,19 @@ impl Mono {
         // can recover them after substitution.
         let proto_def = self.ctx.protocol_defs.get(&item_ref.id._value);
         if proto_def.is_some() {
+            // The protocol's own parameters' bounds (e.g. `F: Formatter<F>`
+            // in `Formattable<Self, F>`) must hold for the arguments.
+            let params = proto_def.unwrap().generic_params;
+            if !type_args.is_empty() {
+                let outer_type_map = self.type_map;
+                self.type_map = outer_type_map.clone();
+                for i in 0usize..std::cmp::min(params.len(), type_args.len()) {
+                    self.type_map.insert(params[i].id._value, type_args[i]);
+                }
+                self.check_generic_bounds(params, type_args, Span::empty());
+                self.type_map.free();
+                self.type_map = outer_type_map;
+            }
             return self.ctx.arena.alloc(IrTy::mk_protocol_with_args(item_ref.id._value, type_args));
         }
 
@@ -858,6 +871,9 @@ impl Mono {
         for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
             self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
         }
+        // The type arguments must satisfy the parameters' bounds (checked
+        // once per instance).
+        self.check_generic_bounds(def.generic_params, type_args, Span::empty());
 
         // Use scope_idx directly from StructDef
         let scope_idx = def.scope_idx;
@@ -5748,6 +5764,13 @@ impl Mono {
             alias_steps += 1;
         }
 
+        // A generic protocol's arguments must satisfy its parameters' bounds
+        // (checked when the protocol type is resolved).
+        if check_ty.tag == TyTag::Generic && check_ty.inner().tag == TyTag::Named
+            && self.ctx.protocol_defs.get(&check_ty.inner().id()._value).is_some() {
+            self.resolve_type(check_ty);
+        }
+
         // Resolve the protocol name to check specific protocols.
         // Extract protocol ID from TyTag::Named, TyTag::Generic(TyTag::Named),
         // or TyTag::Placeholder when the placeholder substitutes to a
@@ -6503,6 +6526,12 @@ impl Mono {
                 let unreach = IrExpr::void_expr(self.ctx.never_ty);
                 unreach.tag = IrTag::Unreachable;
                 return Option::some(self.ctx.arena.alloc(unreach) as &IrExpr);
+            }
+            // As in alumina-boot, a field takes precedence over a method of
+            // the same name: `s.f(...)` calls the field's value.
+            let (_idx, _ty, is_field) = self.resolve_field(resolved_ty, method_name);
+            if is_field {
+                return Option::none();
             }
             scope_idx = resolved_ty.struct_ref().scope_idx;
             method_type_args = resolved_ty.struct_ref().type_args;
@@ -7769,7 +7798,17 @@ impl Mono {
                 self.mk_call(fn_ref, all_args, ret_ty)
             } else {
                 // Not a function pointer or closure - method resolution failed
-                if expr.lhs().tag == ExprTag::FieldAccess && expr.lhs().str_val().len() > 0usize {
+                if ir_callee.tag == IrTag::FieldAccess && !ir_callee.ty.is_void() {
+                    // A field of that name exists, and it takes precedence.
+                    let ty_name = self.ir_type_name(ir_callee.ty);
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                        expr.span,
+                        std::fmt::format!(
+                            "`{}` is not callable (hint: fields take precedence over methods; call the method as `Type::method(...)`)",
+                            ty_name,
+                        ).unwrap().as_slice(),
+                    ));
+                } else if expr.lhs().tag == ExprTag::FieldAccess && expr.lhs().str_val().len() > 0usize {
                     // Recover the receiver's type for the error message. The
                     // FieldAccess was already lowered (into ir_callee, which
                     // is now void / not-callable); re-lower the receiver with
