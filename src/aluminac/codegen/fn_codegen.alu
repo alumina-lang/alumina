@@ -551,12 +551,13 @@ impl FnCodegen {
             }
 
             let num_fields = LLVMCountStructElementTypes(obj_ty);
-            if expr.field_idx() >= num_fields {
+            let member = self.ctx.llvm_field_index(lhs_ir_ty, expr.field_idx());
+            if member >= num_fields {
                 self.internal_error(diagnostics::CodeDiagnostic::codegen_field_oob(expr.span));
                 return LLVMGetUndef(result_ty);
             }
             let field_ptr = LLVMBuildStructGEP2(
-                self.ctx.builder, obj_ty, obj_ptr, expr.field_idx(),
+                self.ctx.builder, obj_ty, obj_ptr, member,
                 self.temp_cname()
             );
             LLVMBuildLoad2(self.ctx.builder, result_ty, field_ptr, self.temp_cname())
@@ -736,10 +737,11 @@ impl FnCodegen {
                             continue;
                         }
                         // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
-                        let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, i as u32);
+                        let member = self.ctx.llvm_field_index(expr.ty, i as u32);
+                        let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, member);
                         let coerced = self.coerce_value(field_val, expected_ty);
                         let field_ptr = LLVMBuildStructGEP2(
-                            self.ctx.builder, llvm_ty, alloca, i as u32,
+                            self.ctx.builder, llvm_ty, alloca, member,
                             self.temp_cname()
                         );
                         self.safe_store(coerced, field_ptr);
@@ -864,7 +866,11 @@ impl FnCodegen {
         IrTag::TypeLayout => {
             let data = expr._data.type_layout;
             let of = self.ctx.llvm_type(data.of);
-            let value: u64 = if data.query == "sizeof" {
+            // (A zero-sized type can have no sized LLVM representation.)
+            let sized = LLVMGetTypeKind(of) != LLVMTypeKind::Void && LLVMTypeIsSized(of) != 0;
+            let value: u64 = if !sized {
+                if data.query == "sizeof" { 0 } else { 1 }
+            } else if data.query == "sizeof" {
                 LLVMABISizeOfType(self.ctx.target_data, of)
             } else {
                 LLVMABIAlignmentOfType(self.ctx.target_data, of) as u64
@@ -1133,7 +1139,7 @@ impl FnCodegen {
                         return LLVMBuildBitCast(self.ctx.builder, ptr_val, field_ptr_ty, self.temp_cname());
                     }
                     return LLVMBuildStructGEP2(
-                        self.ctx.builder, pointee_ty, ptr_val, expr.field_idx(),
+                        self.ctx.builder, pointee_ty, ptr_val, self.ctx.llvm_field_index(pointee_ir_ty, expr.field_idx()),
                         self.temp_cname()
                     );
                 }
@@ -1167,7 +1173,7 @@ impl FnCodegen {
             let obj_ptr_ty = LLVMPointerType(obj_ty, 0);
             let typed_ptr = LLVMBuildBitCast(self.ctx.builder, obj_ptr, obj_ptr_ty, self.temp_cname());
             LLVMBuildStructGEP2(
-                self.ctx.builder, obj_ty, typed_ptr, expr.field_idx(),
+                self.ctx.builder, obj_ty, typed_ptr, self.ctx.llvm_field_index(lhs_ir_ty, expr.field_idx()),
                 self.temp_cname()
             )
         }
@@ -1246,6 +1252,54 @@ impl FnCodegen {
         }
     }
 
+    /// Whether two values of type `ty` are equal (an `i1`), comparing
+    /// aggregates element by element (recursively) and floats as floats.
+    fn gen_elementwise_equal(self: &mut FnCodegen, a: LLVMValueRef, b: LLVMValueRef, ty: &IrTy) -> LLVMValueRef {
+        let b_ = self.ctx.builder;
+        let fields: &[&IrTy] = switch ty.tag {
+            IrTyTag::Tuple => ty.elems(),
+            IrTyTag::Struct => {
+                let tys = self.ctx.arena.alloc_slice::<&IrTy>(ty.struct_ref().fields.len());
+                for (i, f) in ty.struct_ref().fields.iter().enumerate() {
+                    tys[i] = f.ty;
+                }
+                tys
+            }
+            _ => &[],
+        };
+        switch ty.tag {
+            IrTyTag::Void => LLVMConstInt(LLVMInt1TypeInContext(self.ctx.context), 1u64, 0i32),
+            IrTyTag::Array, IrTyTag::Tuple, IrTyTag::Struct => {
+                let n = if ty.tag == IrTyTag::Array { ty.array_size() } else { fields.len() };
+                let acc = LLVMConstInt(LLVMInt1TypeInContext(self.ctx.context), 1u64, 0i32);
+                for i in 0usize..n {
+                    let elem_ty = if ty.tag == IrTyTag::Array { ty.inner() } else { fields[i] };
+                    if elem_ty.is_zero_sized() { continue; }
+                    let a_i = LLVMBuildExtractValue(b_, a, i as u32, self.temp_cname());
+                    let b_i = LLVMBuildExtractValue(b_, b, i as u32, self.temp_cname());
+                    acc = LLVMBuildAnd(b_, acc, self.gen_elementwise_equal(a_i, b_i, elem_ty), self.temp_cname());
+                }
+                acc
+            }
+            IrTyTag::Slice => {
+                // (pointer, length)
+                let ptr_eq = LLVMBuildICmp(b_, LLVMIntPredicate::EQ,
+                    LLVMBuildExtractValue(b_, a, 0u32, self.temp_cname()), LLVMBuildExtractValue(b_, b, 0u32, self.temp_cname()), self.temp_cname());
+                let len_eq = LLVMBuildICmp(b_, LLVMIntPredicate::EQ,
+                    LLVMBuildExtractValue(b_, a, 1u32, self.temp_cname()), LLVMBuildExtractValue(b_, b, 1u32, self.temp_cname()), self.temp_cname());
+                LLVMBuildAnd(b_, ptr_eq, len_eq, self.temp_cname())
+            }
+            _ => {
+                let kind = LLVMGetTypeKind(LLVMTypeOf(a));
+                if kind == LLVMTypeKind::Float || kind == LLVMTypeKind::Double {
+                    LLVMBuildFCmp(b_, LLVMRealPredicate::OEQ, a, b, self.temp_cname())
+                } else {
+                    LLVMBuildICmp(b_, LLVMIntPredicate::EQ, a, b, self.temp_cname())
+                }
+            }
+        }
+    }
+
     fn gen_binary(self: &mut FnCodegen, op: BinOp, lhs: &IrExpr, rhs: &IrExpr, result_ty: &IrTy) -> LLVMValueRef {
         // Short-circuit for logical and/or
         switch op {
@@ -1279,32 +1333,15 @@ impl FnCodegen {
         // compare aggregates directly, so unroll into element-wise compare
         // folded with AND (==) or OR (!=).
         if (op == BinOp::Eq || op == BinOp::Ne) && (lhs.ty.tag == IrTyTag::Array || lhs.ty.tag == IrTyTag::Tuple) {
-            let n_elems: u32 = if lhs.ty.tag == IrTyTag::Array {
-                lhs.ty.array_size() as u32
-            } else {
-                lhs.ty.elems().len() as u32
-            };
-            let acc: LLVMValueRef = LLVMConstInt(self.ctx.i8_type, if op == BinOp::Eq { 1u64 } else { 0u64 }, 0i32);
-            for i in 0u32..n_elems {
-                let a_i = LLVMBuildExtractValue(self.ctx.builder, lhs_val, i, self.temp_cname());
-                let b_i = LLVMBuildExtractValue(self.ctx.builder, rhs_val, i, self.temp_cname());
-                let cmp_kind = LLVMGetTypeKind(LLVMTypeOf(a_i));
-                let elem_eq: LLVMValueRef;
-                if cmp_kind == LLVMTypeKind::Float || cmp_kind == LLVMTypeKind::Double {
-                    let pred = if op == BinOp::Eq { LLVMRealPredicate::OEQ } else { LLVMRealPredicate::UNE };
-                    elem_eq = LLVMBuildFCmp(self.ctx.builder, pred, a_i, b_i, self.temp_cname());
-                } else {
-                    let pred = if op == BinOp::Eq { LLVMIntPredicate::EQ } else { LLVMIntPredicate::NE };
-                    elem_eq = LLVMBuildICmp(self.ctx.builder, pred, a_i, b_i, self.temp_cname());
-                }
-                let elem_eq_i8 = LLVMBuildZExt(self.ctx.builder, elem_eq, self.ctx.i8_type, self.temp_cname());
-                if op == BinOp::Eq {
-                    acc = LLVMBuildAnd(self.ctx.builder, acc, elem_eq_i8, self.temp_cname());
-                } else {
-                    acc = LLVMBuildOr(self.ctx.builder, acc, elem_eq_i8, self.temp_cname());
-                }
-            }
-            return acc;
+            let equal = self.gen_elementwise_equal(lhs_val, rhs_val, lhs.ty);
+            let result = if op == BinOp::Eq { equal } else { LLVMBuildNot(self.ctx.builder, equal, self.temp_cname()) };
+            return LLVMBuildZExt(self.ctx.builder, result, self.ctx.i8_type, self.temp_cname());
+        }
+        // Offsetting a pointer to a zero-sized type is a no-op (as in
+        // alumina-boot, which warns about it).
+        if (op == BinOp::Add || op == BinOp::Sub) && lhs_kind == LLVMTypeKind::Pointer
+            && rhs_kind == LLVMTypeKind::Integer && lhs.ty.tag == IrTyTag::Pointer && lhs.ty.inner().is_zero_sized() {
+            return lhs_val;
         }
         // Pointer arithmetic: ptr + int or int + ptr → use GEP
         if op == BinOp::Add && lhs_kind == LLVMTypeKind::Pointer && rhs_kind == LLVMTypeKind::Integer {

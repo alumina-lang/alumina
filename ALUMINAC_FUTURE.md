@@ -224,6 +224,11 @@ boot misreads the language (record such cases here).
 
 - `intrinsics::fields` lays out union fields like struct fields (offsets
   0, 4, 12 for `union U { a: i32, b: f64, c: u8 }`); aluminac gives 0.
+- Compound assignment `*f() += g()` is emitted as C `+=`, whose operand
+  evaluation order is unspecified (clang calls `g()` first), although its
+  lang tests expect left to right (special-cased only for zero-sized
+  pointers); aluminac evaluates the place first
+  (`compound_assign_once.alu`).
 - Duplicate `#[lang]` items are accepted (one silently wins); aluminac
   reports them (`duplicate_lang_item_compile_fail.alu`).
 
@@ -279,8 +284,27 @@ always satisfied). A json bug that alumina-boot never instantiated
 
 ### alumina-boot's lang tests under aluminac
 
-`tests/lang/lang.alu` (alumina-boot's language test suite) compiles with
-aluminac except for **coroutines** (`fn*`, `yield`; aluminac has none).
+`tests/lang/lang.alu` (alumina-boot's language test suite) compiles and
+runs with aluminac (`--cfg coroutines`, linking `minicoro.o`); see below
+for the remaining failures. **Coroutines** are implemented as in
+alumina-boot: a `fn*` instance's body becomes a function of its own that
+returns `()`, and the instance calls `#[lang(coroutine_new)]` with it and
+its arguments; `yield v` is `#[lang(coroutine_yield)]` (returning when the
+coroutine is cancelled).
+Found through it: compound assignment evaluated a place with side effects
+twice (`*f() += 1`); nested aggregates (arrays of arrays) compared with a
+bad `icmp`; offsets of pointers to zero-sized types were GEPs into `void`;
+zero-length arrays and aligned zero-sized structs were given no alignment,
+and **LLVM struct types now follow layout.alu exactly** (explicit padding
+where LLVM would place a member elsewhere, e.g. after an aligned
+zero-sized field or in `#[packed(N)]`; the struct type cache was keyed by
+a weak hash); constants with `()` fields/elements were malformed;
+constant slices of strings lost their offset; `transmute` in constants now
+goes through the value's bytes (e.g. `[u8; 4]` to `u32`).
+Remaining lang failures: `#[packed(N)]`'s alignment as seen by LLVM (a
+packed LLVM struct has alignment 1; aluminac's layout is right),
+`test_const_zst`, `test_location*` (`#[line_directive]`-style locations?),
+`test_pretty_print` (`stringify!({ a })`).
 (`T::associated_type` type paths inside `stringify!` are fine since
 `stringify!` does not resolve; elsewhere they are unsupported.) Done for
 it: **linear block scopes** (each item declared in a block starts a new

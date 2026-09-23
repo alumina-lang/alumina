@@ -63,6 +63,9 @@ struct Mono {
     // lambda's type does not depend on its context, so lowering it again
     // (e.g. for real after tentatively) must give the same closure type.
     lambda_cache: HashMap<usize, &IrExpr>,
+    // In a coroutine's body: the types it yields and receives.
+    yield_type: Option<&IrTy>,
+    recv_type: &IrTy,
     // Hints for untyped `let`s of locals that are the value of a block with
     // a hint, by local id: in `{ let x = ...; x }` expected to be `T`, `x`
     // is expected to be `T` (as in alumina-boot).
@@ -95,6 +98,8 @@ struct FnState {
     inside_arg_inference: bool,
     tentative: bool,
     lambda_cache: HashMap<usize, &IrExpr>,
+    yield_type: Option<&IrTy>,
+    recv_type: &IrTy,
     loop_contexts: Vector<LoopContext>,
     const_replacements: HashMap<usize, ConstValue>,
     inference_incomplete: bool,
@@ -135,6 +140,8 @@ impl Mono {
             inside_arg_inference: false,
             tentative: false,
             lambda_cache: HashMap::new(),
+            yield_type: Option::none(),
+            recv_type: ctx.void_ty,
             local_type_hints: HashMap::new(),
             inferred_found: &[],
             tentative_incomplete: false,
@@ -154,6 +161,8 @@ impl Mono {
             inside_arg_inference: self.inside_arg_inference,
             tentative: self.tentative,
             lambda_cache: self.lambda_cache,
+            yield_type: self.yield_type,
+            recv_type: self.recv_type,
             loop_contexts: self.loop_contexts,
             const_replacements: self.const_replacements,
             inference_incomplete: self.inference_incomplete,
@@ -165,6 +174,7 @@ impl Mono {
         self.inside_arg_inference = false;
         self.tentative = false;
         self.lambda_cache = HashMap::new();
+        self.yield_type = Option::none();
         self.loop_contexts = Vector::new();
         self.const_replacements = HashMap::new();
         self.inference_incomplete = false;
@@ -187,6 +197,8 @@ impl Mono {
         self.inside_arg_inference = saved.inside_arg_inference;
         self.tentative = saved.tentative;
         self.lambda_cache = saved.lambda_cache;
+        self.yield_type = saved.yield_type;
+        self.recv_type = saved.recv_type;
         self.loop_contexts = saved.loop_contexts;
         self.const_replacements = saved.const_replacements;
         self.inference_incomplete = saved.inference_incomplete;
@@ -1286,10 +1298,15 @@ impl Mono {
 
         // Lower body (may recursively call mono_function)
         let body_expr: Option<&Expr> = if bounds_ok { def.body } else { Option::none() };
-        let body: Option<&IrExpr> = body_expr.map(|=self, v: &Expr| -> &IrExpr {
-            let body_ir = self.lower_expr_coerced(v, self.return_type);
-            self.check_and_coerce(body_ir, self.return_type, v.span)
-        });
+        let is_coroutine = def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Coroutine });
+        let body: Option<&IrExpr> = if is_coroutine && body_expr.is_some() {
+            Option::some(self.lower_coroutine(def, body_expr.unwrap(), params))
+        } else {
+            body_expr.map(|=self, v: &Expr| -> &IrExpr {
+                let body_ir = self.lower_expr_coerced(v, self.return_type);
+                self.check_and_coerce(body_ir, self.return_type, v.span)
+            })
+        };
         if body.is_some() && tuple_param.is_some() {
             // { let tuple = (arg0, arg1, ...); body }
             let tuple = tuple_param.unwrap();
@@ -1320,6 +1337,109 @@ impl Mono {
         self.current_fn_name = prev_fn_name;
         self.ctx.pop_mono_frame();
         idx
+    }
+
+    /// The body of a coroutine (`fn*`) instance, as in alumina-boot: the
+    /// written body becomes a function of its own that returns `()` (with
+    /// the yielded and received types in scope for `yield`), and the
+    /// instance calls the sysroot's `#[lang(coroutine_new)]` with it and its
+    /// arguments, which returns the `Coroutine<YieldT, RecvT>`.
+    fn lower_coroutine(self: &mut Mono, def: &FnDef, body: &Expr, params: &[IrParam]) -> &IrExpr {
+        let coroutine_id = self.ctx.get_lang_item("coroutine");
+        let ret = self.return_type;
+        if coroutine_id.is_none() || ret.tag != IrTyTag::Struct || ret.struct_ref().id._value != coroutine_id.unwrap()
+            || ret.struct_ref().type_args.len() < 2 {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                def.span, "a coroutine must return a `std::runtime::Coroutine`"));
+            return self.mk_void();
+        }
+        let (yield_ty, recv_ty) = (ret.struct_ref().type_args[0], ret.struct_ref().type_args[1]);
+
+        // The body function.
+        self.yield_type = Option::some(yield_ty);
+        self.recv_type = recv_ty;
+        self.return_type = self.ctx.void_ty;
+        let body_ir = self.check_and_coerce(self.lower_expr_coerced(body, self.ctx.void_ty), self.ctx.void_ty, body.span);
+        self.yield_type = Option::none();
+        self.return_type = ret;
+        let body_fn = IrFunction {
+            id: self.ctx.id_gen.next_id(),
+            name: def.name,
+            mangled_name: self.ctx.mangle_name("coroutine_body"),
+            params: params,
+            return_type: self.ctx.void_ty,
+            body: Option::some(body_ir),
+            local_defs: self.ctx.arena.alloc_slice_copy::<IrLocalDef>(self.local_defs.as_slice()),
+            attributes: &[],
+            is_variadic: false,
+            abi: Option::none(),
+            span: def.span,
+            type_args: &[],
+        };
+        self.local_defs.clear();
+        self.ctx.ir_functions.push(body_fn);
+
+        // coroutine_new::<body, (A...), YieldT, RecvT>((a, ...))
+        let arg_tys = self.ctx.arena.alloc_slice::<&IrTy>(params.len());
+        let items = self.ctx.arena.alloc_slice::<&IrExpr>(params.len());
+        for (i, param) in params.iter().enumerate() {
+            arg_tys[i] = param.ty;
+            items[i] = self.mk_local(param.id, param.ty);
+        }
+        let args_ty = self.ctx.make_tuple_ty(arg_tys);
+        let args = IrExpr::void_expr(args_ty);
+        args.tag = IrTag::TupleLit;
+        args._data.block.items = items;
+        let body_fn_ty = self.ctx.make_fn_ty(IrFnRef { id: body_fn.id, mangled_name: body_fn.mangled_name });
+        let call = self.call_lang_fn("coroutine_new", &[body_fn_ty, args_ty, yield_ty, recv_ty], &[self.ctx.arena.alloc(args) as &IrExpr], def.span);
+        if call.is_none() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(def.span, "coroutines need the sysroot's `coroutine_new`"));
+            return self.mk_void();
+        }
+        call.unwrap()
+    }
+
+    /// `yield v` in a coroutine's body, as in alumina-boot:
+    ///     { let tmp = v; let out: RecvT; if coroutine_yield(&tmp, &out) { return; } else { out } }
+    /// (`coroutine_yield` is true when the coroutine is being cancelled).
+    fn lower_yield(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if self.yield_type.is_none() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "`yield` outside of a coroutine"));
+            return self.mk_void();
+        }
+        let (yield_ty, recv_ty) = (self.yield_type.unwrap(), self.recv_type);
+        let value = if expr.opt_expr().is_some() {
+            let v = expr.opt_expr().unwrap();
+            self.check_and_coerce(self.lower_expr_coerced(v, yield_ty), yield_ty, v.span)
+        } else {
+            self.check_and_coerce(self.mk_void(), yield_ty, expr.span)
+        };
+        if value.ty.is_never() {
+            return value;
+        }
+        let tmp_id = self.ctx.id_gen.next_id();
+        self.local_defs.push(IrLocalDef { id: tmp_id, ty: yield_ty, name: "_yielded", span: expr.span });
+        let out_id = self.ctx.id_gen.next_id();
+        self.local_defs.push(IrLocalDef { id: out_id, ty: recv_ty, name: "_received", span: expr.span });
+        let cond = self.call_lang_fn(
+            "coroutine_yield",
+            &[yield_ty, recv_ty],
+            &[self.mk_ref(self.mk_local(tmp_id, yield_ty), false), self.mk_ref(self.mk_local(out_id, recv_ty), false)],
+            expr.span,
+        );
+        if cond.is_none() {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "coroutines need the sysroot's `coroutine_yield`"));
+            return self.mk_void();
+        }
+        let ret = IrExpr::void_expr(self.ctx.never_ty);
+        ret.tag = IrTag::Return;
+        let chosen = self.mk_if(cond.unwrap(), self.ctx.arena.alloc(ret), Option::some(self.mk_local(out_id, recv_ty)));
+        (chosen as &mut IrExpr).ty = recv_ty;
+        let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+        stmts[0] = self.mk_let(tmp_id, yield_ty, value);
+        stmts[1] = self.mk_let_uninit(out_id, recv_ty);
+        stmts[2] = chosen;
+        self.mk_block(stmts)
     }
 
     fn mk_void(self: &mut Mono) -> &IrExpr {
@@ -1472,6 +1592,7 @@ impl Mono {
             ExprTag::If, ExprTag::While, ExprTag::Loop, ExprTag::For,
             ExprTag::Switch, ExprTag::Break, ExprTag::Continue, ExprTag::Return =>
                 self.lower_control_flow(expr),
+            ExprTag::Yield => self.lower_yield(expr),
             ExprTag::Ref, ExprTag::Deref, ExprTag::FieldAccess,
             ExprTag::TupleIndex, ExprTag::Index, ExprTag::Cast, ExprTag::TypeCheck =>
                 self.lower_memory(expr),
@@ -3140,6 +3261,14 @@ impl Mono {
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Assign {
             let ir_lhs = self.lower_expr(expr.lhs());
+            // The target must be a mutable place (as in alumina-boot).
+            if !ir_lhs.ty.is_never() {
+                if !Mono::is_place(ir_lhs) {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.lhs().span, "cannot assign to rvalue"));
+                } else if self.is_const_place(ir_lhs) {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.lhs().span, "cannot assign to const"));
+                }
+            }
             // Compound assignment: typechecked as the binary operation
             // (as alumina-boot's `lower_assign_op`).
             let compound = expr.assign_op().bin_op();
@@ -3150,8 +3279,20 @@ impl Mono {
                     && self.binary_result_ty(op, ir_lhs.ty, ir_rhs.ty, expr.span).is_none() {
                     self.report_invalid_binop(op, ir_lhs.ty, ir_rhs.ty, expr.span);
                 }
-                let binop_expr = self.mk_binary(op, ir_lhs, ir_rhs, ir_lhs.ty);
-                return self.mk_assign(ir_lhs, binop_expr);
+                if Mono::is_simple_place(ir_lhs) {
+                    let binop_expr = self.mk_binary(op, ir_lhs, ir_rhs, ir_lhs.ty);
+                    return self.mk_assign(ir_lhs, binop_expr);
+                }
+                // The place is evaluated once, before the right operand:
+                //     { let p = &place; *p = *p op rhs }
+                let ptr = self.mk_ref(ir_lhs, false);
+                let ptr_id = self.ctx.id_gen.next_id();
+                self.local_defs.push(IrLocalDef { id: ptr_id, ty: ptr.ty, name: "_place", span: expr.span });
+                let place = self.mk_deref(self.mk_local(ptr_id, ptr.ty), ir_lhs.ty);
+                let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                stmts[0] = self.mk_let(ptr_id, ptr.ty, ptr);
+                stmts[1] = self.mk_assign(place, self.mk_binary(op, place, ir_rhs, ir_lhs.ty));
+                return self.mk_block(stmts);
             }
             // Plain assignment: coerce and typecheck
             let ir_rhs = self.lower_expr_coerced(expr.rhs(), ir_lhs.ty);
@@ -3743,7 +3884,16 @@ impl Mono {
             };
             let e = IrExpr::void_expr(ir_ty);
             e.tag = IrTag::StringLit;
-            e._data.lit.str_val = val.bytes();
+            e._data.lit.str_val = val.bytes()[val.bytes_offset()..];
+            self.ctx.arena.alloc(e) as &IrExpr
+        } else if val.tag == CValTag::Tuple && ty.tag == IrTyTag::Slice && val.elems().len() == 2
+            && val.elems()[0].tag == CValTag::Bytes && val.elems()[1].tag == CValTag::Int {
+            // A slice of a string constant: its (pointer, length).
+            let bytes = val.elems()[0];
+            let start = bytes.bytes_offset();
+            let e = IrExpr::void_expr(ty);
+            e.tag = IrTag::StringLit;
+            e._data.lit.str_val = bytes.bytes()[start..start + (val.elems()[1].int_val() as usize)];
             self.ctx.arena.alloc(e) as &IrExpr
         } else if val.tag == CValTag::Array {
             let elem_ty = ty.inner();
@@ -8388,9 +8538,23 @@ impl Mono {
         }
     }
 
+    /// Whether evaluating a place twice is the same as once (no side
+    /// effects, e.g. no calls).
+    fn is_simple_place(e: &IrExpr) -> bool {
+        switch e.tag {
+            IrTag::Local, IrTag::Param, IrTag::GlobalRef => true,
+            IrTag::FieldAccess => Mono::is_simple_place(e._data.field.lhs),
+            IrTag::Deref => {
+                let inner = e._data.single.lhs;
+                inner.tag == IrTag::Local || inner.tag == IrTag::Param || Mono::is_simple_place(inner)
+            }
+            _ => false,
+        }
+    }
+
     fn is_place(e: &IrExpr) -> bool {
         switch e.tag {
-            IrTag::Local, IrTag::Param, IrTag::Deref, IrTag::Index => true,
+            IrTag::Local, IrTag::Param, IrTag::GlobalRef, IrTag::Deref, IrTag::Index => true,
             IrTag::FieldAccess => Mono::is_place(e._data.field.lhs),
             _ => false,
         }

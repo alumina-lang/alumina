@@ -477,6 +477,7 @@ enum ExprTag {
     TurbofishValue = 48i32, // func::<T> used as a value (fn pointer), not a call
     Defered = 49i32,        // T::method() where T is a generic type param - deferred until mono
                             // id = generic param id, str_val = method name
+    Yield = 50i32,          // `yield value` in a coroutine (opt_expr)
 }
 
 // Expression sub-structs for union variants
@@ -695,7 +696,8 @@ impl Expr {
     fn opt_expr(self: &Expr) -> Option<&Expr> {
         if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.opt_expr }
         else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.opt_expr }
-        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue { self._data.jump.opt_expr }
+        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue
+            || self.tag == ExprTag::Yield { self._data.jump.opt_expr }
         else if self.tag == ExprTag::Let { self._data.let_expr.opt_expr }
         else { Option::none() }
     }
@@ -752,7 +754,8 @@ impl Expr {
     fn set_opt_expr(self: &mut Expr, val: Option<&Expr>) {
         if self.tag == ExprTag::Index || self.tag == ExprTag::TupleIndex { self._data.index.opt_expr = val; }
         else if self.tag == ExprTag::If || self.tag == ExprTag::When { self._data.cond.opt_expr = val; }
-        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue { self._data.jump.opt_expr = val; }
+        else if self.tag == ExprTag::Break || self.tag == ExprTag::Return || self.tag == ExprTag::Continue
+            || self.tag == ExprTag::Yield { self._data.jump.opt_expr = val; }
         else if self.tag == ExprTag::Let { self._data.let_expr.opt_expr = val; }
     }
 
@@ -864,6 +867,7 @@ enum AttrTag {
     NoConst = 24i32,
     TupleArgs = 25i32,     // #[tuple_args]: the single tuple parameter is passed as separate arguments
     Custom = 26i32,        // unrecognized #[name(...)]; str_val = name
+    Coroutine = 27i32,     // `fn*`: a coroutine
 }
 
 union _AttributeData {
@@ -907,6 +911,7 @@ impl Attribute {
     fn no_mangle() -> Attribute { Attribute { tag: AttrTag::NoMangle, _data: Attribute::_no_data() } }
     fn const_only() -> Attribute { Attribute { tag: AttrTag::ConstOnly, _data: Attribute::_no_data() } }
     fn no_const() -> Attribute { Attribute { tag: AttrTag::NoConst, _data: Attribute::_no_data() } }
+    fn coroutine() -> Attribute { Attribute { tag: AttrTag::Coroutine, _data: Attribute::_no_data() } }
     fn tuple_args() -> Attribute { Attribute { tag: AttrTag::TupleArgs, _data: Attribute::_no_data() } }
     fn custom(name: &[u8]) -> Attribute { Attribute { tag: AttrTag::Custom, _data: _AttributeData { str_val: name } } }
 }

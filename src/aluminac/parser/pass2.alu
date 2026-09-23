@@ -432,16 +432,20 @@ impl Pass2 {
             Option::none()
         };
 
-        // Tag "main" functions with AttrTag::Main
-        let attributes = if pending.name == "main" && body.is_some() {
-            let new_attrs = self.ctx.arena.alloc_slice::<Attribute>(pending.attributes.len() + 1);
-            for ai in 0usize..pending.attributes.len() {
-                new_attrs[ai] = pending.attributes[ai];
-            }
-            new_attrs[pending.attributes.len()] = Attribute::main_attr();
-            new_attrs as &[Attribute]
-        } else {
+        // Tag "main" functions with AttrTag::Main, and `fn*` with
+        // AttrTag::Coroutine.
+        let extra: std::collections::Vector<Attribute> = std::collections::Vector::from_slice(pending.attributes);
+        defer extra.free();
+        if pending.name == "main" && body.is_some() {
+            extra.push(Attribute::main_attr());
+        }
+        if child_by!(node, FieldKind::Coroutine).is_some() {
+            extra.push(Attribute::coroutine());
+        }
+        let attributes = if extra.len() == pending.attributes.len() {
             pending.attributes
+        } else {
+            self.ctx.arena.alloc_slice_copy::<Attribute>(extra.as_slice()) as &[Attribute]
         };
 
         let fn_def = FnDef {

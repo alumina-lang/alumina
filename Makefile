@@ -58,6 +58,9 @@ endif
 ifndef NO_MINICORO
 	MINICORO = $(BUILD_DIR)/minicoro.o
 	ALUMINA_FLAGS += --cfg coroutines
+	# (Only for aluminac's test programs; the compiler itself uses none.)
+	ALUMINAC_TEST_FLAGS += --cfg coroutines
+	ALUMINAC_TEST_LDFLAGS += $(MINICORO)
 else
 	MINICORO =
 endif
@@ -201,6 +204,7 @@ ALUMINAC_S3 = $(BUILD_DIR)/aluminac_s3
 SYSROOT_ALUMINAC = sysroot/
 STDLIB_ALUMINAC_TESTS = $(BUILD_DIR)/stdlib-aluminac-tests
 LIBRARIES_ALUMINAC_TESTS = $(BUILD_DIR)/libraries-aluminac-tests
+LANG_ALUMINAC_TESTS = $(BUILD_DIR)/lang-aluminac-tests
 
 SYSROOT_ALUMINAC_FILES = $(shell find $(SYSROOT_ALUMINAC) -type f -name '*.alu')
 ALUMINAC_COMMON_SOURCES = $(shell find libraries/aluminac-common/ -type f -name '*.alu')
@@ -237,16 +241,22 @@ $(ALUMINAC_S3): $(ALUMINAC_S2) $(BOOTSTRAP_DEPS)
 $(BUILD_DIR)/aluminac: $(ALUMINAC_S3)
 	cp $^ $@
 
-$(STDLIB_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES)
-	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --cfg test_std --sysroot $(SYSROOT_ALUMINAC) \
-		--link-args "$(ALUMINAC_LDFLAGS)" \
+$(STDLIB_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES) $(MINICORO)
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) $(ALUMINAC_TEST_FLAGS) --test --cfg test_std --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "$(ALUMINAC_LDFLAGS) $(ALUMINAC_TEST_LDFLAGS)" \
 		-o $@
 
 # alumina-boot's library tests (libraries/), compiled with aluminac.
-$(LIBRARIES_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES) $(ALU_LIBRARIES)
-	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --test --sysroot $(SYSROOT_ALUMINAC) \
-		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(ALUMINAC_LDFLAGS)" \
+$(LIBRARIES_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES) $(ALU_LIBRARIES) $(MINICORO)
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) $(ALUMINAC_TEST_FLAGS) --test --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "-ltree-sitter $(LLVM_LINK_FLAGS) $(ALUMINAC_LDFLAGS) $(ALUMINAC_TEST_LDFLAGS)" \
 		-o $@ $(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
+
+# alumina-boot's language tests (tests/lang/), compiled with aluminac.
+$(LANG_ALUMINAC_TESTS): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES) $(LANG_TEST_FILES) $(MINICORO)
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) $(ALUMINAC_TEST_FLAGS) --test --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "$(ALUMINAC_LDFLAGS) $(ALUMINAC_TEST_LDFLAGS)" \
+		-o $@ $(call alumina_modules,$(LANG_TEST_FILES),tests/,)
 
 # The bootstrap fixpoint: stage 2 and stage 3 must emit byte-identical LLVM IR
 # for the compiler itself. (Comparing the linked binaries is not meaningful on
@@ -352,7 +362,7 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac test-libraries-aluminac porting-gates idiom-gate
+.PHONY: test-std test-alumina-boot test-libraries test-lang test test-aluminac test-std-aluminac test-libraries-aluminac test-lang-aluminac porting-gates idiom-gate
 
 # Per-commit quality gates for the aluminac → alumina-boot parity work.
 # Runs the suites listed under "Quality gates" in PORTING.md. test-diag is
@@ -376,6 +386,9 @@ test-std-aluminac: $(STDLIB_ALUMINAC_TESTS)
 test-libraries-aluminac: $(LIBRARIES_ALUMINAC_TESTS)
 	$(LIBRARIES_ALUMINAC_TESTS) $(TEST_FLAGS)
 
+test-lang-aluminac: $(LANG_ALUMINAC_TESTS)
+	$(LANG_ALUMINAC_TESTS) $(TEST_FLAGS)
+
 test-lang: alumina-boot $(LANG_TESTS)
 	$(LANG_TESTS) $(TEST_FLAGS)
 
@@ -385,7 +398,7 @@ test-libraries: alumina-boot $(LIBRARIES_TESTS)
 test-alumina-boot:
 	cargo test $(CARGO_FLAGS) --all-targets
 
-test-aluminac: $(BUILD_DIR)/aluminac
+test-aluminac: $(BUILD_DIR)/aluminac $(MINICORO)
 	./tests/aluminac/run_tests.sh $(BUILD_DIR)/aluminac $(TEST_FILTER)
 
 test: test-alumina-boot test-std test-lang

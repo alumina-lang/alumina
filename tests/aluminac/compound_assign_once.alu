@@ -1,0 +1,17 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// BOOT_DIVERGES: alumina-boot emits C `*f() += g()`, whose operand order is unspecified (clang evaluates g() first); its own lang tests expect left to right
+// A compound assignment evaluates its place once, before the right operand
+// (aluminac evaluated `*f()` twice in `*f() += 1`).
+
+fn main() -> i32 {
+    let counter = 0;
+    let val = 10;
+    let place = |&counter, &val| -> &mut i32 { counter += 1; &val };
+    let amount = |&counter| -> i32 { counter *= 3; 1 };
+
+    *place() += 1;
+    if counter != 1 || val != 11 { return 1; }
+    *place() += amount();
+    if counter != 6 || val != 12 { return 2; }
+    0
+}

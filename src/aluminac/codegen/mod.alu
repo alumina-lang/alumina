@@ -5,7 +5,7 @@
 
 use llvm::*;
 use ast::*;
-use layout::{compute_type_size, layout_of};
+use layout::{compute_type_size, layout_of, AggregateLayout};
 use aluminac_common::arena::Arena;
 use diagnostics::DiagnosticContext;
 use std::collections::HashMap;
@@ -26,7 +26,10 @@ struct CodegenCtx {
     // Type cache: maps IrTy pointer -> LLVMTypeRef
     type_cache: HashMap<usize, LLVMTypeRef>,
     // Named struct type cache (for forward declarations)
-    struct_type_cache: HashMap<usize, LLVMTypeRef>,
+    struct_type_cache: HashMap<StructKey, LLVMTypeRef>,
+    // For a struct whose LLVM type has padding members: each field's member
+    // index (see llvm_struct_type).
+    member_indices_cache: HashMap<StructKey, &[u32]>,
 
     // Function declarations: mangled_name key -> LLVMValueRef
     fn_decls: HashMap<&[u8], LLVMValueRef>,
@@ -211,6 +214,7 @@ impl CodegenCtx {
             target_machine: target_machine,
             type_cache: HashMap::new(),
             struct_type_cache: HashMap::new(),
+            member_indices_cache: HashMap::new(),
             fn_decls: HashMap::new(),
             extern_c_fns: HashMap::new(),
             extern_c_sret_fns: HashMap::new(),
@@ -288,13 +292,15 @@ impl CodegenCtx {
                 LLVMPointerType(inner_ty, 0)
             }
         } else if ty.tag == IrTyTag::Array {
-            // For zero-length arrays, use [0 x i8] to avoid issues with recursive element types
+            // A zero-length array is a zero-length member with the element's
+            // alignment (not the element type itself, which may be recursive).
             if ty.array_size() == 0 {
-                return LLVMArrayType(self.i8_type, 0);
+                return self.alignment_member(layout_of(ty.inner(), self.pointer_size as usize).align);
             }
             let elem_ty = self.llvm_type(ty.inner());
-            // Can't have void element in arrays
-            let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.i8_type } else { elem_ty };
+            // Can't have void element in arrays: `()` elements are zero-sized
+            // members (an `i8` would give the array a size, unlike its layout).
+            let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.zst_member_type() } else { elem_ty };
             LLVMArrayType(safe_elem, ty.array_size() as u32)
         } else if ty.tag == IrTyTag::Tuple {
             if ty.elems().len() == 0 {
@@ -355,12 +361,8 @@ impl CodegenCtx {
         }
     }
 
-    fn struct_cache_key(self: &CodegenCtx, s: &IrStructRef) -> usize {
-        let h: usize = s.id._value;
-        for type_arg in s.type_args.iter() {
-            h = h * 31 + type_arg as &void as usize;
-        }
-        h
+    fn struct_cache_key(self: &CodegenCtx, s: &IrStructRef) -> StructKey {
+        StructKey { id: s.id._value, type_args: s.type_args }
     }
 
     fn llvm_struct_type(self: &mut CodegenCtx, s: &IrStructRef) -> LLVMTypeRef {
@@ -371,10 +373,15 @@ impl CodegenCtx {
         }
 
         if s.is_zero_sized {
-            // Zero-sized struct becomes {}
-            let result = LLVMStructTypeInContext(
-                self.context, null, 0, 0i32
-            );
+            // Zero-sized struct becomes {} (or, with an alignment, a
+            // zero-length member with that alignment).
+            let align = layout_of(&IrTy::mk_struct(*s), self.pointer_size as usize).align;
+            let result = if align > 1 {
+                let member = self.alignment_member(align);
+                LLVMStructTypeInContext(self.context, &member, 1, 0i32)
+            } else {
+                LLVMStructTypeInContext(self.context, null, 0, 0i32)
+            };
             self.struct_type_cache.insert(key, result);
             return result;
         }
@@ -407,31 +414,53 @@ impl CodegenCtx {
                 self.llvm_type(field.ty);
             }
         } else {
-            // With `#[align(N)]`, a trailing zero-sized member raises the
-            // alignment to N, without moving any field.
-            let extra = if CodegenCtx::has_alignment_member(s) { 1usize } else { 0usize };
-            let llvm_fields = self.arena.alloc_slice::<LLVMTypeRef>(s.fields.len() + extra);
+            // The members are placed where layout.alu places the fields:
+            // LLVM places a member at the next multiple of its alignment, so
+            // explicit padding is only needed where the layout puts a field
+            // further (a zero-length array or a zero-sized struct with an
+            // alignment, #[packed(N)], ...), and the struct is only packed
+            // where a field is not at a multiple of its LLVM alignment. A
+            // trailing member gives the struct the layout's alignment
+            // (#[align(N)]) and a trailing array its size.
+            let aggregate = AggregateLayout::of_struct(s);
+            let packed = s.is_packed;
+            let members: std::collections::Vector<LLVMTypeRef> = std::collections::Vector::new();
+            defer members.free();
+            let indices = self.arena.alloc_slice::<u32>(s.fields.len());
+            let padded = false;
+            let (at, llvm_align) = (0usize, 1usize);
             for (i, field) in s.fields.iter().enumerate() {
+                let field_layout = layout_of(field.ty, self.pointer_size as usize);
+                let offset = aggregate.add(field_layout);
                 let field_ty = self.llvm_type(field.ty);
-                // LLVM doesn't allow void as a struct member. Use a true
-                // zero-sized type (not an i8 placeholder) so the struct's
-                // LLVM layout matches compute_type_size and the offsets of
-                // fields *after* a ZST member don't shift — same Bug B
-                // family as the tuple case above.
-                if LLVMGetTypeKind(field_ty) == LLVMTypeKind::Void {
-                    llvm_fields[i] = self.zst_member_type();
-                } else {
-                    llvm_fields[i] = field_ty;
+                let member_ty = if LLVMGetTypeKind(field_ty) == LLVMTypeKind::Void { self.zst_member_type() } else { field_ty };
+                let member_align = if packed { 1usize } else { LLVMABIAlignmentOfType(self.target_data, member_ty) as usize };
+                let natural = (at + member_align - 1) / member_align * member_align;
+                if natural != offset {
+                    members.push(LLVMArrayType(self.i8_type, (offset - at) as u32));
+                    padded = true;
                 }
+                indices[i] = members.len() as u32;
+                members.push(member_ty);
+                llvm_align = std::cmp::max(llvm_align, member_align);
+                at = offset + field_layout.size;
             }
-            if extra > 0 {
-                llvm_fields[s.fields.len()] = self.alignment_member(layout.align);
+            if !packed && layout.align > llvm_align {
+                // (Zero-sized: fields keep their indices.)
+                members.push(self.alignment_member(layout.align));
+                llvm_align = layout.align;
             }
-            let packed_flag = if s.is_packed { 1i32 } else { 0i32 };
-            if llvm_fields.len() > 0 {
-                LLVMStructSetBody(struct_ty, &llvm_fields[0], llvm_fields.len() as u32, packed_flag);
+            let natural_size = (at + llvm_align - 1) / llvm_align * llvm_align;
+            if natural_size < layout.size {
+                members.push(LLVMArrayType(self.i8_type, (layout.size - at) as u32));
+            }
+            if padded {
+                self.member_indices_cache.insert(key, indices);
+            }
+            if members.is_empty() {
+                LLVMStructSetBody(struct_ty, null, 0, if packed { 1i32 } else { 0i32 });
             } else {
-                LLVMStructSetBody(struct_ty, null, 0, packed_flag);
+                LLVMStructSetBody(struct_ty, &members[0], members.len() as u32, if packed { 1i32 } else { 0i32 });
             }
         }
 
@@ -953,6 +982,30 @@ impl CodegenCtx {
         global
     }
 
+    /// For a struct whose LLVM type has padding members (see
+    /// llvm_struct_type), the LLVM member index of each field; none if the
+    /// members are the fields.
+    fn struct_member_indices(self: &mut CodegenCtx, s: &IrStructRef) -> Option<&[u32]> {
+        if s.is_union || s.is_zero_sized {
+            return Option::none();
+        }
+        self.llvm_struct_type(s);
+        self.member_indices_cache.get(&self.struct_cache_key(s))
+    }
+
+    /// The LLVM member index of a field of a struct type.
+    fn llvm_field_index(self: &mut CodegenCtx, ty: &IrTy, field_idx: u32) -> u32 {
+        if ty.tag != IrTyTag::Struct {
+            return field_idx;
+        }
+        let indices = self.struct_member_indices(&ty.struct_ref());
+        if indices.is_some() && (field_idx as usize) < indices.unwrap().len() {
+            indices.unwrap()[field_idx as usize]
+        } else {
+            field_idx
+        }
+    }
+
     fn gen_const_init(self: &mut CodegenCtx, expr: &IrExpr) -> LLVMValueRef {
         switch expr.tag {
         IrTag::IntLit => {
@@ -1062,6 +1115,11 @@ impl CodegenCtx {
             }
             let fields = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
             for (i, item) in expr.items().iter().enumerate() {
+                // A `()` field is a zero-sized member of the struct type.
+                if LLVMGetTypeKind(self.llvm_type(item.ty)) == LLVMTypeKind::Void {
+                    fields[i] = LLVMConstNull(self.zst_member_type());
+                    continue;
+                }
                 fields[i] = self.gen_const_init(item);
                 if (fields[i] as usize) == 0 {
                     return std::mem::zeroed::<LLVMValueRef>();
@@ -1072,6 +1130,18 @@ impl CodegenCtx {
             // `{...}` rather than `%Foo`, and the LLVM verifier rejects it as a
             // global initializer (the type does not match the global's `%Foo`).
             let llvm_ty = self.llvm_type(expr.ty);
+            let member_indices = if expr.ty.tag == IrTyTag::Struct { self.struct_member_indices(&expr.ty.struct_ref()) } else { Option::none() };
+            if member_indices.is_some() {
+                // With padding members (zero) between the fields.
+                let members = self.arena.alloc_slice::<LLVMValueRef>(LLVMCountStructElementTypes(llvm_ty) as usize);
+                for i in 0usize..members.len() {
+                    members[i] = LLVMConstNull(LLVMStructGetTypeAtIndex(llvm_ty, i as u32));
+                }
+                for (i, field) in fields.iter().enumerate() {
+                    members[member_indices.unwrap()[i] as usize] = field;
+                }
+                return LLVMConstNamedStruct(llvm_ty, &members[0], members.len() as u32);
+            }
             if expr.ty.tag == IrTyTag::Struct && CodegenCtx::has_alignment_member(&expr.ty.struct_ref()) {
                 let with_align = self.arena.alloc_slice::<LLVMValueRef>(fields.len() + 1);
                 for i in 0usize..fields.len() {
@@ -1084,6 +1154,9 @@ impl CodegenCtx {
         }
         IrTag::ArrayLit => {
             let elem_ty = self.llvm_type(expr.ty.inner());
+            if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
+                return LLVMConstNull(self.llvm_type(expr.ty));
+            }
             let elems = self.arena.alloc_slice::<LLVMValueRef>(expr.items().len());
             for (i, item) in expr.items().iter().enumerate() {
                 elems[i] = self.gen_const_init(item);
@@ -1105,6 +1178,10 @@ impl CodegenCtx {
             for item in expr.items().iter() {
                 let elem_ty = self.llvm_type(item.ty);
                 if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void {
+                    // The tuple type has a zero-sized member for it (see
+                    // llvm_type).
+                    all_fields[count] = LLVMConstNull(self.zst_member_type());
+                    count = count + 1;
                     continue;
                 }
                 all_fields[count] = self.gen_const_init(item);
@@ -1459,6 +1536,7 @@ impl CodegenCtx {
     fn free(self: &mut CodegenCtx) {
         self.type_cache.free();
         self.struct_type_cache.free();
+        self.member_indices_cache.free();
         self.fn_decls.free();
         self.global_decls.free();
         self.string_cache.free();
@@ -1655,4 +1733,24 @@ fn generate(
         }
     }
     ctx
+}
+
+/// A struct instance, keying the LLVM struct type caches (its type
+/// arguments compared by structure).
+struct StructKey {
+    id: usize,
+    type_args: &[&IrTy],
+}
+
+impl StructKey {
+    fn equals(self: &StructKey, other: &StructKey) -> bool {
+        self.id == other.id && same_types(self.type_args, other.type_args)
+    }
+
+    fn hash<H: std::hash::Hasher<H>>(self: &StructKey, hasher: &mut H) {
+        self.id.hash(hasher);
+        hash_types(self.type_args, hasher);
+    }
+
+    mixin std::cmp::Equatable<StructKey>;
 }

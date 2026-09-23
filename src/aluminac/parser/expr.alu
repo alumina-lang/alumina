@@ -86,6 +86,7 @@ impl ExprParser {
                 self.ctx.alloc_expr(e)
             },
             NodeKind::ReturnExpression => self.parse_return(node, span),
+            NodeKind::YieldExpression => self.parse_yield(node, span),
             NodeKind::LetDeclaration => self.parse_let(node, span),
             NodeKind::StructExpression => self.parse_struct_lit(node, span),
             NodeKind::TupleExpression => self.parse_tuple_lit(node, span),
@@ -1403,6 +1404,15 @@ impl ExprParser {
         self.ctx.alloc_expr(e)
     }
 
+    fn parse_yield(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Inner);
+        let e = self.make_expr(ExprTag::Yield, span);
+        if value.is_some() {
+            e._data.jump.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+        }
+        self.ctx.alloc_expr(e)
+    }
+
     fn parse_let(self: &ExprParser, node: Node, span: Span) -> &Expr {
         // Honour `#[cfg(...)]` on let declarations: if the condition is false,
         // drop the let entirely (no scope binding, no initializer side-effect).
@@ -2674,7 +2684,7 @@ impl ExprParser {
             if !e._data.for_expr.args.is_empty() {
                 e._data.for_expr.args = self.expand_macro_args_list(e._data.for_expr.args, param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map);
             }
-        } else if e.tag == ExprTag::Break || e.tag == ExprTag::Return {
+        } else if e.tag == ExprTag::Break || e.tag == ExprTag::Return || e.tag == ExprTag::Yield {
             if e._data.jump.opt_expr.is_some() {
                 e._data.jump.opt_expr = Option::some(self.expand_macro_expr(e._data.jump.opt_expr.unwrap(), param_args, variadic_args, variadic_param_idx, et_cetera_idx, id_map));
             }

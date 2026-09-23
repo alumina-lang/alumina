@@ -1,0 +1,28 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// LLVM's view of each struct agrees with aluminac's layout (checked
+// through codegen_type_func), including fields after aligned zero-sized
+// fields, zero-length arrays and structs containing #[packed(N)] structs;
+// and field accesses land at the layout's offsets.
+
+use std::intrinsics::codegen_type_func;
+use std::mem::{size_of, align_of};
+
+#[align(64)] struct BigZst {}
+struct AfterZst { a: u8, b: BigZst, c: u8 }
+struct ZeroLen { a: u8, b: [u64; 0] }
+#[packed(2)] struct P2 { b: u8, a: i32 }
+struct HoldsP2 { x: u8, p: P2, y: u8 }
+
+fn same<T>() -> bool {
+    size_of::<T>() == codegen_type_func::<T, usize>("sizeof")
+        && align_of::<T>() == codegen_type_func::<T, usize>("_Alignof")
+}
+
+fn main() -> i32 {
+    if !same::<AfterZst>() || !same::<ZeroLen>() || !same::<HoldsP2>() { return 1; }
+    if size_of::<P2>() != 6 || size_of::<HoldsP2>() != 10 { return 2; }
+    let h = HoldsP2 { x: 1, p: P2 { b: 2, a: 3 }, y: 4 };
+    let bytes = &h as &u8;
+    if *(bytes + 2) != 2 || *(bytes + 4 as usize) != 3 || *(bytes + 8) != 4 { return 3; }
+    0
+}

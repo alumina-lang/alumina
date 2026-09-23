@@ -5,7 +5,7 @@
 // and `const_eval`/`const_bake` intrinsics.
 
 use ast::*;
-use layout::{compute_type_size, compute_type_align};
+use layout::{compute_type_size, compute_type_align, layout_of, AggregateLayout};
 use aluminac_common::arena::Arena;
 use std::collections::HashMap;
 use std::option::{Option, try};
@@ -1399,7 +1399,152 @@ impl ConstEvaluator {
             return Result::ok(ConstValue::make_int(result, target_bt));
         }
 
-        Result::err(ConstEvalError::unsupported())
+        // Otherwise, through the value's bytes (e.g. `[u8; 4]` <-> `u32`).
+        let from_ty = expr.lhs().ty;
+        let to_ty = expr.ir_ty();
+        let size = compute_type_size(from_ty, self.pointer_size);
+        if size != compute_type_size(to_ty, self.pointer_size) {
+            return Result::err(ConstEvalError::unsupported());
+        }
+        let bytes = self.arena.alloc_slice::<u8>(size);
+        for i in 0usize..size {
+            bytes[i] = 0;
+        }
+        if !self.to_bytes(inner, from_ty, bytes) {
+            return Result::err(ConstEvalError::unsupported());
+        }
+        self.from_bytes(bytes, to_ty).ok_or(ConstEvalError::unsupported())
+    }
+
+    /// The field offsets of a struct or tuple type.
+    fn field_offsets(self: &ConstEvaluator, ty: &IrTy) -> &[usize] {
+        let is_struct = ty.tag == IrTyTag::Struct;
+        let n = if is_struct { ty.struct_ref().fields.len() } else { ty.elems().len() };
+        let offsets = self.arena.alloc_slice::<usize>(n);
+        let aggregate = if is_struct { AggregateLayout::of_struct(&ty.struct_ref()) } else { AggregateLayout::new(false, false, 1) };
+        for i in 0usize..n {
+            let field_ty = if is_struct { ty.struct_ref().fields[i].ty } else { ty.elems()[i] };
+            offsets[i] = aggregate.add(layout_of(field_ty, self.pointer_size));
+        }
+        offsets
+    }
+
+    /// Write a value's in-memory representation (little-endian) into `out`,
+    /// if it is one of plain data: numbers, booleans, and arrays, tuples and
+    /// structs of them. (Unset parts stay zero.)
+    fn to_bytes(self: &ConstEvaluator, value: ConstValue, ty: &IrTy, out: &mut [u8]) -> bool {
+        switch value.tag {
+            CValTag::Uninitialized, CValTag::Void => true,
+            CValTag::Int, CValTag::Bool => {
+                let bits = value.int_val();
+                for i in 0usize..std::cmp::min(out.len(), 8) {
+                    out[i] = (bits >> (8 * i)) as u8;
+                }
+                true
+            }
+            CValTag::Float => {
+                let bits: u64 = if value.builtin_type() == BuiltinType::F32 {
+                    let f = value.float_val() as f32;
+                    *(&f as &u32) as u64
+                } else {
+                    let f = value.float_val();
+                    *(&f as &u64)
+                };
+                for i in 0usize..std::cmp::min(out.len(), 8) {
+                    out[i] = (bits >> (8 * i)) as u8;
+                }
+                true
+            }
+            CValTag::Array => {
+                if ty.tag != IrTyTag::Array { return false; }
+                let elem_size = compute_type_size(ty.inner(), self.pointer_size);
+                for (i, elem) in value.elems().iter().enumerate() {
+                    if !self.to_bytes(elem, ty.inner(), out[i * elem_size..(i + 1) * elem_size]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            CValTag::Tuple => {
+                if ty.tag != IrTyTag::Tuple { return false; }
+                let offsets = self.field_offsets(ty);
+                for (i, elem) in value.elems().iter().enumerate() {
+                    let elem_ty = ty.elems()[i];
+                    let size = compute_type_size(elem_ty, self.pointer_size);
+                    if !self.to_bytes(elem, elem_ty, out[offsets[i]..offsets[i] + size]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            CValTag::Struct => {
+                if ty.tag != IrTyTag::Struct || ty.struct_ref().is_union { return false; }
+                let offsets = self.field_offsets(ty);
+                for field in value.fields() {
+                    let field_ty = ty.struct_ref().fields[field.field_idx as usize].ty;
+                    let offset = offsets[field.field_idx as usize];
+                    let size = compute_type_size(field_ty, self.pointer_size);
+                    if !self.to_bytes(field.value, field_ty, out[offset..offset + size]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The value of type `ty` whose in-memory representation is `bytes`.
+    fn from_bytes(self: &ConstEvaluator, bytes: &[u8], ty: &IrTy) -> Option<ConstValue> {
+        switch ty.tag {
+            IrTyTag::Builtin => {
+                let bits: u64 = 0;
+                for i in 0usize..std::cmp::min(bytes.len(), 8) {
+                    bits |= (bytes[i] as u64) << (8 * i);
+                }
+                let bt = ty.builtin();
+                if bt == BuiltinType::Bool {
+                    Option::some(ConstValue::make_bool(bits != 0))
+                } else if bt == BuiltinType::F32 {
+                    let b = bits as u32;
+                    Option::some(ConstValue::make_float(*(&b as &f32) as f64, bt))
+                } else if bt == BuiltinType::F64 {
+                    Option::some(ConstValue::make_float(*(&bits as &f64), bt))
+                } else if bt.is_integer() && bytes.len() <= 8 {
+                    Option::some(ConstValue::make_int(bits, bt))
+                } else {
+                    Option::none()
+                }
+            }
+            IrTyTag::Array => {
+                let elem_size = compute_type_size(ty.inner(), self.pointer_size);
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size());
+                for i in 0usize..ty.array_size() {
+                    elems[i] = self.from_bytes(bytes[i * elem_size..(i + 1) * elem_size], ty.inner())?;
+                }
+                Option::some(ConstValue::make_array(elems))
+            }
+            IrTyTag::Tuple => {
+                let offsets = self.field_offsets(ty);
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.elems().len());
+                for (i, elem_ty) in ty.elems().iter().enumerate() {
+                    let size = compute_type_size(elem_ty, self.pointer_size);
+                    elems[i] = self.from_bytes(bytes[offsets[i]..offsets[i] + size], elem_ty)?;
+                }
+                Option::some(ConstValue::make_tuple(elems))
+            }
+            IrTyTag::Struct => {
+                if ty.struct_ref().is_union { return Option::none(); }
+                let offsets = self.field_offsets(ty);
+                let fields = self.arena.alloc_slice::<ConstField>(ty.struct_ref().fields.len());
+                for (i, field) in ty.struct_ref().fields.iter().enumerate() {
+                    let size = compute_type_size(field.ty, self.pointer_size);
+                    fields[i] = ConstField { field_idx: i as u32, value: self.from_bytes(bytes[offsets[i]..offsets[i] + size], field.ty)? };
+                }
+                Option::some(ConstValue::make_struct(fields))
+            }
+            _ => Option::none(),
+        }
     }
 
     // ========== LLVM intrinsic interpretation ==========
