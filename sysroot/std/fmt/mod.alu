@@ -600,13 +600,12 @@ mod internal {
                 // We do not know which field is active, so we cannot print it.
                 f.write_str("<union>")?;
             } else when ty.is_enum() {
-                for variant in ty.variants() {
-                    if value == variant.value() {
-                        fmt::write!(f, "{}::{}", ty.name().unwrap_or("<unnamed>"), variant.name())?;
-                        return Result::ok(());
-                    }
+                let variant = ty.variant_name(value);
+                if variant.is_some() {
+                    fmt::write!(f, "{}::{}", ty.name().unwrap_or("<unnamed>"), variant.unwrap())?;
+                } else {
+                    DebugAdapter::write(value as builtins::underlying_type_of<T>, f, &stack_guard)?;
                 }
-                DebugAdapter::write(value as builtins::underlying_type_of<T>, f, &stack_guard)?;
             } else when ty.is_function_pointer() {
                 if (value as &void) == null {
                     f.write_str("null")?;
