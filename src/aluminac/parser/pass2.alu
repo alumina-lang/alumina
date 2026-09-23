@@ -33,26 +33,22 @@ impl Pass2 {
         Pass2 { ctx: ctx }
     }
 
-    fn run(self: &mut Pass2, root: Node) {
-        // Process all pending items
-        // For each pending function, re-find the node and parse the body
-        // We store byte offsets and walk the tree to find matching nodes
-
-        // Note: macros are collected separately via collect_macros()
-        self.process_structs(root);
-        self.process_enums(root);
-        self.process_protocols(root);
-        self.process_mixins(root);
-        self.process_functions(root);
-        self.process_type_aliases(root);
-        self.process_statics(root);
+    fn run(self: &mut Pass2) {
+        // The items pass 1 found, with their syntax nodes (macros are
+        // collected separately, see collect_macros).
+        self.process_structs();
+        self.process_enums();
+        self.process_protocols();
+        self.process_mixins();
+        self.process_functions();
+        self.process_type_aliases();
+        self.process_statics();
     }
 
     /// Process pending items added after the given starting indices.
     /// Used by parse_block to handle items defined inside function bodies.
     fn process_items_from(
         self: &mut Pass2,
-        root: Node,
         structs_start: usize,
         enums_start: usize,
         protocols_start: usize,
@@ -69,7 +65,7 @@ impl Pass2 {
         loop {
             if si >= self.ctx.pending_structs.len() { break; }
             let pending = self.ctx.pending_structs[si];
-            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let item_node = pending.node;
             self.build_struct(item_node, &pending);
             si = si + 1usize;
         }
@@ -77,7 +73,7 @@ impl Pass2 {
         loop {
             if ei >= self.ctx.pending_enums.len() { break; }
             let pending = self.ctx.pending_enums[ei];
-            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let item_node = pending.node;
             self.build_enum(item_node, &pending);
             ei = ei + 1usize;
         }
@@ -85,26 +81,26 @@ impl Pass2 {
         loop {
             if pi >= self.ctx.pending_protocols.len() { break; }
             let pending = self.ctx.pending_protocols[pi];
-            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let item_node = pending.node;
             self.build_protocol(item_node, &pending);
             pi = pi + 1usize;
         }
         // Mixins reference protocol items, so they must come after protocols
-        self.process_mixins_from(root, mixins_start);
+        self.process_mixins_from(mixins_start);
         // Functions are processed last since they may contain nested blocks.
         let fi = functions_start;
         loop {
             if fi >= self.ctx.pending_functions.len() { break; }
             let pending = self.ctx.pending_functions[fi];
-            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
-            self.build_function(root, item_node, &pending);
+            let item_node = pending.node;
+            self.build_function(item_node, &pending);
             fi = fi + 1usize;
         }
         let ti = type_aliases_start;
         loop {
             if ti >= self.ctx.pending_type_aliases.len() { break; }
             let pending = self.ctx.pending_type_aliases[ti];
-            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let item_node = pending.node;
             self.build_type_alias(item_node, &pending);
             ti = ti + 1usize;
         }
@@ -112,19 +108,19 @@ impl Pass2 {
         loop {
             if xi >= self.ctx.pending_statics.len() { break; }
             let pending = self.ctx.pending_statics[xi];
-            let item_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let item_node = pending.node;
             self.build_static(item_node, &pending);
             xi = xi + 1usize;
         }
     }
 
-    fn process_mixins_from(self: &mut Pass2, root: Node, start: usize) {
+    fn process_mixins_from(self: &mut Pass2, start: usize) {
         let i = start;
         loop {
             if i >= self.ctx.pending_mixins.len() { break; }
             let pending = self.ctx.pending_mixins[i];
             i = i + 1usize;
-            let mixin_node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let mixin_node = pending.node;
             let proto_node = child_by!(mixin_node, FieldKind::Protocol);
             if proto_node.is_none() {
                 continue;
@@ -186,11 +182,11 @@ impl Pass2 {
         }
     }
 
-    fn process_macros(self: &mut Pass2, root: Node) {
-        self.process_macros_from(root, 0usize);
+    fn process_macros(self: &mut Pass2) {
+        self.process_macros_from(0usize);
     }
 
-    fn process_macros_from(self: &mut Pass2, root: Node, start: usize) {
+    fn process_macros_from(self: &mut Pass2, start: usize) {
         let mac_len = self.ctx.pending_macros.len();
         if mac_len == 0usize || start >= mac_len {
             return;
@@ -203,7 +199,7 @@ impl Pass2 {
             // our reference. See the comment on `process_functions`.
             let pending = self.ctx.pending_macros[i];
             i = i + 1usize;
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
 
             // Parse parameter names
             let params_node = child_by!(node, FieldKind::Parameters);
@@ -292,29 +288,7 @@ impl Pass2 {
         }
     }
 
-    fn find_node_at(self: &Pass2, root: Node, start: u32, end: u32) -> Node {
-        // Find the deepest node matching the given byte range.
-        // We recurse even when a match is found, because wrapper nodes (e.g.
-        // statement) can have the same byte range as their inner content node
-        // (e.g. struct_definition).
-        let cursor = root.walk();
-        defer cursor.free();
-        if cursor.goto_first_child_for_byte(start as usize).is_some() {
-            let node = cursor.node();
-            if node.start_byte() as u32 == start && node.end_byte() as u32 == end {
-                // Try to find a deeper match
-                let deeper = self.find_node_at(node, start, end);
-                if deeper.start_byte() as u32 == start && deeper.end_byte() as u32 == end {
-                    return deeper;
-                }
-                return node;
-            }
-            return self.find_node_at(node, start, end);
-        }
-        root
-    }
-
-    fn process_functions(self: &mut Pass2, root: Node) {
+    fn process_functions(self: &mut Pass2) {
         // Copy each pending entry by value: body parsing inside `build_function`
         // can trigger recursive Pass1 (for block-local items), which pushes to
         // `pending_functions` and may realloc it. A borrow into the Vector
@@ -323,8 +297,8 @@ impl Pass2 {
         loop {
             if i >= self.ctx.pending_functions.len() { break; }
             let pending = self.ctx.pending_functions[i];
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
-            self.build_function(root, node, &pending);
+            let node = pending.node;
+            self.build_function(node, &pending);
             i = i + 1usize;
         }
     }
@@ -353,7 +327,7 @@ impl Pass2 {
         }
     }
 
-    fn build_function(self: &mut Pass2, root: Node, node: Node, pending: &PendingFunction) {
+    fn build_function(self: &mut Pass2, node: Node, pending: &PendingFunction) {
         // For methods inside an `impl Foo<K, V, ...>` block, re-register the
         // impl's generic params in this function's scope so name lookups bind
         // to THIS impl's ids. The struct's shared scope only retains whichever
@@ -403,8 +377,8 @@ impl Pass2 {
             // placeholders. Falls back to the old empty-bounds entries if the
             // impl decl range is unavailable or the count doesn't line up.
             let impl_gps: &[GenericParam] = &[];
-            if pending.impl_decl_end > pending.impl_decl_start {
-                let impl_node = self.find_node_at(root, pending.impl_decl_start, pending.impl_decl_end);
+            if pending.impl_decl.is_some() {
+                let impl_node = pending.impl_decl.unwrap();
                 impl_gps = self.parse_generic_params(impl_node, pending.scope_idx);
             }
             let use_parsed = impl_gps.len() == impl_count;
@@ -1088,12 +1062,12 @@ impl Pass2 {
         }
     }
 
-    fn process_structs(self: &mut Pass2, root: Node) {
+    fn process_structs(self: &mut Pass2) {
         let i = 0usize;
         loop {
             if i >= self.ctx.pending_structs.len() { break; }
             let pending = self.ctx.pending_structs[i];
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
             self.build_struct(node, &pending);
             i = i + 1usize;
         }
@@ -1194,12 +1168,12 @@ impl Pass2 {
         self.ctx.items.push(item);
     }
 
-    fn process_enums(self: &mut Pass2, root: Node) {
+    fn process_enums(self: &mut Pass2) {
         let i = 0usize;
         loop {
             if i >= self.ctx.pending_enums.len() { break; }
             let pending = self.ctx.pending_enums[i];
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
             self.build_enum(node, &pending);
             i = i + 1usize;
         }
@@ -1262,12 +1236,12 @@ impl Pass2 {
         self.ctx.items.push(item);
     }
 
-    fn process_protocols(self: &mut Pass2, root: Node) {
+    fn process_protocols(self: &mut Pass2) {
         let i = 0usize;
         loop {
             if i >= self.ctx.pending_protocols.len() { break; }
             let pending = self.ctx.pending_protocols[i];
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
             self.build_protocol(node, &pending);
             i = i + 1usize;
         }
@@ -1364,13 +1338,13 @@ impl Pass2 {
         self.ctx.items.push(item);
     }
 
-    fn process_mixins(self: &mut Pass2, root: Node) {
+    fn process_mixins(self: &mut Pass2) {
         let i = 0usize;
         loop {
             if i >= self.ctx.pending_mixins.len() { break; }
             let pending = self.ctx.pending_mixins[i];
             i = i + 1usize;
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
 
             // Get the protocol type from the mixin node
             let proto_node = child_by!(node, FieldKind::Protocol);
@@ -1438,12 +1412,12 @@ impl Pass2 {
         }
     }
 
-    fn process_type_aliases(self: &mut Pass2, root: Node) {
+    fn process_type_aliases(self: &mut Pass2) {
         let i = 0usize;
         loop {
             if i >= self.ctx.pending_type_aliases.len() { break; }
             let pending = self.ctx.pending_type_aliases[i];
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
             self.build_type_alias(node, &pending);
             i = i + 1usize;
         }
@@ -1468,22 +1442,22 @@ impl Pass2 {
             target: target,
             opaque: inner_node.is_none(),
             attributes: pending.attributes,
-            span: Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end, expansion: 0 },
+            span: self.ctx.make_span(pending.node),
         };
 
         let item = std::mem::zeroed::<Item>();
         item.tag = ItemTag::TypeAlias;
-        item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end, expansion: 0 };
+        item.span = self.ctx.make_span(pending.node);
         item._data.type_alias = alias;
         self.ctx.items.push(item);
     }
 
-    fn process_statics(self: &mut Pass2, root: Node) {
+    fn process_statics(self: &mut Pass2) {
         let i = 0usize;
         loop {
             if i >= self.ctx.pending_statics.len() { break; }
             let pending = self.ctx.pending_statics[i];
-            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            let node = pending.node;
             self.build_static(node, &pending);
             i = i + 1usize;
         }

@@ -1132,7 +1132,7 @@ impl ConstEvaluator {
         // the structured control flow in eval_while/eval_loop)
 
         for i in 0usize..expr.items().len() - 1 {
-            let r = self.eval(expr.items()[i])?;
+            self.eval(expr.items()[i])?;
         }
 
         // Last item is the value
@@ -1339,8 +1339,7 @@ impl ConstEvaluator {
     fn eval_tuple_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
         let elems = self.arena.alloc_slice::<ConstValue>(expr.items().len());
         for i in 0usize..expr.items().len() {
-            let r = self.eval(expr.items()[i])?;
-            elems[i] = r;
+            elems[i] = self.eval(expr.items()[i])?;
         }
         Result::ok(ConstValue::make_tuple(elems))
     }
@@ -1348,8 +1347,7 @@ impl ConstEvaluator {
     fn eval_array_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
         let elems = self.arena.alloc_slice::<ConstValue>(expr.items().len());
         for i in 0usize..expr.items().len() {
-            let r = self.eval(expr.items()[i])?;
-            elems[i] = r;
+            elems[i] = self.eval(expr.items()[i])?;
         }
         Result::ok(ConstValue::make_array(elems))
     }
@@ -1358,10 +1356,9 @@ impl ConstEvaluator {
         // IrTag::StructLit: items are field value exprs, ordered by struct field position
         let fields = self.arena.alloc_slice::<ConstField>(expr.items().len());
         for i in 0usize..expr.items().len() {
-            let r = self.eval(expr.items()[i])?;
             fields[i] = ConstField {
                 field_idx: i as u32,
-                value: r,
+                value: self.eval(expr.items()[i])?,
             };
         }
         if expr.ty.tag == IrTyTag::Slice && fields.len() == 2 {
@@ -1426,14 +1423,14 @@ impl ConstEvaluator {
                 }
                 if body_r.unwrap_err() == EvalError::Continue {
                     if expr.opt_expr().is_some() {
-                        let cont_r = self.eval(expr.opt_expr().unwrap())?;
+                        self.eval(expr.opt_expr().unwrap())?;
                     }
                     continue;
                 }
                 return body_r;
             }
             if expr.opt_expr().is_some() {
-                let cont_r = self.eval(expr.opt_expr().unwrap())?;
+                self.eval(expr.opt_expr().unwrap())?;
             }
         }
         Result::ok(ConstValue::make_void())
@@ -1520,8 +1517,7 @@ impl ConstEvaluator {
         // Evaluate arguments
         let arg_values = self.arena.alloc_slice::<ConstValue>(expr.items().len());
         for i in 0usize..expr.items().len() {
-            let r = self.eval(expr.items()[i])?;
-            arg_values[i] = r;
+            arg_values[i] = self.eval(expr.items()[i])?;
         }
 
         // Create child evaluator sharing the same variable store.

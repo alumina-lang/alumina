@@ -50,12 +50,11 @@ struct Pass1 {
     current_enum_id: Option<Id>,
     impl_generic_param_ids: &[Id],
     impl_generic_param_names: &[&[u8]],
-    // Byte range of the enclosing `impl Foo<...>` block node, so pass2 can
-    // re-parse its generic params *with bounds* (the impl-level bounds like
+    // The enclosing `impl Foo<...>` block node, so pass2 can re-parse its
+    // generic params *with bounds* (the impl-level bounds like
     // `Rg: RangeOf<T>` are otherwise dropped when prepended to a method's
-    // generic_params). 0/0 when not inside an impl.
-    impl_decl_start: u32,
-    impl_decl_end: u32,
+    // generic_params).
+    impl_decl: Option<Node>,
     skip_item: bool,      // set by parse_attributes when #[cfg] evaluates to false
     // The functions of the `impl` block being visited (one of a type's
     // blocks may shadow a function of another, with a warning).
@@ -77,8 +76,7 @@ impl Pass1 {
             current_enum_id: Option::none(),
             impl_generic_param_ids: &[],
             impl_generic_param_names: &[],
-            impl_decl_start: 0,
-            impl_decl_end: 0,
+            impl_decl: Option::none(),
             skip_item: false,
             impl_fn_names: std::collections::HashSet::new(),
             attr_owner: std::mem::zeroed::<Node>(),
@@ -497,8 +495,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_functions.push(PendingFunction {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             id: id,
             name: name,
@@ -506,8 +503,7 @@ impl Pass1 {
             is_method: self.in_container,
             impl_generic_param_ids: self.impl_generic_param_ids,
             impl_generic_param_names: self.impl_generic_param_names,
-            impl_decl_start: self.impl_decl_start,
-            impl_decl_end: self.impl_decl_end,
+            impl_decl: self.impl_decl,
         });
 
         // Visit generic params and parameters in child scope
@@ -542,8 +538,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_structs.push(PendingStruct {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             id: id,
             name: name,
@@ -578,8 +573,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_enums.push(PendingEnum {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             id: id,
             name: name,
@@ -626,8 +620,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_protocols.push(PendingProtocol {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             id: id,
             name: name,
@@ -696,8 +689,7 @@ impl Pass1 {
         };
 
         self.ctx.pending_impls.push(PendingImpl {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             target_type_scope: self.current_scope,
         });
@@ -706,8 +698,7 @@ impl Pass1 {
         let prev_container = self.in_container;
         let prev_impl_gp = self.impl_generic_param_ids;
         let prev_impl_gp_names = self.impl_generic_param_names;
-        let prev_impl_decl_start = self.impl_decl_start;
-        let prev_impl_decl_end = self.impl_decl_end;
+        let prev_impl_decl = self.impl_decl;
         self.current_scope = child_scope;
         self.in_container = true;
 
@@ -728,13 +719,11 @@ impl Pass1 {
             // generic params *with bounds* (collect_* above only captures
             // ids/names — the `Rg: RangeOf<T>` bounds are needed for
             // RangeOf-bound type inference of the impl generics).
-            self.impl_decl_start = node.start_byte() as u32;
-            self.impl_decl_end = node.end_byte() as u32;
+            self.impl_decl = Option::some(node);
         } else {
             self.impl_generic_param_ids = &[];
             self.impl_generic_param_names = &[];
-            self.impl_decl_start = 0;
-            self.impl_decl_end = 0;
+            self.impl_decl = Option::none();
         }
         self.visit_children_by_field(node, FieldKind::Body);
 
@@ -742,8 +731,7 @@ impl Pass1 {
         self.in_container = prev_container;
         self.impl_generic_param_ids = prev_impl_gp;
         self.impl_generic_param_names = prev_impl_gp_names;
-        self.impl_decl_start = prev_impl_decl_start;
-        self.impl_decl_end = prev_impl_decl_end;
+        self.impl_decl = prev_impl_decl;
     }
 
     fn visit_type_def_p1(self: &mut Pass1, node: Node) {
@@ -760,8 +748,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_type_aliases.push(PendingTypeAlias {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             id: id,
             name: name,
@@ -985,8 +972,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_statics.push(PendingStatic {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: body_scope,
             id: id,
             name: name,
@@ -1024,8 +1010,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_statics.push(PendingStatic {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: body_scope,
             id: id,
             name: name,
@@ -1059,8 +1044,7 @@ impl Pass1 {
         });
 
         self.ctx.pending_macros.push(PendingMacro {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             scope_idx: child_scope,
             id: id,
             name: name,
@@ -1221,8 +1205,7 @@ impl Pass1 {
         }
 
         self.ctx.pending_mixins.push(PendingMixin {
-            node_start: node.start_byte() as u32,
-            node_end: node.end_byte() as u32,
+            node: node,
             impl_scope_idx: self.current_scope,
             type_scope_idx: type_scope_idx,
             impl_generic_param_ids: combined_gp_ids,
