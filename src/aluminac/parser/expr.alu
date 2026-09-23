@@ -384,10 +384,11 @@ impl ExprParser {
 
     fn parse_int_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
-        let (value, suffix) = parse_int_with_suffix(text);
+        let (value, negative, suffix) = parse_int_with_suffix(text);
         let e = self.make_expr(ExprTag::IntLit, span);
         e._data.lit.int_val = value as u64;
         e._data.lit.int_val_hi = (value >> 64) as u64;
+        e._data.lit.negative = negative;
         e._data.lit.type_suffix = suffix;
         self.ctx.alloc_expr(e)
     }
@@ -425,29 +426,17 @@ impl ExprParser {
         self.ctx.alloc_expr(e)
     }
 
+    /// A character literal is a `u8` literal (as in alumina-boot): it must
+    /// denote exactly one byte.
     fn parse_char_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
         let text = self.ctx.node_text(node);
-        // Strip quotes
-        let ch: u32 = if text.len() >= 3 {
-            if text[1] == '\\' && text.len() >= 4 {
-                // Escape sequence
-                switch text[2] {
-                    'n' => '\n' as u32,
-                    'r' => '\r' as u32,
-                    't' => '\t' as u32,
-                    '\\' => '\\' as u32,
-                    '\'' => '\'' as u32,
-                    '0' => 0u32,
-                    _ => text[2] as u32,
-                }
-            } else {
-                text[1] as u32
-            }
-        } else {
-            0u32
-        };
-        let e = self.make_expr(ExprTag::CharLit, span);
-        e._data.lit.int_val = ch as u64;
+        let bytes = unescape_string(text[1..text.len() - 1], self.ctx.arena);
+        if bytes.len() != 1 {
+            self.ctx.error(node, "invalid character literal (must be a single byte)");
+        }
+        let e = self.make_expr(ExprTag::IntLit, span);
+        e._data.lit.int_val = if bytes.len() == 1 { bytes[0] as u64 } else { 0 };
+        e._data.lit.type_suffix = Option::some(BuiltinType::U8);
         self.ctx.alloc_expr(e)
     }
 
@@ -877,12 +866,6 @@ impl ExprParser {
         let func_node = func.unwrap();
         let func_kind = NODE_KINDS[func_node.symbol() as usize];
         if func_kind == NodeKind::Turbofish || func_kind == NodeKind::GenericTypeWithTurbofish {
-            let result = self.try_parse_intrinsic_call(func_node, span);
-            if result.tag != ExprTag::Void {
-                // Intrinsic call (e.g., zeroed::<T>())
-                return self.ctx.alloc_expr(result);
-            }
-            // Non-intrinsic turbofish: parse as generic call with type args
             let turbofish_result = self.parse_turbofish_call(node, func_node, span);
             if turbofish_result.tag != ExprTag::Void {
                 return self.ctx.alloc_expr(turbofish_result);
@@ -937,39 +920,6 @@ impl ExprParser {
         e._data.call.lhs = callee;
         e._data.call.args = args;
         self.ctx.alloc_expr(e)
-    }
-
-    fn try_parse_intrinsic_call(self: &ExprParser, func_node: Node, span: Span) -> Expr {
-        // Turbofish has field("function", ...) and field("type_arguments", ...)
-        // GenericTypeWithTurbofish has field("type", ...) and field("type_arguments", ...)
-        let path_node = child_by!(func_node, FieldKind::Function);
-        let path_node2 = if path_node.is_none() { child_by!(func_node, FieldKind::Type) } else { path_node };
-        let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
-
-        if path_node2.is_none() || type_args_node.is_none() {
-            return Expr::void_expr();
-        }
-
-        // Get the function path text
-        let pass2 = Pass2 { ctx: self.ctx };
-        let segments = pass2.collect_type_path_segments(path_node2.unwrap());
-        if segments.is_empty() {
-            return Expr::void_expr();
-        }
-
-        let last_seg = segments[segments.len() - 1];
-
-        // Check for std::mem::zeroed::<T>()
-        if last_seg == "zeroed" {
-            let type_args = pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx);
-            if type_args.len() >= 1 {
-                let e = self.make_expr(ExprTag::Zeroed, span);
-                e._data.typed.ty = type_args[0];
-                return e;
-            }
-        }
-
-        Expr::void_expr()
     }
 
     fn parse_turbofish_value(self: &ExprParser, node: Node, span: Span) -> &Expr {
@@ -2534,7 +2484,7 @@ impl ExprParser {
         // Leaf expressions that don't need expansion
         if expr.tag == ExprTag::IntLit || expr.tag == ExprTag::FloatLit ||
            expr.tag == ExprTag::BoolLit || expr.tag == ExprTag::StringLit ||
-           expr.tag == ExprTag::CharLit || expr.tag == ExprTag::NullLit ||
+           expr.tag == ExprTag::NullLit ||
            expr.tag == ExprTag::Void || expr.tag == ExprTag::Zeroed {
             return expr;
         }

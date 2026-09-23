@@ -563,7 +563,9 @@ impl Compiler {
 
     fn register_builtins(self: &mut Compiler, scope_idx: u32) {
         // Register builtin types
-        let builtins: [(&[u8], BuiltinType); 17] = [
+        // `!` (never) has no name of its own; `std::builtins::never` is its
+        // lang struct, as in alumina-boot.
+        let builtins: [(&[u8], BuiltinType); 16] = [
             ("void", BuiltinType::Void),
             ("bool", BuiltinType::Bool),
             ("u8", BuiltinType::U8),
@@ -580,11 +582,9 @@ impl Compiler {
             ("isize", BuiltinType::ISize),
             ("f32", BuiltinType::F32),
             ("f64", BuiltinType::F64),
-            ("never", BuiltinType::Never),
         ];
 
-        for i in 0usize..17 {
-            let (name, bt) = builtins[i];
+        for (name, bt) in builtins {
             self.scopes.add_item(scope_idx, NamedItem {
                 name: name,
                 kind: NamedItemKind::builtin_type(bt),

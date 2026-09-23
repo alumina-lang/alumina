@@ -323,7 +323,6 @@ enum ExprTag {
     FloatLit = 1i32,
     BoolLit = 2i32,
     StringLit = 3i32,
-    CharLit = 4i32,
     NullLit = 5i32,
     Local = 6i32,
     Param = 7i32,
@@ -373,7 +372,9 @@ enum ExprTag {
 }
 
 // Expression sub-structs for union variants
-struct _ExprLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8], type_suffix: Option<BuiltinType> }
+// For an integer literal, int_val/int_val_hi hold the value's two's
+// complement bits and `negative` whether it was written with a `-`.
+struct _ExprLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8], type_suffix: Option<BuiltinType>, negative: bool }
 struct _ExprIdData { id: Id, id2: Id, str_val: &[u8], flag: bool, int_val: u64 }
 struct _ExprUnaryData { un_op: UnOp, lhs: &Expr }
 struct _ExprBinaryData { bin_op: BinOp, lhs: &Expr, rhs: &Expr }
@@ -438,7 +439,7 @@ impl Expr {
     // --- Getter accessors ---
 
     fn int_val(self: &Expr) -> u64 {
-        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::CharLit || self.tag == ExprTag::NullLit {
+        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::NullLit {
             self._data.lit.int_val
         } else {
             self._data.id_ref.int_val  // MacroParam, etc.
@@ -455,11 +456,22 @@ impl Expr {
         ((self.int_val_hi() as u128) << 64) | (self.int_val() as u128)
     }
 
+    /// Whether an integer literal was written negative (`-5`).
+    fn is_negative(self: &Expr) -> bool {
+        self._data.lit.negative
+    }
+
+    /// The absolute value of an integer literal.
+    fn int_magnitude(self: &Expr) -> u128 {
+        let v = self.int_val_u128();
+        if self.is_negative() && v != 0 { ~v + 1 } else { v }
+    }
+
     fn float_val(self: &Expr) -> f64 { self._data.lit.float_val }
     fn bool_val(self: &Expr) -> bool { self._data.lit.bool_val }
 
     fn str_val(self: &Expr) -> &[u8] {
-        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::CharLit || self.tag == ExprTag::NullLit {
+        if self.tag == ExprTag::IntLit || self.tag == ExprTag::FloatLit || self.tag == ExprTag::BoolLit || self.tag == ExprTag::StringLit || self.tag == ExprTag::NullLit {
             self._data.lit.str_val
         } else if self.tag == ExprTag::FieldAccess {
             self._data.field.str_val

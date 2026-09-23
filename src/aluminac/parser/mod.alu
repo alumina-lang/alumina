@@ -414,7 +414,9 @@ fn parse_usize(text: &[u8]) -> usize {
 // Returns the full 128-bit value so i128/u128 literals (and
 // `0x7fff…ffffu128 as i128` style max_value defs) survive. Callers
 // that only care about <2^64 just use the low word (`as u64`).
-fn parse_int_with_suffix(text: &[u8]) -> (u128, Option<BuiltinType>) {
+/// Parse an integer literal: (value as two's complement bits, whether it is
+/// negative, type suffix).
+fn parse_int_with_suffix(text: &[u8]) -> (u128, bool, Option<BuiltinType>) {
     let value: u128 = 0;
     let base: u128 = 10;
     let i: usize = 0;
@@ -465,11 +467,11 @@ fn parse_int_with_suffix(text: &[u8]) -> (u128, Option<BuiltinType>) {
         Option::none()
     };
 
-    if negative {
-        value = (0u128 - value);
+    if negative && value != 0 {
+        value = ~value + 1;
     }
 
-    (value, suffix)
+    (value, negative, suffix)
 }
 
 fn parse_float_with_suffix(text: &[u8]) -> (f64, Option<BuiltinType>) {
@@ -566,6 +568,7 @@ fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
                 't' => { buf[j] = '\t'; },
                 '\\' => { buf[j] = '\\'; },
                 '"' => { buf[j] = '"'; },
+                '\'' => { buf[j] = '\''; },
                 '0' => { buf[j] = 0u8; },
                 'x' => {
                     if i + 3 < text.len() {

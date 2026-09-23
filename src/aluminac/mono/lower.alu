@@ -1311,7 +1311,7 @@ impl Mono {
     fn lower_expr_inner(self: &mut Mono, expr: &Expr) -> &IrExpr {
         switch expr.tag {
             ExprTag::IntLit, ExprTag::FloatLit, ExprTag::BoolLit,
-            ExprTag::StringLit, ExprTag::NullLit, ExprTag::CharLit =>
+            ExprTag::StringLit, ExprTag::NullLit =>
                 self.lower_literal(expr),
             ExprTag::Local, ExprTag::Param, ExprTag::FnRef,
             ExprTag::EnumRef, ExprTag::StaticRef =>
@@ -1576,6 +1576,10 @@ impl Mono {
     // Lower an expression with a type hint for unsuffixed literals
     fn lower_expr_coerced(self: &mut Mono, expr: &Expr, expected_ty: &IrTy) -> &IrExpr {
         // For unsuffixed integer literals, use the expected type directly
+        if expr.tag == ExprTag::IntLit && expr.type_suffix().is_none() && expected_ty.tag == IrTyTag::Builtin
+            && expected_ty.builtin().is_integer() {
+            return self.mk_checked_int_lit(expected_ty, expr.int_magnitude(), expr.is_negative(), expr.span);
+        }
         if expr.tag == ExprTag::IntLit && expr.type_suffix().is_none() && expected_ty.tag == IrTyTag::Builtin {
             let r = self.mk_int_lit_u128(expected_ty, expr.int_val_u128());
             let m = r as &void as &mut IrExpr;
@@ -1599,19 +1603,6 @@ impl Mono {
             result._data.lit.float_val = v32 as f64;
             result.span = expr.span;
             return self.ctx.arena.alloc(result);
-        }
-        // Char literals default to u32 (Unicode codepoint) but coerce to the
-        // expected integer builtin when one is supplied — e.g. `Option::some('\n')`
-        // matched against `Option<u8>` should produce u8(10), not u32(10).
-        // Without this, the `Option<u8>` comparison fails type-check at runtime
-        // (different IR types) and downstream code paths silently use a
-        // not-equal result — which is how `io::LineIterator::next` failed to
-        // strip trailing newlines and test_lines blew up.
-        if expr.tag == ExprTag::CharLit && expected_ty.tag == IrTyTag::Builtin {
-            let r = self.mk_int_lit(expected_ty, expr.int_val());
-            let m = r as &void as &mut IrExpr;
-            m.span = expr.span;
-            return r;
         }
         // For null literals, adopt the expected pointer type
         if expr.tag == ExprTag::NullLit && expected_ty.tag == IrTyTag::Pointer {
@@ -1655,7 +1646,47 @@ impl Mono {
         ir
     }
 
-    // Lower literal expressions: ExprTag::IntLit, ExprTag::FloatLit, ExprTag::BoolLit, ExprTag::StringLit, ExprTag::NullLit, ExprTag::CharLit
+    // Lower literal expressions: ExprTag::IntLit, ExprTag::FloatLit, ExprTag::BoolLit, ExprTag::StringLit, ExprTag::NullLit
+    /// An integer literal of the given type, checked to be in its range
+    /// (as in alumina-boot). `negative` is for a negated literal.
+    fn mk_checked_int_lit(self: &mut Mono, ty: &IrTy, value: u128, negative: bool, span: Span) -> &IrExpr {
+        if ty.tag == IrTyTag::Builtin && ty.builtin().is_integer() {
+            let bits = layout::compute_type_size(ty, self.ctx.pointer_size) * 8;
+            let signed = switch ty.builtin() {
+                BuiltinType::I8, BuiltinType::I16, BuiltinType::I32,
+                BuiltinType::I64, BuiltinType::I128, BuiltinType::ISize => true,
+                _ => false,
+            };
+            // Largest magnitude: 2^(bits-1) - 1 / 2^(bits-1) when signed
+            // (positive / negative), 2^bits - 1 when unsigned.
+            let max_magnitude: u128 = if signed {
+                let half = 1u128 << (bits - 1) as u128;
+                if negative { half } else { half - 1 }
+            } else if negative {
+                0
+            } else if bits == 128 {
+                0xffffffffffffffffffffffffffffffffu128
+            } else {
+                (1u128 << bits as u128) - 1
+            };
+            if value > max_magnitude {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+                    span,
+                    std::fmt::format!(
+                        "integer literal out of range ({}{} does not fit into {})",
+                        if negative { "-" } else { "" }, value, self.ir_type_name(ty),
+                    ).unwrap().as_slice(),
+                ));
+            }
+        }
+        // Two's complement of the magnitude for a negative literal.
+        let bits_value = if negative && value != 0 { ~value + 1 } else { value };
+        let result = self.mk_int_lit_u128(ty, bits_value);
+        let m = result as &void as &mut IrExpr;
+        m.span = span;
+        result
+    }
+
     fn lower_literal(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == ExprTag::IntLit {
             let ty = if expr.type_suffix().is_some() {
@@ -1663,7 +1694,7 @@ impl Mono {
             } else {
                 self.ctx.intern_builtin_ty(BuiltinType::I32) // default int type
             };
-            self.mk_int_lit_u128(ty, expr.int_val_u128())
+            self.mk_checked_int_lit(ty, expr.int_magnitude(), expr.is_negative(), expr.span)
         } else if expr.tag == ExprTag::FloatLit {
             let ty = if expr.type_suffix().is_some() {
                 self.ctx.intern_builtin_ty(expr.type_suffix().unwrap())
@@ -1690,8 +1721,6 @@ impl Mono {
             let result = IrExpr::void_expr(ptr_ty);
             result.tag = IrTag::NullLit;
             self.ctx.arena.alloc(result)
-        } else if expr.tag == ExprTag::CharLit {
-            self.mk_int_lit(self.ctx.intern_builtin_ty(BuiltinType::U32), expr.int_val())
         } else {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(r)
@@ -2677,6 +2706,19 @@ impl Mono {
             };
             self.mk_binary(expr.bin_op(), ir_lhs, ir_rhs, result_ty)
         } else if expr.tag == ExprTag::Unary {
+            // A negated integer literal is a negative literal (as in
+            // alumina-boot): `-128i8` is in range although `128i8` is not.
+            if expr.un_op() == UnOp::Neg && expr.lhs().tag == ExprTag::IntLit && !expr.lhs().is_negative() {
+                let lit = expr.lhs();
+                let ty = if lit.type_suffix().is_some() {
+                    self.ctx.intern_builtin_ty(lit.type_suffix().unwrap())
+                } else if self.expected_type.tag == IrTyTag::Builtin && self.expected_type.builtin().is_integer() {
+                    self.expected_type
+                } else {
+                    self.ctx.intern_builtin_ty(BuiltinType::I32)
+                };
+                return self.mk_checked_int_lit(ty, lit.int_val_u128(), true, expr.span);
+            }
             let ir_operand = self.lower_expr(expr.lhs());
             let result_ty = switch expr.un_op() {
                 UnOp::Not => self.ctx.bool_ty,
@@ -7182,62 +7224,7 @@ impl Mono {
 
                         // Infer type args from argument types
                         let inferred = self.infer_type_args(def, expr.args());
-                        // If the expected return type structurally matches the
-                        // function's declared return type AND the call has any
-                        // unsuffixed integer-style literal arg (`IntLit` /
-                        // `CharLit`), prefer the expected_type's type-args
-                        // over the arg-inferred ones. Without this, a bare
-                        // char literal arg like `Option::some('\n')` infers
-                        // T=u32 (the CharLit default), shadowing the correct
-                        // T=u8 from the surrounding comparison — which is
-                        // how `LineIterator::next`'s newline check silently
-                        // produced "not equal" and the test_lines test
-                        // looped forever / crashed. The literal-arg guard
-                        // keeps the existing behavior for ordinary fn calls
-                        // (e.g. `from_fn(|&i| ...)` whose closure-arg
-                        // inference of `F`/`T` shouldn't be overridden by
-                        // a maybe-misleading expected type).
-                        let prefer_expected = false;
-                        if self.expected_type != self.ctx.void_ty
-                            && self.expected_type.tag == IrTyTag::Struct
-                            && self.expected_type.struct_ref().type_args.len() == def.generic_params.len()
-                            && def.return_type.tag == TyTag::Generic
-                            && def.return_type.elems().len() == def.generic_params.len() {
-                            // Check the return is a Placeholder over the same
-                            // generic_param ids in the same order. Bails on
-                            // anything more complex (e.g. Result<E, T>-style
-                            // reordering) — those keep falling through to
-                            // arg inference.
-                            let shapes_match = true;
-                            for ri in 0usize..def.return_type.elems().len() {
-                                let el = def.return_type.elems()[ri];
-                                if el.tag != TyTag::Placeholder
-                                    || el.id()._value != def.generic_params[ri].id._value {
-                                    shapes_match = false;
-                                    break;
-                                }
-                            }
-                            if shapes_match {
-                                // Restrict to CharLit only — IntLit's existing
-                                // path through lower_expr_coerced already
-                                // honors expected_type for unsuffixed
-                                // integers. Triggering prefer_expected for
-                                // IntLit shifted from_fn's `T`-inference in
-                                // ways that broke `test_from_fn`; keep that
-                                // path on arg inference until needed.
-                                for ai in 0usize..expr.args().len() {
-                                    if expr.args()[ai].tag == ExprTag::CharLit {
-                                        prefer_expected = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        let call_ta: &[&IrTy] = if prefer_expected {
-                            self.expected_type.struct_ref().type_args
-                        } else {
-                            inferred
-                        };
+                        let call_ta: &[&IrTy] = inferred;
                         if call_ta.len() == 0usize && self.expected_type != self.ctx.void_ty {
                             // Try to extract type args from expected_type (e.g. Option<usize>)
                             if self.expected_type.tag == IrTyTag::Struct && self.expected_type.struct_ref().type_args.len() == def.generic_params.len() {
