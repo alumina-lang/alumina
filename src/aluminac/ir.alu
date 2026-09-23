@@ -897,7 +897,8 @@ struct ConstField {
 
 struct _CVIntData {
     builtin_type: BuiltinType,
-    int_val: u64,
+    /// The value's bits (as of the type's width).
+    int_val: u128,
 }
 
 struct _CVFloatData {
@@ -945,7 +946,9 @@ impl ConstValue {
 
     // Accessors - builtin_type is at offset 0 in both int_data and float_data
     fn builtin_type(self: &ConstValue) -> BuiltinType { self._data.int_data.builtin_type }
-    fn int_val(self: &ConstValue) -> u64 { self._data.int_data.int_val }
+    /// The value's low 64 bits (see `bits`).
+    fn int_val(self: &ConstValue) -> u64 { self._data.int_data.int_val as u64 }
+    fn bits(self: &ConstValue) -> u128 { self._data.int_data.int_val }
     fn float_val(self: &ConstValue) -> f64 { self._data.float_data.float_val }
     fn bytes(self: &ConstValue) -> &[u8] { self._data.bytes_data.bytes }
     fn bytes_offset(self: &ConstValue) -> usize { self._data.bytes_data.bytes_offset }
@@ -966,10 +969,14 @@ impl ConstValue {
     }
 
     fn make_bool(v: bool) -> ConstValue {
-        ConstValue { tag: CValTag::Bool, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Bool, int_val: if v { 1u64 } else { 0u64 } } } }
+        ConstValue { tag: CValTag::Bool, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Bool, int_val: if v { 1u128 } else { 0u128 } } } }
     }
 
     fn make_int(v: u64, bt: BuiltinType) -> ConstValue {
+        ConstValue::make_bits(v as u128, bt)
+    }
+
+    fn make_bits(v: u128, bt: BuiltinType) -> ConstValue {
         ConstValue { tag: CValTag::Int, _data: _ConstValueData { int_data: _CVIntData { builtin_type: bt, int_val: v } } }
     }
 

@@ -232,6 +232,13 @@ boot misreads the language (record such cases here).
   (`compound_assign_once.alu`).
 - Duplicate `#[lang]` items are accepted (one silently wins); aluminac
   reports them (`duplicate_lang_item_compile_fail.alu`).
+- Crashes ("type ... was not registered") on a float cast to `i128`/`u128`
+  at run time and on a function of a zero-sized return type taken as a
+  `fn` pointer (`let f: fn(u8) -> Z = z;`); cannot IR-inline slice indexing
+  of zero-sized elements (so `Vector<Z>` fails).
+- Evaluates zero-sized struct/tuple elements before the others, and drops
+  the receiver's effects in `f().len()` on arrays
+  (`side_effects_evaluated_once.alu`).
 
 ### alumina-boot quirks aluminac follows (for now)
 
@@ -325,7 +332,7 @@ scope for the rest of the block, so a later `const A` / `fn foo` /
 `struct foo` shadows an earlier one from its declaration on; aluminac
 registered all of a block's items up front and the last one won), tuple slicing
 `t.(a..b)`, `#[tuple_args]` (aluminac had a `tuple_call` of its own),
-text-only `stringify!`, `codegen_type_func` `sizeof`/`_Alignof` (from
+`codegen_type_func` `sizeof`/`_Alignof` (from
 LLVM's data layout, so it checks aluminac's layout), prelude module paths,
 and a crash (`transmute` lowered without its target type, which the const
 evaluator dereferenced).
@@ -622,7 +629,8 @@ evaluates the place first (alumina-boot's lang tests expect it; its
   pass enumerating `std::typing::Type` methods vs alumina-boot's
   `intr_*` would cheaply surface what's left.
 - **Const-eval completeness.** Doesn't fold calls through
-  `format!`/`_finish_format`; `u64`-bounded for 128-bit ints.
+  `format!`/`_finish_format`. (128-bit integers: done, the evaluator is
+  128 bits wide; `const_eval_integers.alu`.)
   Structured comparison vs `src/alumina-boot/src/ir/` const-eval if
   this becomes a priority (alumina-boot's interpreter is ~2000 LoC;
   aluminac's gaps: pointer-arena chasing, dyn dispatch, heap-bake).

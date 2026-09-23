@@ -1885,7 +1885,8 @@ impl FnCodegen {
         if src_is_int && dst_is_int {
             LLVMBuildIntCast2(self.ctx.builder, src_val, dst_llvm, if src_is_signed { 1i32 } else { 0i32 }, n)
         } else if src_is_float && dst_is_int {
-            if src_is_signed {
+            // (Signed or not as the integer type is.)
+            if target_ty.tag == IrTyTag::Builtin && target_ty.builtin().is_signed() {
                 LLVMBuildFPToSI(self.ctx.builder, src_val, dst_llvm, n)
             } else {
                 LLVMBuildFPToUI(self.ctx.builder, src_val, dst_llvm, n)

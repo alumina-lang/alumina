@@ -1,0 +1,28 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Constant integer arithmetic of every width, as alumina-boot computes it:
+// 128-bit values were refused (the evaluator was 64 bits wide), and signed
+// right shifts, division and casts are checked across widths.
+
+const A: u128 = 0xfffffffffffffffffffffffffffffff0u128;
+const C: u128 = A / 3 + (1u128 << 100);
+const D: i128 = -170141183460469231731687303715884105728i128 + 1 - (-5i128 * 7);
+const E: bool = A > (1u128 << 127) && -1i128 < 0i128 && (-1i128) as u128 > 0u128;
+const F: u64 = (A >> 64) as u64;
+const G: i128 = -100i128 >> 3;
+const H: i8 = (0x1234567890abcdef1234567890abcdefu128) as i8;
+const I: u128 = (-1i64) as u128;
+const J: u128 = 0x0102030405060708090a0b0c0d0e0f10u128.swap_bytes();
+const K: u128 = (1u128 << 100).trailing_zeros() as u128;
+const L: i128 = i128::max_value() % 1000000007;
+const M: u128 = u128::max_value() / 7;
+
+fn main() -> i32 {
+    if C != 113427456907963421382687603973959275856u128 { return 1; }
+    if D != -170141183460469231731687303715884105692i128 { return 2; }
+    if !E || F != 18446744073709551615u64 || G != -13 { return 3; }
+    if H != -17 || I != 340282366920938463463374607431768211455u128 { return 4; }
+    if J != 0x100f0e0d0c0b0a090807060504030201u128 || K != 100 { return 5; }
+    if L != 639816141 || M != 48611766702991209066196372490252601636u128 { return 6; }
+    if (-8i32 >> 1) != -4 || (-128i8 / 3) != -42 || (-7i8 % 3) != -1 || (250u8 + 10u8) != 4 { return 7; }
+    0
+}

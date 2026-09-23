@@ -1,0 +1,17 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A float converted to a signed integer is converted as signed: aluminac
+// chose by the float's signedness (never), so `-3.9 as i64` was 0.
+
+fn id<T>(x: T) -> T { x }
+
+fn main() -> i32 {
+    let f = id(-3.9f64);
+    if f as i64 != -3 || f as i32 != -3 || f as i8 != -3 { return 1; }
+    let g = id(-2.5f32);
+    if g as i16 != -2 || g as i64 != -2 { return 2; }
+    let h = id(3000000000.7f64);
+    if h as u32 != 3000000000u32 || h as i64 != 3000000000 { return 3; }
+    const K: i64 = (-3.9f64) as i64;
+    if id(K) != -3 { return 4; }
+    0
+}
