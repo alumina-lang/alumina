@@ -7927,7 +7927,7 @@ impl Mono {
                 } else if outcome.value.is_some() {
                     self.ctx.const_values.insert(id._value, outcome.value.unwrap());
                     self.constvalue_to_ir(outcome.value.unwrap(), ty)
-                } else if outcome.failure.is_some() && outcome.failure.unwrap().code == const_eval::CECode::Unsupported
+                } else if outcome.failure.is_some() && outcome.failure.unwrap().code == const_eval::EvalError::Unsupported
                     && !ty.is_zero_sized() {
                     // Codegen may still fold it (e.g. addresses of globals);
                     // if not, it reports the failure.
@@ -7974,7 +7974,7 @@ impl Mono {
         let (span, reason) = if failure.is_some() && !failure.unwrap().span.is_empty() {
             (failure.unwrap().span, failure.unwrap().code.reason())
         } else {
-            (fallback, const_eval::CECode::Unsupported.reason())
+            (fallback, const_eval::EvalError::Unsupported.reason())
         };
         // The calls it happened in, innermost first.
         let notes: Vector<diagnostics::CodeDiagnostic> = Vector::new();
