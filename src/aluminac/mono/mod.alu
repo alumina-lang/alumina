@@ -59,6 +59,8 @@ struct MonoCtx {
 
     // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
     fn_cache: HashMap<MonoKey, usize>,
+    // Index in `ir_functions` of each function, by mangled name.
+    fn_indices: HashMap<&[u8], usize>,
     struct_cache: HashMap<MonoKey, usize>,
     struct_ty_cache: HashMap<MonoKey, &IrTy>,
     enum_cache: HashMap<MonoKey, usize>,
@@ -176,6 +178,7 @@ impl MonoCtx {
             baked_allocs: HashMap::new(),
             baked_globals: HashMap::new(),
             fn_cache: HashMap::new(),
+            fn_indices: HashMap::new(),
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
             enum_cache: HashMap::new(),
@@ -521,6 +524,7 @@ impl MonoCtx {
         self.static_cache.free();
         self.static_inits.free();
         self.const_values.free();
+        self.fn_indices.free();
         self.baked_allocs.free();
         self.baked_globals.free();
         self.fn_cache.free();

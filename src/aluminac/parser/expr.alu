@@ -1676,9 +1676,11 @@ impl ExprParser {
                                     ve._data.id_ref.flag = item.kind.scope_idx == BoundType::ByReference as u32;
                                     self.ctx.alloc_expr(ve)
                                 } else {
-                                    self.alloc_void(span) // Can only close over locals
+                                    self.ctx.error(child, "can only bind local variables");
+                                    self.alloc_void(span)
                                 }
                             } else {
+                                self.ctx.error(child, std::fmt::format!("could not resolve the path `{}`", name).unwrap().as_slice());
                                 self.alloc_void(span)
                             }
                         };

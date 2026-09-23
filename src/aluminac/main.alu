@@ -326,6 +326,7 @@ impl Compiler {
         }
 
         // Phase 1: Parse all files, run Pass 1 to register names in scopes
+        let syntax_errors = false;
         for i in 0usize..self.source_files.len() {
             let entry = &self.source_files[i];
             let file_scope = file_scopes[i];
@@ -335,7 +336,9 @@ impl Compiler {
             let root = tree_sitter::Node { inner: raw_node };
 
             // Check for syntax errors before proceeding
+            let reported = self.diag.errors.len();
             aluminac::parser::check_syntax_errors(root, entry.contents, i as u32, &self.diag);
+            syntax_errors = syntax_errors || self.diag.errors.len() > reported;
 
             let ctx = aluminac::parser::parse_file_pass1(
                 root,
@@ -351,6 +354,17 @@ impl Compiler {
 
             trees.push(tree);
             contexts.push(ctx);
+        }
+        // (What follows would report errors that are only consequences of
+        // the syntax errors, as in alumina-boot.)
+        if syntax_errors {
+            for i in 0usize..trees.len() {
+                trees[i].free();
+                contexts.as_slice_mut()[i].free();
+            }
+            parser.free();
+            self.diag.emit_all();
+            return false;
         }
 
         // Phase 1.5a: Link #[lang(builtin_X)] struct scopes to root BuiltinType entries

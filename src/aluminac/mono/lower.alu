@@ -25,6 +25,11 @@ struct Mono {
     current_fn_name: &[u8],
     // Expected type hint for return type inference (e.g. from if-else sibling branch)
     expected_type: &IrTy,
+    // Whether a function's body is being lowered (not, e.g., a signature or
+    // a constant's initializer), where `return` and `defer` can be.
+    fn_scope: bool,
+    // Whether a deferred expression is being lowered.
+    in_defer: bool,
     // The span of the expression (or item) being lowered, for errors in the
     // types it names (which have no spans of their own).
     type_span: Span,
@@ -106,6 +111,8 @@ struct FnState {
     loop_contexts: Vector<LoopContext>,
     const_replacements: HashMap<usize, ConstValue>,
     inference_incomplete: bool,
+    fn_scope: bool,
+    in_defer: bool,
 }
 
 struct LoopContext {
@@ -136,6 +143,8 @@ impl Mono {
             current_fn_name: "",
             expected_type: ctx.no_hint,
             type_span: Span::empty(),
+            fn_scope: false,
+            in_defer: false,
             suppress_field_error: false,
             const_replacements: HashMap::new(),
             current_fn_idx: 0usize,
@@ -170,7 +179,11 @@ impl Mono {
             loop_contexts: self.loop_contexts,
             const_replacements: self.const_replacements,
             inference_incomplete: self.inference_incomplete,
+            fn_scope: self.fn_scope,
+            in_defer: self.in_defer,
         };
+        self.fn_scope = false;
+        self.in_defer = false;
         self.local_types = HashMap::new();
         self.local_defs = Vector::new();
         self.return_type = return_type;
@@ -206,6 +219,8 @@ impl Mono {
         self.loop_contexts = saved.loop_contexts;
         self.const_replacements = saved.const_replacements;
         self.inference_incomplete = saved.inference_incomplete;
+        self.fn_scope = saved.fn_scope;
+        self.in_defer = saved.in_defer;
         local_defs
     }
 
@@ -1271,9 +1286,11 @@ impl Mono {
             if params.len() != 1 {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
                     def.span, "functions with #[tuple_args] must have a single argument"));
+                bounds_ok = false;  // (the body is not lowered)
             } else if params[0].ty.tag != IrTyTag::Tuple && !params[0].ty.is_void() {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(
                     def.span, "the argument to a #[tuple_args] function must be a tuple"));
+                bounds_ok = false;
             } else {
                 tuple_param = Option::some(params[0]);
                 let elems: &[&IrTy] = if params[0].ty.tag == IrTyTag::Tuple { params[0].ty.elems() } else { &[] };
@@ -1331,6 +1348,7 @@ impl Mono {
             span: def.span,
             type_args: type_args,
         };
+        self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
         self.ctx.fn_cache.insert(cache_key.stored(self.ctx.arena), idx);
 
@@ -1342,6 +1360,7 @@ impl Mono {
         // Lower body (may recursively call mono_function)
         let body_expr: Option<&Expr> = if bounds_ok { def.body } else { Option::none() };
         let is_coroutine = def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Coroutine });
+        self.fn_scope = true;
         let body: Option<&IrExpr> = if is_coroutine && body_expr.is_some() {
             Option::some(self.lower_coroutine(def, body_expr.unwrap(), params))
         } else {
@@ -1420,6 +1439,7 @@ impl Mono {
             type_args: &[],
         };
         self.local_defs.clear();
+        self.ctx.fn_indices.insert(body_fn.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(body_fn);
 
         // coroutine_new::<body, (A...), YieldT, RecvT>((a, ...))
@@ -1446,6 +1466,10 @@ impl Mono {
     ///     { let tmp = v; let out: RecvT; if coroutine_yield(&tmp, &out) { return; } else { out } }
     /// (`coroutine_yield` is true when the coroutine is being cancelled).
     fn lower_yield(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if self.in_defer {
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot yield inside a defered expression"));
+            return self.mk_error();
+        }
         if self.yield_type.is_none() {
             self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "`yield` outside of a coroutine"));
             return self.mk_void();
@@ -1658,8 +1682,13 @@ impl Mono {
             ExprTag::Ref, ExprTag::Deref, ExprTag::FieldAccess,
             ExprTag::TupleIndex, ExprTag::Index, ExprTag::Cast, ExprTag::TypeCheck =>
                 self.lower_memory(expr),
-            ExprTag::Call, ExprTag::StructLit, ExprTag::TurbofishValue =>
-                self.lower_call(expr),
+            ExprTag::Call, ExprTag::StructLit, ExprTag::TurbofishValue => {
+                let call = self.lower_call(expr);
+                if expr.tag == ExprTag::Call && call.tag == IrTag::Call {
+                    self.check_arg_count(call, expr);
+                }
+                call
+            }
             ExprTag::Block, ExprTag::Let, ExprTag::Defer =>
                 self.lower_block(expr),
             ExprTag::TupleLit => self.lower_tuple_lit(expr),
@@ -2082,6 +2111,11 @@ impl Mono {
             let fn_def = self.ctx.fn_defs.get(&expr.id()._value);
             if fn_def.is_some() {
                 let def = fn_def.unwrap();
+                // (Intrinsics can only be called.)
+                if def.abi.is_some() && def.abi.unwrap() == "intrinsic" {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot take address of a compiler intrinsic"));
+                    return self.mk_error();
+                }
                 // A `Type::method` path *taken as a function value* (e.g.
                 // `opt.and_then(u8::parse)`) where `method` is a mixin'd
                 // protocol method: bind its proto-generics / Self from the
@@ -3576,6 +3610,10 @@ impl Mono {
             let ir_value = self.lower_expr(expr.lhs());
             self.lower_switch(ir_value, expr.switch_arms(), expr.span)
         } else if expr.tag == ExprTag::Break {
+            if self.loop_contexts.is_empty() {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "break outside of loop"));
+                return self.mk_error();
+            }
             // `break value;` flows the value through the enclosing loop's
             // result slot. Without this, the value is evaluated for side
             // effects and discarded — the codegen-side Break path drops
@@ -3629,10 +3667,18 @@ impl Mono {
                 self.ctx.arena.alloc(result)
             }
         } else if expr.tag == ExprTag::Continue {
+            if self.loop_contexts.is_empty() {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "continue outside of loop"));
+                return self.mk_error();
+            }
             let result = IrExpr::void_expr(self.ctx.never_ty);
             result.tag = IrTag::Continue;
             self.ctx.arena.alloc(result)
         } else if expr.tag == ExprTag::Return {
+            if !self.fn_scope {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "can only do that in function scope"));
+                return self.mk_error();
+            }
             if expr.opt_expr().is_some() {
                 let ret_expr = expr.opt_expr().unwrap();
                 let ir_val = self.lower_expr_coerced(ret_expr, self.return_type);
@@ -7810,9 +7856,11 @@ impl Mono {
             span: expr.span,
             type_args: &[],
         };
+        self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
 
         // Lower body; its value is expected to have the return type.
+        self.fn_scope = true;
         let body = self.lower_expr_hinted(expr.lhs(), ret_ty);
 
         self.ctx.ir_functions[idx].body = Option::some(body);
@@ -8129,6 +8177,37 @@ impl Mono {
             IrTag::TupleLit, IrTag::ArrayLit => e._data.block.items.iter().all(|i: &IrExpr| -> bool { Mono::is_plain_constant(i) }),
             _ => false,
         }
+    }
+
+    /// A call must pass as many arguments as the function takes (at least as
+    /// many for varargs functions).
+    fn check_arg_count(self: &mut Mono, call: &IrExpr, expr: &Expr) {
+        let target = call.call_target();
+        let (params, variadic) = if target.tag == CallKind::Direct {
+            let idx = self.ctx.fn_indices.get(&target.fn_ref.mangled_name);
+            if idx.is_none() { return; }
+            let f = &self.ctx.ir_functions[idx.unwrap()];
+            (f.params.len(), f.is_variadic)
+        } else if target.callee.ty.tag == IrTyTag::FnPointer {
+            (target.callee.ty.elems().len(), false)
+        } else {
+            return;
+        };
+        let args = call.items().len();
+        if args == params || variadic && args > params {
+            return;
+        }
+        // (A method's receiver is not counted, as in alumina-boot.)
+        if expr.lhs().tag == ExprTag::FieldAccess && args == expr.args().len() + 1 {
+            if params == 0 {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot be called as a method"));
+                return;
+            }
+            args -= 1;
+            params -= 1;
+        }
+        self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+            std::fmt::format!("expected {} arguments, found {}", params, args).unwrap().as_slice()));
     }
 
     fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {
@@ -8703,7 +8782,17 @@ impl Mono {
                 self.mk_let_uninit(expr.id(), var_ty)
             }
         } else if expr.tag == ExprTag::Defer {
+            if !self.fn_scope {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "can only do that in function scope"));
+                return self.mk_error();
+            }
+            if self.in_defer {
+                self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, "cannot defer inside a defered expression"));
+                return self.mk_error();
+            }
+            self.in_defer = true;
             let ir_inner = self.lower_expr(expr.lhs());
+            self.in_defer = false;
             let result = IrExpr::void_expr(self.ctx.void_ty);
             result.tag = IrTag::Defer;
             result._data.single.lhs = ir_inner;
