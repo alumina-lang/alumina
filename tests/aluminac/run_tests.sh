@@ -70,6 +70,12 @@ for src in "$TESTDIR"/*.alu; do
                     break
                 fi
             done < <(grep '^// EXPECTED_ERROR: ' "$src" || true)
+            # `// EXPECTED_ERROR_COUNT: N`: exactly N errors (no cascades).
+            count_line=$(grep -m1 '^// EXPECTED_ERROR_COUNT:' "$src" || true)
+            error_count=$(echo "$compile_output" | grep -c '^error' || true)
+            if [ -z "$missing" ] && [ -n "$count_line" ] && [ "$error_count" != "$(echo "${count_line#// EXPECTED_ERROR_COUNT:}" | tr -d ' ')" ]; then
+                missing="${count_line#// } (found $error_count)"
+            fi
             if [ -n "$missing" ]; then
                 echo "FAIL (missing expected error: $missing)"
                 FAIL=$((FAIL + 1))

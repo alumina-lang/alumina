@@ -74,6 +74,8 @@ struct MonoCtx {
     signatures_in_progress: Vector<MonoKey>,
     struct_cache: HashMap<MonoKey, usize>,
     struct_ty_cache: HashMap<MonoKey, &IrTy>,
+    /// The protocol instances whose arguments' bounds have been checked.
+    checked_protocols: HashSet<MonoKey>,
     enum_cache: HashMap<MonoKey, usize>,
 
     // Type caching for pointer stability
@@ -194,6 +196,7 @@ impl MonoCtx {
             signatures_in_progress: Vector::new(),
             struct_cache: HashMap::new(),
             struct_ty_cache: HashMap::new(),
+            checked_protocols: HashSet::new(),
             enum_cache: HashMap::new(),
             ty_cache: HashMap::new(),
             mangle_counter: 0,
@@ -551,6 +554,7 @@ impl MonoCtx {
         self.fn_cache.free();
         self.struct_cache.free();
         self.struct_ty_cache.free();
+        self.checked_protocols.free();
         self.enum_cache.free();
         self.ty_cache.free();
         self.mono_stack.free();

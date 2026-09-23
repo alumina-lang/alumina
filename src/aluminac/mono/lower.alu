@@ -942,13 +942,15 @@ impl Mono {
             let params = def.generic_params;
             self.resolving_protocols.push((item_ref.id._value, type_args));
             defer self.resolving_protocols.pop();
-            if !type_args.is_empty() {
+            // (Once per instance.)
+            if !type_args.is_empty()
+                && self.ctx.checked_protocols.insert(MonoKey::new(item_ref.id, type_args).stored(self.ctx.arena)) {
                 let outer_type_map = self.type_map;
                 self.type_map = outer_type_map.clone();
                 for i in 0usize..std::cmp::min(params.len(), type_args.len()) {
                     self.type_map.insert(params[i].id._value, type_args[i]);
                 }
-                self.check_generic_bounds(params, type_args, Span::empty());
+                self.check_generic_bounds(params, type_args, self.type_span);
                 self.type_map.free();
                 self.type_map = outer_type_map;
             }
@@ -1040,8 +1042,8 @@ impl Mono {
             self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
         }
         // The type arguments must satisfy the parameters' bounds (checked
-        // once per instance).
-        self.check_generic_bounds(def.generic_params, type_args, Span::empty());
+        // once per instance, where it is first used).
+        self.check_generic_bounds(def.generic_params, type_args, self.type_span);
 
         // Use scope_idx directly from StructDef
         let scope_idx = def.scope_idx;
@@ -1680,7 +1682,8 @@ impl Mono {
             if !unit_note.is_empty() && (result_ty.is_void() || branch.ty.is_void()) {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, unit_note));
             }
-            break;
+            // (An error, which the uses of the value need not repeat.)
+            return self.ctx.never_ty;
         }
         result_ty
     }
@@ -3397,7 +3400,7 @@ impl Mono {
                     return self.mk_binary(op, ir_lhs, ir_rhs, self.ctx.bool_ty);
                 }
                 self.report_invalid_binop(op, ir_lhs.ty, ir_rhs.ty, expr.span);
-                self.mk_binary(op, ir_lhs, ir_rhs, fallback_ty)
+                self.mk_error()
             }
             ExprTag::Unary => {
                 // A negated integer literal is a negative literal (as in
@@ -4938,13 +4941,14 @@ impl Mono {
 
     fn lower_deref(self: &mut Mono, expr: &Expr) -> &IrExpr {
         let ir_inner = self.lower_expr(expr.lhs());
-        let pointee_ty = if ir_inner.ty.tag == IrTyTag::Pointer {
-            ir_inner.ty.inner()
-        } else {
+        if ir_inner.ty.is_never() {
+            return ir_inner;
+        }
+        if ir_inner.ty.tag != IrTyTag::Pointer {
             self.emit_diag(diagnostics::CodeDiagnostic::invalid_deref(expr.span));
-            self.ctx.void_ty
-        };
-        self.mk_deref(ir_inner, pointee_ty)
+            return self.mk_error();
+        }
+        self.mk_deref(ir_inner, ir_inner.ty.inner())
     }
 
     fn lower_field_access(self: &mut Mono, expr: &Expr) -> &IrExpr {
@@ -4957,11 +4961,18 @@ impl Mono {
             }
             actual_obj = self.mk_deref(actual_obj, actual_obj.ty.inner());
         }
+        // (A field of what does not evaluate, e.g. an error, is not looked for.)
+        if actual_obj.ty.is_never() {
+            return actual_obj;
+        }
         // Find field index on the dereferenced struct type
         let (field_idx, field_ty, field_found) = self.resolve_field(actual_obj.ty, expr.str_val());
-        if !field_found && expr.str_val().len() > 0usize && !self.suppress_field_error {
-            let ty_name = self.ir_type_name(actual_obj.ty);
-            self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(expr.span, expr.str_val(), ty_name));
+        if !field_found {
+            if expr.str_val().len() > 0usize && !self.suppress_field_error {
+                let ty_name = self.ir_type_name(actual_obj.ty);
+                self.emit_diag(diagnostics::CodeDiagnostic::unresolved_field(expr.span, expr.str_val(), ty_name));
+            }
+            return self.mk_error();
         }
         self.mk_field(actual_obj, field_idx, field_ty)
     }
@@ -5020,6 +5031,17 @@ impl Mono {
         let derefed = ir_base;
         while derefed.ty.tag == IrTyTag::Pointer {
             derefed = self.mk_deref(derefed, derefed.ty.inner());
+        }
+        if derefed.ty.is_never() {
+            return derefed;
+        }
+        // (Other than slices and arrays, only collections, which are
+        // indexed as slices, are indexable.)
+        if derefed.ty.tag != IrTyTag::Slice && derefed.ty.tag != IrTyTag::Array && derefed.ty.tag != IrTyTag::Struct {
+            self.lower_expr(expr.rhs());
+            self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+                std::fmt::format!("cannot index into a value of type `{}`", self.type_name(derefed.ty)).unwrap().as_slice()));
+            return self.mk_error();
         }
 
         // Lower the index expression and determine whether it's a range
@@ -6413,19 +6435,27 @@ impl Mono {
             if arg.is_void() && !param.bounds.is_empty() {
                 continue;
             }
+            // (A bound whose own arguments do not match its parameters, e.g.
+            // `Comparable<T>` of a `T` that is not `Equatable<T>`, has been
+            // reported as such.)
+            let errors_before = self.ctx.diag.errors.len();
             let positive_ok = if param.any_bounds && param.bounds.len() > 0 {
                 param.bounds.iter().any(|&self, =arg, b: &Ty| -> bool { self.satisfies_bound(arg, b) })
             } else {
                 let unsatisfied = param.bounds.iter().find(|&self, =arg, b: &Ty| -> bool { !self.satisfies_bound(arg, b) });
                 if unsatisfied.is_some() {
-                    self.report_unsatisfied_bound(arg, unsatisfied.unwrap(), false, span);
+                    if self.ctx.diag.errors.len() == errors_before {
+                        self.report_unsatisfied_bound(arg, unsatisfied.unwrap(), false, span);
+                    }
                     ok = false;
                     continue;
                 }
                 true
             };
             if !positive_ok {
-                self.report_unsatisfied_bound(arg, param.bounds[0], false, span);
+                if self.ctx.diag.errors.len() == errors_before {
+                    self.report_unsatisfied_bound(arg, param.bounds[0], false, span);
+                }
                 ok = false;
                 continue;
             }
@@ -8461,8 +8491,7 @@ impl Mono {
             } else {
                 self.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
             }
-            let r = IrExpr::void_expr(self.ctx.void_ty);
-            self.ctx.arena.alloc(r)
+            self.mk_error()
         }
     }
 

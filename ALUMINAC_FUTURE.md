@@ -473,11 +473,14 @@ instances.
   driven by hints, as alumina-boot's `infer`, would replace them.
 - `make test-std-aluminac` still lacks `--cfg libbacktrace` and
   coroutines (aluminac has no stackful coroutines).
-- One unresolved path yields several cascading errors in mono ("expression
-  is not callable" ×N, "could not resolve field on ()").
-- Bound errors for struct/protocol type arguments have no source span
-  (`StructDef`/`ProtocolDef` carry none); only the instantiation notes
-  locate them.
+- ~~Cascading errors~~: done. What fails to lower is an error value of
+  type `!` (`mk_error`) that uses do not report again: unresolved methods
+  and fields, invalid operators, dereferences and indexing, incompatible
+  branches (75 errors for the 10 mistakes of
+  `errors_do_not_cascade_compile_fail.alu`, which checks the count with
+  `// EXPECTED_ERROR_COUNT`). A protocol instance's bounds are checked
+  once, and bound errors of struct and protocol instances are located
+  where the type is used (`type_span`).
 - Protocol conformance of a method with a generic parameter that its
   signature does not determine (e.g. a method `<T>` shadowing the impl's
   `T`): alumina-boot says "does not match" (type hint would be needed),
@@ -549,8 +552,7 @@ different mechanism and both paths are fully implemented:
 4. ~~Deeper feature gaps~~: `std/typing.alu` `element_types` (type-level
    `Tup.(1..)` and splats) and `std/fmt` `test_const_println` both work
    (their `#[cfg(boot)]` gates were stale and are removed; a constant's
-   notes were hidden, see below). Remaining: `test_debug_formatter` (the
-   `debug()` adapter's reflection: closures, enums as integers, unions).
+   notes were hidden, see below); so does `test_debug_formatter`.
    Standalone notes (a constant's `println!`) were dropped after an allowed
    lint: notes on a diagnostic are now marked `attached` and only those go
    with it.
@@ -605,15 +607,6 @@ evaluates the place first (alumina-boot's lang tests expect it; its
 
 ## Other architectural opportunities (non-blocking)
 
-- **Type-level tuple ops.** `TyTag::TupleIndexOf` (single index)
-  added; range slicing + splat-in-tuple-construction still missing
-  (blocks `tuple_map_of` / `element_types`). Likely a clean extension
-  of the same parse_type/resolve_type machinery.
-- **Reflection breadth.** `Type::new::<fn>()` name/module_path now
-  work and `type_of<typeof(x)>` resolves (via `tuple_index_of`);
-  closure/enum/union/named-type `debug()` is the remaining gap. A
-  pass enumerating `std::typing::Type` methods vs alumina-boot's
-  `intr_*` would cheaply surface what's left.
 - **Const-eval completeness.** Doesn't fold calls through
   `format!`/`_finish_format`. (128-bit integers: done, the evaluator is
   128 bits wide; `const_eval_integers.alu`.)
