@@ -32,10 +32,11 @@ alumina-boot emits C (not LLVM IR), so an "IR-level diff between the
 two compilers" is not a valid debugging strategy.
 
 Hosts: bootstrap works on x86_64 and aarch64 Linux and on arm64 macOS
-(the supported platforms for now; not Intel macOS, riscv64 or Windows). ABI-sensitive
-codegen in `src/aluminac/codegen/` runtime-detects host arch from the
-LLVM target triple (`CodegenCtx::is_x86_64` / `needs_sret` /
-`uses_byval_attr`); check both when touching those paths.
+(the supported platforms for now; not Intel macOS, riscv64 or Windows). The C
+calling convention (how aggregates are passed) is `codegen/abi.alu`, per
+target arch (AAPCS64, x86_64 SysV); check both when touching it.
+`tests/aluminac/c_abi.alu` (with its C side, `tests/aluminac/c/c_abi.c`)
+covers the shapes, both ways.
 
 Coroutines / minicoro / `codegen_func` / `codegen_const` are
 deliberately out of scope for aluminac (alumina-boot emits C and
@@ -212,6 +213,20 @@ boot misreads the language (record such cases here).
   (`(Option<i32>, &mut [u8])`, `fn(i32) -> u8`, `&dyn P<..>`).
 - Sysroot: `Deque::from_slice` passed `T` where `&mut T` was expected
   (alumina-boot rejected it too, when instantiated).
+- **The C calling convention for aggregates** (`codegen/abi.alu`): LLVM
+  passes a first-class aggregate member by member, which C does only for
+  some, so structs crossing into C (or callbacks C calls, e.g.
+  tree-sitter's read callback taking `TSPoint`) were garbled. Aggregates
+  are now classified as clang does (AArch64: HFAs as they are, up to 16
+  bytes as i64s, larger through memory/sret; x86_64: eightbytes, byval)
+  for extern "C", exported and address-taken functions and every call
+  through a pointer; other functions keep LLVM's passing. Found with it:
+  `llvm_type` built pointee types, which could query a struct's layout
+  while it was opaque and poison LLVM's layout cache (sizes of 0).
+- **alumina-doc is built by aluminac** (`make docs`; no minicoro). Its
+  output is byte-identical to the alumina-boot build's (all 1095 files,
+  debug and -O3). Getting there fixed root paths (`use ::x`), universal
+  macro calls in macro bodies and a `defer` that returns.
 
 ### alumina-boot bugs found (aluminac deliberately differs)
 
@@ -512,7 +527,9 @@ instances.
   aluminac lets it match.
 - Cross-compilation: `--target` exists, but ABI lowering only knows
   x86_64 SysV / AAPCS64 (Apple arm64 variadics differ), there is no
-  per-target sysroot/linker story, and only x86_64/aarch64 parse.
+  per-target sysroot/linker story, and only x86_64/aarch64 parse. The
+  x86_64 aggregate classification has not been run on an x86_64 host
+  yet (the c_abi test will, on Linux CI).
 
 ## Remaining `#[cfg(boot)]` gated tests (the cleanup queue)
 

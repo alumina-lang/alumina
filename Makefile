@@ -289,13 +289,14 @@ clean-bootstrap:
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc
 ALUMINA_DOC_SOURCES = $(shell find tools/alumina-doc/ -type f -name '*.alu')
 
-$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac-common/node_kinds.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
+# Built by aluminac.
+$(ALUMINA_DOC): $(BUILD_DIR)/aluminac $(SYSROOT_ALUMINAC_FILES) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) \
+		libraries/aluminac-common/node_kinds.alu $(BUILD_DIR)/parser.o
+	$(BUILD_DIR)/aluminac $(ALUMINAC_FLAGS) --sysroot $(SYSROOT_ALUMINAC) \
+		--link-args "-ltree-sitter $(BUILD_DIR)/parser.o $(ALUMINAC_LDFLAGS)" \
+		-o $@ \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINA_DOC_SOURCES),tools/,/)
-
-$(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
 $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/static/*
 	@mkdir -p $(BUILD_DIR)/~doctest
