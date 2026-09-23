@@ -313,12 +313,13 @@ temporaries, globals) the layout's alignment explicitly
 their elements as structs do (`place_members`: `(u8, S)` had `S` at
 offset 1 and 7 bytes where size_of said 8), and constant tuples and
 element-wise `==` go through the member index map.
-Remaining lang failure (32 of 33 pass): `test_pretty_print`: alumina-boot's `stringify!` pretty-prints
-the AST (`stringify!((a))` is `a`, `a + b + c` is `(a + b) + c`);
-aluminac's gives the source text. Matching it needs a pretty-printer over
-the syntax tree (aluminac's AST is partly desugared).
-(`T::associated_type` type paths inside `stringify!` are fine since
-`stringify!` does not resolve; elsewhere they are unsupported.) Done for
+All 33 pass. `stringify!` prints the expression as alumina-boot prints
+its AST (`parser/pretty.alu`, a port of `ast/pretty.rs`): after macro
+expansion and name resolution, with nested operators parenthesized and
+`while` desugared; it used to give the source text. `T::name` in a type
+(`TyTag::Defered`) is the type of `T`'s associated function, as in
+alumina-boot, and `T::name` as a value is a path to it (both were errors).
+Done for
 it: **linear block scopes** (each item declared in a block starts a new
 scope for the rest of the block, so a later `const A` / `fn foo` /
 `struct foo` shadows an earlier one from its declaration on; aluminac
@@ -547,7 +548,9 @@ different mechanism and both paths are fully implemented:
      the `tuple_index_of` grammar node — `parser/pass2.alu`
      `parse_type` + `mono/lower.alu` `resolve_type` + `ast.alu`);
      extend to a range/splat form (check `node-types.json`).
-   - `std/fmt/mod.alu` `test_const_println`: const-eval doesn't fold
+   - (`std::thread::tests::test_detach_panic_2` is timing-dependent: it
+    fails when a loaded machine takes over a second to end the process.)
+  - `std/fmt/mod.alu` `test_const_println`: const-eval doesn't fold
      the `format!`/`_finish_format(...)` helper-call chain in a
      `const { … }` block. Overlaps the deferred const-eval work.
    - `std/fmt/mod.alu` `test_debug_formatter`: the `debug()` adapter

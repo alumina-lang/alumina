@@ -606,6 +606,17 @@ impl Mono {
                     self.resolve_type(ty.ret_ty())
                 }
             }
+            TyTag::Defered => {
+                // The type of the associated function (as in alumina-boot,
+                // which has no associated types).
+                let def = self.find_method_in_scope(self.resolve_type(ty.inner()), ty.defered_name());
+                if def.is_none() {
+                    self.emit_diag(diagnostics::CodeDiagnostic::generic_error(Span::empty(),
+                        std::fmt::format!("unresolved item `{}`", ty.defered_name()).unwrap().as_slice()));
+                    return self.ctx.void_ty;
+                }
+                self.resolve_named_type(ItemRef { id: def.unwrap().id }, &[])
+            }
             TyTag::Unresolved => self.ctx.void_ty,
             _ => self.ctx.void_ty,
         }
@@ -1775,6 +1786,7 @@ impl Mono {
             ExprTag::Continue => self.lower_continue(expr),
             ExprTag::Return => self.lower_return(expr),
             ExprTag::Yield => self.lower_yield(expr),
+            ExprTag::Defered => self.lower_defered_value(expr),
             ExprTag::Ref => self.lower_ref(expr),
             ExprTag::Deref => self.lower_deref(expr),
             ExprTag::FieldAccess => self.lower_field_access(expr),
@@ -2611,11 +2623,9 @@ impl Mono {
 
     // Lower a deferred call: T::method(args) where T was a generic type param or type alias.
     // At mono time, T has been resolved to a concrete type via type_map or type_aliases.
-    fn lower_defered_call(self: &mut Mono, expr: &Expr) -> Option<&IrExpr> {
-        let defered = expr.lhs();
-        let method_name = defered.str_val();
-
-        // Look up the concrete type: first try generic type params, then type aliases
+    /// The type a deferred path (`T::f`) is on: the generic parameter's
+    /// argument, or a type alias's target.
+    fn defered_target(self: &mut Mono, defered: &Expr) -> Option<&IrTy> {
         let concrete_ty: &IrTy = self.ctx.void_ty;
         let resolved = self.type_map.get(&defered.id()._value);
         if resolved.is_some() {
@@ -2658,6 +2668,28 @@ impl Mono {
                 return Option::none();
             }
         }
+        Option::some(concrete_ty)
+    }
+
+    /// `T::f` as a value: a path to the associated function.
+    fn lower_defered_value(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        let target = self.defered_target(expr);
+        let def = if target.is_some() { self.find_method_in_scope(target.unwrap(), expr.str_val()) } else { Option::none() };
+        if def.is_none() {
+            self.emit_diag(diagnostics::CodeDiagnostic::unresolved_function(expr.span, expr.str_val()));
+            return self.mk_error();
+        }
+        let path = *expr;
+        path.tag = ExprTag::FnRef;
+        path._data.id_ref.id = def.unwrap().id;
+        path._data.id_ref.id2 = Id { _value: 0 };
+        self.lower_variable(self.ctx.arena.alloc(path))
+    }
+
+    fn lower_defered_call(self: &mut Mono, expr: &Expr) -> Option<&IrExpr> {
+        let defered = expr.lhs();
+        let method_name = defered.str_val();
+        let concrete_ty = self.defered_target(defered)?;
 
         // Find the method on the concrete type
         let method_def = self.find_method_in_scope(concrete_ty, method_name);

@@ -194,11 +194,13 @@ enum TyTag {
     Dyn = 14i32,        // &dyn Proto — fat pointer with vtable; resolves to lang(dyn) struct
     TupleIndexOf = 15i32, // T.N in type position — Nth element of tuple type T
     EtCetera = 16i32,   // T... in a tuple or parameter list — the elements of tuple T
+    Defered = 17i32,    // T::name in type position — the type of T's associated function `name`
 }
 
 struct _TyPointerData { inner: &Ty, is_const: bool }
 struct _TyArrayData { inner: &Ty, array_size: usize }
-struct _TyFnPtrData { elems: &[&Ty], ret_ty: &Ty }
+struct _TyFnPtrData { elems: &[&Ty], ret_ty: &Ty, is_protocol: bool }
+struct _TyDeferedData { inner: &Ty, name: &[u8] }
 struct _TyGenericData { inner: &Ty, elems: &[&Ty] }
 struct _TyWhenData { inner: &Ty, ret_ty: &Ty, typeof_expr: &Expr }
 
@@ -212,6 +214,7 @@ union _TyData {
     generic: _TyGenericData,     // Generic
     typeof_expr: &Expr,          // Typeof
     when: _TyWhenData,           // When
+    defered: _TyDeferedData,     // Defered
 }
 
 struct Ty {
@@ -226,8 +229,8 @@ impl Ty {
             return true;
         }
         switch self.tag {
-            TyTag::Pointer, TyTag::Slice, TyTag::Array, TyTag::EtCetera, TyTag::DerefOf, TyTag::Dyn =>
-                self.inner().any_part(pred),
+            TyTag::Pointer, TyTag::Slice, TyTag::Array, TyTag::EtCetera, TyTag::DerefOf, TyTag::Dyn,
+            TyTag::Defered => self.inner().any_part(pred),
             TyTag::Tuple => self.elems().iter().any(|=pred, t: &Ty| -> bool { t.any_part(pred) }),
             TyTag::FnPointer => self.ret_ty().any_part(pred)
                 || self.elems().iter().any(|=pred, t: &Ty| -> bool { t.any_part(pred) }),
@@ -262,6 +265,7 @@ impl Ty {
             || self.tag == TyTag::Dyn || self.tag == TyTag::EtCetera { self._data.pointer.inner }
         else if self.tag == TyTag::Array || self.tag == TyTag::TupleIndexOf { self._data.array.inner }
         else if self.tag == TyTag::Generic { self._data.generic.inner }
+        else if self.tag == TyTag::Defered { self._data.defered.inner }
         else { self._data.when.inner } // When
     }
     fn is_const(self: &Ty) -> bool { self._data.pointer.is_const }
@@ -275,6 +279,11 @@ impl Ty {
         if self.tag == TyTag::FnPointer { self._data.fn_ptr.ret_ty }
         else { self._data.when.ret_ty } // When
     }
+    /// Whether a function type is the `Fn(...) -> R` protocol (else a
+    /// `fn(...) -> R` pointer).
+    fn is_fn_protocol(self: &Ty) -> bool { self._data.fn_ptr.is_protocol }
+    /// The name of the associated function a `Defered` type is of.
+    fn defered_name(self: &Ty) -> &[u8] { self._data.defered.name }
     fn typeof_expr(self: &Ty) -> &Expr {
         if self.tag == TyTag::Typeof { self._data.typeof_expr }
         else { self._data.when.typeof_expr } // When, Array (size expr via array_ty_with_expr)
@@ -319,7 +328,14 @@ impl Ty {
         Ty { tag: TyTag::TupleIndexOf, _data: _TyData { when: _TyWhenData { inner: inner, ret_ty: null, typeof_expr: index } } }
     }
     fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
-        Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret } } }
+        Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret, is_protocol: false } } }
+    }
+    fn fn_protocol_ty(params: &[&Ty], ret: &Ty) -> Ty {
+        Ty { tag: TyTag::FnPointer, _data: _TyData { fn_ptr: _TyFnPtrData { elems: params, ret_ty: ret, is_protocol: true } } }
+    }
+    /// `T::name`, where `T` is a generic parameter.
+    fn defered_ty(inner: &Ty, name: &[u8]) -> Ty {
+        Ty { tag: TyTag::Defered, _data: _TyData { defered: _TyDeferedData { inner: inner, name: name } } }
     }
     fn generic_ty(base: &Ty, args: &[&Ty]) -> Ty {
         Ty { tag: TyTag::Generic, _data: _TyData { generic: _TyGenericData { inner: base, elems: args } } }

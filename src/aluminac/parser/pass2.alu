@@ -794,7 +794,8 @@ impl Pass2 {
                     self.ctx.alloc_ty(Ty::void_ty())
                 };
 
-                self.ctx.alloc_ty(Ty::fn_pointer_ty(self.ctx.arena.alloc_slice_copy::<&Ty>(param_types.as_slice()), ret))
+                let params = self.ctx.arena.alloc_slice_copy::<&Ty>(param_types.as_slice());
+                self.ctx.alloc_ty(if kind == NodeKind::FunctionProtocol { Ty::fn_protocol_ty(params, ret) } else { Ty::fn_pointer_ty(params, ret) })
             },
             NodeKind::GenericType => {
                 let base_node = child_by!(node, FieldKind::Type);
@@ -836,6 +837,16 @@ impl Pass2 {
                         // branch above.
                         let id = item.kind.id();
                         return self.ctx.alloc_ty(Ty::named(id));
+                    }
+                }
+                // `T::name` with `T` a generic parameter: the type of its
+                // associated function `name`, once `T` is known (as in
+                // alumina-boot).
+                if segments.len() == 2 {
+                    let param = self.ctx.scopes.resolve(scope_idx, segments[0]);
+                    if param.is_some() && param.unwrap().kind.tag == scope::NamedItemTag::GenericParam {
+                        let inner = self.ctx.alloc_ty(Ty::placeholder(param.unwrap().kind.id()));
+                        return self.ctx.alloc_ty(Ty::defered_ty(inner, segments[1]));
                     }
                 }
                 // Path didn't resolve to anything (or resolved to an item kind
