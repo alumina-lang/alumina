@@ -198,7 +198,11 @@ impl ExprParser {
         // Inner `let` declarations will be in the child scope and won't overwrite
         // outer variables in the parent scope.
         let block_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(self.scope_idx));
-        let block_parser = ExprParser::new(self.ctx, block_scope);
+        // The scopes of the block's segments (see below), by the offset of
+        // the statement each starts at.
+        let segment_scope = block_scope;
+        let segments: Vector<(usize, u32)> = Vector::new();
+        defer segments.free();
 
         // Pre-pass: run Pass 1 + Pass 2 on any item definitions (struct, enum,
         // impl, etc.) inside this block so their scopes, names, fields, and methods
@@ -232,17 +236,27 @@ impl ExprParser {
                 let inner = inner_opt.unwrap();
                 let inner_kind = NODE_KINDS[inner.symbol() as usize];
                 switch inner_kind {
+                    // An impl block goes with the type declared before it.
+                    NodeKind::ImplBlock => {
+                        let pass1 = Pass1::new(self.ctx, segment_scope);
+                        pass1.visit_node(inner);
+                    },
+                    // Items are visible from their declaration on and shadow
+                    // earlier items of the same name (as in alumina-boot's
+                    // linear block scopes): each starts a new scope that the
+                    // rest of the block is parsed in.
                     NodeKind::StructDefinition,
                     NodeKind::EnumDefinition,
                     NodeKind::ProtocolDefinition,
-                    NodeKind::ImplBlock,
                     NodeKind::TypeDefinition,
                     NodeKind::FunctionDefinition,
                     NodeKind::UseDeclaration,
                     NodeKind::StaticDeclaration,
                     NodeKind::ConstDeclaration,
                     NodeKind::MacroDefinition => {
-                        let pass1 = Pass1::new(self.ctx, block_scope);
+                        segment_scope = self.ctx.scopes.create_scope(ScopeKind::Block, Option::some(segment_scope));
+                        segments.push((stmt.start_byte(), segment_scope));
+                        let pass1 = Pass1::new(self.ctx, segment_scope);
                         pass1.visit_node(inner);
                     },
                     _ => {},
@@ -344,9 +358,20 @@ impl ExprParser {
             }
         }
 
+        // Each statement is parsed in the scope of the segment it is in.
+        let block_parser = ExprParser::new(self.ctx, block_scope);
+        let next_segment = 0usize;
         for raw_stmt in raw_stmts.iter() {
+            while next_segment < segments.len() && segments[next_segment].0 <= raw_stmt.start_byte() {
+                block_parser = ExprParser::new(self.ctx, segments[next_segment].1);
+                next_segment += 1;
+            }
             let expr = block_parser.parse_expr(raw_stmt);
             stmts.push(expr);
+        }
+        while next_segment < segments.len() {
+            block_parser = ExprParser::new(self.ctx, segments[next_segment].1);
+            next_segment += 1;
         }
 
         // Also handle the FieldKind::Result child, which the tree-sitter

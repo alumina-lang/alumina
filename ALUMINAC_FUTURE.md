@@ -279,12 +279,14 @@ always satisfied). A json bug that alumina-boot never instantiated
 
 ### alumina-boot's lang tests under aluminac
 
-`tests/lang/lang.alu` (alumina-boot's language test suite) needs, beyond
-what is done: **linear scoping of block items** (a block's `const A` /
-`fn foo` / `struct foo` shadow earlier ones from their declaration on;
-aluminac's scopes map a name to one item), **coroutines** (`fn*`,
-`yield`; aluminac has none), and deferred type paths through generic
-parameters (`T::associated_type`). Done for it: tuple slicing
+`tests/lang/lang.alu` (alumina-boot's language test suite) compiles with
+aluminac except for **coroutines** (`fn*`, `yield`; aluminac has none).
+(`T::associated_type` type paths inside `stringify!` are fine since
+`stringify!` does not resolve; elsewhere they are unsupported.) Done for
+it: **linear block scopes** (each item declared in a block starts a new
+scope for the rest of the block, so a later `const A` / `fn foo` /
+`struct foo` shadows an earlier one from its declaration on; aluminac
+registered all of a block's items up front and the last one won), tuple slicing
 `t.(a..b)`, `#[tuple_args]` (aluminac had a `tuple_call` of its own),
 text-only `stringify!`, `codegen_type_func` `sizeof`/`_Alignof` (from
 LLVM's data layout, so it checks aluminac's layout), prelude module paths,
