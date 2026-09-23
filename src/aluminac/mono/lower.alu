@@ -5,6 +5,7 @@
 
 use mono::*;
 use ast::*;
+use ir::*;
 use scope::*;
 use diagnostics::DiagnosticContext;
 use aluminac_common::arena::Arena;
@@ -633,14 +634,14 @@ impl Mono {
         }
         // Every function takes `self` by pointer, and `Self` appears nowhere
         // else in its signature.
-        let self_id = if def.generic_params.len() > 0 { def.generic_params[0].id._value } else { 0usize };
+        let self_id = if def.generic_params.len() > 0 { def.generic_params[0].id } else { Id { _value: 0 } };
         for method in def.methods {
             let dispatchable = method.params.len() > 0
                 && method.params[0].ty.tag == TyTag::Pointer
                 && method.params[0].ty.inner().tag == TyTag::Placeholder
-                && method.params[0].ty.inner().id()._value == self_id
-                && !method.params[1..].iter().any(|=self_id, p: FnParam| -> bool { Mono::mentions_placeholder(p.ty, self_id) })
-                && !Mono::mentions_placeholder(method.return_type, self_id);
+                && method.params[0].ty.inner().id()._value == self_id._value
+                && !method.params[1..].iter().any(|=self_id, p: FnParam| -> bool { p.ty.mentions(self_id) })
+                && !method.return_type.mentions(self_id);
             if !dispatchable {
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
                     std::fmt::format!("signature of `{}` is incompatible with virtual dispatch", method.name).unwrap().as_slice()));
@@ -648,32 +649,6 @@ impl Mono {
             }
         }
         true
-    }
-
-    /// Whether a (syntactic) type is the same type wherever it is written:
-    /// built from builtin types only (slices are instances of a generic
-    /// type, as in alumina-boot).
-    fn is_concrete_type(ty: &Ty) -> bool {
-        switch ty.tag {
-            TyTag::Builtin => true,
-            TyTag::Pointer, TyTag::Array => Mono::is_concrete_type(ty.inner()),
-            TyTag::Tuple => ty.elems().iter().all(|t: &Ty| -> bool { Mono::is_concrete_type(t) }),
-            _ => false,
-        }
-    }
-
-    /// Whether a (syntactic) type mentions the generic parameter `id`.
-    fn mentions_placeholder(ty: &Ty, id: usize) -> bool {
-        switch ty.tag {
-            TyTag::Placeholder => ty.id()._value == id,
-            TyTag::Pointer, TyTag::Slice, TyTag::Array => Mono::mentions_placeholder(ty.inner(), id),
-            TyTag::Tuple => ty.elems().iter().any(|=id, t: &Ty| -> bool { Mono::mentions_placeholder(t, id) }),
-            TyTag::FnPointer => ty.elems().iter().any(|=id, t: &Ty| -> bool { Mono::mentions_placeholder(t, id) })
-                || Mono::mentions_placeholder(ty.ret_ty(), id),
-            TyTag::Generic => Mono::mentions_placeholder(ty.inner(), id)
-                || ty.elems().iter().any(|=id, t: &Ty| -> bool { Mono::mentions_placeholder(t, id) }),
-            _ => false,
-        }
     }
 
     /// Resolve the type of a struct literal, using type hints when explicit type args are absent.
@@ -746,9 +721,9 @@ impl Mono {
             for attr in sd.attributes {
                 if attr.tag == AttrTag::Lang {
                     let lang = attr.str_val();
-                    let bt = Mono::lang_name_to_builtin(lang);
-                    if bt != BuiltinType::Void {
-                        return self.ctx.intern_builtin_ty(bt);
+                    let bt = BuiltinType::from_lang_name(lang);
+                    if bt.is_some() {
+                        return self.ctx.intern_builtin_ty(bt.unwrap());
                     }
                     if lang == "builtin_array" || lang == "builtin_tuple" {
                         self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
@@ -2344,76 +2319,6 @@ impl Mono {
         }
     }
 
-    // Map binary operator to its lang item name for operator overloading
-    // Map builtin type to lang item name for method resolution
-    fn builtin_lang_name(bt: BuiltinType) -> &[u8] {
-        switch bt {
-            BuiltinType::Bool => "builtin_bool",
-            BuiltinType::U8 => "builtin_u8",
-            BuiltinType::U16 => "builtin_u16",
-            BuiltinType::U32 => "builtin_u32",
-            BuiltinType::U64 => "builtin_u64",
-            BuiltinType::U128 => "builtin_u128",
-            BuiltinType::USize => "builtin_usize",
-            BuiltinType::I8 => "builtin_i8",
-            BuiltinType::I16 => "builtin_i16",
-            BuiltinType::I32 => "builtin_i32",
-            BuiltinType::I64 => "builtin_i64",
-            BuiltinType::I128 => "builtin_i128",
-            BuiltinType::ISize => "builtin_isize",
-            BuiltinType::F32 => "builtin_f32",
-            BuiltinType::F64 => "builtin_f64",
-            _ => "",
-        }
-    }
-
-    // Map lang item name to builtin type (reverse of builtin_lang_name)
-    fn lang_name_to_builtin(name: &[u8]) -> BuiltinType {
-        if name == "builtin_bool" { BuiltinType::Bool }
-        else if name == "builtin_u8" { BuiltinType::U8 }
-        else if name == "builtin_u16" { BuiltinType::U16 }
-        else if name == "builtin_u32" { BuiltinType::U32 }
-        else if name == "builtin_u64" { BuiltinType::U64 }
-        else if name == "builtin_u128" { BuiltinType::U128 }
-        else if name == "builtin_usize" { BuiltinType::USize }
-        else if name == "builtin_i8" { BuiltinType::I8 }
-        else if name == "builtin_i16" { BuiltinType::I16 }
-        else if name == "builtin_i32" { BuiltinType::I32 }
-        else if name == "builtin_i64" { BuiltinType::I64 }
-        else if name == "builtin_i128" { BuiltinType::I128 }
-        else if name == "builtin_isize" { BuiltinType::ISize }
-        else if name == "builtin_f32" { BuiltinType::F32 }
-        else if name == "builtin_f64" { BuiltinType::F64 }
-        else if name == "builtin_never" { BuiltinType::Never }
-        else { BuiltinType::Void } // sentinel: not a builtin
-    }
-
-    fn binop_lang_name(op: BinOp) -> &[u8] {
-        switch op {
-            BinOp::Eq => "operator_eq",
-            BinOp::Ne => "operator_neq",
-            BinOp::Lt => "operator_lt",
-            BinOp::Le => "operator_lte",
-            BinOp::Gt => "operator_gt",
-            BinOp::Ge => "operator_gte",
-            _ => "",
-        }
-    }
-
-    // Map binary comparison operator to the method name to look up on the type.
-    // These match the sysroot's Equatable/Comparable protocol methods.
-    fn binop_method_name(op: BinOp) -> &[u8] {
-        switch op {
-            BinOp::Eq => "equals",
-            BinOp::Ne => "not_equals",
-            BinOp::Lt => "less_than",
-            BinOp::Le => "less_than_or_equal",
-            BinOp::Gt => "greater_than",
-            BinOp::Ge => "greater_than_or_equal",
-            _ => "",
-        }
-    }
-
     // Bind a protocol method's protocol-generic params (Self + others, in
     // declaration order) into `type_map` from a slice of concrete IR types.
     // The list of ids comes from `proto_method_proto_gp_ids` and was set when
@@ -2554,7 +2459,7 @@ impl Mono {
             // (`max_value`, `min_value`, …) are visible to lower_defered_call.
             // Surfaced by sysroot's `parse_integer<T: Integer>` body's
             // `T::max_value()`.
-            let lang_name = Mono::builtin_lang_name(ty.builtin());
+            let lang_name = ty.builtin().lang_name();
             if lang_name.len() > 0 {
                 scope_idx = self.ctx.get_lang_item(lang_name)
                     .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
@@ -2891,7 +2796,7 @@ impl Mono {
             } else if concrete_ty.tag == IrTyTag::Enum {
                 receiver_scope_idx = concrete_ty.enum_ref().scope_idx;
             } else if concrete_ty.tag == IrTyTag::Builtin {
-                let lang_name = Mono::builtin_lang_name(concrete_ty.builtin());
+                let lang_name = concrete_ty.builtin().lang_name();
                 if lang_name.len() > 0 {
                     receiver_scope_idx = self.ctx.get_lang_item(lang_name)
                         .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
@@ -2969,7 +2874,7 @@ impl Mono {
         }
 
         // Without a sysroot: call the type's methods directly.
-        let method_name = Mono::binop_method_name(op);
+        let method_name = op.method_name();
         if method_name.len() > 0 {
             let direct_def = self.find_method_in_scope(ir_lhs.ty, method_name);
             if direct_def.is_some() {
@@ -3482,7 +3387,7 @@ impl Mono {
             let ir_lhs = self.lower_expr(expr.lhs());
             // The target must be a mutable place (as in alumina-boot).
             if !ir_lhs.ty.is_never() {
-                if !Mono::is_place(ir_lhs) {
+                if !ir_lhs.is_place() {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.lhs().span, "cannot assign to rvalue"));
                 } else if self.is_const_place(ir_lhs) {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.lhs().span, "cannot assign to const"));
@@ -3498,7 +3403,7 @@ impl Mono {
                     && self.binary_result_ty(op, ir_lhs.ty, ir_rhs.ty, expr.span).is_none() {
                     self.report_invalid_binop(op, ir_lhs.ty, ir_rhs.ty, expr.span);
                 }
-                if Mono::is_simple_place(ir_lhs) {
+                if ir_lhs.is_simple_place() {
                     let binop_expr = self.mk_binary(op, ir_lhs, ir_rhs, ir_lhs.ty);
                     return self.mk_assign(ir_lhs, binop_expr);
                 }
@@ -3850,7 +3755,7 @@ impl Mono {
             // identity matters (e.g. a channel's mutex). Only an rvalue is
             // first stored in a local, to take its address.
             let iterable_var_id = self.ctx.id_gen.next_id();
-            let ir_iterable_ref = if Mono::is_place(iterable_ir) {
+            let ir_iterable_ref = if iterable_ir.is_place() {
                 self.mk_ref(iterable_ir, false)
             } else {
                 self.local_types.insert(iterable_var_id._value, iterable_ty);
@@ -3866,7 +3771,7 @@ impl Mono {
             let iter_call = self.resolve_method_call_on_type(iterable_ty, "iter", ir_iterable_ref, &[]);
             if iter_call.is_some() {
                 // let _iterable = iterable_expr; (rvalues only)
-                iter_let_stmt = if Mono::is_place(iterable_ir) {
+                iter_let_stmt = if iterable_ir.is_place() {
                     Option::none()
                 } else {
                     Option::some(self.mk_let(iterable_var_id, iterable_ty, iterable_ir))
@@ -4053,7 +3958,7 @@ impl Mono {
 
     fn try_bool_at_run_time(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
         // (Most conditions are not constant; this saves trying.)
-        if !Mono::may_be_constant(expr) {
+        if !expr.may_be_constant() {
             return Option::none();
         }
         const_eval::try_eval_bool_at_run_time(
@@ -4065,23 +3970,6 @@ impl Mono {
             self.ctx.pointer_size,
             expr,
         )
-    }
-
-    /// Whether an expression may be constant (it reads no variables).
-    fn may_be_constant(e: &IrExpr) -> bool {
-        switch e.tag {
-            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
-            IrTag::InConstContext, IrTag::TypeLayout, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void,
-            IrTag::Zeroed => true,
-            IrTag::Call => e.call_target().tag == CallKind::Direct
-                && e.items().iter().all(|a: &IrExpr| -> bool { Mono::may_be_constant(a) }),
-            IrTag::Binary, IrTag::Index => Mono::may_be_constant(e.lhs()) && Mono::may_be_constant(e.rhs()),
-            IrTag::Unary, IrTag::Cast, IrTag::Transmute, IrTag::FieldAccess, IrTag::Ref =>
-                Mono::may_be_constant(e.lhs()),
-            IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block =>
-                e.items().iter().all(|a: &IrExpr| -> bool { Mono::may_be_constant(a) }),
-            _ => false,
-        }
     }
 
     fn try_const_eval_bool(self: &mut Mono, expr: &IrExpr) -> Option<bool> {
@@ -4341,90 +4229,6 @@ impl Mono {
         }
     }
 
-    // Walk an IR expression tree and remap local variable IDs.
-    // Used to deduplicate locals across static for iterations.
-    fn remap_ir_locals(self: &Mono, expr_: &IrExpr, remap: &HashMap<usize, usize>) {
-        // Cast away const - safe because all IrExpr are arena-allocated and owned by us
-        let expr = expr_ as &mut IrExpr;
-        switch expr.tag {
-            IrTag::Local, IrTag::Param => {
-                let r = remap.get(&expr._data.var.id._value);
-                if r.is_some() {
-                    expr._data.var.id._value = r.unwrap();
-                }
-            }
-            IrTag::Let => {
-                let r = remap.get(&expr._data.let_data.id._value);
-                if r.is_some() {
-                    expr._data.let_data.id._value = r.unwrap();
-                }
-                if expr.opt_expr().is_some() {
-                    self.remap_ir_locals(expr.opt_expr().unwrap(), remap);
-                }
-            }
-            IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit => {
-                for item in expr.items().iter() {
-                    self.remap_ir_locals(item, remap);
-                }
-            }
-            IrTag::StructLit => {
-                for item in expr.items().iter() {
-                    self.remap_ir_locals(item, remap);
-                }
-            }
-            IrTag::Binary => {
-                self.remap_ir_locals(expr.lhs(), remap);
-                self.remap_ir_locals(expr.rhs(), remap);
-            }
-            IrTag::Unary, IrTag::Ref, IrTag::Deref, IrTag::Defer, IrTag::Loop => {
-                self.remap_ir_locals(expr.lhs(), remap);
-            }
-            IrTag::Assign => {
-                self.remap_ir_locals(expr.lhs(), remap);
-                self.remap_ir_locals(expr.rhs(), remap);
-            }
-            IrTag::Index => {
-                self.remap_ir_locals(expr.lhs(), remap);
-                self.remap_ir_locals(expr.rhs(), remap);
-            }
-            IrTag::FieldAccess => {
-                self.remap_ir_locals(expr.lhs(), remap);
-            }
-            IrTag::Cast, IrTag::Transmute => {
-                self.remap_ir_locals(expr.lhs(), remap);
-            }
-            IrTag::If, IrTag::While => {
-                self.remap_ir_locals(expr.cond(), remap);
-                self.remap_ir_locals(expr.lhs(), remap);
-                if expr.opt_expr().is_some() {
-                    self.remap_ir_locals(expr.opt_expr().unwrap(), remap);
-                }
-            }
-            IrTag::Switch => {
-                self.remap_ir_locals(expr.lhs(), remap);
-                for switch_arm in expr.switch_arms().iter() {
-                    self.remap_ir_locals(switch_arm.body, remap);
-                }
-            }
-            IrTag::Call => {
-                for item in expr.items().iter() {
-                    self.remap_ir_locals(item, remap);
-                }
-                if expr.call_target().tag == CallKind::Indirect {
-                    self.remap_ir_locals(expr.call_target().callee, remap);
-                }
-            }
-            IrTag::Return, IrTag::Break => {
-                if expr.opt_expr().is_some() {
-                    self.remap_ir_locals(expr.opt_expr().unwrap(), remap);
-                }
-            }
-            _ => {
-                // Literals, Void, Zeroed, etc. - no children to remap
-            }
-        }
-    }
-
     // Try to redirect a bodyless protocol method call to the concrete type's impl.
     // For example, when Equatable::not_equals<Point> calls Equatable::equals,
     // we redirect to Point::equals.
@@ -4538,7 +4342,7 @@ impl Mono {
         let lang_name: &[u8] = switch ty.tag {
             IrTyTag::Struct => return ty.struct_ref().scope_idx,
             IrTyTag::Enum => return ty.enum_ref().scope_idx,
-            IrTyTag::Builtin => Mono::builtin_lang_name(ty.builtin()),
+            IrTyTag::Builtin => ty.builtin().lang_name(),
             IrTyTag::Slice => "slice",
             IrTyTag::Array => "builtin_array",
             // `()` collapses to void; it is the zero-tuple.
@@ -4687,7 +4491,7 @@ impl Mono {
                 })
             };
             let negative = gp.negative_bounds.iter().any(|&self, =m_def, =found, =arg, b: &Ty| -> bool {
-                !Mono::mentions_unknown_param(b, m_def.generic_params, found) && self.satisfies_bound(arg, b)
+                !mentions_unknown_param(b, m_def.generic_params, found) && self.satisfies_bound(arg, b)
             });
             if !positive || negative {
                 result = false;
@@ -4978,7 +4782,7 @@ impl Mono {
                     self.local_types.insert(new_id._value, self.local_defs[di].ty);
                 }
                 if remap.len() > 0 {
-                    self.remap_ir_locals(body_ir, &remap);
+                    body_ir.remap_locals(&remap);
                 }
             }
 
@@ -5080,7 +4884,7 @@ impl Mono {
         } else if resolved_ty.tag == IrTyTag::Fn || resolved_ty.tag == IrTyTag::FnPointer || resolved_ty.tag == IrTyTag::Closure {
             scope_idx = self.resolve_lang_scope("builtin_callable");
         } else if resolved_ty.tag == IrTyTag::Builtin {
-            let lang_name = Mono::builtin_lang_name(resolved_ty.builtin());
+            let lang_name = resolved_ty.builtin().lang_name();
             if lang_name.len() > 0 {
                 scope_idx = self.resolve_lang_scope(lang_name);
             }
@@ -5401,7 +5205,7 @@ impl Mono {
             // A cast to the type the value has, written as that type (not
             // through an alias or a generic parameter, which may be another
             // type elsewhere).
-            if ir_inner.ty.same_as(ir_ty) && !ir_ty.is_never() && Mono::is_concrete_type(expr.ty())
+            if ir_inner.ty.same_as(ir_ty) && !ir_ty.is_never() && expr.ty().is_concrete()
                 && self.type_map.is_empty() && !self.tentative {
                 self.emit_diag(diagnostics::CodeDiagnostic::lint(expr.span, "unnecessary_cast",
                     std::fmt::format!("unnecessary cast (value is already `{}`)", self.ir_type_name(ir_ty)).unwrap().as_slice()));
@@ -5723,7 +5527,7 @@ impl Mono {
                 }
             }
         } else if impl_ty.tag == IrTyTag::Builtin {
-            let lang_name = Mono::builtin_lang_name(impl_ty.builtin());
+            let lang_name = impl_ty.builtin().lang_name();
             if lang_name.len() > 0 {
                 impl_scope_idx = self.ctx.get_lang_item(lang_name)
                     .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
@@ -6690,7 +6494,7 @@ impl Mono {
     /// the method's generic parameters are unknown: fully if the bound
     /// mentions none of them, and otherwise by the methods of its protocol.
     fn bound_plausibly_holds(self: &mut Mono, arg: &IrTy, bound: &Ty, params: &[GenericParam], found: &[bool]) -> bool {
-        if !Mono::mentions_unknown_param(bound, params, found) {
+        if !mentions_unknown_param(bound, params, found) {
             return self.satisfies_bound(arg, bound);
         }
         let proto_id: usize = if bound.tag == TyTag::Generic && bound.inner().tag == TyTag::Named {
@@ -6702,28 +6506,6 @@ impl Mono {
         };
         let proto = self.ctx.protocol_defs.get(&proto_id);
         proto.is_none() || self.check_protocol_conformance(arg, proto.unwrap())
-    }
-
-    /// Whether a type mentions one of `params` that is not `found`.
-    fn mentions_unknown_param(ty: &Ty, params: &[GenericParam], found: &[bool]) -> bool {
-        switch ty.tag {
-            TyTag::Placeholder => {
-                for (i, p) in params.iter().enumerate() {
-                    if p.id._value == ty.id()._value {
-                        return !found[i];
-                    }
-                }
-                false
-            }
-            TyTag::Pointer, TyTag::Slice, TyTag::Array, TyTag::EtCetera, TyTag::DerefOf =>
-                Mono::mentions_unknown_param(ty.inner(), params, found),
-            TyTag::Tuple => ty.elems().iter().any(|=params, =found, t: &Ty| -> bool { Mono::mentions_unknown_param(t, params, found) }),
-            TyTag::FnPointer => Mono::mentions_unknown_param(ty.ret_ty(), params, found)
-                || ty.elems().iter().any(|=params, =found, t: &Ty| -> bool { Mono::mentions_unknown_param(t, params, found) }),
-            TyTag::Generic => Mono::mentions_unknown_param(ty.inner(), params, found)
-                || ty.elems().iter().any(|=params, =found, t: &Ty| -> bool { Mono::mentions_unknown_param(t, params, found) }),
-            _ => false,
-        }
     }
 
     /// Whether `arg` satisfies `param`'s bounds (all of them, or any of them
@@ -7419,7 +7201,7 @@ impl Mono {
             }
         } else if resolved_ty.tag == IrTyTag::Builtin {
             // Look up #[lang(builtin_X)] struct to find methods on builtin types
-            let lang_name = Mono::builtin_lang_name(resolved_ty.builtin());
+            let lang_name = resolved_ty.builtin().lang_name();
             if lang_name.len() > 0 {
                 scope_idx = self.ctx.get_lang_item(lang_name)
                     .and_then(|=self, id: usize| -> Option<&StructDef> { self.ctx.struct_defs.get(&id) })
@@ -8256,7 +8038,7 @@ impl Mono {
                 if !outcome.panic_msg.is_empty() {
                     self.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, outcome.panic_msg));
                 }
-                if outcome.value.is_some() && Mono::contains_pointer(outcome.value.unwrap()) {
+                if outcome.value.is_some() && outcome.value.unwrap().contains_pointer() {
                     self.adopt_baked(outcome.heap);
                     if self.only_baked_pointers(outcome.value.unwrap()) {
                         // Pointers into baked allocations, which become
@@ -8285,7 +8067,7 @@ impl Mono {
                     zeroed.tag = IrTag::Zeroed;
                     self.ctx.arena.alloc(zeroed) as &IrExpr
                 }
-            } else if is_extern || Mono::is_plain_constant(init_ir)
+            } else if is_extern || init_ir.is_plain_constant()
                 || def.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::ThreadLocal }) {
                 init_ir
             } else {
@@ -8338,34 +8120,6 @@ impl Mono {
             ),
             notes.as_slice(),
         );
-    }
-
-    /// Whether a constant value contains pointers (other than to string
-    /// literals, which are values of their own).
-    fn contains_pointer(v: ConstValue) -> bool {
-        switch v.tag {
-            CValTag::Pointer, CValTag::Lvalue => true,
-            CValTag::Tuple, CValTag::Array => v.elems().iter().any(|e: ConstValue| -> bool { Mono::contains_pointer(e) }),
-            CValTag::Struct => v.fields().iter().any(|f: ConstField| -> bool { Mono::contains_pointer(f.value) }),
-            _ => false,
-        }
-    }
-
-    /// Whether a static's initializer is a constant that the global can be
-    /// initialized with directly: literals, aggregates and arithmetic of them,
-    /// and addresses of globals and functions.
-    fn is_plain_constant(e: &IrExpr) -> bool {
-        switch e.tag {
-            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
-            IrTag::Void, IrTag::Zeroed, IrTag::Undef, IrTag::FnRef => true,
-            IrTag::Cast => Mono::is_plain_constant(e._data.cast.lhs),
-            IrTag::Unary => Mono::is_plain_constant(e._data.un.lhs),
-            IrTag::Binary => Mono::is_plain_constant(e._data.bin.lhs) && Mono::is_plain_constant(e._data.bin.rhs),
-            IrTag::Ref => e._data.single.lhs.tag == IrTag::GlobalRef,
-            IrTag::StructLit => e._data.struct_lit.items.iter().all(|i: &IrExpr| -> bool { Mono::is_plain_constant(i) }),
-            IrTag::TupleLit, IrTag::ArrayLit => e._data.block.items.iter().all(|i: &IrExpr| -> bool { Mono::is_plain_constant(i) }),
-            _ => false,
-        }
     }
 
     /// A call must pass as many arguments as the function takes (at least as
@@ -8924,7 +8678,7 @@ impl Mono {
     /// on `in_const_context()` are not the same at compile time and run
     /// time.
     fn check_condition(self: &mut Mono, cond: &IrExpr, span: Span, is_loop: bool) {
-        if self.tentative || Mono::mentions_const_context(cond) {
+        if self.tentative || cond.mentions_const_context() {
             return;
         }
         let value = self.try_const_eval_bool(cond);
@@ -8938,22 +8692,6 @@ impl Mono {
         } else {
             self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "constant_condition",
                 std::fmt::format!("condition is always `{}`, did you mean to use `when`?", value.unwrap()).unwrap().as_slice()));
-        }
-    }
-
-    /// Whether an expression depends on `in_const_context()`.
-    fn mentions_const_context(e: &IrExpr) -> bool {
-        switch e.tag {
-            IrTag::InConstContext => true,
-            IrTag::Binary => Mono::mentions_const_context(e.lhs()) || Mono::mentions_const_context(e.rhs()),
-            IrTag::Unary, IrTag::Cast => Mono::mentions_const_context(e.lhs()),
-            IrTag::Block => e.items().iter().any(|i: &IrExpr| -> bool { Mono::mentions_const_context(i) }),
-            IrTag::If => Mono::mentions_const_context(e.cond()) || Mono::mentions_const_context(e.lhs())
-                || (e.opt_expr().is_some() && Mono::mentions_const_context(e.opt_expr().unwrap())),
-            // (A call may depend on it; conditions with calls are evaluated
-            // only for the lint.)
-            IrTag::Call => true,
-            _ => false,
         }
     }
 
@@ -8984,24 +8722,8 @@ impl Mono {
                     std::fmt::format!("unused result of `{}`, which must be used", def.unwrap().name).unwrap().as_slice()));
             }
         }
-        if Mono::is_pure(stmt) && !stmt.ty.is_void() && !stmt.ty.is_never() {
+        if stmt.is_pure() && !stmt.ty.is_void() && !stmt.ty.is_never() {
             self.emit_diag(diagnostics::CodeDiagnostic::lint(span, "pure_statement", "statement has no effect"));
-        }
-    }
-
-    /// Whether evaluating an expression has no effects (as alumina-boot's
-    /// `Expr::pure`).
-    fn is_pure(e: &IrExpr) -> bool {
-        switch e.tag {
-            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
-            IrTag::Local, IrTag::Param, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void, IrTag::Zeroed => true,
-            IrTag::Binary, IrTag::Index => Mono::is_pure(e.lhs()) && Mono::is_pure(e.rhs()),
-            IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Ref, IrTag::Deref => Mono::is_pure(e.lhs()),
-            IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block =>
-                e.items().iter().all(|i: &IrExpr| -> bool { Mono::is_pure(i) }),
-            IrTag::If => Mono::is_pure(e.cond()) && Mono::is_pure(e.lhs())
-                && (e.opt_expr().is_none() || Mono::is_pure(e.opt_expr().unwrap())),
-            _ => false,
         }
     }
 
@@ -9157,28 +8879,6 @@ impl Mono {
         }
     }
 
-    /// Whether evaluating a place twice is the same as once (no side
-    /// effects, e.g. no calls).
-    fn is_simple_place(e: &IrExpr) -> bool {
-        switch e.tag {
-            IrTag::Local, IrTag::Param, IrTag::GlobalRef => true,
-            IrTag::FieldAccess => Mono::is_simple_place(e._data.field.lhs),
-            IrTag::Deref => {
-                let inner = e._data.single.lhs;
-                inner.tag == IrTag::Local || inner.tag == IrTag::Param || Mono::is_simple_place(inner)
-            }
-            _ => false,
-        }
-    }
-
-    fn is_place(e: &IrExpr) -> bool {
-        switch e.tag {
-            IrTag::Local, IrTag::Param, IrTag::GlobalRef, IrTag::Deref, IrTag::Index => true,
-            IrTag::FieldAccess => Mono::is_place(e._data.field.lhs),
-            _ => false,
-        }
-    }
-
     fn autoref(self: &mut Mono, expr: &IrExpr, target_ty: &IrTy) -> &IrExpr {
         // Count pointer depth of actual expression type
         let a: i32 = 0;
@@ -9222,4 +8922,14 @@ impl Mono {
         self.local_types.free();
         self.local_defs.free();
     }
+}
+
+/// Whether a type mentions one of `params` that is not `found` (yet).
+fn mentions_unknown_param(ty: &Ty, params: &[GenericParam], found: &[bool]) -> bool {
+    ty.any_part(|=params, =found, t: &Ty| -> bool {
+        t.tag == TyTag::Placeholder && params.iter()
+            .find_index(|=t, p: GenericParam| -> bool { p.id._value == t.id()._value })
+            .map(|=found, i: usize| -> bool { !found[i] })
+            .unwrap_or(false)
+    })
 }

@@ -5,6 +5,7 @@
 // compiled; const-only code among them is reported, since it cannot run.
 
 use ast::*;
+use ir::*;
 use std::collections::{HashMap, HashSet, Vector};
 use std::option::Option;
 
@@ -97,55 +98,20 @@ impl Reachability {
                         .any(|a: Attribute| -> bool { a.tag == AttrTag::ConstOnly }) {
                         self.const_only(e);
                     }
-                } else {
-                    self.visit(target.callee);
                 }
-                self.visit_all(e.items());
             }
             IrTag::FnRef => self.reach(e.fn_ref().mangled_name),
-            IrTag::ConstAlloc, IrTag::ConstFree, IrTag::ConstBake => {
-                self.const_only(e);
-                self.visit_all(e.items());
-            }
+            IrTag::ConstAlloc, IrTag::ConstFree, IrTag::ConstBake => self.const_only(e),
+            // (Only the branch taken, if known when compiling.)
             IrTag::If => switch e._data.if_data.run_time_cond {
-                2u8 => self.visit(e.lhs()),
-                1u8 => if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); },
-                _ => {
-                    self.visit(e.cond());
-                    self.visit(e.lhs());
-                    if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); }
-                }
+                2u8 => return self.visit(e.lhs()),
+                1u8 => return if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); },
+                _ => {}
             },
-            IrTag::While => {
-                self.visit(e.cond());
-                self.visit(e.lhs());
-                if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); }
-            }
-            IrTag::Binary, IrTag::Assign, IrTag::Index => {
-                self.visit(e.lhs());
-                self.visit(e.rhs());
-            }
-            IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Transmute, IrTag::Switch => {
-                self.visit(e.lhs());
-                if e.tag == IrTag::Switch {
-                    for arm in e.switch_arms() {
-                        self.visit(arm.body);
-                    }
-                }
-            }
-            IrTag::Ref, IrTag::Deref, IrTag::Defer, IrTag::Loop, IrTag::StackAlloc =>
-                self.visit(e._data.single.lhs),
-            IrTag::Let, IrTag::Return, IrTag::Break => if e.opt_expr().is_some() { self.visit(e.opt_expr().unwrap()); },
-            IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::LlvmIntrinsic,
-            IrTag::AtomicOp, IrTag::ConstPanic, IrTag::ConstWarning, IrTag::ConstNote => self.visit_all(e.items()),
-            // Literals, locals, globals (all compiled), and the like.
             _ => {}
         }
-    }
-
-    fn visit_all(self: &mut Reachability, items: &[&IrExpr]) {
-        for item in items {
-            self.visit(item);
+        for child in e.children() {
+            self.visit(child);
         }
     }
 }

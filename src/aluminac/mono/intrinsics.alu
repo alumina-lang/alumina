@@ -6,6 +6,7 @@
 use mono::*;
 use mono::lower::Mono;
 use ast::*;
+use ir::*;
 use scope::*;
 use diagnostics::DiagnosticContext;
 use layout::{compute_type_size, compute_type_align};
@@ -79,7 +80,7 @@ fn lower_const_eval(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrEx
         if !outcome.note_msg.is_empty() {
             m.emit_diag(diagnostics::CodeDiagnostic::generic_note(expr.span, outcome.note_msg));
         }
-        if outcome.value.is_some() && lower::Mono::contains_pointer(outcome.value.unwrap()) {
+        if outcome.value.is_some() && outcome.value.unwrap().contains_pointer() {
             m.adopt_baked(outcome.heap);
             if m.only_baked_pointers(outcome.value.unwrap()) {
                 return m.constvalue_to_ir(outcome.value.unwrap(), ir_expr.ty);

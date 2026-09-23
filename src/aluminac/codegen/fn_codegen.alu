@@ -5,6 +5,7 @@
 use codegen::*;
 use llvm::*;
 use ast::*;
+use ir::*;
 use aluminac_common::arena::Arena;
 use diagnostics::DiagnosticContext;
 use std::collections::HashMap;
@@ -349,27 +350,6 @@ impl FnCodegen {
         }
     }
 
-    // Helpers: access fields through function parameters to avoid chained field
-    // access bug in bootstrap binary. The stage 0 (Rust alumina-boot) generates
-    // wrong GEP indices when accessing fields through a pointer loaded from
-    // another struct field (all indices become 0). By routing through function
-    // parameters, each GEP correctly uses the parameter pointer.
-    fn expr_ty(e: &IrExpr) -> &IrTy {
-        e.ty
-    }
-
-    fn expr_ir_ty(e: &IrExpr) -> &IrTy {
-        e.ir_ty()
-    }
-
-    fn irty_inner(ty: &IrTy) -> &IrTy {
-        ty.inner()
-    }
-
-    fn call_target_name(t: &IrCallTarget) -> &[u8] {
-        t.fn_ref.mangled_name
-    }
-
     fn gen_expr(self: &mut FnCodegen, expr: &IrExpr) -> LLVMValueRef {
         // Safety: check for null/invalid expression pointer
         let expr_ptr = expr as &void as usize;
@@ -520,7 +500,7 @@ impl FnCodegen {
         }
         IrTag::FieldAccess => {
             // Mono inserts explicit Deref nodes, so LHS is always a struct/tuple value
-            let lhs_ir_ty = FnCodegen::expr_ty(expr.lhs());
+            let lhs_ir_ty = expr.lhs().ty;
             let obj_ty = self.ctx.llvm_type(lhs_ir_ty);
             let result_ty = self.ctx.llvm_type(expr.ty);
 
@@ -576,7 +556,7 @@ impl FnCodegen {
             }
 
             // Check if base is a pointer or array
-            let lhs_ty = FnCodegen::expr_ty(expr.lhs());
+            let lhs_ty = expr.lhs().ty;
             if lhs_ty.tag == IrTyTag::Array {
                 let base_ptr = self.gen_lvalue(expr.lhs());
                 let arr_ty = self.ctx.llvm_type(lhs_ty);
@@ -1033,7 +1013,7 @@ impl FnCodegen {
                 let ord = self.atomic_ord(items[2]);
                 let inst = LLVMBuildStore(self.ctx.builder, val, ptr);
                 LLVMSetOrdering(inst, ord);
-                LLVMSetAlignment(inst, compute_type_size(FnCodegen::expr_ty(items[1]), self.ctx.pointer_size as usize) as u32);
+                LLVMSetAlignment(inst, compute_type_size(items[1].ty, self.ctx.pointer_size as usize) as u32);
                 LLVMGetUndef(self.ctx.void_type)
             } else if op == "cmpxchg" {
                 // cmpxchg(ptr, &mut expected, desired, weak, succ, fail) -> bool
@@ -1044,7 +1024,7 @@ impl FnCodegen {
                 // __atomic_compare_exchange_n in/out semantics).
                 let ptr = self.gen_expr(items[0]);
                 let exp_ptr = self.gen_expr(items[1]);  // &mut expected
-                let exp_ty = self.ctx.llvm_type(FnCodegen::expr_ty(items[2]));
+                let exp_ty = self.ctx.llvm_type(items[2].ty);
                 let exp = LLVMBuildLoad2(self.ctx.builder, exp_ty, exp_ptr, self.temp_cname());
                 let des = self.gen_expr(items[2]);
                 let succ = self.atomic_ord(items[4]);
@@ -1138,13 +1118,13 @@ impl FnCodegen {
             self.gen_expr(expr.lhs())
         }
         IrTag::FieldAccess => {
-            let lhs_ir_ty = FnCodegen::expr_ty(expr.lhs());
+            let lhs_ir_ty = expr.lhs().ty;
             let obj_ty = self.ctx.llvm_type(lhs_ir_ty);
             let obj_kind = LLVMGetTypeKind(obj_ty);
 
             // If LHS is a pointer type, auto-deref to get the struct
             if obj_kind == LLVMTypeKind::Pointer || lhs_ir_ty.tag == IrTyTag::Pointer {
-                let pointee_ir_ty = FnCodegen::irty_inner(lhs_ir_ty);
+                let pointee_ir_ty = lhs_ir_ty.inner();
                 let pointee_ty = self.ctx.llvm_type(pointee_ir_ty);
                 if LLVMGetTypeKind(pointee_ty) == LLVMTypeKind::Struct {
                     let ptr_val = self.gen_expr(expr.lhs());
@@ -1201,7 +1181,7 @@ impl FnCodegen {
             } else {
                 index_val
             };
-            let lhs_ty = FnCodegen::expr_ty(expr.lhs());
+            let lhs_ty = expr.lhs().ty;
             if lhs_ty.tag == IrTyTag::Array {
                 let base_ptr = self.gen_lvalue(expr.lhs());
                 let arr_ty = self.ctx.llvm_type(lhs_ty);
@@ -1214,7 +1194,7 @@ impl FnCodegen {
                 )
             } else if lhs_ty.tag == IrTyTag::Pointer {
                 let base_val = self.gen_expr(expr.lhs());
-                let elem_ty = self.ctx.llvm_type(FnCodegen::irty_inner(lhs_ty));
+                let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
                 // Protect against void element type
                 let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
                 let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
@@ -1227,7 +1207,7 @@ impl FnCodegen {
                 // Slice lvalue indexing: extract data pointer, then GEP
                 let base_val = self.gen_expr(expr.lhs());
                 let slice_llvm = self.ctx.llvm_type(lhs_ty);
-                let elem_ty = self.ctx.llvm_type(FnCodegen::irty_inner(lhs_ty));
+                let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
                 // Protect against void element type
                 let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
                 let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
@@ -1605,20 +1585,20 @@ impl FnCodegen {
 
     fn gen_call(self: &mut FnCodegen, target: &IrCallTarget, args: &[&IrExpr], result_ty: &IrTy) -> LLVMValueRef {
         let callee: LLVMValueRef = if target.tag == CallKind::Direct {
-            let mangled = FnCodegen::call_target_name(target);
+            let mangled = target.fn_ref.mangled_name;
             let key = mangled;
             let existing = self.ctx.fn_decls.get(&key);
             if existing.is_some() {
                 existing.unwrap()
             } else {
                 // Auto-declare common libc functions if not yet declared
-                let fn_val = self.ctx.auto_declare_libc(FnCodegen::call_target_name(target));
+                let fn_val = self.ctx.auto_declare_libc(target.fn_ref.mangled_name);
                 if (fn_val as usize) != 0usize {
                     fn_val
                 } else {
                     // (Every function called is declared: this is a bug.)
                     self.internal_error(diagnostics::CodeDiagnostic::codegen_missing_function(
-                        Span::empty(), FnCodegen::call_target_name(target)));
+                        Span::empty(), target.fn_ref.mangled_name));
                     return LLVMGetUndef(self.ctx.llvm_type(result_ty));
                 }
             }
@@ -1642,7 +1622,7 @@ impl FnCodegen {
         let sret_ty: LLVMTypeRef = std::mem::zeroed::<LLVMTypeRef>();
         let sret_buf: LLVMValueRef = std::mem::zeroed::<LLVMValueRef>();
         if target.tag == CallKind::Direct {
-            let mangled = FnCodegen::call_target_name(target);
+            let mangled = target.fn_ref.mangled_name;
             let h = mangled;
             let s = self.ctx.extern_c_sret_fns.get(&h);
             if s.is_some() {
@@ -1686,7 +1666,7 @@ impl FnCodegen {
             // Cast each argument to match the declared parameter type
             let num_params = LLVMCountParamTypes(declared_fn_ty);
             // Check if this is an extern C function (for byval handling)
-            let callee_key = FnCodegen::call_target_name(target);
+            let callee_key = target.fn_ref.mangled_name;
             let is_extern_c_call = self.ctx.extern_c_fns.get(&callee_key).is_some();
 
             if num_params > 0u32 {
@@ -1832,7 +1812,7 @@ impl FnCodegen {
         // indirect-arg lowering; aarch64 (and other targets) get the right
         // indirect ABI from the bare pointer parameter alone.
         if target.tag == CallKind::Direct && self.ctx.uses_byval_attr() {
-            let callee_key2 = FnCodegen::call_target_name(target);
+            let callee_key2 = target.fn_ref.mangled_name;
             if self.ctx.extern_c_fns.get(&callee_key2).is_some() {
                 let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
                 for i in 0usize..args.len() {
