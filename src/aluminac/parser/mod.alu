@@ -468,12 +468,6 @@ impl ParseContext {
         self.macro_args.free();
         self.items.free();
     }
-    fn collect_macro_entries(self: &mut ParseContext, ids: &mut Vector<usize>, entries: &mut Vector<MacroEntry>) {
-        for pair in self.macro_defs {
-            ids.push(pair.0);
-            entries.push(pair.1);
-        }
-    }
 }
 
 // ============================================================
@@ -760,38 +754,27 @@ fn collect_macros(ctx: &mut ParseContext) {
     p2.process_macros();
 }
 
+/// Every file sees the macros of all files (by id, and by name as a
+/// fallback; the first file's wins for a name defined in several).
 fn share_macros(contexts: &mut [ParseContext]) {
-    // Collect all macro ids+entries from all contexts
-    let all_ids: Vector<usize> = Vector::new();
-    let all_entries: Vector<MacroEntry> = Vector::new();
-    defer all_ids.free();
-    defer all_entries.free();
-
-    // Also collect name->id mappings for fallback
-    let all_names: Vector<&[u8]> = Vector::new();
-    let all_name_ids: Vector<usize> = Vector::new();
-    defer all_names.free();
-    defer all_name_ids.free();
-
-    for i in 0usize..contexts.len() {
-        contexts[i].collect_macro_entries(&all_ids, &all_entries);
-        for pair in contexts[i].macro_name_to_id {
-            all_names.push(pair.0);
-            all_name_ids.push(pair.1);
+    let defs: HashMap<usize, MacroEntry> = HashMap::new();
+    defer defs.free();
+    let names: HashMap<&[u8], usize> = HashMap::new();
+    defer names.free();
+    for ctx in contexts.iter_ref() {
+        for pair in ctx.macro_defs {
+            if !defs.contains(&pair.0) { defs.insert(pair.0, pair.1); }
+        }
+        for pair in ctx.macro_name_to_id {
+            if !names.contains(&pair.0) { names.insert(pair.0, pair.1); }
         }
     }
-
-    // Inject all macros into every context
-    for i in 0usize..contexts.len() {
-        for j in 0usize..all_ids.len() {
-            if contexts[i].macro_defs.get(&all_ids[j]).is_none() {
-                contexts[i].macro_defs.insert(all_ids[j], all_entries[j]);
-            }
+    for ctx in contexts.iter_mut() {
+        for pair in defs {
+            if !ctx.macro_defs.contains(&pair.0) { ctx.macro_defs.insert(pair.0, pair.1); }
         }
-        for j in 0usize..all_names.len() {
-            if contexts[i].macro_name_to_id.get(&all_names[j]).is_none() {
-                contexts[i].macro_name_to_id.insert(all_names[j], all_name_ids[j]);
-            }
+        for pair in names {
+            if !ctx.macro_name_to_id.contains(&pair.0) { ctx.macro_name_to_id.insert(pair.0, pair.1); }
         }
     }
 }
