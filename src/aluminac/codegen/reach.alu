@@ -16,6 +16,8 @@ struct Reachability {
     reachable: HashSet<&[u8]>,
     /// Functions reached whose bodies are yet to be walked.
     pending: Vector<usize>,
+    /// The functions whose address is taken (not only called directly).
+    address_taken: HashSet<&[u8]>,
     diag: &mut diagnostics::DiagnosticContext,
 }
 
@@ -27,6 +29,7 @@ impl Reachability {
             indices: HashMap::new(),
             reachable: HashSet::new(),
             pending: Vector::new(),
+            address_taken: HashSet::new(),
             diag: diag,
         };
         for (i, f) in unit.functions.iter_ref().enumerate() {
@@ -55,6 +58,7 @@ impl Reachability {
         self.indices.free();
         self.reachable.free();
         self.pending.free();
+        self.address_taken.free();
     }
 
     fn contains(self: &Reachability, f: &IrFunction) -> bool {
@@ -100,7 +104,10 @@ impl Reachability {
                     }
                 }
             }
-            IrTag::FnRef => self.reach(e.fn_ref().mangled_name),
+            IrTag::FnRef => {
+                self.reach(e.fn_ref().mangled_name);
+                self.address_taken.insert(e.fn_ref().mangled_name);
+            }
             IrTag::ConstAlloc, IrTag::ConstFree, IrTag::ConstBake => self.const_only(e),
             // (Only the branch taken, if known when compiling.)
             IrTag::If => switch e._data.if_data.run_time_cond {

@@ -49,6 +49,17 @@ for src in "$TESTDIR"/*.alu; do
         extra_flags="${flags_line#// ALUMINAC_FLAGS:}"
     fi
 
+    # A C helper (c/<name>.c), compiled and linked in.
+    if [ -f "$TESTDIR/c/$name.c" ]; then
+        if ! ${CC:-cc} -c -o "$out.helper.o" "$TESTDIR/c/$name.c"; then
+            echo "FAIL (C helper)"
+            FAIL=$((FAIL + 1))
+            FAILURES="$FAILURES\n  $name: C helper failed to compile"
+            continue
+        fi
+        extra_flags="$extra_flags --link-args $out.helper.o"
+    fi
+
     # Extract expected exit code (// EXPECTED_EXIT: N), default 0
     expected_rc=0
     exit_line=$(grep -m1 '^// EXPECTED_EXIT:' "$src" || true)
@@ -108,7 +119,7 @@ for src in "$TESTDIR"/*.alu; do
     # Run
     "$out"
     rc=$?
-    rm -f "$out"
+    rm -f "$out" "$out.helper.o"
 
     if [ "$rc" -eq "$expected_rc" ]; then
         echo "ok"

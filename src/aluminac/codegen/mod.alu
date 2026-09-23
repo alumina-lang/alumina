@@ -38,13 +38,11 @@ struct CodegenCtx {
     fn_decls: HashMap<&[u8], LLVMValueRef>,
 
     // Set of extern C function hashes (for byval handling at call sites)
-    extern_c_fns: HashMap<&[u8], bool>,
-
-    // Extern C functions that use the sret return convention; maps the
-    // function name key to its (original) struct return type so call sites
-    // can alloca a buffer of the right type and reload the value after the
-    // call. Populated when the function is declared (see `declare_function`).
-    extern_c_sret_fns: HashMap<&[u8], LLVMTypeRef>,
+    /// The signature of each function declared (see `codegen::abi`).
+    fn_sigs: HashMap<&[u8], codegen::abi::Signature>,
+    /// The functions (besides `extern "C"` and exported ones) that take the
+    /// C calling convention: those whose address is taken.
+    address_taken: std::collections::HashSet<&[u8]>,
 
     // Global declarations
     global_decls: HashMap<&[u8], LLVMValueRef>,
@@ -229,8 +227,8 @@ impl CodegenCtx {
             member_indices_cache: HashMap::new(),
             tuple_member_indices: HashMap::new(),
             fn_decls: HashMap::new(),
-            extern_c_fns: HashMap::new(),
-            extern_c_sret_fns: HashMap::new(),
+            fn_sigs: HashMap::new(),
+            address_taken: std::collections::HashSet::new(),
             global_decls: HashMap::new(),
             string_cache: HashMap::new(),
             string_counter: 0,
@@ -292,19 +290,9 @@ impl CodegenCtx {
     fn llvm_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
         switch ty.tag {
             IrTyTag::Builtin => self.builtin_to_llvm(ty.builtin()),
-            IrTyTag::Pointer => {
-                let inner_ptr = ty.inner() as &void as usize;
-                if inner_ptr == 0 || inner_ptr < 4096usize {
-                    return self.ptr_type;
-                }
-                let inner_ty = self.llvm_type(ty.inner());
-                // LLVM doesn't support void*, use i8* instead
-                if LLVMGetTypeKind(inner_ty) == LLVMTypeKind::Void {
-                    self.ptr_type
-                } else {
-                    LLVMPointerType(inner_ty, 0)
-                }
-            }
+            // (Pointers are opaque: the pointee's type is not built here,
+            // which could query the layout of a struct still being built.)
+            IrTyTag::Pointer => self.ptr_type,
             IrTyTag::Array => {
                 // A zero-length array is a zero-length member with the element's
                 // alignment (not the element type itself, which may be recursive).
@@ -333,16 +321,9 @@ impl CodegenCtx {
             IrTyTag::Slice => {
                 // Slice fat pointer: { data_ptr, usize }
                 let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
-                let inner_llvm = self.llvm_type(ty.inner());
-                let safe_inner = if LLVMGetTypeKind(inner_llvm) == LLVMTypeKind::Void { self.i8_type } else { inner_llvm };
-                llvm_elems[0] = LLVMPointerType(safe_inner, 0);
+                llvm_elems[0] = self.ptr_type;
                 llvm_elems[1] = self.builtin_to_llvm(BuiltinType::USize);
-                LLVMStructTypeInContext(
-                    self.context,
-                    &llvm_elems[0],
-                    2u32,
-                    0i32
-                )
+                LLVMStructTypeInContext(self.context, &llvm_elems[0], 2u32, 0i32)
             }
             IrTyTag::FnPointer => {
                 // Function pointers are just i8* in LLVM
@@ -553,23 +534,6 @@ impl CodegenCtx {
         }
     }
 
-    /// Check if a param type needs indirect passing for extern C ABI.
-    /// Both x86_64 SysV and aarch64 PCS pass composite types > 16 bytes
-    /// indirectly: caller copies the struct to its stack frame and passes a
-    /// pointer to the callee. At the LLVM IR level we therefore lower the
-    /// parameter to a pointer and alloca+store the value at the call site.
-    /// The platform-specific `byval` attribute is only added on x86_64 (see
-    /// `uses_byval_attr`).
-    fn needs_byval(self: &mut CodegenCtx, llvm_ty: LLVMTypeRef) -> bool {
-        let kind = LLVMGetTypeKind(llvm_ty);
-        if kind == LLVMTypeKind::Struct {
-            let size = LLVMStoreSizeOfType(self.target_data, llvm_ty);
-            size > 16
-        } else {
-            false
-        }
-    }
-
     /// Whether to emit the LLVM `byval` parameter attribute alongside the
     /// indirect-arg lowering. This is the x86_64-specific lowering used by
     /// clang; on aarch64 the same indirect ABI is achieved without the
@@ -577,83 +541,6 @@ impl CodegenCtx {
     /// there produces the wrong call sequence against C callees.
     fn uses_byval_attr(self: &CodegenCtx) -> bool {
         self.target.arch == Arch::X86_64
-    }
-
-    /// Whether an extern C return type needs explicit sret lowering.
-    ///
-    /// LLVM's x86_64 backend implicitly converts a struct-typed return into
-    /// the SysV sret convention, but the AArch64 backend tries to return the
-    /// struct in registers (w0-w3, x4, x5 for a 32-byte struct), which does
-    /// not match the AArch64 PCS that requires the caller to pass a hidden
-    /// buffer pointer in x8 for composite returns > 16 bytes. So on aarch64
-    /// we materialize the sret convention explicitly: the LLVM function takes
-    /// `void` and a leading `ptr sret` parameter, and call sites alloca a
-    /// buffer and reload the value after the call.
-    fn needs_sret(self: &mut CodegenCtx, llvm_ret_ty: LLVMTypeRef) -> bool {
-        if self.target.arch == Arch::X86_64 {
-            return false;
-        }
-        if LLVMGetTypeKind(llvm_ret_ty) != LLVMTypeKind::Struct {
-            return false;
-        }
-        LLVMStoreSizeOfType(self.target_data, llvm_ret_ty) > 16
-    }
-
-    fn llvm_fn_type(self: &mut CodegenCtx, ir_fn: &IrFunction) -> LLVMTypeRef {
-        self.llvm_fn_type_ext(ir_fn, false)
-    }
-
-    fn llvm_fn_type_ext(self: &mut CodegenCtx, ir_fn: &IrFunction, is_extern_c: bool) -> LLVMTypeRef {
-        let ret_type = self.llvm_type(ir_fn.return_type);
-        let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
-        let use_sret = is_extern_c && !is_void_ret && self.needs_sret(ret_type);
-
-        let extra = if use_sret { 1usize } else { 0usize };
-        let total_params = ir_fn.params.len() + extra;
-
-        let param_types = if total_params > 0 {
-            self.arena.alloc_slice::<LLVMTypeRef>(total_params)
-        } else {
-            std::mem::zeroed::<&mut [LLVMTypeRef]>()
-        };
-        if use_sret {
-            param_types[0] = LLVMPointerType(ret_type, 0u32);
-        }
-        for (i, param) in ir_fn.params.iter().enumerate() {
-            let pty = self.llvm_type(param.ty);
-            // LLVM doesn't allow void as a param type
-            if LLVMGetTypeKind(pty) == LLVMTypeKind::Void {
-                param_types[i + extra] = self.i8_type;
-            } else if is_extern_c && self.needs_byval(pty) {
-                // For extern C, large structs are passed by pointer with byval attribute
-                param_types[i + extra] = LLVMPointerType(pty, 0u32);
-            } else {
-                param_types[i + extra] = pty;
-            }
-        }
-
-        // If return type is void-ish or sret-lowered, use LLVM void
-        let llvm_ret = if is_void_ret || use_sret {
-            self.void_type
-        } else {
-            ret_type
-        };
-
-        if total_params > 0 {
-            LLVMFunctionType(
-                llvm_ret,
-                &param_types[0],
-                total_params as u32,
-                if ir_fn.is_variadic { 1i32 } else { 0i32 }
-            )
-        } else {
-            LLVMFunctionType(
-                llvm_ret,
-                null,
-                0u32,
-                if ir_fn.is_variadic { 1i32 } else { 0i32 }
-            )
-        }
     }
 
     fn mangle_struct_name(self: &mut CodegenCtx, name: &[u8], key: usize) -> &[u8] {
@@ -886,41 +773,18 @@ impl CodegenCtx {
             return existing.unwrap();
         }
 
-        // Use extern C ABI handling for large struct params (byval)
-        let is_extern_c = ir_fn.abi.is_some() && ir_fn.body.is_none();
-        let fn_type = self.llvm_fn_type_ext(ir_fn, is_extern_c);
-        let name = self.symbol_name(ir_fn.mangled_name, ir_fn.attributes);
-        let llvm_fn = LLVMAddFunction(self.module, &name[0] as &libc::c_char, fn_type);
-
-        // Mark for call-site handling, and on x86_64 attach the `byval`
-        // parameter attribute that the SysV ABI lowering needs. On aarch64 the
-        // pointer parameter alone gives the right indirect-arg ABI.
-        if is_extern_c {
-            self.extern_c_fns.insert(key, true);
-
-            let ret_ty = self.llvm_type(ir_fn.return_type);
-            let is_void_ret = ir_fn.return_type.is_void() || ir_fn.return_type.is_never();
-            let use_sret = !is_void_ret && self.needs_sret(ret_ty);
-            let extra = if use_sret { 1u32 } else { 0u32 };
-
-            if use_sret {
-                self.extern_c_sret_fns.insert(key, ret_ty);
-                let sret_kind = LLVMGetEnumAttributeKindForName(&"sret\0"[0] as &libc::c_char, 4usize);
-                let sret_attr = LLVMCreateTypeAttribute(self.context, sret_kind, ret_ty);
-                LLVMAddAttributeAtIndex(llvm_fn, 1u32, sret_attr);
-            }
-
-            if self.uses_byval_attr() {
-                let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
-                for (i, param) in ir_fn.params.iter().enumerate() {
-                    let orig_ty = self.llvm_type(param.ty);
-                    if self.needs_byval(orig_ty) {
-                        let byval_attr = LLVMCreateTypeAttribute(self.context, byval_kind, orig_ty);
-                        LLVMAddAttributeAtIndex(llvm_fn, (i as u32) + 1u32 + extra, byval_attr);
-                    }
-                }
-            }
+        // (C calls it, or may through a pointer: the C convention.)
+        let c_abi = ir_fn.abi.is_some() || self.address_taken.contains(&key)
+            || ir_fn.attributes.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Export || a.tag == AttrTag::NoMangle });
+        let param_tys = self.arena.alloc_slice::<&IrTy>(ir_fn.params.len());
+        for (i, param) in ir_fn.params.iter().enumerate() {
+            param_tys[i] = param.ty;
         }
+        let sig = codegen::abi::signature(self, param_tys, ir_fn.return_type, ir_fn.is_variadic, c_abi);
+        self.fn_sigs.insert(key, sig);
+        let name = self.symbol_name(ir_fn.mangled_name, ir_fn.attributes);
+        let llvm_fn = LLVMAddFunction(self.module, &name[0] as &libc::c_char, sig.fn_type);
+        self.add_abi_attributes(llvm_fn, &sig, false);
 
         // Set linkage
         if ir_fn.body.is_none() {
@@ -977,13 +841,35 @@ impl CodegenCtx {
 
         // Name parameters
         for (i, ir_param) in ir_fn.params.iter().enumerate() {
-            let param = LLVMGetParam(llvm_fn, i as u32);
+            let param = LLVMGetParam(llvm_fn, sig.param_index(i));
             let pname = self.null_terminate(ir_param.name);
             LLVMSetValueName2(param, &pname[0] as &libc::c_char, ir_param.name.len());
         }
 
         self.fn_decls.insert(key, llvm_fn);
         llvm_fn
+    }
+
+    /// The attributes a signature's parameters take: `sret` for the result's
+    /// buffer, and on x86_64 `byval` for aggregates passed through memory (on
+    /// AArch64 a plain pointer is the convention). On a function, or with
+    /// `call_site` on a call.
+    fn add_abi_attributes(self: &mut CodegenCtx, value: LLVMValueRef, sig: &codegen::abi::Signature, call_site: bool) {
+        if sig.sret {
+            let kind = LLVMGetEnumAttributeKindForName(&"sret\0"[0] as &libc::c_char, 4usize);
+            let attr = LLVMCreateTypeAttribute(self.context, kind, sig.ret_original);
+            if call_site { LLVMAddCallSiteAttribute(value, 1u32, attr); } else { LLVMAddAttributeAtIndex(value, 1u32, attr); }
+        }
+        if self.uses_byval_attr() {
+            let kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
+            for (i, p) in sig.params.iter().enumerate() {
+                if p.how == codegen::abi::Pass::Indirect {
+                    let attr = LLVMCreateTypeAttribute(self.context, kind, sig.originals[i]);
+                    let index = sig.param_index(i) + 1u32;
+                    if call_site { LLVMAddCallSiteAttribute(value, index, attr); } else { LLVMAddAttributeAtIndex(value, index, attr); }
+                }
+            }
+        }
     }
 
     fn add_fn_attribute(self: &mut CodegenCtx, func: LLVMValueRef, attr_name: &[u8]) {
@@ -1617,6 +1503,8 @@ impl CodegenCtx {
         self.type_cache.free();
         self.struct_type_cache.free();
         self.member_indices_cache.free();
+        self.fn_sigs.free();
+        self.address_taken.free();
         self.tuple_member_indices.free();
         self.fn_decls.free();
         self.global_decls.free();
@@ -1668,6 +1556,9 @@ fn generate(
     // Only the functions the program uses are compiled.
     let reachable = codegen::reach::Reachability::of(unit, diag);
     defer reachable.free();
+    for name in reachable.address_taken.iter() {
+        ctx.address_taken.insert(name);
+    }
 
     // Phase 2: Declare all functions (skip intrinsics)
     for fn_decl in unit.functions.iter_ref() {
@@ -1847,3 +1738,4 @@ impl StructKey {
 
     mixin std::cmp::Equatable<StructKey>;
 }
+

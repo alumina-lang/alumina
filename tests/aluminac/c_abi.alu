@@ -1,0 +1,239 @@
+// Calls between Alumina and C (c/c_abi.c) with aggregates of the shapes
+// the C calling convention passes differently (in integer or floating-
+// point registers, coerced, through memory): as arguments and results,
+// both ways (callbacks), directly and through function pointers.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+
+extern "C" fn c_data() -> &u8;
+struct Pair32 { a: u32, b: u32 }
+struct Small { a: u16, b: u8 }
+struct Bytes3 { a: u8, b: u8, c: u8 }
+struct MixF { a: f32, b: i32 }
+struct DI { a: f64, b: i32 }
+struct IB { a: i64, b: i8 }
+struct BD { a: u8, b: f64 }
+struct F3 { a: f32, b: f32, c: f32 }
+struct D4 { a: f64, b: f64, c: f64, d: f64 }
+struct W2 { a: u64, b: u64 }
+struct PL { a: &u8, b: usize }
+struct Big { a: u64, b: u32, c: u64, d: u8, e: u64 }
+
+extern "C" fn c_make_Pair32(k: i32) -> Pair32;
+extern "C" fn c_check_Pair32(x: Pair32, k: i32, y: Pair32) -> i32;
+extern "C" fn c_callback_Pair32(f: fn(Pair32, i32, Pair32) -> Pair32) -> i32;
+fn callback_Pair32(x: Pair32, k: i32, y: Pair32) -> Pair32 {
+    assert!(k == 11 && x.a == 36u32 && x.b == 39u32 && y.a == 43u32 && y.b == 46u32);
+    Pair32 { a: 50u32, b: 53u32 }
+}
+
+extern "C" fn c_make_Small(k: i32) -> Small;
+extern "C" fn c_check_Small(x: Small, k: i32, y: Small) -> i32;
+extern "C" fn c_callback_Small(f: fn(Small, i32, Small) -> Small) -> i32;
+fn callback_Small(x: Small, k: i32, y: Small) -> Small {
+    assert!(k == 11 && x.a == 36u16 && x.b == 39u8 && y.a == 43u16 && y.b == 46u8);
+    Small { a: 50u16, b: 53u8 }
+}
+
+extern "C" fn c_make_Bytes3(k: i32) -> Bytes3;
+extern "C" fn c_check_Bytes3(x: Bytes3, k: i32, y: Bytes3) -> i32;
+extern "C" fn c_callback_Bytes3(f: fn(Bytes3, i32, Bytes3) -> Bytes3) -> i32;
+fn callback_Bytes3(x: Bytes3, k: i32, y: Bytes3) -> Bytes3 {
+    assert!(k == 11 && x.a == 36u8 && x.b == 39u8 && x.c == 42u8 && y.a == 43u8 && y.b == 46u8 && y.c == 49u8);
+    Bytes3 { a: 50u8, b: 53u8, c: 56u8 }
+}
+
+extern "C" fn c_make_MixF(k: i32) -> MixF;
+extern "C" fn c_check_MixF(x: MixF, k: i32, y: MixF) -> i32;
+extern "C" fn c_callback_MixF(f: fn(MixF, i32, MixF) -> MixF) -> i32;
+fn callback_MixF(x: MixF, k: i32, y: MixF) -> MixF {
+    assert!(k == 11 && x.a == 36.5f32 && x.b == 39i32 && y.a == 43.5f32 && y.b == 46i32);
+    MixF { a: 50.5f32, b: 53i32 }
+}
+
+extern "C" fn c_make_DI(k: i32) -> DI;
+extern "C" fn c_check_DI(x: DI, k: i32, y: DI) -> i32;
+extern "C" fn c_callback_DI(f: fn(DI, i32, DI) -> DI) -> i32;
+fn callback_DI(x: DI, k: i32, y: DI) -> DI {
+    assert!(k == 11 && x.a == 36.5f64 && x.b == 39i32 && y.a == 43.5f64 && y.b == 46i32);
+    DI { a: 50.5f64, b: 53i32 }
+}
+
+extern "C" fn c_make_IB(k: i32) -> IB;
+extern "C" fn c_check_IB(x: IB, k: i32, y: IB) -> i32;
+extern "C" fn c_callback_IB(f: fn(IB, i32, IB) -> IB) -> i32;
+fn callback_IB(x: IB, k: i32, y: IB) -> IB {
+    assert!(k == 11 && x.a == 36i64 && x.b == 39i8 && y.a == 43i64 && y.b == 46i8);
+    IB { a: 50i64, b: 53i8 }
+}
+
+extern "C" fn c_make_BD(k: i32) -> BD;
+extern "C" fn c_check_BD(x: BD, k: i32, y: BD) -> i32;
+extern "C" fn c_callback_BD(f: fn(BD, i32, BD) -> BD) -> i32;
+fn callback_BD(x: BD, k: i32, y: BD) -> BD {
+    assert!(k == 11 && x.a == 36u8 && x.b == 39.5f64 && y.a == 43u8 && y.b == 46.5f64);
+    BD { a: 50u8, b: 53.5f64 }
+}
+
+extern "C" fn c_make_F3(k: i32) -> F3;
+extern "C" fn c_check_F3(x: F3, k: i32, y: F3) -> i32;
+extern "C" fn c_callback_F3(f: fn(F3, i32, F3) -> F3) -> i32;
+fn callback_F3(x: F3, k: i32, y: F3) -> F3 {
+    assert!(k == 11 && x.a == 36.5f32 && x.b == 39.5f32 && x.c == 42.5f32 && y.a == 43.5f32 && y.b == 46.5f32 && y.c == 49.5f32);
+    F3 { a: 50.5f32, b: 53.5f32, c: 56.5f32 }
+}
+
+extern "C" fn c_make_D4(k: i32) -> D4;
+extern "C" fn c_check_D4(x: D4, k: i32, y: D4) -> i32;
+extern "C" fn c_callback_D4(f: fn(D4, i32, D4) -> D4) -> i32;
+fn callback_D4(x: D4, k: i32, y: D4) -> D4 {
+    assert!(k == 11 && x.a == 36.5f64 && x.b == 39.5f64 && x.c == 42.5f64 && x.d == 45.5f64 && y.a == 43.5f64 && y.b == 46.5f64 && y.c == 49.5f64 && y.d == 52.5f64);
+    D4 { a: 50.5f64, b: 53.5f64, c: 56.5f64, d: 59.5f64 }
+}
+
+extern "C" fn c_make_W2(k: i32) -> W2;
+extern "C" fn c_check_W2(x: W2, k: i32, y: W2) -> i32;
+extern "C" fn c_callback_W2(f: fn(W2, i32, W2) -> W2) -> i32;
+fn callback_W2(x: W2, k: i32, y: W2) -> W2 {
+    assert!(k == 11 && x.a == 36u64 && x.b == 39u64 && y.a == 43u64 && y.b == 46u64);
+    W2 { a: 50u64, b: 53u64 }
+}
+
+extern "C" fn c_make_PL(k: i32) -> PL;
+extern "C" fn c_check_PL(x: PL, k: i32, y: PL) -> i32;
+extern "C" fn c_callback_PL(f: fn(PL, i32, PL) -> PL) -> i32;
+fn callback_PL(x: PL, k: i32, y: PL) -> PL {
+    assert!(k == 11 && x.a == c_data() && x.b == 39usize && y.a == c_data() && y.b == 46usize);
+    PL { a: c_data(), b: 53usize }
+}
+
+extern "C" fn c_make_Big(k: i32) -> Big;
+extern "C" fn c_check_Big(x: Big, k: i32, y: Big) -> i32;
+extern "C" fn c_callback_Big(f: fn(Big, i32, Big) -> Big) -> i32;
+fn callback_Big(x: Big, k: i32, y: Big) -> Big {
+    assert!(k == 11 && x.a == 36u64 && x.b == 39u32 && x.c == 42u64 && x.d == 45u8 && x.e == 48u64 && y.a == 43u64 && y.b == 46u32 && y.c == 49u64 && y.d == 52u8 && y.e == 55u64);
+    Big { a: 50u64, b: 53u32, c: 56u64, d: 59u8, e: 62u64 }
+}
+
+fn main() {
+    let m = c_make_Pair32(5);
+    assert!(m.a == 15u32 && m.b == 18u32);
+    assert!(c_check_Pair32(Pair32 { a: 22u32, b: 25u32 }, 9, Pair32 { a: 29u32, b: 32u32 }) == 1);
+    assert!(c_callback_Pair32(callback_Pair32) == 1);
+    let f: fn(i32) -> Pair32 = c_make_Pair32;
+    let m = f(5);
+    assert!(m.a == 15u32 && m.b == 18u32);
+    let g: fn(Pair32, i32, Pair32) -> Pair32 = callback_Pair32;
+    let r = g(Pair32 { a: 36u32, b: 39u32 }, 11, Pair32 { a: 43u32, b: 46u32 });
+    assert!(r.a == 50u32 && r.b == 53u32);
+    let m = c_make_Small(5);
+    assert!(m.a == 15u16 && m.b == 18u8);
+    assert!(c_check_Small(Small { a: 22u16, b: 25u8 }, 9, Small { a: 29u16, b: 32u8 }) == 1);
+    assert!(c_callback_Small(callback_Small) == 1);
+    let f: fn(i32) -> Small = c_make_Small;
+    let m = f(5);
+    assert!(m.a == 15u16 && m.b == 18u8);
+    let g: fn(Small, i32, Small) -> Small = callback_Small;
+    let r = g(Small { a: 36u16, b: 39u8 }, 11, Small { a: 43u16, b: 46u8 });
+    assert!(r.a == 50u16 && r.b == 53u8);
+    let m = c_make_Bytes3(5);
+    assert!(m.a == 15u8 && m.b == 18u8 && m.c == 21u8);
+    assert!(c_check_Bytes3(Bytes3 { a: 22u8, b: 25u8, c: 28u8 }, 9, Bytes3 { a: 29u8, b: 32u8, c: 35u8 }) == 1);
+    assert!(c_callback_Bytes3(callback_Bytes3) == 1);
+    let f: fn(i32) -> Bytes3 = c_make_Bytes3;
+    let m = f(5);
+    assert!(m.a == 15u8 && m.b == 18u8 && m.c == 21u8);
+    let g: fn(Bytes3, i32, Bytes3) -> Bytes3 = callback_Bytes3;
+    let r = g(Bytes3 { a: 36u8, b: 39u8, c: 42u8 }, 11, Bytes3 { a: 43u8, b: 46u8, c: 49u8 });
+    assert!(r.a == 50u8 && r.b == 53u8 && r.c == 56u8);
+    let m = c_make_MixF(5);
+    assert!(m.a == 15.5f32 && m.b == 18i32);
+    assert!(c_check_MixF(MixF { a: 22.5f32, b: 25i32 }, 9, MixF { a: 29.5f32, b: 32i32 }) == 1);
+    assert!(c_callback_MixF(callback_MixF) == 1);
+    let f: fn(i32) -> MixF = c_make_MixF;
+    let m = f(5);
+    assert!(m.a == 15.5f32 && m.b == 18i32);
+    let g: fn(MixF, i32, MixF) -> MixF = callback_MixF;
+    let r = g(MixF { a: 36.5f32, b: 39i32 }, 11, MixF { a: 43.5f32, b: 46i32 });
+    assert!(r.a == 50.5f32 && r.b == 53i32);
+    let m = c_make_DI(5);
+    assert!(m.a == 15.5f64 && m.b == 18i32);
+    assert!(c_check_DI(DI { a: 22.5f64, b: 25i32 }, 9, DI { a: 29.5f64, b: 32i32 }) == 1);
+    assert!(c_callback_DI(callback_DI) == 1);
+    let f: fn(i32) -> DI = c_make_DI;
+    let m = f(5);
+    assert!(m.a == 15.5f64 && m.b == 18i32);
+    let g: fn(DI, i32, DI) -> DI = callback_DI;
+    let r = g(DI { a: 36.5f64, b: 39i32 }, 11, DI { a: 43.5f64, b: 46i32 });
+    assert!(r.a == 50.5f64 && r.b == 53i32);
+    let m = c_make_IB(5);
+    assert!(m.a == 15i64 && m.b == 18i8);
+    assert!(c_check_IB(IB { a: 22i64, b: 25i8 }, 9, IB { a: 29i64, b: 32i8 }) == 1);
+    assert!(c_callback_IB(callback_IB) == 1);
+    let f: fn(i32) -> IB = c_make_IB;
+    let m = f(5);
+    assert!(m.a == 15i64 && m.b == 18i8);
+    let g: fn(IB, i32, IB) -> IB = callback_IB;
+    let r = g(IB { a: 36i64, b: 39i8 }, 11, IB { a: 43i64, b: 46i8 });
+    assert!(r.a == 50i64 && r.b == 53i8);
+    let m = c_make_BD(5);
+    assert!(m.a == 15u8 && m.b == 18.5f64);
+    assert!(c_check_BD(BD { a: 22u8, b: 25.5f64 }, 9, BD { a: 29u8, b: 32.5f64 }) == 1);
+    assert!(c_callback_BD(callback_BD) == 1);
+    let f: fn(i32) -> BD = c_make_BD;
+    let m = f(5);
+    assert!(m.a == 15u8 && m.b == 18.5f64);
+    let g: fn(BD, i32, BD) -> BD = callback_BD;
+    let r = g(BD { a: 36u8, b: 39.5f64 }, 11, BD { a: 43u8, b: 46.5f64 });
+    assert!(r.a == 50u8 && r.b == 53.5f64);
+    let m = c_make_F3(5);
+    assert!(m.a == 15.5f32 && m.b == 18.5f32 && m.c == 21.5f32);
+    assert!(c_check_F3(F3 { a: 22.5f32, b: 25.5f32, c: 28.5f32 }, 9, F3 { a: 29.5f32, b: 32.5f32, c: 35.5f32 }) == 1);
+    assert!(c_callback_F3(callback_F3) == 1);
+    let f: fn(i32) -> F3 = c_make_F3;
+    let m = f(5);
+    assert!(m.a == 15.5f32 && m.b == 18.5f32 && m.c == 21.5f32);
+    let g: fn(F3, i32, F3) -> F3 = callback_F3;
+    let r = g(F3 { a: 36.5f32, b: 39.5f32, c: 42.5f32 }, 11, F3 { a: 43.5f32, b: 46.5f32, c: 49.5f32 });
+    assert!(r.a == 50.5f32 && r.b == 53.5f32 && r.c == 56.5f32);
+    let m = c_make_D4(5);
+    assert!(m.a == 15.5f64 && m.b == 18.5f64 && m.c == 21.5f64 && m.d == 24.5f64);
+    assert!(c_check_D4(D4 { a: 22.5f64, b: 25.5f64, c: 28.5f64, d: 31.5f64 }, 9, D4 { a: 29.5f64, b: 32.5f64, c: 35.5f64, d: 38.5f64 }) == 1);
+    assert!(c_callback_D4(callback_D4) == 1);
+    let f: fn(i32) -> D4 = c_make_D4;
+    let m = f(5);
+    assert!(m.a == 15.5f64 && m.b == 18.5f64 && m.c == 21.5f64 && m.d == 24.5f64);
+    let g: fn(D4, i32, D4) -> D4 = callback_D4;
+    let r = g(D4 { a: 36.5f64, b: 39.5f64, c: 42.5f64, d: 45.5f64 }, 11, D4 { a: 43.5f64, b: 46.5f64, c: 49.5f64, d: 52.5f64 });
+    assert!(r.a == 50.5f64 && r.b == 53.5f64 && r.c == 56.5f64 && r.d == 59.5f64);
+    let m = c_make_W2(5);
+    assert!(m.a == 15u64 && m.b == 18u64);
+    assert!(c_check_W2(W2 { a: 22u64, b: 25u64 }, 9, W2 { a: 29u64, b: 32u64 }) == 1);
+    assert!(c_callback_W2(callback_W2) == 1);
+    let f: fn(i32) -> W2 = c_make_W2;
+    let m = f(5);
+    assert!(m.a == 15u64 && m.b == 18u64);
+    let g: fn(W2, i32, W2) -> W2 = callback_W2;
+    let r = g(W2 { a: 36u64, b: 39u64 }, 11, W2 { a: 43u64, b: 46u64 });
+    assert!(r.a == 50u64 && r.b == 53u64);
+    let m = c_make_PL(5);
+    assert!(m.a == c_data() && m.b == 18usize);
+    assert!(c_check_PL(PL { a: c_data(), b: 25usize }, 9, PL { a: c_data(), b: 32usize }) == 1);
+    assert!(c_callback_PL(callback_PL) == 1);
+    let f: fn(i32) -> PL = c_make_PL;
+    let m = f(5);
+    assert!(m.a == c_data() && m.b == 18usize);
+    let g: fn(PL, i32, PL) -> PL = callback_PL;
+    let r = g(PL { a: c_data(), b: 39usize }, 11, PL { a: c_data(), b: 46usize });
+    assert!(r.a == c_data() && r.b == 53usize);
+    let m = c_make_Big(5);
+    assert!(m.a == 15u64 && m.b == 18u32 && m.c == 21u64 && m.d == 24u8 && m.e == 27u64);
+    assert!(c_check_Big(Big { a: 22u64, b: 25u32, c: 28u64, d: 31u8, e: 34u64 }, 9, Big { a: 29u64, b: 32u32, c: 35u64, d: 38u8, e: 41u64 }) == 1);
+    assert!(c_callback_Big(callback_Big) == 1);
+    let f: fn(i32) -> Big = c_make_Big;
+    let m = f(5);
+    assert!(m.a == 15u64 && m.b == 18u32 && m.c == 21u64 && m.d == 24u8 && m.e == 27u64);
+    let g: fn(Big, i32, Big) -> Big = callback_Big;
+    let r = g(Big { a: 36u64, b: 39u32, c: 42u64, d: 45u8, e: 48u64 }, 11, Big { a: 43u64, b: 46u32, c: 49u64, d: 52u8, e: 55u64 });
+    assert!(r.a == 50u64 && r.b == 53u32 && r.c == 56u64 && r.d == 59u8 && r.e == 62u64);
+}

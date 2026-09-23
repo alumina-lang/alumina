@@ -75,7 +75,11 @@ for src in "$TESTDIR"/*.alu; do
         continue
     fi
 
-    if ! $CC -o "$bin_out" "$c_out" -lm >/dev/null 2>&1; then
+    helper=""
+    if [ -f "$TESTDIR/c/$name.c" ]; then
+        helper="$TESTDIR/c/$name.c"
+    fi
+    if ! $CC -o "$bin_out" "$c_out" $helper -lm >/dev/null 2>&1; then
         echo "FAIL (C compilation)"
         FAIL=$((FAIL + 1))
         FAILURES="$FAILURES\n  $name: C compilation failed"

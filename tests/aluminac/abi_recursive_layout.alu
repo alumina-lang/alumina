@@ -1,0 +1,41 @@
+// A struct reached, while its type is built, through a slice of a struct
+// that contains it: its size must still be known in full when a function
+// passing it in the C convention (here one whose address is taken) is
+// declared, else it would be passed as if it were smaller.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::option::Option;
+
+struct Value {
+    tag: i32,
+    data: Data,
+}
+
+union Data {
+    bytes: [u8; 32],
+    fields: &[Field],
+}
+
+struct Field {
+    idx: u32,
+    value: Value,
+}
+
+fn make(tag: i32, v: Value) -> Option<Value> {
+    let r = v;
+    r.tag += tag;
+    r.data.bytes[31] += 1;
+    Option::some(r)
+}
+
+fn main() {
+    let v: Value = std::mem::zeroed();
+    v.tag = 1;
+    v.data.bytes[0] = 7;
+    v.data.bytes[31] = 7;
+    let f: fn(i32, Value) -> Option<Value> = make;
+    let r = f(2, v).unwrap();
+    assert_eq!(r.tag, 3);
+    assert_eq!(r.data.bytes[0], 7);
+    assert_eq!(r.data.bytes[31], 8);
+}

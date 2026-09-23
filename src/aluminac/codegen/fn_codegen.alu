@@ -28,12 +28,18 @@ struct FnCodegen {
 
     // Defer stack: stores IR expressions to execute at scope exit
     defer_stack: std::collections::Vector<&IrExpr>,
+    /// Whether deferred code is being generated (whose `return`s, as in
+    /// alumina-boot, run no deferred code again).
+    in_defers: bool,
 
     // Temp counter for naming
     temp_counter: usize,
 
     // Debug info subprogram for this function
     di_subprogram: LLVMMetadataRef,
+
+    /// How the function is called (see `codegen::abi`).
+    sig: codegen::abi::Signature,
 }
 
 impl FnCodegen {
@@ -47,8 +53,10 @@ impl FnCodegen {
             break_bb: Option::none(),
             continue_bb: Option::none(),
             defer_stack: std::collections::Vector::new(),
+            in_defers: false,
             temp_counter: 0,
             di_subprogram: std::mem::zeroed::<LLVMMetadataRef>(),
+            sig: ctx.fn_sigs.get(&ir_fn.mangled_name).unwrap(),
         }
     }
 
@@ -178,7 +186,8 @@ impl FnCodegen {
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &pname[0] as &libc::c_char);
             LLVMSetAlignment(alloca, self.ctx.alignment_of(param.ty));
             if !self.is_void_type(param_ty) {
-                let param_val = LLVMGetParam(self.llvm_fn, i as u32);
+                let passed = LLVMGetParam(self.llvm_fn, self.sig.param_index(i));
+                let param_val = self.from_abi(passed, self.sig.params[i], self.sig.originals[i]);
                 self.safe_store(param_val, alloca);
             }
 
@@ -330,26 +339,86 @@ impl FnCodegen {
             if (terminator as usize) == 0 {
                 // Generate deferred expressions before implicit return
                 self.gen_defers();
-                let ret_ty = self.ctx.llvm_type(self.ir_fn.return_type);
-                let is_void_ret = LLVMGetTypeKind(ret_ty) == LLVMTypeKind::Void;
-                if is_void_ret || self.ir_fn.return_type.is_void() || self.ir_fn.return_type.is_never() {
-                    LLVMBuildRetVoid(self.ctx.builder);
-                } else {
-                    // Ensure return value type matches function return type
-                    let ret_val = self.coerce_value(body_val, ret_ty);
-                    LLVMBuildRet(self.ctx.builder, ret_val);
-                }
+                self.build_return(body_val);
             }
         } else {
             LLVMBuildRetVoid(self.ctx.builder);
         }
     }
 
+    /// Return `value` (of the function's result type), as the signature
+    /// passes it.
+    fn build_return(self: &mut FnCodegen, value: LLVMValueRef) {
+        if self.sig.sret {
+            let v = self.coerce_value(value, self.sig.ret_original);
+            LLVMBuildStore(self.ctx.builder, v, LLVMGetParam(self.llvm_fn, 0u32));
+            LLVMBuildRetVoid(self.ctx.builder);
+        } else if self.sig.ret_void {
+            LLVMBuildRetVoid(self.ctx.builder);
+        } else {
+            let v = self.coerce_value(value, self.sig.ret_original);
+            LLVMBuildRet(self.ctx.builder, self.to_abi(v, self.sig.ret, self.sig.ret_original));
+        }
+    }
+
+    /// A value of LLVM type `original` as `info` passes it.
+    fn to_abi(self: &mut FnCodegen, value: LLVMValueRef, info: codegen::abi::PassInfo, original: LLVMTypeRef) -> LLVMValueRef {
+        switch info.how {
+            codegen::abi::Pass::Direct => value,
+            codegen::abi::Pass::Coerce => self.reinterpret(value, original, info.ty),
+            _ => {
+                // (A copy, which the callee may change.)
+                let copy = self.entry_alloca(original, original);
+                LLVMBuildStore(self.ctx.builder, value, copy);
+                copy
+            }
+        }
+    }
+
+    /// The value of LLVM type `original` that `passed` passes as `info` does.
+    fn from_abi(self: &mut FnCodegen, passed: LLVMValueRef, info: codegen::abi::PassInfo, original: LLVMTypeRef) -> LLVMValueRef {
+        switch info.how {
+            codegen::abi::Pass::Direct => passed,
+            codegen::abi::Pass::Coerce => self.reinterpret(passed, info.ty, original),
+            _ => LLVMBuildLoad2(self.ctx.builder, original, passed, self.temp_cname()),
+        }
+    }
+
+    /// The bytes of `value` (of LLVM type `from`) as a value of type `to`.
+    fn reinterpret(self: &mut FnCodegen, value: LLVMValueRef, from: LLVMTypeRef, to: LLVMTypeRef) -> LLVMValueRef {
+        let td = self.ctx.target_data;
+        let slot = self.entry_alloca(if LLVMABISizeOfType(td, from) >= LLVMABISizeOfType(td, to) { from } else { to },
+            if LLVMABIAlignmentOfType(td, from) >= LLVMABIAlignmentOfType(td, to) { from } else { to });
+        LLVMBuildStore(self.ctx.builder, value, slot);
+        LLVMBuildLoad2(self.ctx.builder, to, slot, self.temp_cname())
+    }
+
+    /// A stack slot of type `ty`, aligned as `align_of`, in the entry block
+    /// (so that one in a loop is not allocated again at each iteration).
+    fn entry_alloca(self: &mut FnCodegen, ty: LLVMTypeRef, align_of: LLVMTypeRef) -> LLVMValueRef {
+        let current = LLVMGetInsertBlock(self.ctx.builder);
+        let terminator = LLVMGetBasicBlockTerminator(self.entry_bb);
+        if (terminator as usize) != 0 {
+            LLVMPositionBuilderBefore(self.ctx.builder, terminator);
+        } else {
+            LLVMPositionBuilderAtEnd(self.ctx.builder, self.entry_bb);
+        }
+        let slot = LLVMBuildAlloca(self.ctx.builder, ty, self.temp_cname());
+        LLVMSetAlignment(slot, LLVMABIAlignmentOfType(self.ctx.target_data, align_of));
+        LLVMPositionBuilderAtEnd(self.ctx.builder, current);
+        slot
+    }
+
     fn gen_defers(self: &mut FnCodegen) {
+        if self.in_defers {
+            return;
+        }
+        self.in_defers = true;
         // Generate deferred expressions in reverse order
         for deferred in self.defer_stack.iter().rev() {
             self.gen_expr(deferred);
         }
+        self.in_defers = false;
     }
 
     fn gen_expr(self: &mut FnCodegen, expr: &IrExpr) -> LLVMValueRef {
@@ -435,7 +504,8 @@ impl FnCodegen {
                 }
                 LLVMBuildLoad2(self.ctx.builder, ty, ptr, self.temp_cname())
             } else {
-                LLVMGetParam(self.llvm_fn, expr.param_idx())
+                let i = expr.param_idx() as usize;
+                self.from_abi(LLVMGetParam(self.llvm_fn, self.sig.param_index(i)), self.sig.params[i], self.sig.originals[i])
             }
         }
         IrTag::FnRef => {
@@ -669,21 +739,13 @@ impl FnCodegen {
         IrTag::Return => {
             // Evaluate return expression BEFORE running defers, so deferred
             // cleanup (e.g. buf.free()) doesn't clobber the return value.
-            let fn_ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(self.llvm_fn));
-            let fn_ret_is_void = LLVMGetTypeKind(fn_ret_ty) == LLVMTypeKind::Void;
-            if expr.opt_expr().is_some() && !fn_ret_is_void {
-                let ret_val = self.gen_expr(expr.opt_expr().unwrap());
-                let coerced = self.coerce_value(ret_val, fn_ret_ty);
-                self.gen_defers();
-                LLVMBuildRet(self.ctx.builder, coerced);
+            let ret_val = if expr.opt_expr().is_some() {
+                self.gen_expr(expr.opt_expr().unwrap())
             } else {
-                if expr.opt_expr().is_some() {
-                    // Generate for side effects but discard result (void function)
-                    self.gen_expr(expr.opt_expr().unwrap());
-                }
-                self.gen_defers();
-                LLVMBuildRetVoid(self.ctx.builder);
-            }
+                LLVMGetUndef(self.ctx.void_type)
+            };
+            self.gen_defers();
+            self.build_return(ret_val);
             LLVMGetUndef(self.ctx.void_type)
         }
         IrTag::Let => {
@@ -1622,225 +1684,58 @@ impl FnCodegen {
             callee_val
         };
 
-        // Detect explicit-sret call site: extern C function whose original
-        // return is a struct that the target ABI requires to be returned via
-        // a hidden caller-provided buffer (see CodegenCtx::needs_sret).
-        let sret_ty: LLVMTypeRef = std::mem::zeroed::<LLVMTypeRef>();
-        let sret_buf: LLVMValueRef = std::mem::zeroed::<LLVMValueRef>();
-        if target.tag == CallKind::Direct {
-            let mangled = target.fn_ref.mangled_name;
-            let h = mangled;
-            let s = self.ctx.extern_c_sret_fns.get(&h);
-            if s.is_some() {
-                sret_ty = s.unwrap();
-                sret_buf = LLVMBuildAlloca(self.ctx.builder, sret_ty, self.temp_cname());
+        // How it is called: as declared, or (through a pointer) in the C
+        // convention.
+        let sig = if target.tag == CallKind::Direct && self.ctx.fn_sigs.get(&target.fn_ref.mangled_name).is_some() {
+            self.ctx.fn_sigs.get(&target.fn_ref.mangled_name).unwrap()
+        } else {
+            let through_pointer = target.tag == CallKind::Indirect && target.callee.ty.tag == IrTyTag::FnPointer;
+            let param_tys = if through_pointer { target.callee.ty.elems() } else {
+                let tys = self.ctx.arena.alloc_slice::<&IrTy>(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    tys[i] = arg.ty;
+                }
+                tys as &[&IrTy]
+            };
+            let s = codegen::abi::signature(self.ctx, param_tys, result_ty, false, true);
+            // (A C function declared on first use, as it is declared.)
+            if target.tag == CallKind::Direct {
+                s.fn_type = LLVMGlobalGetValueType(callee);
             }
+            s
+        };
+
+        // The arguments, as the signature passes them (after the result's
+        // buffer, if any); those past the parameters of a variadic function
+        // as they are.
+        let arg_vals: std::collections::Vector<LLVMValueRef> = std::collections::Vector::new();
+        defer arg_vals.free();
+        let ret_buf = std::mem::zeroed::<LLVMValueRef>();
+        if sig.sret {
+            ret_buf = self.entry_alloca(sig.ret_original, sig.ret_original);
+            arg_vals.push(ret_buf);
         }
-        let use_sret = (sret_ty as usize) != 0usize;
-
-        // Generate argument values; prepend the sret buffer pointer when used.
-        let nargs = args.len();
-        let extra = if use_sret { 1usize } else { 0usize };
-        let arg_vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(nargs + extra);
-        if use_sret {
-            arg_vals[0] = sret_buf;
-        }
-        for i in 0usize..nargs {
-            arg_vals[i + extra] = self.gen_expr(args[i]);
-        }
-
-        // Build function type for the call
-        let ret_ty = self.ctx.llvm_type(result_ty);
-        // IrTyTag::Fn is a ZST whose llvm_type is void; treat it like a void
-        // return so we don't try to bind a name to the call result. Same for
-        // empty tuples (`()`), which `CodegenCtx::llvm_type` collapses to
-        // LLVM void — without the LLVM-side check, a call to a function
-        // declared `-> ()` (e.g. `read_volatile<()>` after generic
-        // instantiation) would be named, and the verifier rejects "named
-        // void result" with "Instruction has a name, but provides a void
-        // value!".
-        let is_void_ret = result_ty.is_void() || result_ty.is_never() || result_ty.tag == IrTyTag::Fn || use_sret
-            || LLVMGetTypeKind(ret_ty) == LLVMTypeKind::Void;
-        let llvm_ret = if is_void_ret { self.ctx.void_type } else { ret_ty };
-
-        // Total slots in arg_vals (synthetic sret + the user-visible args).
-        let total_args = nargs + extra;
-
-        // For direct calls, use the declared function type and cast arguments to match
-        let fn_type: LLVMTypeRef = if target.tag == CallKind::Direct {
-            let declared_fn_ty = LLVMGlobalGetValueType(callee);
-            // Cast each argument to match the declared parameter type
-            let num_params = LLVMCountParamTypes(declared_fn_ty);
-            // Check if this is an extern C function (for byval handling)
-            let callee_key = target.fn_ref.mangled_name;
-            let is_extern_c_call = self.ctx.extern_c_fns.get(&callee_key).is_some();
-
-            if num_params > 0u32 {
-                let declared_params = self.ctx.arena.alloc_slice::<LLVMTypeRef>(num_params as usize);
-                LLVMGetParamTypes(declared_fn_ty, &declared_params[0]);
-
-                // Skip the synthetic sret slot at arg_vals[0]; it already has
-                // the right type (LLVMPointerType(ret_ty, 0)) from the alloca.
-                for i in 0usize..args.len() {
-                    let av_idx = i + extra;
-                    if av_idx < num_params as usize {
-                        let expected = declared_params[av_idx];
-                        let actual = LLVMTypeOf(arg_vals[av_idx]);
-                        // If expected is void, replace with i8 (void is not first-class)
-                        if LLVMGetTypeKind(expected) == LLVMTypeKind::Void {
-                            arg_vals[av_idx] = LLVMGetUndef(self.ctx.i8_type);
-                        } else if expected != actual {
-                            let expected_kind = LLVMGetTypeKind(expected);
-                            let actual_kind = LLVMGetTypeKind(actual);
-                            if actual_kind == LLVMTypeKind::Void {
-                                arg_vals[av_idx] = LLVMGetUndef(expected);
-                            } else if expected_kind == LLVMTypeKind::Integer && actual_kind == LLVMTypeKind::Integer {
-                                arg_vals[av_idx] = LLVMBuildIntCast2(self.ctx.builder, arg_vals[av_idx], expected, 0i32, self.temp_cname());
-                            } else if expected_kind == LLVMTypeKind::Pointer && actual_kind == LLVMTypeKind::Pointer {
-                                arg_vals[av_idx] = LLVMBuildBitCast(self.ctx.builder, arg_vals[av_idx], expected, self.temp_cname());
-                            } else if expected_kind == LLVMTypeKind::Pointer && actual_kind == LLVMTypeKind::Struct {
-                                // byval parameter: alloca + store + pass pointer
-                                let alloca = LLVMBuildAlloca(self.ctx.builder, actual, self.temp_cname());
-                                LLVMBuildStore(self.ctx.builder, arg_vals[av_idx], alloca);
-                                arg_vals[av_idx] = alloca;
-                            } else if expected_kind == LLVMTypeKind::Pointer && actual_kind == LLVMTypeKind::Integer {
-                                arg_vals[av_idx] = LLVMBuildIntToPtr(self.ctx.builder, arg_vals[av_idx], expected, self.temp_cname());
-                            } else if expected_kind == LLVMTypeKind::Integer && actual_kind == LLVMTypeKind::Pointer {
-                                arg_vals[av_idx] = LLVMBuildPtrToInt(self.ctx.builder, arg_vals[av_idx], expected, self.temp_cname());
-                            } else if expected_kind == LLVMTypeKind::Struct && actual_kind == LLVMTypeKind::Struct {
-                                // Struct-to-struct: store-and-load reinterpret
-                                let alloca = LLVMBuildAlloca(self.ctx.builder, actual, self.temp_cname());
-                                LLVMBuildStore(self.ctx.builder, arg_vals[av_idx], alloca);
-                                let cast_ptr = LLVMBuildBitCast(self.ctx.builder, alloca, LLVMPointerType(expected, 0u32), self.temp_cname());
-                                arg_vals[av_idx] = LLVMBuildLoad2(self.ctx.builder, expected, cast_ptr, self.temp_cname());
-                            } else {
-                                arg_vals[av_idx] = LLVMGetUndef(expected);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // For variadic functions, just use the declared type directly.
-            // LLVM allows passing additional arguments beyond the fixed params.
-            let is_variadic_fn = LLVMIsFunctionVarArg(declared_fn_ty) != 0i32;
-            if is_variadic_fn {
-                declared_fn_ty
-            } else if is_extern_c_call {
-                // For extern C calls, handle byval: convert large struct args to pointer+byval.
-                // (Skip the synthetic sret slot; it's already a pointer.)
-                let has_byval = false;
-                for i in 0usize..args.len() {
-                    let av_idx = i + extra;
-                    let at = LLVMTypeOf(arg_vals[av_idx]);
-                    if LLVMGetTypeKind(at) == LLVMTypeKind::Struct && self.ctx.needs_byval(at) {
-                        has_byval = true;
-                        let alloca = LLVMBuildAlloca(self.ctx.builder, at, self.temp_cname());
-                        LLVMBuildStore(self.ctx.builder, arg_vals[av_idx], alloca);
-                        arg_vals[av_idx] = alloca;
-                    }
-                }
-                if has_byval {
-                    // Build a new fn_type with pointer params for byval args
-                    let new_params = self.ctx.arena.alloc_slice::<LLVMTypeRef>(total_args);
-                    for i in 0usize..total_args {
-                        new_params[i] = LLVMTypeOf(arg_vals[i]);
-                    }
-                    let fn_ret = LLVMGetReturnType(declared_fn_ty);
-                    if total_args > 0 {
-                        LLVMFunctionType(fn_ret, &new_params[0], total_args as u32, 0i32)
-                    } else {
-                        declared_fn_ty
-                    }
-                } else {
-                    declared_fn_ty
-                }
+        for (i, arg) in args.iter().enumerate() {
+            let value = self.gen_expr(arg);
+            if i < sig.params.len() {
+                let v = self.coerce_value(value, sig.originals[i]);
+                arg_vals.push(self.to_abi(v, sig.params[i], sig.originals[i]));
             } else {
-                declared_fn_ty
-            }
-        } else {
-            let param_types = self.ctx.arena.alloc_slice::<LLVMTypeRef>(total_args);
-            for i in 0usize..total_args {
-                let pt = LLVMTypeOf(arg_vals[i]);
-                if LLVMGetTypeKind(pt) == LLVMTypeKind::Void {
-                    arg_vals[i] = LLVMGetUndef(self.ctx.i8_type);
-                    param_types[i] = self.ctx.i8_type;
-                } else {
-                    param_types[i] = pt;
-                }
-            }
-            if total_args > 0 {
-                LLVMFunctionType(llvm_ret, &param_types[0], total_args as u32, 0i32)
-            } else {
-                LLVMFunctionType(llvm_ret, null, 0u32, 0i32)
-            }
-        };
-
-        let call_name = if is_void_ret {
-            self.empty_name()
-        } else {
-            self.temp_cname()
-        };
-
-        // For indirect calls, bitcast i8* callee to the correct function pointer type
-        let typed_callee = if target.tag == CallKind::Indirect {
-            LLVMBuildBitCast(
-                self.ctx.builder, callee,
-                LLVMPointerType(fn_type, 0),
-                self.temp_cname()
-            )
-        } else {
-            callee
-        };
-
-        let call_val = if total_args > 0 {
-            LLVMBuildCall2(
-                self.ctx.builder, fn_type, typed_callee,
-                &arg_vals[0], total_args as u32, call_name
-            )
-        } else {
-            LLVMBuildCall2(
-                self.ctx.builder, fn_type, typed_callee,
-                null, 0u32, call_name
-            )
-        };
-
-        // Mirror the sret declaration attribute on the call site (LLVM
-        // requires this for the AArch64 ABI lowering to fire).
-        if use_sret {
-            let sret_kind = LLVMGetEnumAttributeKindForName(&"sret\0"[0] as &libc::c_char, 4usize);
-            let sret_attr = LLVMCreateTypeAttribute(self.ctx.context, sret_kind, sret_ty);
-            LLVMAddCallSiteAttribute(call_val, 1u32, sret_attr);
-        }
-
-        // Add byval attributes to call site for extern C byval parameters.
-        // x86_64 SysV requires the explicit `byval` attribute to get the right
-        // indirect-arg lowering; aarch64 (and other targets) get the right
-        // indirect ABI from the bare pointer parameter alone.
-        if target.tag == CallKind::Direct && self.ctx.uses_byval_attr() {
-            let callee_key2 = target.fn_ref.mangled_name;
-            if self.ctx.extern_c_fns.get(&callee_key2).is_some() {
-                let byval_kind = LLVMGetEnumAttributeKindForName(&"byval\0"[0] as &libc::c_char, 5usize);
-                for i in 0usize..args.len() {
-                    let orig_ty = self.ctx.llvm_type(args[i].ty);
-                    if LLVMGetTypeKind(orig_ty) == LLVMTypeKind::Struct && self.ctx.needs_byval(orig_ty) {
-                        let attr = LLVMCreateTypeAttribute(self.ctx.context, byval_kind, orig_ty);
-                        LLVMAddCallSiteAttribute(call_val, (i + 1 + extra) as u32, attr);
-                    }
-                }
+                arg_vals.push(if LLVMGetTypeKind(LLVMTypeOf(value)) == LLVMTypeKind::Void { LLVMGetUndef(self.ctx.i8_type) } else { value });
             }
         }
 
-        // For sret calls the LLVM call returns void and the actual struct value
-        // lives in the alloca buffer; reload it as the call's IR-level result.
-        if use_sret {
-            return LLVMBuildLoad2(self.ctx.builder, sret_ty, sret_buf, self.temp_cname());
-        }
+        let call_name = if sig.ret_void || sig.sret { self.empty_name() } else { self.temp_cname() };
+        let call_val = LLVMBuildCall2(self.ctx.builder, sig.fn_type, callee,
+            if arg_vals.is_empty() { null } else { &arg_vals[0] }, arg_vals.len() as u32, call_name);
+        self.ctx.add_abi_attributes(call_val, &sig, true);
 
-        if is_void_ret {
+        if sig.sret {
+            LLVMBuildLoad2(self.ctx.builder, sig.ret_original, ret_buf, self.temp_cname())
+        } else if sig.ret_void {
             LLVMGetUndef(self.ctx.void_type)
         } else {
-            call_val
+            self.from_abi(call_val, sig.ret, sig.ret_original)
         }
     }
 
