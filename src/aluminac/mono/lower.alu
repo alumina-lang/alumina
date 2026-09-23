@@ -1616,14 +1616,14 @@ impl Mono {
                 continue;
             }
             let coerced = self.try_coerce(branch, result_ty);
-            if coerced as &void != null {
-                branches[i] = coerced;
+            if coerced.is_some() {
+                branches[i] = coerced.unwrap();
                 continue;
             }
             // Maybe the earlier branches coerce to this one's type instead.
             let all_coerce = true;
             for earlier in branches[..i] {
-                if !earlier.ty.is_never() && self.try_coerce(earlier, branch.ty) as &void == null {
+                if !earlier.ty.is_never() && self.try_coerce(earlier, branch.ty).is_none() {
                     all_coerce = false;
                 }
             }
@@ -1631,7 +1631,7 @@ impl Mono {
                 result_ty = branch.ty;
                 for j in 0usize..i {
                     if !branches[j].ty.is_never() {
-                        branches[j] = self.try_coerce(branches[j], result_ty);
+                        branches[j] = self.try_coerce(branches[j], result_ty).unwrap();
                     }
                 }
                 continue;
@@ -1641,11 +1641,11 @@ impl Mono {
             // slice, or pointers to different types to a `dyn`).
             if hint != self.ctx.no_hint && !hint.is_void()
                 && branches.iter().all(|=self, =hint, b: &IrExpr| -> bool {
-                    b.ty.is_never() || self.try_coerce(b, hint) as &void != null
+                    b.ty.is_never() || self.try_coerce(b, hint).is_some()
                 }) {
                 for j in 0usize..branches.len() {
                     if !branches[j].ty.is_never() {
-                        branches[j] = self.try_coerce(branches[j], hint);
+                        branches[j] = self.try_coerce(branches[j], hint).unwrap();
                     }
                 }
                 return hint;
@@ -5117,8 +5117,9 @@ impl Mono {
             return value;
         }
         let coerced = self.try_coerce(value, ty);
-        if coerced as &void != null {
-            return if coerced.ty.same_as(ty) { coerced } else { self.mk_cast(coerced, ty) };
+        if coerced.is_some() {
+            let c = coerced.unwrap();
+            return if c.ty.same_as(ty) { c } else { self.mk_cast(c, ty) };
         }
 
         let dyn_id = self.ctx.get_lang_item("dyn");
@@ -5372,23 +5373,23 @@ impl Mono {
     /// protocol, concatenated in the order of the protos tuple. Each entry
     /// is the impl's typed function pointer, bitcast to opaque `fn()`.
     ///
-    /// Returns null (as &IrExpr) if the protos tuple has no recognisable
-    /// protocol entries (caller should fall back to null vtable).
-    fn build_dyn_vtable_ref(self: &mut Mono, impl_ty: &IrTy, protos_tuple: &IrTy) -> &IrExpr {
+    /// None if the protos tuple has no recognisable protocol entries (the
+    /// caller falls back to a null vtable).
+    fn build_dyn_vtable_ref(self: &mut Mono, impl_ty: &IrTy, protos_tuple: &IrTy) -> Option<&IrExpr> {
         if protos_tuple.tag != IrTyTag::Tuple {
-            return 0usize as &IrExpr;
+            return Option::none();
         }
         if self.dyn_protocols(impl_ty).is_some() {
             // (A `dyn` of a `dyn`: its functions would dispatch virtually.)
             self.emit_diag(diagnostics::CodeDiagnostic::generic_error(self.type_span,
                 "indirect `dyn` pointers are not supported"));
-            return 0usize as &IrExpr;
+            return Option::none();
         }
         // Cache key: pointer-identity of protos_tuple + impl_ty.
         let cache_key = (protos_tuple as &void as usize, impl_ty as &void as usize);
         let cached = self.ctx.dyn_vtable_cache.get(&cache_key);
         if cached.is_some() {
-            return cached.unwrap();
+            return cached;
         }
 
         // Resolve impl scope so we can look up method implementations.
@@ -5429,7 +5430,7 @@ impl Mono {
             _ => {}
         }
         if impl_scope_idx == 0u32 {
-            return 0usize as &IrExpr;
+            return Option::none();
         }
 
         // Opaque `fn()` element type for the vtable array.
@@ -5613,7 +5614,7 @@ impl Mono {
         }
 
         if entries.len() == 0usize {
-            return 0usize as &IrExpr;
+            return Option::none();
         }
 
         // Build the array literal initializer.
@@ -5649,26 +5650,23 @@ impl Mono {
         let result = self.mk_cast(arr_addr, opaque_fn_ptr_ty);
 
         self.ctx.dyn_vtable_cache.insert(cache_key, result);
-        result
+        Option::some(result)
     }
 
-    /// Check if the init type is clearly incompatible with the declared type.
-    /// This catches specific mismatches like Pointer(Slice) vs Slice (from &a[..]).
-    /// Returns true if there is a clear type tag mismatch.
-    /// Try to coerce `val` to `expected_ty`. Returns the coerced expression on success.
-    /// Returns null (as &IrExpr) if the types are incompatible.
-    fn try_coerce(self: &mut Mono, val: &IrExpr, expected_ty: &IrTy) -> &IrExpr {
-        if val.ty.same_as(expected_ty) { return val; }
+    /// `val` as a value of `expected_ty`, if it coerces to it (as in
+    /// alumina-boot).
+    fn try_coerce(self: &mut Mono, val: &IrExpr, expected_ty: &IrTy) -> Option<&IrExpr> {
+        if val.ty.same_as(expected_ty) { return Option::some(val); }
 
         // Bottom type matches anything
-        if val.ty.tag == IrTyTag::Never { return val; }
+        if val.ty.tag == IrTyTag::Never { return Option::some(val); }
 
         // `()` is a type like any other.
-        if val.ty.is_void() || expected_ty.is_void() { return 0usize as &IrExpr; }
+        if val.ty.is_void() || expected_ty.is_void() { return Option::none(); }
 
         // Distinct builtin types never convert implicitly (as in alumina-boot).
         if val.ty.tag == IrTyTag::Builtin && expected_ty.tag == IrTyTag::Builtin {
-            return 0usize as &IrExpr;
+            return Option::none();
         }
 
         // Coerce &[T; N] to &[T] (pointer to array → slice fat pointer)
@@ -5682,14 +5680,14 @@ impl Mono {
             let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
             items[0] = data_ptr_ref;
             items[1] = len_ref;
-            return self.alloc(IrExpr::list(IrTag::TupleLit, expected_ty, items));
+            return Option::some(self.alloc(IrExpr::list(IrTag::TupleLit, expected_ty, items)));
         }
 
         // Coerce &mut T -> &T (mutable pointer to const pointer)
         if expected_ty.tag == IrTyTag::Pointer && val.ty.tag == IrTyTag::Pointer
             && expected_ty.is_const() && !val.ty.is_const()
             && expected_ty.inner().same_as(val.ty.inner()) {
-            return self.mk_cast(val, expected_ty);
+            return Option::some(self.mk_cast(val, expected_ty));
         }
 
         // Coerce &mut [T] -> &[T] (mutable slice to const slice)
@@ -5697,7 +5695,7 @@ impl Mono {
             let target_elem = self.slice_elem_ty(expected_ty);
             let val_elem = self.slice_elem_ty(val.ty);
             if target_elem.same_as(val_elem) && expected_ty.is_const() && !val.ty.is_const() {
-                return self.mk_cast(val, expected_ty);
+                return Option::some(self.mk_cast(val, expected_ty));
             }
         }
 
@@ -5710,14 +5708,14 @@ impl Mono {
             let (want, have) = (expected_ty.struct_ref().type_args, val.ty.struct_ref().type_args);
             if want.len() == 2 && have.len() == 2 && want[0].same_as(have[0])
                 && want[1].is_const() && !have[1].is_const() {
-                return self.rebuild_dyn(val, expected_ty);
+                return Option::some(self.rebuild_dyn(val, expected_ty));
             }
         }
 
         // Coerce Fn (function item ZST) to fn pointer
         if expected_ty.tag == IrTyTag::FnPointer && val.ty.tag == IrTyTag::Fn {
             let fn_ref = val.ty.fn_item_ref();
-            return self.alloc(IrExpr::of_fn(expected_ty, fn_ref));
+            return Option::some(self.alloc(IrExpr::of_fn(expected_ty, fn_ref)));
         }
 
         // Coerce &T (or any pointer) to a dyn struct (`&dyn Proto` resolved
@@ -5747,8 +5745,8 @@ impl Mono {
                 };
 
                 let vtable_expr = self.build_dyn_vtable_ref(impl_ty, protos_tuple);
-                let vtable_cast: &IrExpr = if vtable_expr as &void as usize != 0usize {
-                    self.mk_cast(vtable_expr, opaque_fn_ptr_ty)
+                let vtable_cast: &IrExpr = if vtable_expr.is_some() {
+                    self.mk_cast(vtable_expr.unwrap(), opaque_fn_ptr_ty)
                 } else {
                     self.alloc(IrExpr::of(IrTag::NullLit, opaque_fn_ptr_ty))
                 };
@@ -5756,20 +5754,19 @@ impl Mono {
                 let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
                 items[0] = data_cast;
                 items[1] = vtable_cast;
-                return self.alloc(IrExpr::struct_lit(expected_ty, items));
+                return Option::some(self.alloc(IrExpr::struct_lit(expected_ty, items)));
             }
         }
 
-        // Incompatible
-        0usize as &IrExpr
+        Option::none()
     }
 
     /// Coerce `val` to `expected_ty`, emitting a diagnostic on type mismatch.
     /// On failure, returns an expression with the expected type (to allow continued compilation).
     fn check_and_coerce(self: &mut Mono, val: &IrExpr, expected_ty: &IrTy, span: Span) -> &IrExpr {
         let result = self.try_coerce(val, expected_ty);
-        if result as &void as usize != 0 {
-            return result;
+        if result.is_some() {
+            return result.unwrap();
         }
 
         let expected_name = self.ir_type_name(expected_ty);
@@ -5782,11 +5779,7 @@ impl Mono {
 
     /// Coerce without error reporting (for contexts where mismatch is not an error).
     fn coerce_to_type(self: &mut Mono, val: &IrExpr, target_ty: &IrTy) -> &IrExpr {
-        let result = self.try_coerce(val, target_ty);
-        if result as &void as usize != 0 {
-            return result;
-        }
-        val
+        self.try_coerce(val, target_ty).unwrap_or(val)
     }
 
     // Check if a type is a range (std::range::Range*, etc.)
