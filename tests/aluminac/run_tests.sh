@@ -9,12 +9,12 @@
 #   ./tests/aluminac/run_tests.sh [path-to-aluminac] [filter]
 #
 # Examples:
-#   ./tests/aluminac/run_tests.sh build/fast-debug/aluminac
-#   ./tests/aluminac/run_tests.sh build/fast-debug/aluminac mixin
+#   ./tests/aluminac/run_tests.sh build/debug/aluminac
+#   ./tests/aluminac/run_tests.sh build/debug/aluminac mixin
 
 set -u
 
-ALUMINAC="${1:-build/fast-debug/aluminac}"
+ALUMINAC="${1:-build/debug/aluminac}"
 FILTER="${2:-}"
 TESTDIR="$(dirname "$0")"
 TMPDIR="${TMPDIR:-/tmp}"
@@ -25,7 +25,7 @@ FAILURES=""
 
 if [ ! -x "$ALUMINAC" ]; then
     echo "error: $ALUMINAC not found or not executable"
-    echo "hint: make FAST_DEBUG=1 build/fast-debug/aluminac"
+    echo "hint: make (or \`make test-features\`)"
     exit 1
 fi
 

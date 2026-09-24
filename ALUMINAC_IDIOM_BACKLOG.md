@@ -8,7 +8,7 @@ The highest-leverage wins are **mechanical and bootstrap-safe**: delete confirme
 
 **Order of attack:** start in leaf/small files (`arena.alu`, `common.alu`, `layout.alu`, `llvm.alu`, `diagnostics.alu`, `ast.alu`), then move to the procedural `mono/` and `codegen/` files, and **quarantine the genuinely bootstrap-sensitive refactors** (`ConstResult` → `Result`, `try_coerce` null-sentinel → `Option`, `lower_switch_as_if_else` multi-pass restructuring) into clearly-flagged late batches, each gated by its own serial `make bootstrap` + `s2==s3` byte-identity run.
 
-Each batch below is independently applyable and verified by a single gate run: `make bootstrap && test-aluminac && test-std-aluminac`, expecting **s2 == s3 byte-identical** and all tests green.
+Each batch below is independently applyable and verified by a single gate run: `make bootstrap test`, expecting **stage 2 and stage 3 to emit the same IR** and all tests green.
 
 ## Per-file spartan-score table
 

@@ -26,20 +26,17 @@ RUN cargo install tree-sitter-cli
 WORKDIR /alumina/deps
 RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.5.tar.gz | tar -xz
 RUN cd tree-sitter-* && make -j8 && make install && ldconfig
-RUN curl -fsSL https://github.com/ianlancetaylor/libbacktrace/archive/master.tar.gz | tar -xz
-RUN cd libbacktrace-* && ./configure && make -j8 && make install
 
 FROM environment AS builder
 
 WORKDIR /alumina
 ADD . .
 
-ENV RELEASE=1
-RUN make -j8
+RUN make boot
 
 FROM ubuntu:24.04 AS alumina-boot
 
-COPY --from=builder /alumina/build/release/alumina-boot /usr/bin/alumina-boot
+COPY --from=builder /alumina/build/alumina-boot /usr/bin/alumina-boot
 COPY ./sysroot /usr/include/alumina
 
 WORKDIR /workspace

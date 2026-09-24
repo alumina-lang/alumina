@@ -10,21 +10,20 @@ scaffolding; it is intentionally self-contained.
 
 **The parity headline is DONE.** There is a single unified `sysroot/`;
 `sysroot-aluminac/` has been deleted. The aluminac self-bootstrap
-converges: alumina-boot compiles aluminac (s1), aluminac_s1 compiles
-aluminac (s2), aluminac_s2 compiles aluminac (s3), and **s2 == s3
-byte-identical**, all against `sysroot/`. `make porting-gates` (=
-`test-aluminac` + `test-std-aluminac` + `bootstrap` + `test-std` +
-`test-libraries` + `test-lang` + `test-diag`) is green. The full
-alumina-boot test runner (`sysroot/test.alu`, reflective
+converges: alumina-boot compiles aluminac stage 1 (via C), stage 1
+compiles stage 2 (= `build/<profile>/aluminac`), and stage 3 (built by
+stage 2) emits **the same IR as stage 2**, all against `sysroot/`. The
+full test runner (`sysroot/test.alu`, reflective
 `attributed::<()>("test")` discovery) runs under aluminac.
 
-Quality gates (Makefile targets): `make` (build alumina-boot),
-`make bootstrap` (3-stage aluminac, must converge), `make
-test-aluminac` / `make test-std-aluminac` (aluminac suites),
-`make test-std` / `make test-lang` / `make test-libraries` /
-`make test-diag` (alumina-boot suites). `make porting-gates` runs the
-whole set. `make build/debug/aluminac_s1` builds just stage-1 for fast
-iteration; standalone repros: `build/debug/aluminac_s1 --sysroot
+The Makefile is aluminac-first (reworked 2026-09-24): everything but
+alumina-boot itself is compiled with aluminac (tests, examples, docs,
+doc tests, tools). Targets: `make` (aluminac, `./aluminac`), `make test`
+(unit, feature, std, lang, libraries, diag, doc tests), `make bootstrap`
+(the fixpoint), `make check` (all CI checks, incl. `lint-boot`,
+`test-boot`, `check-node-kinds`, examples), `make boot` / `lint-boot` /
+`test-boot` / `cross-check` (alumina-boot). `make build/debug/aluminac-stage1`
+builds just stage 1; standalone repros: `build/debug/aluminac --sysroot
 sysroot <file>.alu -o out`. alumina-boot is the language spec — when in
 doubt, read `src/alumina-boot/src/` and compare; do not infer semantics
 from aluminac (it is buggy by definition until proven otherwise).
@@ -294,7 +293,7 @@ print (modulo randomness and thread interleaving). Fixed for them:
 
 ### alumina-boot's library tests under aluminac
 
-`make test-libraries-aluminac` (new) builds `libraries/` (json, the
+`make test-libraries` builds `libraries/` (json, the
 tree-sitter bindings, aluminac-common) with aluminac: all 22 tests pass.
 Fixed for it: `?` inside macro bodies (it was expanded while pre-parsing,
 before `try!` was available), `let (a, b): T;` / typed tuple patterns,
@@ -511,8 +510,8 @@ instances.
   parameter types), as in alumina-boot.
   Candidate next step: a local's type from later statements
   (`let v = Vector::new(); v.push(1u8);`), which neither compiler infers.
-- `make test-std-aluminac` still lacks `--cfg libbacktrace` and
-  coroutines (aluminac has no stackful coroutines).
+- The std tests under aluminac lack `--cfg libbacktrace` (backtraces use
+  libc's `backtrace`); coroutines link minicoro until LLVM coroutines.
 - ~~Cascading errors~~: done. What fails to lower is an error value of
   type `!` (`mk_error`) that uses do not report again: unresolved methods
   and fields, invalid operators, dereferences and indexing, incompatible
@@ -663,17 +662,27 @@ evaluates the place first (alumina-boot's lang tests expect it; its
   `when cfg!` arms from name resolution) would unblock the cleaner
   inline-dispatch style across `builtins.alu` and `sync/mod.alu`.
 
+- Aggregates are LLVM first-class values everywhere (loads, stores,
+  arguments), where clang uses memcpy/memset and pointers. For large ones
+  that is slow to compile and can break LLVM: a `store [65536 x i8]`
+  overflows x86_64 instruction selection (locals are now zeroed with a
+  memset, the case found; copying such an array by value is still one
+  load/store).
+
 ## Test infrastructure backlog
 
 - **Unit tests** of the compiler itself: `#[cfg(test)] mod tests` beside
   the code (const_eval's integer arithmetic, layout, literal parsing and
   unescaping, cfg specs, lint levels and notes, AST helpers, targets),
-  built with aluminac by `make test-aluminac-unit`. `porting-gates` (the
-  release gate) runs them, the diag parity check (`test-diag-aluminac`) and
-  the lang/library suites under aluminac, besides the rest.
+  built with aluminac by `make test-unit`; `make test` runs them with the
+  rest of the suites.
 
-- `make test-docs` under aluminac — gated on full sysroot/doc parity.
-- `make test-diag` stays alumina-boot-only by design.
+- ~~`make test-docs` under aluminac~~: done (the doc tests are compiled
+  with aluminac; it found `format_args!(concat, ...)` crashing, `Fn(..)`
+  types being function pointers, `Type<X>` of same-named items, and
+  mixin `self: Self` methods through pointers).
+- `make test-diag` checks aluminac's diagnostics against the annotations
+  in tests/diag (alumina-boot's `tools/diag.py` wrote them).
 
 `tests/aluminac/*.alu` is the aluminac feature suite (run by
 `tests/aluminac/run_tests.sh`); add a regression per concrete fix.

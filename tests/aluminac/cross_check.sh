@@ -11,7 +11,7 @@
 
 set -u
 
-ALUMINA_BOOT="${1:-build/debug/alumina-boot}"
+ALUMINA_BOOT="${1:-build/alumina-boot}"
 FILTER="${2:-}"
 TESTDIR="$(dirname "$0")"
 TMPDIR="${TMPDIR:-/tmp}"
