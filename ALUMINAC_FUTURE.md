@@ -665,9 +665,17 @@ evaluates the place first (alumina-boot's lang tests expect it; its
 - Aggregates are LLVM first-class values everywhere (loads, stores,
   arguments), where clang uses memcpy/memset and pointers. For large ones
   that is slow to compile and can break LLVM: a `store [65536 x i8]`
-  overflows x86_64 instruction selection (locals are now zeroed with a
-  memset, the case found; copying such an array by value is still one
+  overflows x86_64 instruction selection (found through locals, which
+  were all zeroed; copying such an array by value is still one
   load/store).
+- ~~Every local was zero-initialized~~ (to hide defers of untaken
+  branches running on uninitialized locals): defers now have flags and
+  run only if reached, from one cleanup block, as in alumina-boot; locals
+  are uninitialized, as `let x: T;` is. That exposed `for i in 0usize..8`
+  storing the `8` as an i32 into the usize bound.
+- On macOS, `-g` output has no usable debug info: the DWARF stays in the
+  object file, which aluminac deletes after linking (run `dsymutil`, or
+  keep the object).
 
 ## Test infrastructure backlog
 

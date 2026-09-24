@@ -1,0 +1,42 @@
+// `for` over a range literal: the bounds have one type (`0usize..8`: the
+// `8` is a usize too), the loop variable holds each
+// element (the last one after the loop, as seen by a defer), and ranges
+// that are inclusive or open-ended iterate as the range's iterator does
+// (`..=255u8` ends).
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+static SEEN: i64 = -1;
+
+#[allow(defer_in_a_loop)]
+fn last(n: usize) -> usize {
+    let total = 0usize;
+    for i in 0usize..n {
+        defer { SEEN = i as i64; };
+        total += i;
+    }
+    total
+}
+
+fn main() {
+    assert_eq!(last(4), 6);
+    assert_eq!(SEEN, 3);
+
+    let big: [u16; 8];
+    for i in 0usize..8 {
+        big[i] = (i * 1000) as u16;
+    }
+    assert_eq!(big[7], 7000);
+
+    let count = 0;
+    for _ in 250u8..=255u8 {
+        count += 1;
+    }
+    assert_eq!(count, 6);
+
+    let seen = 0;
+    for i in 3u64.. {
+        if i == 10 { break; }
+        seen += 1;
+    }
+    assert_eq!(seen, 7);
+}

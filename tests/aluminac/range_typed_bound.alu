@@ -1,0 +1,17 @@
+// A range literal with an untyped literal bound and a typed one takes the
+// typed bound's type: `0..n` with `n: usize` is a `Range<usize>`.
+// BOOT_DIVERGES: alumina-boot types the `0` as i32 first and reports a mismatch
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::typing::type_name;
+
+fn main() {
+    let n: usize = 4;
+    let r = 0..n;
+    assert_eq!(type_name::<typeof(r)>(), "Range<usize>");
+    let total = 0usize;
+    for i in 0..n {
+        total += i;
+    }
+    assert_eq!(total, 6);
+}

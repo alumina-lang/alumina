@@ -26,10 +26,16 @@ struct FnCodegen {
     break_bb: Option<LLVMBasicBlockRef>,
     continue_bb: Option<LLVMBasicBlockRef>,
 
-    // Defer stack: stores IR expressions to execute at scope exit
-    defer_stack: std::collections::Vector<&IrExpr>,
+    /// The function's deferred expressions, in order, each with the flag
+    /// set when its `defer` runs (as in alumina-boot: only those reached run,
+    /// in reverse, at the function's exit).
+    defers: std::collections::Vector<(&IrExpr, LLVMValueRef)>,
+    /// With defers: the block every `return` goes to (it runs them), and
+    /// the slot for the result.
+    cleanup_bb: Option<LLVMBasicBlockRef>,
+    ret_slot: LLVMValueRef,
     /// Whether deferred code is being generated (whose `return`s, as in
-    /// alumina-boot, run no deferred code again).
+    /// alumina-boot, return directly).
     in_defers: bool,
 
     // Temp counter for naming
@@ -52,7 +58,9 @@ impl FnCodegen {
             entry_bb: std::mem::zeroed::<LLVMBasicBlockRef>(),
             break_bb: Option::none(),
             continue_bb: Option::none(),
-            defer_stack: std::collections::Vector::new(),
+            defers: std::collections::Vector::new(),
+            cleanup_bb: Option::none(),
+            ret_slot: std::mem::zeroed::<LLVMValueRef>(),
             in_defers: false,
             temp_counter: 0,
             di_subprogram: std::mem::zeroed::<LLVMMetadataRef>(),
@@ -203,18 +211,7 @@ impl FnCodegen {
             let lname = self.temp_name();
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &lname[0] as &libc::c_char);
             LLVMSetAlignment(alloca, self.ctx.alignment_of(local.ty));
-            // Zero-initialize all allocas to prevent issues with defer cleanup
-            // running on uninitialized variables from untaken branches. (An
-            // aggregate with a memset, as clang does: storing a large one as a
-            // value, e.g. `[u8; 65536]`, overflows LLVM's instruction selection.)
-            let kind = LLVMGetTypeKind(alloca_ty);
-            if kind == LLVMTypeKind::Struct || kind == LLVMTypeKind::Array {
-                let size = LLVMConstInt(self.ctx.i64_type, LLVMABISizeOfType(self.ctx.target_data, alloca_ty), 0i32);
-                LLVMBuildMemSet(self.ctx.builder, alloca, LLVMConstInt(self.ctx.i8_type, 0u64, 0i32), size,
-                    self.ctx.alignment_of(local.ty));
-            } else {
-                LLVMBuildStore(self.ctx.builder, LLVMConstNull(alloca_ty), alloca);
-            }
+            // (Not initialized: `let x: T;` is uninitialized, as in C.)
             self.locals.insert(local.id._value, alloca);
         }
 
@@ -326,6 +323,19 @@ impl FnCodegen {
             }
         }
 
+        // The deferred expressions' flags (cleared), and with any, the block
+        // the returns go to and the result's slot.
+        if self.ir_fn.body.is_some() {
+            self.collect_defers(self.ir_fn.body.unwrap());
+        }
+        if !self.defers.is_empty() {
+            self.cleanup_bb = Option::some(LLVMAppendBasicBlockInContext(
+                self.ctx.context, self.llvm_fn, &"cleanup\0"[0] as &libc::c_char));
+            if !self.sig.ret_void {
+                self.ret_slot = LLVMBuildAlloca(self.ctx.builder, self.sig.ret_original, &"result\0"[0] as &libc::c_char);
+            }
+        }
+
         // Branch from entry to body
         LLVMBuildBr(self.ctx.builder, body_bb);
 
@@ -345,10 +355,9 @@ impl FnCodegen {
             let current_bb = LLVMGetInsertBlock(self.ctx.builder);
             let terminator = LLVMGetBasicBlockTerminator(current_bb);
             if (terminator as usize) == 0 {
-                // Generate deferred expressions before implicit return
-                self.gen_defers();
-                self.build_return(body_val);
+                self.gen_return(body_val);
             }
+            self.gen_cleanup();
         } else {
             LLVMBuildRetVoid(self.ctx.builder);
         }
@@ -417,16 +426,58 @@ impl FnCodegen {
         slot
     }
 
-    fn gen_defers(self: &mut FnCodegen) {
-        if self.in_defers {
+    /// A flag for each `defer` in `expr` (cleared in the entry block).
+    fn collect_defers(self: &mut FnCodegen, expr: &IrExpr) {
+        if expr.tag == IrTag::Defer {
+            let flag = LLVMBuildAlloca(self.ctx.builder, self.ctx.i1_type, self.temp_cname());
+            LLVMBuildStore(self.ctx.builder, LLVMConstInt(self.ctx.i1_type, 0u64, 0i32), flag);
+            self.defers.push((expr, flag));
+        }
+        for child in expr.children() {
+            self.collect_defers(child);
+        }
+    }
+
+    /// Return `value`: through the cleanup block if there are defers (and
+    /// this is not deferred code itself).
+    fn gen_return(self: &mut FnCodegen, value: LLVMValueRef) {
+        if self.cleanup_bb.is_none() || self.in_defers {
+            self.build_return(value);
             return;
         }
+        if (self.ret_slot as usize) != 0 {
+            LLVMBuildStore(self.ctx.builder, self.coerce_value(value, self.sig.ret_original), self.ret_slot);
+        }
+        LLVMBuildBr(self.ctx.builder, self.cleanup_bb.unwrap());
+    }
+
+    /// The cleanup block: the deferred expressions whose `defer` ran, last
+    /// first, then the return.
+    fn gen_cleanup(self: &mut FnCodegen) {
+        if self.cleanup_bb.is_none() {
+            return;
+        }
+        LLVMPositionBuilderAtEnd(self.ctx.builder, self.cleanup_bb.unwrap());
         self.in_defers = true;
-        // Generate deferred expressions in reverse order
-        for deferred in self.defer_stack.iter().rev() {
-            self.gen_expr(deferred);
+        for (deferred, flag) in self.defers.iter().rev() {
+            let run_bb = LLVMAppendBasicBlockInContext(self.ctx.context, self.llvm_fn, &"defer\0"[0] as &libc::c_char);
+            let next_bb = LLVMAppendBasicBlockInContext(self.ctx.context, self.llvm_fn, &"defer.next\0"[0] as &libc::c_char);
+            let ran = LLVMBuildLoad2(self.ctx.builder, self.ctx.i1_type, flag, self.temp_cname());
+            LLVMBuildCondBr(self.ctx.builder, ran, run_bb, next_bb);
+            LLVMPositionBuilderAtEnd(self.ctx.builder, run_bb);
+            self.gen_expr(deferred.lhs());
+            if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(self.ctx.builder)) as usize) == 0 {
+                LLVMBuildBr(self.ctx.builder, next_bb);
+            }
+            LLVMPositionBuilderAtEnd(self.ctx.builder, next_bb);
         }
         self.in_defers = false;
+        let value = if (self.ret_slot as usize) != 0 {
+            LLVMBuildLoad2(self.ctx.builder, self.sig.ret_original, self.ret_slot, self.temp_cname())
+        } else {
+            LLVMGetUndef(self.ctx.void_type)
+        };
+        self.build_return(value);
     }
 
     fn gen_expr(self: &mut FnCodegen, expr: &IrExpr) -> LLVMValueRef {
@@ -752,8 +803,7 @@ impl FnCodegen {
             } else {
                 LLVMGetUndef(self.ctx.void_type)
             };
-            self.gen_defers();
-            self.build_return(ret_val);
+            self.gen_return(ret_val);
             LLVMGetUndef(self.ctx.void_type)
         }
         IrTag::Let => {
@@ -879,8 +929,12 @@ impl FnCodegen {
             LLVMBuildLoad2(self.ctx.builder, llvm_ty, alloca, self.temp_cname())
         }
         IrTag::Defer => {
-            // Push the deferred expression onto the stack for later execution
-            self.defer_stack.push(expr.lhs());
+            // (It runs at the function's exit, see gen_cleanup.)
+            for (deferred, flag) in self.defers {
+                if deferred as &void == expr as &void {
+                    LLVMBuildStore(self.ctx.builder, LLVMConstInt(self.ctx.i1_type, 1u64, 0i32), flag);
+                }
+            }
             LLVMGetUndef(self.ctx.void_type)
         }
         IrTag::Void => {
@@ -2165,7 +2219,7 @@ impl FnCodegen {
 
     fn free(self: &mut FnCodegen) {
         self.locals.free();
-        self.defer_stack.free();
+        self.defers.free();
     }
 }
 

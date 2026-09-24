@@ -1951,51 +1951,10 @@ impl Mono {
                 // both are present they must agree (else fallback to usize); when
                 // neither is present (RangeFull), T is the context's, else i32
                 // (as for an untyped integer literal, and in alumina-boot).
-                let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-
                 let has_lower = expr.lhs() as &void as usize != 0;
                 let has_upper = expr.rhs() as &void as usize != 0;
                 let is_inclusive = expr.flag();
-
-                // The bounds' type, when the context dictates it: usize when
-                // indexing a slice, or `T` when a `Range<T>` (etc.) is expected
-                // (as in alumina-boot).
-                let bound_hint = self.range_bound_hint;
-                self.range_bound_hint = Option::none();
-                if bound_hint.is_none() && self.is_range_ty(self.expected_type)
-                    && self.expected_type.struct_ref().type_args.len() > 0 {
-                    bound_hint = Option::some(self.expected_type.struct_ref().type_args[0]);
-                }
-                let raw_lower = if !has_lower {
-                    null as &IrExpr
-                } else if bound_hint.is_some() {
-                    self.lower_expr_coerced(expr.lhs(), bound_hint.unwrap())
-                } else {
-                    self.lower_expr(expr.lhs())
-                };
-                let raw_upper = if !has_upper {
-                    null as &IrExpr
-                } else if bound_hint.is_some() {
-                    self.lower_expr_coerced(expr.rhs(), bound_hint.unwrap())
-                } else {
-                    self.lower_expr(expr.rhs())
-                };
-
-                let elem_ty: &IrTy = if has_lower && has_upper {
-                    if raw_lower.ty as &void == raw_upper.ty as &void {
-                        raw_lower.ty
-                    } else {
-                        usize_ty
-                    }
-                } else if has_lower {
-                    raw_lower.ty
-                } else if has_upper {
-                    raw_upper.ty
-                } else if bound_hint.is_some() {
-                    bound_hint.unwrap()
-                } else {
-                    self.ctx.intern_builtin_ty(BuiltinType::I32)
-                };
+                let (raw_lower, raw_upper, elem_ty) = self.lower_range_bounds(expr);
 
                 let lang_name: &[u8] = if has_lower && has_upper {
                     if is_inclusive { "range_inclusive" } else { "range" }
@@ -3557,67 +3516,113 @@ impl Mono {
         }
     }
 
+    /// The bounds of a range literal (null where absent) and their type:
+    /// the context's, else the typed bound's, else the lower bound's, else
+    /// (`..`) i32.
+    fn lower_range_bounds(self: &mut Mono, expr: &Expr) -> (&IrExpr, &IrExpr, &IrTy) {
+        let has_lower = expr.lhs() as &void as usize != 0;
+        let has_upper = expr.rhs() as &void as usize != 0;
+        // The bounds' type, when the context dictates it: usize when
+        // indexing a slice, or `T` when a `Range<T>` (etc.) is expected
+        // (as in alumina-boot).
+        let bound_hint = self.range_bound_hint;
+        self.range_bound_hint = Option::none();
+        if bound_hint.is_none() && self.is_range_ty(self.expected_type)
+            && self.expected_type.struct_ref().type_args.len() > 0 {
+            bound_hint = Option::some(self.expected_type.struct_ref().type_args[0]);
+        }
+        // The bounds have one type: the context's, else the typed
+        // bound's (`0..n` with `n: usize` is a `Range<usize>`, where
+        // alumina-boot types the untyped literal first and reports a
+        // mismatch), else the lower bound's.
+        let lower_follows = bound_hint.is_none() && has_lower && has_upper
+            && mono::infer::is_untyped_literal(expr.lhs()) && !mono::infer::is_untyped_literal(expr.rhs());
+        let raw_lower: &IrExpr = null as &IrExpr;
+        let raw_upper: &IrExpr = null as &IrExpr;
+        if lower_follows {
+            raw_upper = self.lower_expr(expr.rhs());
+            raw_lower = self.lower_expr_coerced(expr.lhs(), raw_upper.ty);
+        } else {
+            if has_lower {
+                raw_lower = if bound_hint.is_some() {
+                    self.lower_expr_coerced(expr.lhs(), bound_hint.unwrap())
+                } else {
+                    self.lower_expr(expr.lhs())
+                };
+            }
+            let upper_hint = if has_lower && !raw_lower.ty.is_never() { Option::some(raw_lower.ty) } else { bound_hint };
+            if has_upper {
+                raw_upper = if upper_hint.is_some() {
+                    self.lower_expr_coerced(expr.rhs(), upper_hint.unwrap())
+                } else {
+                    self.lower_expr(expr.rhs())
+                };
+            }
+        }
+
+        // (The bounds have been given one type.)
+        let elem_ty: &IrTy = if has_lower {
+            raw_lower.ty
+        } else if has_upper {
+            raw_upper.ty
+        } else if bound_hint.is_some() {
+            bound_hint.unwrap()
+        } else {
+            self.ctx.intern_builtin_ty(BuiltinType::I32)
+        };
+        (raw_lower, raw_upper, elem_ty)
+    }
+
     fn lower_for(self: &mut Mono, expr: &Expr) -> &IrExpr {
-        // Desugar: for i in start..end { body }
-        // Into: let i = start; let _end = end; while i < _end { body; i = i + 1; }
+        // `for i in a..b { body }` (with both bounds; any other range is an
+        // iterator) is
+        //   { let _i = a; let _end = b; while _i < _end { let i = _i; _i += 1; body } }
+        // so that `i` holds the element, as with the range's iterator (as in
+        // alumina-boot, where it is the last element after the loop).
         let range_expr = expr.lhs();
-        if range_expr.tag != ExprTag::Range {
-            // Iterator-based for loop: for item in iterator { body }
-            // Desugar into: let _iter = expr; loop { let _opt = _iter.next(); if _opt.is_none() { break; } let item = _opt.unwrap(); body }
+        if range_expr.tag != ExprTag::Range || range_expr.flag()
+            || range_expr.lhs() as &void as usize == 0 || range_expr.rhs() as &void as usize == 0 {
             return self.lower_for_iterator(expr);
         }
 
-        let ir_start = self.lower_expr(range_expr.lhs());
-        let ir_end = self.lower_expr(range_expr.rhs());
-        let iter_ty = ir_start.ty;
+        let (ir_start, ir_end, iter_ty) = self.lower_range_bounds(range_expr);
 
-        // Register loop variable type
         let loop_var_id = expr.id();
-        self.local_types.insert(loop_var_id._value, iter_ty);
-        self.local_defs.push(IrLocalDef {
-            id: loop_var_id,
-            ty: iter_ty,
-            name: "",
-            span: Span::empty(),
-        });
-
-        // Register end variable
+        let counter_id = self.ctx.id_gen.next_id();
         let end_var_id = self.ctx.id_gen.next_id();
-        self.local_types.insert(end_var_id._value, iter_ty);
-        self.local_defs.push(IrLocalDef {
-            id: end_var_id,
-            ty: iter_ty,
-            name: "",
-            span: Span::empty(),
-        });
+        for id in [loop_var_id, counter_id, end_var_id] {
+            self.local_types.insert(id._value, iter_ty);
+            self.local_defs.push(IrLocalDef {
+                id: id,
+                ty: iter_ty,
+                name: "",
+                span: Span::empty(),
+            });
+        }
 
-        // let i = start; let _end = end
-        let ir_let_start = self.mk_let(loop_var_id, iter_ty, ir_start);
+        let ir_let_counter = self.mk_let(counter_id, iter_ty, ir_start);
         let ir_let_end = self.mk_let(end_var_id, iter_ty, ir_end);
+        let ir_cond = self.mk_binary(BinOp::Lt, self.mk_local(counter_id, iter_ty), self.mk_local(end_var_id, iter_ty), self.ctx.bool_ty);
 
-        // i < _end (or i <= _end for inclusive)
-        let cmp_op = if range_expr.flag() { BinOp::Le } else { BinOp::Lt };
-        let ir_cond = self.mk_binary(cmp_op, self.mk_local(loop_var_id, iter_ty), self.mk_local(end_var_id, iter_ty), self.ctx.bool_ty);
-
-        // Lower body
+        // let i = _i; _i += 1; (before the body, so that `continue` needs
+        // nothing else)
+        let ir_let_i = self.mk_let(loop_var_id, iter_ty, self.mk_local(counter_id, iter_ty));
+        let ir_counter = self.mk_local(counter_id, iter_ty);
+        let ir_incr = self.mk_assign(ir_counter, self.mk_binary(BinOp::Add, ir_counter, self.mk_int_lit(iter_ty, 1), iter_ty));
         let ir_body = self.lower_loop_body(expr.rhs());
+        let body_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
+        body_stmts[0] = ir_let_i;
+        body_stmts[1] = ir_incr;
+        body_stmts[2] = ir_body;
 
-        // i = i + 1
-        let ir_read_i2 = self.mk_local(loop_var_id, iter_ty);
-        let ir_add = self.mk_binary(BinOp::Add, ir_read_i2, self.mk_int_lit(iter_ty, 1), iter_ty);
-        let ir_incr = self.mk_assign(ir_read_i2, ir_add);
-
-        // while i < _end { body } with continue -> increment
         let while_expr = IrExpr::void_expr(self.ctx.void_ty);
         while_expr.tag = IrTag::While;
         while_expr._data.if_data.cond = ir_cond;
-        while_expr._data.if_data.lhs = ir_body;
-        while_expr._data.if_data.opt_expr = Option::some(ir_incr);
+        while_expr._data.if_data.lhs = self.mk_block_void(body_stmts);
         let ir_while = self.ctx.arena.alloc(while_expr) as &IrExpr;
 
-        // Full block: { let i = start; let _end = end; while ... }
         let block_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(3);
-        block_stmts[0] = ir_let_start;
+        block_stmts[0] = ir_let_counter;
         block_stmts[1] = ir_let_end;
         block_stmts[2] = ir_while;
         self.mk_block_void(block_stmts)
