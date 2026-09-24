@@ -15,7 +15,7 @@
 // - x86_64 (System V): up to 16 bytes, each eightbyte in an SSE register if
 //   it holds only floating-point values, else in an integer one (unless the
 //   eightbytes are single 64-bit values, which LLVM passes alike); larger
-//   ones through memory (`byval`; LLVM returns them through memory itself).
+//   ones through memory (`byval`, and for a result a buffer).
 
 use llvm::*;
 use ir::*;
@@ -69,7 +69,7 @@ fn signature(ctx: &mut CodegenCtx, param_tys: &[&IrTy], ret: &IrTy, variadic: bo
         let llvm_ty = ctx.llvm_type(ty);
         // (A `()` parameter is an i8, void is not a value.)
         originals[i] = if LLVMGetTypeKind(llvm_ty) == LLVMTypeKind::Void { ctx.i8_type } else { llvm_ty };
-        params[i] = if c_abi { classify(ctx, originals[i], false) } else { PassInfo { how: Pass::Direct, ty: originals[i] } };
+        params[i] = if c_abi { classify(ctx, originals[i]) } else { PassInfo { how: Pass::Direct, ty: originals[i] } };
     }
     let ret_original = ctx.llvm_type(ret);
     let ret_void = ret.is_void() || ret.is_never() || ret.tag == IrTyTag::Fn
@@ -77,7 +77,7 @@ fn signature(ctx: &mut CodegenCtx, param_tys: &[&IrTy], ret: &IrTy, variadic: bo
     let ret_info = if ret_void || !c_abi {
         PassInfo { how: Pass::Direct, ty: ret_original }
     } else {
-        classify(ctx, ret_original, true)
+        classify(ctx, ret_original)
     };
     let sret = ret_info.how == Pass::Indirect;
 
@@ -103,8 +103,8 @@ fn signature(ctx: &mut CodegenCtx, param_tys: &[&IrTy], ret: &IrTy, variadic: bo
     }
 }
 
-/// How C passes a value of LLVM type `ty` (as an argument, or a result).
-fn classify(ctx: &mut CodegenCtx, ty: LLVMTypeRef, is_result: bool) -> PassInfo {
+/// How C passes a value of LLVM type `ty` (as an argument or a result).
+fn classify(ctx: &mut CodegenCtx, ty: LLVMTypeRef) -> PassInfo {
     let direct = PassInfo { how: Pass::Direct, ty: ty };
     let kind = LLVMGetTypeKind(ty);
     if kind != LLVMTypeKind::Struct && kind != LLVMTypeKind::Array {
@@ -134,8 +134,9 @@ fn classify(ctx: &mut CodegenCtx, ty: LLVMTypeRef, is_result: bool) -> PassInfo 
 
     // x86_64
     if size > 16 {
-        // (LLVM returns a large aggregate through memory itself.)
-        return if is_result { direct } else { PassInfo { how: Pass::Indirect, ty: ctx.ptr_type } };
+        // (A result too: LLVM would return one of up to four integers or
+        // four doubles in registers.)
+        return PassInfo { how: Pass::Indirect, ty: ctx.ptr_type };
     }
     if words_only(ctx, leaves.as_slice(), size) {
         return direct;

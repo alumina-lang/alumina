@@ -826,6 +826,14 @@ fn check_syntax_errors(
     }
 }
 
+/// Add the methods the impls of a file mix in to their scopes. This is done
+/// for every file before any is parsed further, since a path in any file
+/// (`u32::to_be`) may name a mixed-in method.
+fn register_mixins(ctx: &mut ParseContext) {
+    let p2 = pass2::Pass2::new(ctx);
+    p2.process_mixins();
+}
+
 fn parse_file_pass2(ctx: &mut ParseContext) -> &[Item] {
     // Pass 2: construct AST (all names are now registered across all files)
     let p2 = pass2::Pass2::new(ctx);

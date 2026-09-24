@@ -165,18 +165,26 @@ impl Compiler {
                 return false;
             }
             let dir_iter = dir_iter_result.unwrap();
-
+            // The entries in name order: the order the files are read in
+            // matters to nothing, but the listing's order varies with the
+            // file system (sorted on APFS, hashed on ext4), and a fixed one
+            // makes the output the same everywhere.
+            let entries: Vector<(&[u8], bool)> = Vector::new();
+            #[allow(defer_in_a_loop)]
+            defer entries.free();
             loop {
                 let entry_opt = dir_iter.next();
-                if entry_opt.is_none() {
-                    break;
-                }
+                if entry_opt.is_none() { break; }
                 let entry_result = entry_opt.unwrap();
-                if entry_result.is_err() {
-                    continue;
-                }
+                if entry_result.is_err() { continue; }
                 let entry = entry_result.unwrap();
-                let name = entry.name();
+                let name = self.arena.alloc_slice_copy::<u8>(entry.name()) as &[u8];
+                entries.push((name, entry.file_type() == FileType::Directory));
+            }
+            std::cmp::sort_by(entries.as_slice_mut(), |a: &(&[u8], bool), b: &(&[u8], bool)| -> std::cmp::Ordering {
+                a.0.compare(&b.0)
+            });
+            for (name, is_dir) in entries {
 
                 // Skip . and ..
                 // Use character-level comparison to avoid potential slice == issues
@@ -191,7 +199,7 @@ impl Compiler {
                     continue;
                 }
 
-                if entry.file_type() == FileType::Directory {
+                if is_dir {
                     // Build child path and module prefix
                     let child_path = PathBuf::from_path(dir_path.as_path());
                     child_path.push(Path::new(name));
@@ -376,6 +384,11 @@ impl Compiler {
         }
         // Share macros across all contexts
         aluminac::parser::share_macros(contexts.as_slice_mut());
+
+        // Phase 1.5c: The methods impls mix in (paths in any file may name them)
+        for ctx in contexts.as_slice_mut().iter_mut() {
+            aluminac::parser::register_mixins(ctx);
+        }
 
         // Phase 2: Parse all function bodies (all names are now registered)
         for ctx in contexts.as_slice_mut().iter_mut() {
