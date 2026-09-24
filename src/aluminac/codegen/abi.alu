@@ -67,8 +67,8 @@ fn signature(ctx: &mut CodegenCtx, param_tys: &[&IrTy], ret: &IrTy, variadic: bo
     let params = ctx.arena.alloc_slice::<PassInfo>(param_tys.len());
     for (i, ty) in param_tys.iter().enumerate() {
         let llvm_ty = ctx.llvm_type(ty);
-        // (A `()` parameter is an i8, void is not a value.)
-        originals[i] = if LLVMGetTypeKind(llvm_ty) == LLVMTypeKind::Void { ctx.i8_type } else { llvm_ty };
+        // (A `()` parameter is a `{}`: void is not a value.)
+        originals[i] = ctx.value_type(llvm_ty);
         params[i] = if c_abi { classify(ctx, originals[i]) } else { PassInfo { how: Pass::Direct, ty: originals[i] } };
     }
     let ret_original = ctx.llvm_type(ret);

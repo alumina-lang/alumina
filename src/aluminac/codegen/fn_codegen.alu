@@ -269,8 +269,7 @@ impl FnCodegen {
         // Create allocas for parameters
         for (i, param) in self.ir_fn.params.iter().enumerate() {
             let param_ty = self.ctx.llvm_type(param.ty);
-            // Can't alloca void types
-            let alloca_ty = if self.is_void_type(param_ty) { self.ctx.i8_type } else { param_ty };
+            let alloca_ty = self.ctx.value_type(param_ty);
             let pname = self.ctx.null_terminate(param.name);
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &pname[0] as &libc::c_char);
             LLVMSetAlignment(alloca, self.ctx.alignment_of(param.ty));
@@ -286,8 +285,7 @@ impl FnCodegen {
         // Create allocas for local variables
         for local in self.ir_fn.local_defs.iter_ref() {
             let local_ty = self.ctx.llvm_type(local.ty);
-            // Can't alloca void types - use i8 as placeholder
-            let alloca_ty = if LLVMGetTypeKind(local_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { local_ty };
+            let alloca_ty = self.ctx.value_type(local_ty);
             //
             let lname = self.temp_name();
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &lname[0] as &libc::c_char);
@@ -699,7 +697,7 @@ impl FnCodegen {
                 // `?` early-return and false-positiving on absent keys,
                 // which hangs HashSet-using code (mono_enum's dedup loop).
                 self.gen_lvalue(expr.lhs());
-                return LLVMGetUndef(if self.is_void_type(result_ty) { self.ctx.i8_type } else { result_ty });
+                return LLVMGetUndef(self.ctx.value_type(result_ty));
             }
 
             let obj_ptr = self.gen_lvalue(expr.lhs());
@@ -732,7 +730,7 @@ impl FnCodegen {
 
             // Safety: void or opaque/unsized types can't be used in GEP/load
             if self.is_void_type(elem_ty) {
-                return LLVMGetUndef(self.ctx.i8_type);
+                return LLVMGetUndef(self.ctx.zst_member_type());
             }
             if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Struct && LLVMIsOpaqueStruct(elem_ty) != 0i32 {
                 return LLVMGetUndef(self.ctx.ptr_type);
@@ -1345,7 +1343,7 @@ impl FnCodegen {
             // zero-sized field are no-ops.
             if LLVMCountStructElementTypes(obj_ty) == 0u32 {
                 let field_llvm = self.ctx.llvm_type(expr.ty);
-                let safe_field = if LLVMGetTypeKind(field_llvm) == LLVMTypeKind::Void { self.ctx.i8_type } else { field_llvm };
+                let safe_field = self.ctx.value_type(field_llvm);
                 return LLVMGetUndef(LLVMPointerType(safe_field, 0));
             }
             // Bitcast to correct pointer type for GEP
@@ -1380,8 +1378,8 @@ impl FnCodegen {
                 }
                 IrTyTag::Pointer => {
                     let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
-                    // Protect against void element type
-                    let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
+                    // (A zero-sized element: a stride of 0.)
+                    let safe_elem = self.ctx.value_type(elem_ty);
                     let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
                     indices[0] = safe_index;
                     LLVMBuildInBoundsGEP2(
@@ -1393,8 +1391,8 @@ impl FnCodegen {
                     // Slice lvalue indexing: extract data pointer, then GEP
                     let slice_llvm = self.ctx.llvm_type(lhs_ty);
                     let elem_ty = self.ctx.llvm_type(lhs_ty.inner());
-                    // Protect against void element type
-                    let safe_elem = if LLVMGetTypeKind(elem_ty) == LLVMTypeKind::Void { self.ctx.i8_type } else { elem_ty };
+                    // (A zero-sized element: a stride of 0.)
+                    let safe_elem = self.ctx.value_type(elem_ty);
                     let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
                     LLVMBuildStore(self.ctx.builder, base, slice_alloca);
                     let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, SLICE_DATA_FIELD, self.temp_cname());
@@ -1732,7 +1730,7 @@ impl FnCodegen {
         if self.is_void_type(val_ty) {
             let res_llvm = self.ctx.llvm_type(result_ty);
             if self.is_void_type(res_llvm) {
-                return LLVMGetUndef(self.ctx.i8_type);
+                return LLVMGetUndef(self.ctx.zst_member_type());
             }
             return LLVMGetUndef(res_llvm);
         }
@@ -1836,7 +1834,7 @@ impl FnCodegen {
                 let v = self.coerce_value(value, sig.originals[i]);
                 arg_vals.push(self.to_abi(v, sig.params[i], sig.originals[i]));
             } else {
-                arg_vals.push(if LLVMGetTypeKind(LLVMTypeOf(value)) == LLVMTypeKind::Void { LLVMGetUndef(self.ctx.i8_type) } else { value });
+                arg_vals.push(if LLVMGetTypeKind(LLVMTypeOf(value)) == LLVMTypeKind::Void { LLVMGetUndef(self.ctx.zst_member_type()) } else { value });
             }
         }
 
@@ -2179,7 +2177,7 @@ impl FnCodegen {
             return LLVMGetUndef(target_ty);
         }
         if target_kind == LLVMTypeKind::Void {
-            return LLVMGetUndef(self.ctx.i8_type);
+            return LLVMGetUndef(self.ctx.zst_member_type());
         }
         if val_ty == target_ty {
             return val;

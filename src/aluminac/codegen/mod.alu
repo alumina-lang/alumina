@@ -282,6 +282,13 @@ impl CodegenCtx {
         LLVMStructTypeInContext(self.context, null, 0, 0i32)
     }
 
+    /// `ty` (an LLVM type) as the type of a value: `()` and function items,
+    /// whose LLVM type is void, are `{}` (as all zero-sized types are), so
+    /// that they take no space, register or argument slot.
+    fn value_type(self: &mut CodegenCtx, ty: LLVMTypeRef) -> LLVMTypeRef {
+        if LLVMGetTypeKind(ty) == LLVMTypeKind::Void { self.zst_member_type() } else { ty }
+    }
+
     fn llvm_type(self: &mut CodegenCtx, ty: &IrTy) -> LLVMTypeRef {
         let key = ty as &void as usize;
         // Safety: check for null/invalid type pointer
