@@ -673,6 +673,13 @@ evaluates the place first (alumina-boot's lang tests expect it; its
   run only if reached, from one cleanup block, as in alumina-boot; locals
   are uninitialized, as `let x: T;` is. That exposed `for i in 0usize..8`
   storing the `8` as an i32 into the usize bound.
+- A `const`/`static` in a generic function's body may use the function's
+  generic parameters (`const SIZE: usize = size_of::<T>();`) but is one
+  item for all instances, so every instance sees the first one's value (as
+  in alumina-boot). Should be an error (Rust: "can't use generic parameters
+  from outer item") or per instance.
+- An unresolved method on a temporary (`[1, 2, 3].iter_ref()`) is
+  reported twice.
 - ~~On macOS, `-g` output has no usable debug info~~: aluminac runs
   `dsymutil` after linking.
 - Debug information (2026-09-24; alumina-boot had `#line` only): DWARF as
