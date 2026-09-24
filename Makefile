@@ -118,8 +118,10 @@ $(STAGE1).c: $(BOOT) $(ALUMINAC_DEPS) | check-llvm
 	@mkdir -p $(@D)
 	$(BOOT) --sysroot $(SYSROOT) --debug --cfg threading --cfg boot --output $@ $(ALUMINAC_MODULES)
 
+# (Uninitialized locals filled with a pattern: the compiler reading one is
+# then a bug that shows, not one that depends on what the stack held.)
 $(STAGE1): $(STAGE1).c $(PARSER)
-	$(CC) -g -w -o $@ $(STAGE1).c $(PARSER) -lm -lpthread -ltree-sitter $(LLVM_LIBS)
+	$(CC) -g -w -ftrivial-auto-var-init=pattern -o $@ $(STAGE1).c $(PARSER) -lm -lpthread -ltree-sitter $(LLVM_LIBS)
 
 $(ALUMINAC): $(STAGE1) $(ALUMINAC_DEPS)
 	$(STAGE1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT) --link-args "$(ALUMINAC_LINK)" -o $@ $(ALUMINAC_MODULES)

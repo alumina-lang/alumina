@@ -83,9 +83,15 @@ impl Arena {
         ptr
     }
 
+    /// A slice of `len` values, uninitialized: the caller initializes it.
+    /// (In debug builds its bytes are 0xA5, so that code reading it before
+    /// writing it fails the same way every time: a `bool` is `true`, a
+    /// pointer invalid.)
     #[inline]
     fn alloc_slice<T>(self: &mut Arena, len: usize) -> &mut [T] {
         let ptr = self.aligned_alloc(size_of::<T>() * len, align_of::<T>()) as &mut T;
+        #[cfg(debug)]
+        libc::memset(ptr as &mut void, 0xA5, size_of::<T>() * len);
         std::mem::slice::from_raw(ptr, len)
     }
 
