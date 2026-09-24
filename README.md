@@ -208,7 +208,7 @@ Compile with `-g` for debug information (DWARF; on macOS aluminac also runs `dsy
 (std::collections::hashmap::HashMap<i32, &[u8], std::hash::xxhash::Xxh64>) m = len=1 { [0] = (1, "one") }
 ```
 
-(or load them in any lldb with `command script import tools/lldb/alumina_lldb.py`).
+(or load them in any lldb with `command script import tools/lldb/alumina_lldb.py`; that also lets `step` enter the standard library, which lldb skips by default because C++'s is also `std::`).
 
 `make install` installs `aluminac`, `alumina-lldb` and the standard library into `PREFIX` (`/usr/local` by default); set `ALUMINA_SYSROOT` to `$PREFIX/share/alumina` to use it without `--sysroot`.
 

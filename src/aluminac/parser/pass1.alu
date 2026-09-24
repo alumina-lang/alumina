@@ -481,6 +481,7 @@ impl Pass1 {
         let attributes = self.parse_attributes(node);
         if self.skip_item { self.skip_item = false; return; }
         let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+        self.ctx.scopes.fn_scope_owners.insert(child_scope, (id._value, name));
 
         let item_kind = if self.in_container {
             NamedItemKind::method(id, id) // simplified: both type and fn ids are the same

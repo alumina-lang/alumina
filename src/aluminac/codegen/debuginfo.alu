@@ -32,10 +32,15 @@ fn namespace(ctx: &mut CodegenCtx, path: &[u8]) -> LLVMMetadataRef {
     if cached.is_some() {
         return cached.unwrap();
     }
-    // (The last `::`.)
-    let split = std::string::rfind_char(path, ':');
-    let (parent, name) = if split.is_some() && split.unwrap() > 0 {
-        (namespace(ctx, path[..split.unwrap() - 1]), path[split.unwrap() + 1..])
+    // (The last `::`, not in type arguments: `main::g<a::B>`.)
+    let last = 0usize;
+    let end = path_segment_end(path, 0);
+    while end < path.len() {
+        last = end + 2;
+        end = path_segment_end(path, last);
+    }
+    let (parent, name) = if last > 0 {
+        (namespace(ctx, path[..last - 2]), path[last..])
     } else {
         (ctx.di_compile_unit, path)
     };
@@ -318,6 +323,11 @@ fn subroutine_type(ctx: &mut CodegenCtx, params: &[&IrTy], ret: &IrTy) -> LLVMMe
 /// The name of a function in debug information: its own name, with the
 /// type arguments of a generic one (`max<i32>`).
 fn function_name(ctx: &mut CodegenCtx, f: &IrFunction) -> &[u8] {
+    // (The name in the symbol, when it has one: a closure's `{closure#0}`.)
+    let symbol_name = symbol_last_name(f.mangled_name);
+    if symbol_name.is_some() {
+        return symbol_name.unwrap();
+    }
     if f.type_args.is_empty() {
         return f.name;
     }

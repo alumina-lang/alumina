@@ -682,16 +682,20 @@ evaluates the place first (alumina-boot's lang tests expect it; its
   `int`); structs, unions and enums in their modules, methods in their
   type's namespace; locals in lexical blocks from their `let` (macro
   expansions' and `_`-prefixed ones hidden); macro code at the call site.
-  Function symbols are Itanium-style paths (`_ZN4main11report<i32>E`, a
-  `.N` suffix on a clash), so lldb, gdb, perf and `nm -C` show
-  `main::report<i32>`. lldb formatters for the standard library's types
+  Symbols of functions, closures and statics are Itanium-style paths
+  (`_ZN4main11report<i32>E`), so lldb, gdb, perf and `nm -C` show
+  `main::report<i32>`; items in a function body are in the function
+  (`main::g<u8>::h`, `main::main::{closure#0}`; a static there, one for
+  all instances, `main::g::X`). Programs are compiled whole, so names need
+  only be unique, not canonical (no hashes; a `.N` suffix on a clash).
+  `#[export]`, `#[no_mangle]`, `#[link_name]` and extern items keep their
+  names. lldb formatters for the standard library's types
   and `alumina-lldb`: `tools/lldb`. Tests: `tests/debuginfo` (lldb
   commands and expected output, `make test-debuginfo`).
   Open: type arguments as Itanium template arguments (`_ZN4main1gIu2u8EE`;
   demanglers read `g<u8>` in a name, but `c++filt` as a text filter
   splits the symbol at the `<`); gdb pretty printers; enums as `enum class` (gdb shows
-  `main::shapes::Green`; the C API has no flag for it); closures and
-  lambdas keep `_AL` symbols (no path); `lldb-server` 22 from
+  `main::shapes::Green`; the C API has no flag for it); `lldb-server` 22 from
   apt.llvm.org crashes on OrbStack's kernel, so the lldb tests do not run
   in the local Linux containers (gdb works there).
 

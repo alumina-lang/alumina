@@ -11,7 +11,7 @@ use diagnostics::DiagnosticContext;
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet, Vector};
 use std::option::Option;
-use std::string::{StringBuf, split};
+use std::string::StringBuf;
 use mono::lower::Mono;
 
 // Frame in the monomorphization call stack for diagnostics
@@ -93,7 +93,7 @@ struct MonoCtx {
 
     // Name mangling counter
     mangle_counter: usize,
-    /// How many functions have each symbol name `mangle_fn_name` made
+    /// How many items have each symbol name `mangle_path` made
     /// (the ones after the first get a suffix).
     fn_symbols: HashMap<&[u8], usize>,
 
@@ -152,6 +152,11 @@ struct MonoCtx {
     // mono cache is keyed against the outer mono's cache_key so that each
     // outer instantiation produces its own copy — see `mono_function`.
     local_fn_ids: HashSet<usize>,
+    /// The function each item declared in a function body (a function, a
+    /// static or a const) is in: its id and name.
+    local_parents: HashMap<usize, (usize, &[u8])>,
+    /// How many closures each function (by path) has named so far.
+    closure_counts: HashMap<&[u8], usize>,
 }
 
 impl MonoCtx {
@@ -241,6 +246,8 @@ impl MonoCtx {
             mono_stack: Vector::new(),
             dyn_vtable_cache: HashMap::new(),
             local_fn_ids: HashSet::new(),
+            local_parents: HashMap::new(),
+            closure_counts: HashMap::new(),
         };
 
         // Build lookup tables
@@ -347,12 +354,19 @@ impl MonoCtx {
             if self.scopes.scopes[sidx].kind != ScopeKind::Block {
                 continue;
             }
+            let parent = self.scopes.enclosing_fn(sidx as u32);
             for pair in self.scopes.scopes[sidx].items {
                 let kind = pair.1.kind;
-                if kind.tag == NamedItemTag::Function {
-                    self.local_fn_ids.insert(kind.id()._value);
-                } else if kind.tag == NamedItemTag::Method {
-                    self.local_fn_ids.insert(kind.id2()._value);
+                let id = switch kind.tag {
+                    NamedItemTag::Function, NamedItemTag::Static, NamedItemTag::Const => kind.id()._value,
+                    NamedItemTag::Method => kind.id2()._value,
+                    _ => continue,
+                };
+                if kind.tag == NamedItemTag::Function || kind.tag == NamedItemTag::Method {
+                    self.local_fn_ids.insert(id);
+                }
+                if parent.is_some() {
+                    self.local_parents.insert(id, parent.unwrap());
                 }
             }
         }
@@ -378,13 +392,14 @@ impl MonoCtx {
         std::fmt::format_in!(buf, "_AL{}{}", base, self.mangle_counter).unwrap()
     }
 
-    /// The symbol name of a function: its path, as C++ compilers name them
-    /// (Itanium ABI), so that debuggers, profilers and `nm -C` show it:
-    /// `_ZN4main3addE` is `main::add`. The last name has the type arguments,
-    /// `_ZN4main11report<i32>E`; the second function with the same path (two
-    /// local functions `f`, an instance of a local function in two instances
-    /// of the function it is in) gets a suffix, `_ZN4main1fE.1`.
-    fn mangle_fn_name(self: &mut MonoCtx, namespace: &[u8], name: &[u8], type_args: &[&IrTy]) -> &[u8] {
+    /// The symbol name of a function or a static: its path, as C++ compilers
+    /// name them (Itanium ABI), so that debuggers, profilers and `nm -C` show
+    /// it: `_ZN4main3addE` is `main::add`. A name has its type arguments,
+    /// `_ZN4main11report<i32>E`, and an item in a function body is in the
+    /// function, `_ZN4main6g<u8>1hE`. (Programs are compiled whole, so the
+    /// names need not be canonical, only unique: a second item with the same
+    /// path, which should be rare, gets a suffix, `_ZN4main1fE.1`.)
+    fn mangle_path(self: &mut MonoCtx, namespace: &[u8], name: &[u8], type_args: &[&IrTy]) -> &[u8] {
         let last = StringBuf::new();
         defer last.free();
         write_fn_name(&last, name, type_args);
@@ -392,10 +407,13 @@ impl MonoCtx {
         let buf = StringBuf::new();
         defer buf.free();
         buf.extend_from_slice(if namespace.is_empty() { "_Z" } else { "_ZN" });
-        for segment in namespace.split("::") {
-            if !segment.is_empty() {
-                std::fmt::write!(&buf, "{}{}", segment.len(), segment).unwrap();
+        let start = 0usize;
+        while start < namespace.len() {
+            let end = path_segment_end(namespace, start);
+            if end > start {
+                std::fmt::write!(&buf, "{}{}", end - start, namespace[start..end]).unwrap();
             }
+            start = end + 2;
         }
         std::fmt::write!(&buf, "{}{}", last.len(), last.as_slice()).unwrap();
         if !namespace.is_empty() {
@@ -410,16 +428,6 @@ impl MonoCtx {
             self.fn_symbols.insert(self.arena.alloc_slice_copy(buf.as_slice()), 1);
         }
         self.arena.alloc_slice_copy(buf.as_slice())
-    }
-
-    // Deterministic per-def global mangling. Two fn-local `const X` in
-    // different functions would collide on the bare source name; appending
-    // def.id._value (unique across defs) guarantees a unique LLVM symbol.
-    // Used for non-extern, non-export, non-link_name globals only.
-    fn mangle_global_name(self: &mut MonoCtx, base: &[u8], id: usize) -> &[u8] {
-        // _AL<base>_<id> — id is at most 20 decimal digits.
-        let buf = self.arena.alloc_slice::<u8>(3usize + base.len() + 1usize + 20usize);
-        std::fmt::format_in!(buf, "_AL{}_{}", base, id).unwrap()
     }
 
     fn intern_builtin_ty(self: &mut MonoCtx, bt: BuiltinType) -> &IrTy {
@@ -599,6 +607,8 @@ impl MonoCtx {
     fn free(self: &mut MonoCtx) {
         self.fn_namespaces.free();
         self.fn_symbols.free();
+        self.local_parents.free();
+        self.closure_counts.free();
         self.fn_defs.free();
         self.struct_defs.free();
         self.enum_defs.free();
@@ -817,7 +827,8 @@ impl MonoCtx {
                         continue;
                     }
                     let id = switch item.kind.tag {
-                        scope::NamedItemTag::Function => item.kind.id()._value,
+                        scope::NamedItemTag::Function, scope::NamedItemTag::Static,
+                        scope::NamedItemTag::Const => item.kind.id()._value,
                         scope::NamedItemTag::Method => item.kind.id2()._value,
                         _ => continue,
                     };

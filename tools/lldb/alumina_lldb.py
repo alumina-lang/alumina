@@ -14,7 +14,8 @@ show the standard library's types by their contents:
     (std::collections::hashmap::HashMap<...>) m = len=2 { [0] = (key, value) ... }
 
 Load them with `command script import <path>/alumina_lldb.py` (the
-`alumina-lldb` script does), e.g. in `~/.lldbinit`.
+`alumina-lldb` script does), e.g. in `~/.lldbinit`. That also lets `step`
+enter the standard library (`std::...`), which lldb skips by default.
 """
 
 import lldb
@@ -316,3 +317,7 @@ def __lldb_init_module(debugger, _dict):
     # (Tuples on one line, `(1, "one")`; their elements are still there.)
     run('type summary add -w %s -x "^\\(.+\\)$" -F %s.tuple_summary' % (CATEGORY, module))
     run("type category enable %s" % CATEGORY)
+    # (lldb does not step into functions matching `^std::` by default, to
+    # skip C++'s standard library: Alumina's is `std::` too, and is stepped
+    # into like other code.)
+    run("settings set target.process.thread.step-avoid-regexp ''")

@@ -177,6 +177,8 @@ struct ScopeArena {
     // Function scopes whose parameters are not checked for use (functions
     // without bodies).
     unchecked_scopes: std::collections::HashSet<u32>,
+    /// The function each function scope is the scope of: its id and name.
+    fn_scope_owners: HashMap<u32, (usize, &[u8])>,
 }
 
 impl ScopeArena {
@@ -188,6 +190,7 @@ impl ScopeArena {
             mixin_impl_generic_ids: HashMap::new(),
             used: std::collections::HashSet::new(),
             unchecked_scopes: std::collections::HashSet::new(),
+            fn_scope_owners: HashMap::new(),
         }
     }
 
@@ -636,6 +639,24 @@ impl ScopeArena {
             scope.items.free();
         }
         self.scopes.free();
+        self.fn_scope_owners.free();
+    }
+
+    /// The function whose body `scope_idx` is in (its id and name), if any.
+    fn enclosing_fn(self: &ScopeArena, scope_idx: u32) -> Option<(usize, &[u8])> {
+        let cur: Option<u32> = Option::some(scope_idx);
+        while cur.is_some() {
+            let owner = self.fn_scope_owners.get(&cur.unwrap());
+            if owner.is_some() {
+                return owner;
+            }
+            let scope = self.get(cur.unwrap());
+            if scope.kind == ScopeKind::Module || scope.kind == ScopeKind::Impl {
+                return Option::none();
+            }
+            cur = scope.parent;
+        }
+        Option::none()
     }
 
     /// Recover the source name of `scope_idx` by searching its parent's items

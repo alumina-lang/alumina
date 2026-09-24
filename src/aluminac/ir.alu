@@ -1168,6 +1168,57 @@ fn write_type_list(buf: &mut StringBuf, tys: &[&IrTy]) {
     }
 }
 
+/// The end of the segment of `path` (`a::g<b::C>::d`) at `start`: the next
+/// `::` not in type arguments, or the end.
+fn path_segment_end(path: &[u8], start: usize) -> usize {
+    let depth = 0usize;
+    let i = start;
+    while i < path.len() {
+        let c = path[i];
+        if c == '<' || c == '(' || c == '[' {
+            depth += 1;
+        } else if (c == '>' && !(i > 0 && path[i - 1] == '-')) || c == ')' || c == ']' {
+            if depth > 0 { depth -= 1; }
+        } else if depth == 0 && c == ':' && i + 1 < path.len() && path[i + 1] == ':' {
+            return i;
+        }
+        i += 1;
+    }
+    path.len()
+}
+
+/// `namespace::name<type_args>`.
+fn write_item_path(buf: &mut StringBuf, namespace: &[u8], name: &[u8], type_args: &[&IrTy]) {
+    if !namespace.is_empty() {
+        buf.extend_from_slice(namespace);
+        buf.extend_from_slice("::");
+    }
+    write_fn_name(buf, name, type_args);
+}
+
+/// The last name in a symbol `MonoCtx::mangle_path` made (`report<i32>` in
+/// `_ZN4main11report<i32>E.1`), if it is one.
+fn symbol_last_name(mangled: &[u8]) -> Option<&[u8]> {
+    if mangled.len() < 3 || mangled[..2] != "_Z" {
+        return Option::none();
+    }
+    let i = if mangled[2] == 'N' { 3usize } else { 2usize };
+    let last: Option<&[u8]> = Option::none();
+    while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+        let len = 0usize;
+        while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+            len = len * 10 + (mangled[i] - '0') as usize;
+            i += 1;
+        }
+        if i + len > mangled.len() {
+            return Option::none();
+        }
+        last = Option::some(mangled[i..i + len]);
+        i += len;
+    }
+    last
+}
+
 /// A function's name with its type arguments, `report<i32>`.
 fn write_fn_name(buf: &mut StringBuf, name: &[u8], type_args: &[&IrTy]) {
     buf.extend_from_slice(name);
@@ -1179,7 +1230,7 @@ fn write_fn_name(buf: &mut StringBuf, name: &[u8], type_args: &[&IrTy]) {
 }
 
 /// The path of a function in its symbol name (`_ZN4main3addE`, see
-/// `MonoCtx::mangle_fn_name`: `main::add`; `_AL<name><n>`: `<name>`).
+/// `MonoCtx::mangle_path`: `main::add`; `_AL<name><n>`: `<name>`).
 fn write_symbol_name(buf: &mut StringBuf, mangled: &[u8]) {
     if mangled.len() > 2 && mangled[..2] == "_Z" {
         let i = if mangled[2] == 'N' { 3usize } else { 2usize };

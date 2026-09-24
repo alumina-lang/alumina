@@ -11,6 +11,7 @@ use diagnostics::DiagnosticContext;
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet, Vector};
 use std::option::{Option, try};
+use std::string::StringBuf;
 
 struct Mono {
     ctx: &mut MonoCtx,
@@ -1495,8 +1496,8 @@ impl Mono {
         } else if keep_name {
             def.name
         } else {
-            let namespace = self.ctx.fn_namespace(def.id._value);
-            self.ctx.mangle_fn_name(namespace, def.name, type_args)
+            let namespace = self.item_namespace(def.id._value, true);
+            self.ctx.mangle_path(namespace, def.name, type_args)
         };
 
         // Reserve index and cache it BEFORE lowering the body
@@ -1516,7 +1517,7 @@ impl Mono {
             span: def.span,
             // (A copy: callers can pass type arguments on the stack.)
             type_args: self.ctx.arena.alloc_slice_copy(type_args),
-            namespace: self.ctx.fn_namespace(def.id._value),
+            namespace: self.item_namespace(def.id._value, true),
         };
         self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
@@ -7036,7 +7037,16 @@ impl Mono {
 
         // Create an anonymous function for the lambda
         let lambda_id = self.ctx.id_gen.next_id();
-        let mangled = self.ctx.mangle_name(if has_captures { "closure" } else { "lambda" });
+        // (`main::f::{closure#0}`, as Rust names them.)
+        let namespace = self.current_fn_path();
+        let count = self.ctx.closure_counts.get(&namespace).unwrap_or(0usize);
+        self.ctx.closure_counts.insert(namespace, count + 1);
+        let buf = StringBuf::from_slice("{closure#");
+        defer buf.free();
+        std::fmt::write!(&buf, "{}", count).unwrap();
+        buf.push('}');
+        let closure_name = self.ctx.arena.alloc_slice_copy(buf.as_slice());
+        let mangled = self.ctx.mangle_path(namespace, closure_name, &[]);
 
         // First, lower the captured values (before switching to lambda's local scope)
         let bound_values = self.ctx.arena.alloc_slice::<&IrExpr>(expr.closure_bindings().len());
@@ -7142,7 +7152,7 @@ impl Mono {
             abi: Option::none(),
             span: expr.span,
             type_args: &[],
-            namespace: "",
+            namespace: namespace,
         };
         self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
@@ -7269,6 +7279,47 @@ impl Mono {
         self.alloc(IrExpr::of_global(global.ty, IrGlobalRef { id: global.id, mangled_name: global.mangled_name }))
     }
 
+    /// The path of the function being lowered (`main::g<u8>`), "" if none.
+    fn current_fn_path(self: &mut Mono) -> &[u8] {
+        if self.current_fn_idx == 0 {
+            return "";
+        }
+        let f = &self.ctx.ir_functions[self.current_fn_idx - 1];
+        let buf = StringBuf::new();
+        defer buf.free();
+        write_item_path(&buf, f.namespace, f.name, f.type_args);
+        self.ctx.arena.alloc_slice_copy(buf.as_slice())
+    }
+
+    /// The namespace of a function, static or const item: its module (or
+    /// type, for a method) or, for one in a function body, the function
+    /// (`main::g<u8>`, the instance being lowered, if `per_instance`: a local
+    /// function is one per instance of the function it is in).
+    fn item_namespace(self: &mut Mono, id: usize, per_instance: bool) -> &[u8] {
+        let parent = self.ctx.local_parents.get(&id);
+        if parent.is_none() {
+            return self.ctx.fn_namespace(id);
+        }
+        let (parent_id, parent_name) = parent.unwrap();
+        if per_instance && self.current_fn_idx > 0 {
+            let current = &self.ctx.ir_functions[self.current_fn_idx - 1];
+            if current.id._value == parent_id {
+                return self.current_fn_path();
+            }
+            // (Used by an item in the same function, e.g. a local function
+            // calling another: in the same instance.)
+            let current_parent = self.ctx.local_parents.get(&current.id._value);
+            if current_parent.is_some() && current_parent.unwrap().0 == parent_id {
+                return current.namespace;
+            }
+        }
+        // (Otherwise the function without its type arguments.)
+        let buf = StringBuf::new();
+        defer buf.free();
+        write_item_path(&buf, self.item_namespace(parent_id, false), parent_name, &[]);
+        self.ctx.arena.alloc_slice_copy(buf.as_slice())
+    }
+
     /// Emit the global for one instantiation of a static or const item and
     /// return its index in `ir_globals`.
     fn emit_static(self: &mut Mono, def: &StaticDef, type_args: &[&IrTy], cache_key: MonoKey) -> usize {
@@ -7287,9 +7338,9 @@ impl Mono {
         } else if is_extern || keep_name {
             def.name
         } else {
-            // Per-def mangling — two fn-local `const X` in different fns
-            // would otherwise collide on def.name.
-            self.ctx.mangle_global_name(def.name, id._value)
+            // (A static in a function body is one for all its instances.)
+            let namespace = self.item_namespace(def.id._value, false);
+            self.ctx.mangle_path(namespace, def.name, type_args)
         };
 
         // The initializer is lowered like a function body of its own: with
