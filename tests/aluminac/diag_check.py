@@ -41,20 +41,20 @@ def expected_diagnostics(contents):
 
 
 def aluminac_diagnostics(output, path):
-    """(level, message, line) of each error/warning, located in `path`."""
+    """(level, message, line, column) of each error/warning, located in `path`."""
     diags = []
     current = None
     for line in output.split("\n"):
         m = re.match(r"^(error|warning): (.*)$", line)
         if m:
-            current = {"level": m[1], "message": m[2], "lines": []}
+            current = {"level": m[1], "message": m[2], "places": []}
             diags.append(current)
             continue
-        m = re.match(r"^\s*--> (.*):(\d+):\d+$", line)
+        m = re.match(r"^\s*--> (.*):(\d+):(\d+)$", line)
         if m and current is not None:
             if os.path.normpath(m[1]) == os.path.normpath(path):
-                current["lines"].append(int(m[2]))
-    return [(d["level"], d["message"], d["lines"][0]) for d in diags if d["lines"]]
+                current["places"].append((int(m[2]), int(m[3])))
+    return [(d["level"], d["message"], *d["places"][0]) for d in diags if d["places"]]
 
 
 def main():
@@ -77,6 +77,11 @@ def main():
         got = aluminac_diagnostics(proc.stderr, path)
 
         problems = []
+        # (Each diagnostic is given once, as alumina-boot's.)
+        for diag in sorted(set(got)):
+            if got.count(diag) > 1:
+                problems.append(f"  line {diag[2]}: {diag[0]} given {got.count(diag)} times: {diag[1]}")
+        got = [(level, message, line) for level, message, line, _ in got]
         for line, diags in sorted(expected.items()):
             for level, kind, message in diags:
                 if not any(g[0] == level and g[2] == line for g in got):

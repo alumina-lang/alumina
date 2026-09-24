@@ -4,6 +4,7 @@ use ast::Span;
 use std::collections::Vector;
 use std::fmt::write;
 use std::io::StdioStream;
+use std::string::StringBuf;
 
 enum DiagLevel {
     Error,
@@ -375,6 +376,8 @@ struct DiagnosticContext {
     overrides_applied: usize,
     /// The lint warnings given (see `emit`).
     lints_seen: std::collections::HashSet<u64>,
+    /// The diagnostics given (see `emit`).
+    seen: std::collections::HashSet<u64>,
     /// Whether the last diagnostic was dropped (so are its attached notes).
     dropped: bool,
     errors: std::collections::Vector<CodeDiagnostic>,
@@ -390,6 +393,7 @@ impl DiagnosticContext {
             overrides: std::collections::Vector::new(),
             overrides_applied: 0,
             lints_seen: std::collections::HashSet::new(),
+            seen: std::collections::HashSet::new(),
             dropped: false,
             errors: std::collections::Vector::new(),
             has_errors: false,
@@ -482,12 +486,36 @@ impl DiagnosticContext {
                 return;
             }
         }
+        // A diagnostic is given once (as in alumina-boot): code can be
+        // lowered more than once, e.g. a macro's argument that it expands in
+        // two places (`println!`'s), and gives the same diagnostic each time.
+        if !diag.attached && !self.seen.insert(self.diagnostic_key(&diag)) {
+            self.dropped = true;
+            return;
+        }
         switch diag.level {
             DiagLevel::Error => { self.has_errors = true; },
             DiagLevel::Warning => { self.has_warnings = true; },
             _ => {},
         };
         self.errors.push(diag);
+    }
+
+    /// What tells diagnostics apart: the level, kind, message and place
+    /// (where the code is written: its macro expansions do not count).
+    fn diagnostic_key(self: &DiagnosticContext, diag: &CodeDiagnostic) -> u64 {
+        let message = StringBuf::new();
+        defer message.free();
+        let _ = write!(&message, "{}", *diag);
+        let span = self.written_span(diag.span);
+        let key = 1469598103934665603u64;
+        for b in message.as_slice() {
+            key = (key ^ (b as u64)) * 1099511628211u64;
+        }
+        for v in [diag.level as u64, diag.kind as u64, span.file_id as u64, span.start as u64, span.end as u64] {
+            key = (key ^ v) * 1099511628211u64;
+        }
+        key
     }
 
     /// The number of errors given (so far).
@@ -646,6 +674,8 @@ impl DiagnosticContext {
     fn free(self: &mut DiagnosticContext) {
         self.files.free();
         self.errors.free();
+        self.lints_seen.free();
+        self.seen.free();
     }
 }
 
