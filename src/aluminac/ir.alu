@@ -1151,7 +1151,8 @@ fn write_type_name(buf: &mut StringBuf, ty: &IrTy, qualified: bool) {
             }
         }
         IrTyTag::Enum => write_path(buf, ty.enum_ref().namespace, ty.enum_ref().name, qualified),
-        IrTyTag::Closure => buf.extend_from_slice("{closure}"),
+        // (A closure by its function's path, `main::f::{closure#0}`.)
+        IrTyTag::Closure => write_symbol_name(buf, ty.closure_fn().mangled_name),
         IrTyTag::Fn => {
             write_symbol_name(buf, ty.fn_item_ref().mangled_name);
         }

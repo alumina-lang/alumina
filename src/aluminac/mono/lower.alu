@@ -1497,7 +1497,9 @@ impl Mono {
             def.name
         } else {
             let namespace = self.item_namespace(def.id._value, true);
-            self.ctx.mangle_path(namespace, def.name, type_args)
+            // (With the arguments of the protocol a mixed-in method is from,
+            // which tell its instances apart too: see `cache_key`.)
+            self.ctx.mangle_path(namespace, def.name, cache_key.args)
         };
 
         // Reserve index and cache it BEFORE lowering the body
@@ -7555,10 +7557,15 @@ impl Mono {
     /// many for varargs functions).
     fn check_arg_count(self: &mut Mono, call: &IrExpr, expr: &Expr) {
         let target = call.call_target();
+        let env = 0usize;
         let (params, variadic) = if target.tag == CallKind::Direct {
             let idx = self.ctx.fn_indices.get(&target.fn_ref.mangled_name);
             if idx.is_none() { return; }
             let f = &self.ctx.ir_functions[idx.unwrap()];
+            // (A closure's environment, its first parameter, is not counted.)
+            if f.params.len() > 0 && f.params[0].name == "__self" {
+                env = 1;
+            }
             (f.params.len(), f.is_variadic)
         } else if target.callee.ty.tag == IrTyTag::FnPointer {
             (target.callee.ty.elems().len(), false)
@@ -7569,6 +7576,8 @@ impl Mono {
         if args == params || variadic && args > params {
             return;
         }
+        args -= env;
+        params -= env;
         // (A method's receiver is not counted, as in alumina-boot.)
         if expr.lhs().tag == ExprTag::FieldAccess && args == expr.args().len() + 1 {
             if params == 0 {
@@ -7870,7 +7879,9 @@ impl Mono {
         let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args().len());
         for i in 0usize..expr.args().len() {
             ir_args[i] = if signature.is_some() && i < signature.unwrap().0.len() {
-                self.lower_expr_coerced(expr.args()[i], signature.unwrap().0[i])
+                let param_ty = signature.unwrap().0[i];
+                let arg = self.lower_expr_coerced(expr.args()[i], param_ty);
+                self.check_and_coerce(arg, param_ty, expr.args()[i].span)
             } else {
                 self.lower_expr(expr.args()[i])
             };
@@ -7999,16 +8010,16 @@ impl Mono {
             return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
         }
 
-        if ir_ty.tag != IrTyTag::Struct {
-            let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(expr.field_inits().len());
-            for (i, fi) in expr.field_inits().iter_ref().enumerate() {
-                ir_fields[i] = self.lower_expr(fi.value);
-            }
-            return self.alloc(IrExpr::struct_lit(ir_ty, ir_fields));
-        }
-
         // The initializers, as written (the first one for a field counts).
-        let fields = ir_ty.struct_ref().fields;
+        // (A slice is `std::mem::slice<Ptr>`'s fields: `_ptr: Ptr`, `_len: usize`.)
+        let fields = if ir_ty.tag == IrTyTag::Slice {
+            let slice_fields = self.ctx.arena.alloc_slice::<IrField>(2);
+            slice_fields[0] = IrField { name: "_ptr", ty: self.ctx.make_ptr_ty(ir_ty.inner(), ir_ty.is_const()) };
+            slice_fields[1] = IrField { name: "_len", ty: self.ctx.usize_ty };
+            slice_fields as &[IrField]
+        } else {
+            ir_ty.struct_ref().fields
+        };
         let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(fields.len());
         let initialized = self.ctx.arena.alloc_slice::<bool>(fields.len());
         initialized.fill(false);

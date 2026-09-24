@@ -1,0 +1,52 @@
+// Comments inside lists (type arguments, function pointer parameters, use
+// lists, switch patterns, lambda parameters) are not elements.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::{
+    string::StringBuf, // a
+    mem::size_of /* b */
+};
+
+struct S<
+    A, // a
+    B  // b
+> { x: A, /* c */ y: B }
+
+fn f(
+    a: i32, // a
+    b: i32  // b
+) -> i32 { a * 10 + b }
+
+fn g<T, // t
+     U>(t: T, u: U) -> (T, U) { (t, u) }
+
+type F = fn(
+    i32, // x
+    i32  // y
+) -> i32;
+
+type T3 = (
+    i32, // x
+    u8   // y
+);
+
+fn main() {
+    let s: S<i32, /* c */ u8> = S { x: 1, y: 2 };
+    let h: F = f;
+    let pair = g::<i32, /* c */ u8>(1, 2);
+    let r = switch s.x {
+        1, // one
+        2 => 10,
+        _ => 0,
+    };
+    let l = |a: i32, // a
+             b: i32| -> i32 { a + b };
+    assert_eq!(s.y, 2u8);
+    assert_eq!(h(3, 4), 34);
+    assert_eq!(pair.1, 2u8);
+    assert_eq!(r, 10);
+    assert_eq!(l(1, 2), 3);
+    assert_eq!(size_of::<T3>(), 8usize);
+    assert_eq!(size_of::<(i32, /* c */ u8)>(), 8usize);
+    assert_eq!(size_of::<StringBuf>(), size_of::<std::collections::Vector<u8>>());
+}

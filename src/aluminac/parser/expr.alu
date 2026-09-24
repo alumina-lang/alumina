@@ -1298,7 +1298,7 @@ impl ExprParser {
                             #[allow(defer_in_a_loop)]
                             defer cursor2.free();
                             for pat_child in pat_node.children(&cursor2) {
-                                if pat_child.is_named() {
+                                if pat_child.is_named() && !pat_child.is_extra() {
                                     patterns.push(self.parse_expr(pat_child));
                                 }
                             }
@@ -1670,7 +1670,7 @@ impl ExprParser {
             defer cursor.free();
             let pass2 = Pass2 { ctx: self.ctx };
             for child in params_n.children(&cursor) {
-                if child.is_named() {
+                if child.is_named() && !child.is_extra() {
                     let kind = NODE_KINDS[child.symbol() as usize];
                     let id = self.ctx.next_id();
 

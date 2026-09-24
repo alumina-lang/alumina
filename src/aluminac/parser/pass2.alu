@@ -783,7 +783,7 @@ impl Pass2 {
                     let cursor = params_node.unwrap().walk();
                     defer cursor.free();
                     for child in params_node.unwrap().children(&cursor) {
-                        if child.is_named() {
+                        if child.is_named() && !child.is_extra() {
                             param_types.push(self.parse_list_type(child, scope_idx));
                         }
                     }
@@ -807,8 +807,10 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
-            NodeKind::ScopedTypeIdentifier => {
-                // Qualified type like std::io::File
+            // (A qualified type like std::io::File; with a turbofish,
+            // `std::mem::slice::<&u8>`, the grammar has it as an expression
+            // path, `scoped_identifier`.)
+            NodeKind::ScopedTypeIdentifier, NodeKind::ScopedIdentifier => {
                 let segments = self.collect_type_path_segments(node);
                 let resolved = self.ctx.scopes.resolve_path(scope_idx, segments);
                 if resolved.is_some() {
@@ -978,7 +980,8 @@ impl Pass2 {
                 self.ctx.alloc_ty(Ty::unresolved())
             },
             _ => {
-                // Fall back: unhandled type node kind
+                let text = self.ctx.node_text(node);
+                self.ctx.error(node, std::fmt::format!("`{}` is not a type", text).unwrap().as_slice());
                 self.ctx.alloc_ty(Ty::unresolved())
             },
         }
@@ -1002,7 +1005,7 @@ impl Pass2 {
         let cursor = node.walk();
         defer cursor.free();
         for child in node.children(&cursor) {
-            if child.is_named() {
+            if child.is_named() && !child.is_extra() {
                 args.push(self.parse_type(child, scope_idx));
             }
         }
