@@ -654,6 +654,7 @@ extern "C" fn LLVMDIBuilderCreateDebugLocation(
 
 extern "C" fn LLVMSetSubprogram(func: LLVMValueRef, sp: LLVMMetadataRef);
 extern "C" fn LLVMSetCurrentDebugLocation2(builder: LLVMBuilderRef, loc: LLVMMetadataRef);
+extern "C" fn LLVMGetCurrentDebugLocation2(builder: LLVMBuilderRef) -> LLVMMetadataRef;
 
 extern "C" fn LLVMDIBuilderCreateBasicType(
     builder: LLVMDIBuilderRef,
@@ -710,6 +711,136 @@ extern "C" fn LLVMDIBuilderInsertDeclareRecordAtEnd(
     debug_loc: LLVMMetadataRef,
     block: LLVMBasicBlockRef,
 ) -> LLVMDbgRecordRef;
+
+extern "C" fn LLVMDIBuilderCreateStructType(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    size_in_bits: u64,
+    align_in_bits: u32,
+    flags: u32,
+    derived_from: LLVMMetadataRef,
+    elements: &LLVMMetadataRef,
+    num_elements: u32,
+    runtime_lang: u32,
+    vtable_holder: LLVMMetadataRef,
+    unique_id: &c_char,
+    unique_id_len: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateUnionType(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    size_in_bits: u64,
+    align_in_bits: u32,
+    flags: u32,
+    elements: &LLVMMetadataRef,
+    num_elements: u32,
+    runtime_lang: u32,
+    unique_id: &c_char,
+    unique_id_len: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateMemberType(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    size_in_bits: u64,
+    align_in_bits: u32,
+    offset_in_bits: u64,
+    flags: u32,
+    ty: LLVMMetadataRef,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateEnumerationType(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    size_in_bits: u64,
+    align_in_bits: u32,
+    elements: &LLVMMetadataRef,
+    num_elements: u32,
+    class_ty: LLVMMetadataRef,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateEnumerator(
+    builder: LLVMDIBuilderRef,
+    name: &c_char,
+    name_len: usize,
+    value: i64,
+    is_unsigned: LLVMBool,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateArrayType(
+    builder: LLVMDIBuilderRef,
+    size: u64,
+    align_in_bits: u32,
+    ty: LLVMMetadataRef,
+    subscripts: &LLVMMetadataRef,
+    num_subscripts: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderGetOrCreateSubrange(builder: LLVMDIBuilderRef, lower_bound: i64, count: i64) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateNameSpace(
+    builder: LLVMDIBuilderRef,
+    parent_scope: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    export_symbols: LLVMBool,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateLexicalBlock(
+    builder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    file: LLVMMetadataRef,
+    line: u32,
+    column: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateReplaceableCompositeType(
+    builder: LLVMDIBuilderRef,
+    tag: u32,
+    name: &c_char,
+    name_len: usize,
+    scope: LLVMMetadataRef,
+    file: LLVMMetadataRef,
+    line: u32,
+    runtime_lang: u32,
+    size_in_bits: u64,
+    align_in_bits: u32,
+    flags: u32,
+    unique_id: &c_char,
+    unique_id_len: usize,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMMetadataReplaceAllUsesWith(temp: LLVMMetadataRef, replacement: LLVMMetadataRef);
+
+extern "C" fn LLVMDIBuilderCreateTypedef(
+    builder: LLVMDIBuilderRef,
+    ty: LLVMMetadataRef,
+    name: &c_char,
+    name_len: usize,
+    file: LLVMMetadataRef,
+    line_no: u32,
+    scope: LLVMMetadataRef,
+    align_in_bits: u32,
+) -> LLVMMetadataRef;
+
+extern "C" fn LLVMDIBuilderCreateUnspecifiedType(builder: LLVMDIBuilderRef, name: &c_char, name_len: usize) -> LLVMMetadataRef;
 
 extern "C" fn LLVMDIBuilderCreateExpression(
     builder: LLVMDIBuilderRef,

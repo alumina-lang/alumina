@@ -1,0 +1,16 @@
+#!/bin/sh
+# lldb, with the formatters for Alumina's types (alumina_lldb.py) loaded:
+#
+#   alumina-lldb ./program
+#
+# (LLDB: the lldb to run, by default lldb-22 or lldb.)
+here="$(cd "$(dirname "$0")" && pwd)"
+for formatters in "$here/alumina_lldb.py" "$here/../share/aluminac/alumina_lldb.py"; do
+    [ -f "$formatters" ] && break
+done
+lldb="${LLDB:-$(command -v lldb-22 || command -v lldb)}"
+if [ -z "$lldb" ]; then
+    echo "alumina-lldb: lldb not found (set LLDB)" >&2
+    exit 1
+fi
+exec "$lldb" -O "command script import '$formatters'" "$@"

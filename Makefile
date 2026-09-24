@@ -22,6 +22,8 @@
 
 PREFIX ?= /usr/local
 LLVM_CONFIG ?= llvm-config-22
+# (For the debug information tests.)
+LLDB ?= $(shell command -v lldb-22 || command -v lldb)
 
 BUILD_ROOT = build
 SYSROOT = sysroot
@@ -210,7 +212,7 @@ $(TESTS_DIR)/aluminac: $(ALUMINAC) $(ALUMINAC_DEPS)
 	@mkdir -p $(@D)
 	$(ALUMINAC_CMD) --test --link-args "$(ALUMINAC_LINK)" -o $@ $(ALUMINAC_MODULES)
 
-.PHONY: test test-std test-lang test-libraries test-unit test-features test-diag test-docs cross-check
+.PHONY: test test-std test-lang test-libraries test-unit test-features test-diag test-debuginfo test-docs cross-check
 test-std: $(TESTS_DIR)/std
 	$< $(TEST_FLAGS)
 
@@ -232,11 +234,16 @@ test-features: $(ALUMINAC)
 test-diag: $(ALUMINAC)
 	python3 tests/aluminac/diag_check.py $(ALUMINAC) $(TEST_FILTER)
 
+# The debug information tests (tests/debuginfo): programs run in lldb.
+test-debuginfo: $(ALUMINAC)
+	LLDB="$(LLDB)" LLVM_DWARFDUMP="$$($(LLVM_CONFIG) --bindir)/llvm-dwarfdump" \
+		python3 tests/debuginfo/run.py $(ALUMINAC) $(TEST_FILTER)
+
 # Every example in the standard library's documentation, run.
 test-docs: $(BUILD_DIR)/doctest
 	$< $(TEST_FLAGS)
 
-test: test-unit test-features test-std test-lang test-libraries test-diag test-docs
+test: test-unit test-features test-std test-lang test-libraries test-diag test-debuginfo test-docs
 
 # The feature tests compiled with alumina-boot: they must behave the same.
 cross-check: $(BOOT)
@@ -295,12 +302,16 @@ check: lint-boot test-boot bootstrap check-node-kinds test examples
 
 # aluminac finds the sysroot through ALUMINA_SYSROOT (or --sysroot); set it to
 # $(PREFIX)/share/alumina. (Build with RELEASE=1 for an optimized compiler.)
+# alumina-lldb is lldb with the formatters for Alumina's types.
 .PHONY: install install-boot
 install: $(ALUMINAC)
 	mkdir -p $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/alumina
 	cp $(ALUMINAC) $(DESTDIR)$(PREFIX)/bin/aluminac
 	rm -rf $(DESTDIR)$(PREFIX)/share/alumina/*
 	cp -R $(SYSROOT)/. $(DESTDIR)$(PREFIX)/share/alumina/
+	mkdir -p $(DESTDIR)$(PREFIX)/share/aluminac
+	cp tools/lldb/alumina_lldb.py $(DESTDIR)$(PREFIX)/share/aluminac/
+	cp tools/lldb/alumina-lldb $(DESTDIR)$(PREFIX)/bin/
 
 install-boot: $(BOOT)
 	mkdir -p $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/alumina

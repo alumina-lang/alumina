@@ -197,7 +197,20 @@ Add `--test` to build the unit test runner instead (the `main()` function is rep
 ./threading
 ```
 
-`make install` installs `aluminac` and the standard library into `PREFIX` (`/usr/local` by default); set `ALUMINA_SYSROOT` to `$PREFIX/share/alumina` to use it without `--sysroot`.
+## Debugging
+
+Compile with `-g` for debug information (DWARF; on macOS aluminac also runs `dsymutil`). Debuggers see Alumina's names: functions by their paths (`main::geometry::Square::area`, `std::collections::vector::Vector::push<i32>`), types as they are written (`&[u8]`, `(i32, bool)`, `std::option::Option<i32>`), in backtraces, breakpoints (`b main::add`) and expressions. `tools/lldb/alumina-lldb` is lldb with formatters for the standard library's types:
+
+```
+(&[u8]) name = "hello"
+(std::collections::vector::Vector<i32>) v = len=2 { [0] = 10, [1] = 20 }
+(std::option::Option<i32>) some = some(7)
+(std::collections::hashmap::HashMap<i32, &[u8], std::hash::xxhash::Xxh64>) m = len=1 { [0] = (1, "one") }
+```
+
+(or load them in any lldb with `command script import tools/lldb/alumina_lldb.py`).
+
+`make install` installs `aluminac`, `alumina-lldb` and the standard library into `PREFIX` (`/usr/local` by default); set `ALUMINA_SYSROOT` to `$PREFIX/share/alumina` to use it without `--sysroot`.
 
 `alumina-boot` alone (it compiles Alumina to C) can be built with `make boot`.
 
@@ -211,7 +224,7 @@ To run all the tests (the compiler's, the standard library's, the language's and
 make test
 ```
 
-or a part of them, e.g. `make test-std` (the standard library) or `make test-docs` (the documentation). `make check` runs everything CI does, including the bootstrap check (the compiler, compiled by itself, compiles itself to the same code).
+or a part of them, e.g. `make test-std` (the standard library), `make test-docs` (the documentation) or `make test-debuginfo` (programs run in lldb, which it needs: `lldb-22` or `lldb`, or `LLDB=<path>`). `make check` runs everything CI does, including the bootstrap check (the compiler, compiled by itself, compiles itself to the same code).
 
 Standard library contributions are especially welcome! Ideas for contribution:
 

@@ -9,6 +9,7 @@ use ast::*;
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet};
 use std::fmt::write;
+use std::string::StringBuf;
 
 // === IR (Monomorphized) types ===
 
@@ -303,13 +304,15 @@ struct IrStructRef {
     type_args: &[&IrTy],  // type args used to instantiate this struct (for method dispatch)
     is_packed: bool,
     attributes: &[Attribute],
+    /// The module the type is in (see IrFunction::namespace).
+    namespace: &[u8],
 }
 
 impl IrStructRef {
     fn empty() -> IrStructRef {
         IrStructRef { id: Id { _value: 0 }, name: "", fields: &[],
                        is_union: false, is_zero_sized: true, scope_idx: 0, type_args: &[],
-                       is_packed: false, attributes: &[] }
+                       is_packed: false, attributes: &[], namespace: "" }
     }
 }
 
@@ -325,12 +328,14 @@ struct IrEnumRef {
     variants: &[IrEnumVariant],
     scope_idx: u32,
     attributes: &[Attribute],
+    /// The module the type is in (see IrFunction::namespace).
+    namespace: &[u8],
 }
 
 impl IrEnumRef {
     fn empty() -> IrEnumRef {
         IrEnumRef { id: Id { _value: 0 }, name: "",
-                     underlying: null, variants: &[], scope_idx: 0, attributes: &[] }
+                     underlying: null, variants: &[], scope_idx: 0, attributes: &[], namespace: "" }
     }
 }
 
@@ -776,6 +781,9 @@ struct IrFunction {
     // Type args this function was mono'd with — used by `ir_type_name` to render
     // function-as-type-arg paths (`type_name<u32>`) source-readably.
     type_args: &[&IrTy],
+    /// The module (or type, for a method) the function is in, `a::b::T`
+    /// (empty for the root module), for debug information.
+    namespace: &[u8],
 }
 
 struct IrParam {
@@ -1081,4 +1089,123 @@ fn check_expr_evaluated_once(e: &IrExpr, seen: &mut HashSet<usize>, diag: &mut d
     for child in e.children() {
         check_expr_evaluated_once(child, seen, diag);
     }
+}
+
+// === Names ===
+
+fn write_path(buf: &mut StringBuf, namespace: &[u8], name: &[u8], qualified: bool) {
+    if qualified && !namespace.is_empty() {
+        buf.extend_from_slice(namespace);
+        buf.extend_from_slice("::");
+    }
+    buf.extend_from_slice(name);
+}
+
+/// The name of a type as it is written in source code; `qualified`: with the
+/// path of a struct or enum (the ones in it always have theirs).
+fn write_type_name(buf: &mut StringBuf, ty: &IrTy, qualified: bool) {
+    // (Type argument lists can hold null for an argument never given.)
+    if ty as &void as usize == 0 {
+        buf.extend_from_slice("()");
+        return;
+    }
+    switch ty.tag {
+        IrTyTag::Builtin => buf.extend_from_slice(ty.builtin().name()),
+        IrTyTag::Void => buf.extend_from_slice("()"),
+        IrTyTag::Never => buf.extend_from_slice("!"),
+        IrTyTag::Pointer => {
+            buf.extend_from_slice(if ty.is_const() { "&" } else { "&mut " });
+            write_type_name(buf, ty.inner(), true);
+        }
+        IrTyTag::Slice => {
+            buf.extend_from_slice(if ty.is_const() { "&[" } else { "&mut [" });
+            write_type_name(buf, ty.inner(), true);
+            buf.extend_from_slice("]");
+        }
+        IrTyTag::Array => {
+            buf.extend_from_slice("[");
+            write_type_name(buf, ty.inner(), true);
+            write!(buf, "; {}]", ty.array_size()).unwrap();
+        }
+        IrTyTag::Tuple => {
+            buf.extend_from_slice("(");
+            write_type_list(buf, ty.elems());
+            buf.extend_from_slice(")");
+        }
+        IrTyTag::FnPointer => {
+            buf.extend_from_slice("fn(");
+            write_type_list(buf, ty.elems());
+            buf.extend_from_slice(")");
+            if !ty.ret_ty().is_void() {
+                buf.extend_from_slice(" -> ");
+                write_type_name(buf, ty.ret_ty(), true);
+            }
+        }
+        IrTyTag::Struct => {
+            write_path(buf, ty.struct_ref().namespace, ty.struct_ref().name, qualified);
+            let args = ty.struct_ref().type_args;
+            if !args.is_empty() {
+                buf.extend_from_slice("<");
+                write_type_list(buf, args);
+                buf.extend_from_slice(">");
+            }
+        }
+        IrTyTag::Enum => write_path(buf, ty.enum_ref().namespace, ty.enum_ref().name, qualified),
+        IrTyTag::Closure => buf.extend_from_slice("{closure}"),
+        IrTyTag::Fn => {
+            write_symbol_name(buf, ty.fn_item_ref().mangled_name);
+        }
+        _ => buf.extend_from_slice("{unknown}"),
+    }
+}
+
+fn write_type_list(buf: &mut StringBuf, tys: &[&IrTy]) {
+    for (i, t) in tys.iter().enumerate() {
+        if i > 0 {
+            buf.extend_from_slice(", ");
+        }
+        write_type_name(buf, t, true);
+    }
+}
+
+/// A function's name with its type arguments, `report<i32>`.
+fn write_fn_name(buf: &mut StringBuf, name: &[u8], type_args: &[&IrTy]) {
+    buf.extend_from_slice(name);
+    if !type_args.is_empty() {
+        buf.extend_from_slice("<");
+        write_type_list(buf, type_args);
+        buf.extend_from_slice(">");
+    }
+}
+
+/// The path of a function in its symbol name (`_ZN4main3addE`, see
+/// `MonoCtx::mangle_fn_name`: `main::add`; `_AL<name><n>`: `<name>`).
+fn write_symbol_name(buf: &mut StringBuf, mangled: &[u8]) {
+    if mangled.len() > 2 && mangled[..2] == "_Z" {
+        let i = if mangled[2] == 'N' { 3usize } else { 2usize };
+        let first = true;
+        while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+            let len = 0usize;
+            while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+                len = len * 10 + (mangled[i] - '0') as usize;
+                i += 1;
+            }
+            if i + len > mangled.len() {
+                break;
+            }
+            if !first {
+                buf.extend_from_slice("::");
+            }
+            buf.extend_from_slice(mangled[i..i + len]);
+            first = false;
+            i += len;
+        }
+        return;
+    }
+    let end = mangled.len();
+    while end > 0 && mangled[end - 1] >= '0' && mangled[end - 1] <= '9' {
+        end -= 1;
+    }
+    let start = if mangled.len() >= 3 && mangled[..3] == "_AL" { 3usize } else { 0usize };
+    buf.extend_from_slice(if start < end { mangled[start..end] } else { mangled });
 }

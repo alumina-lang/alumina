@@ -587,7 +587,7 @@ struct _ExprTypedData { lhs: &Expr, ty: &Ty, flag: bool }
 struct _ExprCondData { cond: &Expr, lhs: &Expr, opt_expr: Option<&Expr> }
 struct _ExprSwitchData { lhs: &Expr, switch_arms: &[SwitchArm] }
 struct _ExprLoopData { cond: &Expr, lhs: &Expr }
-struct _ExprForData { id: Id, lhs: &Expr, rhs: &Expr, args: &[&Expr] }
+struct _ExprForData { id: Id, lhs: &Expr, rhs: &Expr, args: &[&Expr], name: &[u8] }
 struct _ExprJumpData { opt_expr: Option<&Expr> }
 struct _ExprLetData { id: Id, str_val: &[u8], opt_ty: Option<&Ty>, opt_expr: Option<&Expr> }
 struct _ExprStructLitData { ty: &Ty, field_inits: &[FieldInit] }
@@ -682,6 +682,9 @@ impl Expr {
             _ => self._data.id_ref.str_val  // Local, Param, StaticRef, FnRef, EnumRef, BoundValue, Defered, MacroParam,
         }
     }
+
+    /// A `for` loop's variable's name (empty with tuple unpacking).
+    fn for_name(self: &Expr) -> &[u8] { self._data.for_expr.name }
 
     fn id(self: &Expr) -> Id {
         switch self.tag {

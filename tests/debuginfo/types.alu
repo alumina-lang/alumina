@@ -1,0 +1,55 @@
+// Types as they are written in Alumina, in their modules.
+mod shapes {
+    struct Point { x: i32, y: i32 }
+    struct Pair<T> { first: T, second: T }
+    enum Color { Red, Green = 5, Blue }
+    union Bits { word: u32, bytes: [u8; 4] }
+    struct Node { value: i64, next: &Node }
+}
+
+use shapes::{Point, Pair, Color, Bits, Node};
+
+fn twice(x: i32) -> i32 { x * 2 }
+
+fn main() {
+    let p = Point { x: 1, y: -2 };
+    let pp = Pair { first: p, second: Point { x: 3, y: 4 } };
+    let color = Color::Green;
+    let bits = Bits { word: 0x01020304 };
+    let tail = Node { value: 2, next: null };
+    let head = Node { value: 1, next: &tail };
+    let tuple = (1u16, true, 2.5f64);
+    let array = [1i8, -1, 3];
+    let ptr = &p;
+    let f: fn(i32) -> i32 = twice;
+    let unit = ();
+    let flag = false;
+    let c = 'a';
+    println!("{} {} {}", ptr.x, f(pp.second.y), tuple.0 + (array[1] as u16)); // #break
+}
+
+// lldb: frame variable p pp color bits head tuple array ptr->x f flag c
+// check: (main::shapes::Point) p = (x = 1, y = -2)
+// check: (main::shapes::Pair<main::shapes::Point>) pp = {
+// check: second = (x = 3, y = 4)
+// check: (main::shapes::Color) color = Green
+// check: (main::shapes::Bits) bits = {
+// check: word = 16909060
+// check: (main::shapes::Node) head = {
+// check: value = 1
+// check: ((u16, bool, f64)) tuple = (1, true, 2.5)
+// check: (i8[3]) array = len=3 {
+// check: [1] = -1
+// check: (i32) ptr->x = 1
+// check: (fn(i32) -> i32) f =
+// check: `main::twice at types.alu:12
+// check: (bool) flag = false
+// check: (u8) c = 97
+// lldb: frame variable ptr head.next->value
+// check: (&mut main::shapes::Point) ptr = 0x
+// check: (i64) head.next->value = 2
+// lldb: expression main::twice(pp.second.x) + ptr->y
+// check: = 4
+// lldb: expression main::shapes::Color::Blue
+// check: (main::shapes::Color)
+// check: Blue

@@ -10,7 +10,7 @@ RUN mkdir -p /etc/apt/keyrings && \
     (wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/keyrings/llvm.gpg) && \
     (echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | tee /etc/apt/sources.list.d/llvm.list) && \
     apt-get update && \
-    apt-get install -y llvm-22-dev
+    apt-get install -y llvm-22-dev lldb-22
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"

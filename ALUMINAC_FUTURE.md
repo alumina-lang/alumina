@@ -19,7 +19,7 @@ full test runner (`sysroot/test.alu`, reflective
 The Makefile is aluminac-first (reworked 2026-09-24): everything but
 alumina-boot itself is compiled with aluminac (tests, examples, docs,
 doc tests, tools). Targets: `make` (aluminac, `./aluminac`), `make test`
-(unit, feature, std, lang, libraries, diag, doc tests), `make bootstrap`
+(unit, feature, std, lang, libraries, diag, debug info, doc tests), `make bootstrap`
 (the fixpoint), `make check` (all CI checks, incl. `lint-boot`,
 `test-boot`, `check-node-kinds`, examples), `make boot` / `lint-boot` /
 `test-boot` / `cross-check` (alumina-boot). `make build/debug/aluminac-stage1`
@@ -673,9 +673,27 @@ evaluates the place first (alumina-boot's lang tests expect it; its
   run only if reached, from one cleanup block, as in alumina-boot; locals
   are uninitialized, as `let x: T;` is. That exposed `for i in 0usize..8`
   storing the `8` as an i32 into the usize bound.
-- On macOS, `-g` output has no usable debug info: the DWARF stays in the
-  object file, which aluminac deletes after linking (run `dsymutil`, or
-  keep the object).
+- ~~On macOS, `-g` output has no usable debug info~~: aluminac runs
+  `dsymutil` after linking.
+- Debug information (2026-09-24; alumina-boot had `#line` only): DWARF as
+  C++ (the language debuggers know with namespaces). Modules are
+  namespaces; types are named as written (`&[u8]`, tuples, `fn(i32) ->
+  i32`, pointers as typedefs `&T`, builtins as typedefs so `i32` is not
+  `int`); structs, unions and enums in their modules, methods in their
+  type's namespace; locals in lexical blocks from their `let` (macro
+  expansions' and `_`-prefixed ones hidden); macro code at the call site.
+  Function symbols are Itanium-style paths (`_ZN4main11report<i32>E`, a
+  `.N` suffix on a clash), so lldb, gdb, perf and `nm -C` show
+  `main::report<i32>`. lldb formatters for the standard library's types
+  and `alumina-lldb`: `tools/lldb`. Tests: `tests/debuginfo` (lldb
+  commands and expected output, `make test-debuginfo`).
+  Open: type arguments as Itanium template arguments (`_ZN4main1gIu2u8EE`;
+  demanglers read `g<u8>` in a name, but `c++filt` as a text filter
+  splits the symbol at the `<`); gdb pretty printers; enums as `enum class` (gdb shows
+  `main::shapes::Green`; the C API has no flag for it); closures and
+  lambdas keep `_AL` symbols (no path); `lldb-server` 22 from
+  apt.llvm.org crashes on OrbStack's kernel, so the lldb tests do not run
+  in the local Linux containers (gdb works there).
 
 ## Test infrastructure backlog
 

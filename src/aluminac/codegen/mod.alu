@@ -81,7 +81,9 @@ struct CodegenCtx {
     di_builder: LLVMDIBuilderRef,
     di_compile_unit: LLVMMetadataRef,
     di_file_cache: HashMap<u32, LLVMMetadataRef>,
-    di_type_cache: HashMap<usize, LLVMMetadataRef>,
+    di_type_cache: HashMap<codegen::debuginfo::TypeKey, LLVMMetadataRef>,
+    di_struct_cache: HashMap<StructKey, LLVMMetadataRef>,
+    di_namespace_cache: HashMap<&[u8], LLVMMetadataRef>,
 }
 
 /// See `CodegenCtx::place_members`.
@@ -106,6 +108,7 @@ impl CodegenCtx {
 
         let context = LLVMContextCreate();
 
+        let main_path = module_name;
         let module_name = CString::from_slice(module_name);
         defer module_name.free();
         let module = LLVMModuleCreateWithNameInContext(module_name.ptr, context);
@@ -188,20 +191,26 @@ impl CodegenCtx {
             LLVMAddModuleFlag(module, 1u32, &"Debug Info Version\0"[0] as &libc::c_char, 18u32,
                 LLVMValueAsMetadata(di_ver));
 
-            // Create compile unit with a default file
-            let default_file = LLVMDIBuilderCreateFile(
+            // (The compile unit: the main file, and the directory the
+            // relative paths of files are relative to.)
+            let cwd = std::process::current_dir();
+            defer if cwd.is_ok() { cwd.unwrap().free(); };
+            let comp_dir: &[u8] = if cwd.is_ok() { cwd.unwrap().inner.as_slice() } else { "." };
+            let main_file = LLVMDIBuilderCreateFile(
                 di_builder,
-                &"<unknown>\0"[0] as &libc::c_char, 9usize,
-                &".\0"[0] as &libc::c_char, 1usize,
+                &main_path[0] as &libc::c_char, main_path.len(),
+                &comp_dir[0] as &libc::c_char, comp_dir.len(),
             );
 
             let producer = "aluminac";
             di_compile_unit = LLVMDIBuilderCreateCompileUnit(
                 di_builder,
-                1u32,  // LLVMDWARFSourceLanguageC
-                default_file,
+                // (C++: the language debuggers know with namespaces, which
+                // modules and types' methods are in.)
+                3u32,  // LLVMDWARFSourceLanguageC_plus_plus
+                main_file,
                 &producer[0] as &libc::c_char, producer.len(),
-                0i32,       // is_optimized
+                if opt_level == main::OptLevel::O0 { 0i32 } else { 1i32 },  // is_optimized
                 &"\0"[0] as &libc::c_char, 0usize,  // flags
                 0u32,       // runtime_ver
                 &"\0"[0] as &libc::c_char, 0usize,  // split_name
@@ -252,6 +261,8 @@ impl CodegenCtx {
             di_compile_unit: di_compile_unit,
             di_file_cache: HashMap::new(),
             di_type_cache: HashMap::new(),
+            di_struct_cache: HashMap::new(),
+            di_namespace_cache: HashMap::new(),
         }
     }
 
@@ -630,106 +641,7 @@ impl CodegenCtx {
     }
 
     fn get_or_create_di_type(self: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
-        let key = ty as &void as usize;
-        if key == 0 || key < 4096usize {
-            return std::mem::zeroed::<LLVMMetadataRef>();
-        }
-        let cached = self.di_type_cache.get(&key);
-        if cached.is_some() {
-            return cached.unwrap();
-        }
-
-        let result = self.create_di_type_inner(ty);
-        self.di_type_cache.insert(key, result);
-        result
-    }
-
-    fn create_di_type_inner(self: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
-        if ty.tag == IrTyTag::Void || ty.tag == IrTyTag::Never {
-            return std::mem::zeroed::<LLVMMetadataRef>();
-        }
-
-        if ty.tag == IrTyTag::Builtin {
-            let bt = ty.builtin();
-            let name: &[u8];
-            let encoding: u32;
-            let size_bits: u64;
-
-            switch bt {
-                BuiltinType::Bool => {
-                    name = "bool";
-                    encoding = 0x02u32; // DW_ATE_boolean
-                    size_bits = 8; // stored as i8
-                }
-                BuiltinType::I8 => { name = "i8"; encoding = 0x05u32; size_bits = 8; }
-                BuiltinType::I16 => { name = "i16"; encoding = 0x05u32; size_bits = 16; }
-                BuiltinType::I32 => { name = "i32"; encoding = 0x05u32; size_bits = 32; }
-                BuiltinType::I64 => { name = "i64"; encoding = 0x05u32; size_bits = 64; }
-                BuiltinType::I128 => { name = "i128"; encoding = 0x05u32; size_bits = 128; }
-                BuiltinType::ISize => { name = "isize"; encoding = 0x05u32; size_bits = 64; }
-                BuiltinType::U8 => { name = "u8"; encoding = 0x07u32; size_bits = 8; }
-                BuiltinType::U16 => { name = "u16"; encoding = 0x07u32; size_bits = 16; }
-                BuiltinType::U32 => { name = "u32"; encoding = 0x07u32; size_bits = 32; }
-                BuiltinType::U64 => { name = "u64"; encoding = 0x07u32; size_bits = 64; }
-                BuiltinType::U128 => { name = "u128"; encoding = 0x07u32; size_bits = 128; }
-                BuiltinType::USize => { name = "usize"; encoding = 0x07u32; size_bits = 64; }
-                BuiltinType::F32 => { name = "f32"; encoding = 0x04u32; size_bits = 32; }
-                BuiltinType::F64 => { name = "f64"; encoding = 0x04u32; size_bits = 64; }
-                _ => {
-                    return std::mem::zeroed::<LLVMMetadataRef>();
-                }
-            };
-
-            return LLVMDIBuilderCreateBasicType(
-                self.di_builder,
-                &name[0] as &libc::c_char, name.len(),
-                size_bits,
-                encoding,
-                0u32, // flags
-            );
-        }
-
-        if ty.tag == IrTyTag::Pointer {
-            let pointee_di = self.get_or_create_di_type(ty.inner());
-            return LLVMDIBuilderCreatePointerType(
-                self.di_builder,
-                pointee_di,
-                64u64, // size_in_bits (64-bit pointers)
-                0u32,  // align
-                0u32,  // addr_space
-                &"\0"[0] as &libc::c_char, 0usize,
-            );
-        }
-
-        // For complex types (slice, struct, tuple, array, enum, closure, fn pointer),
-        // represent as opaque byte blob using ABI size
-        let llvm_ty = self.llvm_type(ty);
-        let type_kind = LLVMGetTypeKind(llvm_ty);
-        if type_kind == LLVMTypeKind::Void {
-            return std::mem::zeroed::<LLVMMetadataRef>();
-        }
-
-        let abi_size = LLVMABISizeOfType(self.target_data, llvm_ty);
-        let size_bits = abi_size * 8;
-
-        let type_name: &[u8];
-        if ty.tag == IrTyTag::Slice { type_name = "slice"; }
-        else if ty.tag == IrTyTag::Struct { type_name = "struct"; }
-        else if ty.tag == IrTyTag::Tuple { type_name = "tuple"; }
-        else if ty.tag == IrTyTag::Array { type_name = "array"; }
-        else if ty.tag == IrTyTag::Enum { type_name = "enum"; }
-        else if ty.tag == IrTyTag::Closure { type_name = "closure"; }
-        else if ty.tag == IrTyTag::FnPointer { type_name = "fn"; }
-        else if ty.tag == IrTyTag::Fn { type_name = "fn"; }
-        else { type_name = "opaque"; }
-
-        LLVMDIBuilderCreateBasicType(
-            self.di_builder,
-            &type_name[0] as &libc::c_char, type_name.len(),
-            size_bits,
-            0x07u32, // DW_ATE_unsigned - treat as raw bytes
-            0u32,
-        )
+        codegen::debuginfo::di_type(self, ty)
     }
 
     // Auto-declare common libc functions that may be referenced by built-in slice methods
@@ -1511,6 +1423,8 @@ impl CodegenCtx {
         self.string_cache.free();
         self.di_file_cache.free();
         self.di_type_cache.free();
+        self.di_struct_cache.free();
+        self.di_namespace_cache.free();
         if self.debug_enabled {
             LLVMDisposeDIBuilder(self.di_builder);
         }

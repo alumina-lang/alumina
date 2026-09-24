@@ -1,0 +1,32 @@
+// Functions by their names in backtraces: modules, methods, generics.
+mod geometry {
+    struct Square { side: i32 }
+
+    impl Square {
+        fn area(self: &Square) -> i32 {
+            report(self.side * self.side)
+        }
+    }
+
+    fn report<T>(value: T) -> T {
+        println!("{}", value); // #break
+        value
+    }
+}
+
+fn main() {
+    let s = geometry::Square { side: 3 };
+    let a = s.area();
+    std::process::exit(a - 9);
+}
+
+// lldb: bt 3
+// lldb: frame select 1
+// lldb: frame variable self
+// check: frame #0:
+// check: backtrace`main::geometry::report<i32>(value=9) at backtrace.alu:12
+// check: frame #1:
+// check: backtrace`main::geometry::Square::area(self=
+// check: frame #2:
+// check: backtrace`main::main at backtrace.alu:19
+// check: (&main::geometry::Square) self = 0x

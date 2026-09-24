@@ -1,0 +1,36 @@
+// Stepping through lines, into and out of functions; parameters at entry.
+fn add(a: i32, b: i32) -> i32 {
+    let sum = a + b;
+    sum
+}
+
+fn main() {
+    let x = 3;
+    let y = add(x, 4);
+    let z = add(y, x);
+    println!("{}", z);
+}
+
+// setup: breakpoint set --name main::add
+// lldb: frame variable a b
+// lldb: finish
+// lldb: next
+// lldb: next
+// lldb: step
+// lldb: frame variable a b
+// lldb: next
+// lldb: frame variable sum
+// check: stop reason = breakpoint 1.1
+// check: `main::add(a=3, b=4) at stepping.alu:2
+// check: (i32) a = 3
+// check: (i32) b = 4
+// check: Return value: (i32) $0 = 7
+// check: `main::main at stepping.alu:9
+// check: stop reason = step over
+// check: `main::main at stepping.alu:10
+// check: `main::add(a=7, b=3) at stepping.alu:2
+// check: stop reason = step in
+// check: `main::add(a=7, b=3) at stepping.alu:3
+// check: (i32) a = 7
+// check: stepping.alu:4
+// check: (i32) sum = 10

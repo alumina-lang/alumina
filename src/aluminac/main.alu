@@ -78,6 +78,9 @@ struct Compiler {
     options: CompilerOptions,
     source_files: Vector<SourceEntry>,
     all_items: Vector<Item>,
+    /// The first source file given (not the sysroot's), which names the
+    /// module (and its debug information's compile unit).
+    main_file: &[u8],
 }
 
 struct SourceEntry {
@@ -97,6 +100,7 @@ impl Compiler {
             options: options,
             source_files: Vector::new(),
             all_items: Vector::new(),
+            main_file: "",
         }
     }
 
@@ -438,7 +442,7 @@ impl Compiler {
             &self.arena,
             &self.diag,
             &unit,
-            "alumina_module",
+            if self.main_file.is_empty() { "alumina_module" } else { self.main_file },
             &self.target,
             self.options.test_mode,
             self.options.debug_info,
@@ -536,11 +540,18 @@ impl Compiler {
             std::fmt::write!(&cmd, " {}", self.options.extra_link_args).unwrap();
         }
 
-        let link_ok = std::process::Command::new(Path::new("/bin/sh"))
-            .args(&["-c", cmd.as_slice()])
-            .status()
-            .map(|status: std::process::ExitStatus| -> bool { status.success() })
-            .unwrap_or(false);
+        let link_ok = run_shell(cmd.as_slice());
+
+        // On macOS, debug information stays in the object files (the
+        // executable points to them): gather it into `<output>.dSYM` (as
+        // clang does), before the object is removed.
+        if link_ok && self.options.debug_info && self.target.os == aluminac::target::Os::MacOs {
+            let dsym = std::fmt::format!("dsymutil {}", output).unwrap();
+            defer dsym.free();
+            if !run_shell(dsym.as_slice()) {
+                eprintln!("warning: dsymutil failed; the executable has no debug information");
+            }
+        }
 
         let _ = std::fs::remove_file(Path::new(obj_file));
         link_ok
@@ -721,6 +732,15 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
     (options, files)
 }
 
+/// Run a command through the shell; whether it succeeded.
+fn run_shell(cmd: &[u8]) -> bool {
+    std::process::Command::new(Path::new("/bin/sh"))
+        .args(&["-c", cmd])
+        .status()
+        .map(|status: std::process::ExitStatus| -> bool { status.success() })
+        .unwrap_or(false)
+}
+
 fn print_usage() {
     eprint!("{}", std::concat!(
         "Usage: aluminac [options] <[module::path=]file.alu...>\n",
@@ -775,6 +795,9 @@ fn main(args: &[&[u8]]) -> i32 {
     for file in files {
         if !compiler.add_source_file(file.file_path, file.module_path) {
             return 1i32;
+        }
+        if compiler.main_file.is_empty() {
+            compiler.main_file = file.file_path;
         }
     }
 

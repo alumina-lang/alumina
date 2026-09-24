@@ -43,6 +43,13 @@ struct FnCodegen {
 
     // Debug info subprogram for this function
     di_subprogram: LLVMMetadataRef,
+    /// The lexical blocks (debug information) the code being generated is
+    /// in, innermost last.
+    di_scopes: std::collections::Vector<LLVMMetadataRef>,
+    /// The locals, by id (for their names in debug information).
+    local_info: HashMap<usize, &IrLocalDef>,
+    /// The line the function's debug information is at.
+    di_line: u32,
 
     /// How the function is called (see `codegen::abi`).
     sig: codegen::abi::Signature,
@@ -64,6 +71,9 @@ impl FnCodegen {
             in_defers: false,
             temp_counter: 0,
             di_subprogram: std::mem::zeroed::<LLVMMetadataRef>(),
+            di_scopes: std::collections::Vector::new(),
+            local_info: HashMap::new(),
+            di_line: 0,
             sig: ctx.fn_sigs.get(&ir_fn.mangled_name).unwrap(),
         }
     }
@@ -87,31 +97,100 @@ impl FnCodegen {
     }
 
     fn set_debug_loc(self: &mut FnCodegen, span: Span) {
-        if !self.ctx.debug_enabled {
+        let loc = self.debug_loc(span);
+        if (loc as usize) != 0 {
+            LLVMSetCurrentDebugLocation2(self.ctx.builder, loc);
+        }
+    }
+
+    /// The debug location of code at `span`, in the current lexical block;
+    /// null where the location is not to change: code expanded from a macro
+    /// is at the (outermost) invocation, as alumina-boot's `#line`, and code
+    /// of another file (the body of a function inlined as IR) is where the
+    /// call is.
+    fn debug_loc(self: &mut FnCodegen, span: Span) -> LLVMMetadataRef {
+        let none = std::mem::zeroed::<LLVMMetadataRef>();
+        if !self.ctx.debug_enabled || (self.di_subprogram as usize) == 0 {
+            return none;
+        }
+        let at = self.source_span(span);
+        if at.is_none() {
+            return none;
+        }
+        let file_info = &self.ctx.diag.files[at.unwrap().file_id as usize];
+        let (line, col) = file_info.line_col(at.unwrap().start);
+        LLVMDIBuilderCreateDebugLocation(self.ctx.context, line, col, self.current_di_scope(), none)
+    }
+
+    /// Where `span` is in this function's source, if it is: after macro
+    /// expansions, and in the function's file.
+    fn source_span(self: &FnCodegen, span: Span) -> Option<Span> {
+        let at = span;
+        while at.expansion != 0 && (at.expansion as usize) <= self.ctx.diag.expansions.len() {
+            at = self.ctx.diag.expansions[at.expansion as usize - 1].call_site;
+        }
+        if (at.start == 0u32 && at.end == 0u32) || at.file_id != self.ir_fn.span.file_id
+            || at.file_id as usize >= self.ctx.diag.files.len() {
+            return Option::none();
+        }
+        Option::some(at)
+    }
+
+    fn current_di_scope(self: &FnCodegen) -> LLVMMetadataRef {
+        if self.di_scopes.is_empty() { self.di_subprogram } else { self.di_scopes[self.di_scopes.len() - 1] }
+    }
+
+    /// Enter a lexical block for the block at `span` (if it is in the
+    /// function's own code); whether one was entered.
+    fn enter_di_block(self: &mut FnCodegen, span: Span) -> bool {
+        if !self.ctx.debug_enabled || (self.di_subprogram as usize) == 0 || span.expansion != 0 {
+            return false;
+        }
+        let at = self.source_span(span);
+        if at.is_none() {
+            return false;
+        }
+        let file_info = &self.ctx.diag.files[at.unwrap().file_id as usize];
+        let (line, col) = file_info.line_col(at.unwrap().start);
+        let block = LLVMDIBuilderCreateLexicalBlock(self.ctx.di_builder, self.current_di_scope(),
+            self.ctx.get_or_create_di_file(at.unwrap().file_id), line, col);
+        self.di_scopes.push(block);
+        true
+    }
+
+    /// A local's debug information, where its `let` is (a local written in
+    /// this function, not by a macro or the compiler).
+    fn declare_local(self: &mut FnCodegen, id: usize, alloca: LLVMValueRef) {
+        if !self.ctx.debug_enabled || (self.di_subprogram as usize) == 0 {
             return;
         }
-        let sp_ptr = self.di_subprogram as &void as usize;
-        if sp_ptr == 0 {
+        let local = self.local_info.get(&id);
+        if local.is_none() {
             return;
         }
-        // Skip empty spans
-        if span.start == 0u32 && span.end == 0u32 {
+        let local = local.unwrap();
+        if local.name.is_empty() || local.name[0] == '_' || local.span.expansion != 0 {
             return;
         }
-        let file_id = span.file_id;
-        if file_id as usize >= self.ctx.diag.files.len() {
+        let at = self.source_span(local.span);
+        if at.is_none() {
             return;
         }
-        let file_info = &self.ctx.diag.files[file_id as usize];
-        let (line, col) = file_info.line_col(span.start);
-        let loc = LLVMDIBuilderCreateDebugLocation(
-            self.ctx.context,
-            line,
-            col,
-            self.di_subprogram,
-            std::mem::zeroed::<LLVMMetadataRef>(),  // no inlined_at
-        );
-        LLVMSetCurrentDebugLocation2(self.ctx.builder, loc);
+        let di_ty = self.ctx.get_or_create_di_type(local.ty);
+        if (di_ty as usize) == 0 {
+            return;
+        }
+        let file_info = &self.ctx.diag.files[at.unwrap().file_id as usize];
+        let (line, col) = file_info.line_col(at.unwrap().start);
+        let scope = self.current_di_scope();
+        let var = LLVMDIBuilderCreateAutoVariable(self.ctx.di_builder, scope,
+            &local.name[0] as &libc::c_char, local.name.len(),
+            self.ctx.get_or_create_di_file(at.unwrap().file_id), line, di_ty, 1i32, 0u32, 0u32);
+        let dummy_addr: u64 = 0;
+        let expr = LLVMDIBuilderCreateExpression(self.ctx.di_builder, &dummy_addr, 0usize);
+        let loc = LLVMDIBuilderCreateDebugLocation(self.ctx.context, line, col, scope, std::mem::zeroed::<LLVMMetadataRef>());
+        LLVMDIBuilderInsertDeclareRecordAtEnd(self.ctx.di_builder, alloca, var, expr, loc,
+            LLVMGetInsertBlock(self.ctx.builder));
     }
 
     // Emit a warning for error-recovery LLVMGetUndef, only if no prior errors (suppress cascade)
@@ -122,6 +201,9 @@ impl FnCodegen {
     }
 
     fn emit(self: &mut FnCodegen) {
+        for local in self.ir_fn.local_defs.iter_ref() {
+            self.local_info.insert(local.id._value, local);
+        }
         // Set up debug info subprogram
         if self.ctx.debug_enabled && (self.ir_fn.span.start != 0u32 || self.ir_fn.span.end != 0u32) {
             let file_id = self.ir_fn.span.file_id;
@@ -130,42 +212,41 @@ impl FnCodegen {
                 let file_info = &self.ctx.diag.files[file_id as usize];
                 let (line, _col) = file_info.line_col(self.ir_fn.span.start);
 
-                // Create subroutine type (empty for line tables only)
-                let sub_type = LLVMDIBuilderCreateSubroutineType(
-                    self.ctx.di_builder,
-                    di_file,
-                    null,
-                    0u32,
-                    0u32,
-                );
-
-                let name = self.ir_fn.name;
-                let linkage_name = self.ir_fn.mangled_name;
+                // In its namespace (module, or type for a method), by its
+                // name (not its symbol's), with its signature.
+                let param_tys = self.ctx.arena.alloc_slice::<&IrTy>(self.ir_fn.params.len());
+                for (i, param) in self.ir_fn.params.iter().enumerate() {
+                    param_tys[i] = param.ty;
+                }
+                let sub_type = codegen::debuginfo::subroutine_type(self.ctx, param_tys, self.ir_fn.return_type);
+                let scope = codegen::debuginfo::namespace(self.ctx, self.ir_fn.namespace);
+                let name = codegen::debuginfo::function_name(self.ctx, self.ir_fn);
+                let is_local = LLVMGetLinkage(self.llvm_fn) == LLVMLinkage::Internal;
+                // (The symbol, which debuggers demangle to the function's
+                // path, when it is one: see `MonoCtx::mangle_fn_name`.)
+                let mangled = self.ir_fn.mangled_name;
+                let linkage_name: &[u8] = if mangled.len() > 2 && mangled[..2] == "_Z" { mangled } else { "\0" };
                 self.di_subprogram = LLVMDIBuilderCreateFunction(
                     self.ctx.di_builder,
-                    di_file,  // scope = file
+                    scope,
                     &name[0] as &libc::c_char, name.len(),
-                    &linkage_name[0] as &libc::c_char, linkage_name.len(),
+                    &linkage_name[0] as &libc::c_char, if linkage_name == "\0" { 0usize } else { linkage_name.len() },
                     di_file,
                     line,
                     sub_type,
-                    0i32,   // is_local_to_unit
+                    if is_local { 1i32 } else { 0i32 },
                     1i32,   // is_definition
                     line,   // scope_line
-                    0u32,   // flags
-                    0i32,   // is_optimized
+                    1u32 << 8,  // DIFlagPrototyped
+                    if self.ctx.opt_level == main::OptLevel::O0 { 0i32 } else { 1i32 },
                 );
                 LLVMSetSubprogram(self.llvm_fn, self.di_subprogram);
+                self.di_line = line;
 
-                // Set initial debug location for entry block allocas
-                let start_loc = LLVMDIBuilderCreateDebugLocation(
-                    self.ctx.context,
-                    line,
-                    0u32,
-                    self.di_subprogram,
-                    std::mem::zeroed::<LLVMMetadataRef>(),
-                );
-                LLVMSetCurrentDebugLocation2(self.ctx.builder, start_loc);
+                // (The entry block, which stores the parameters, has no
+                // location, as with clang: the function's first location is
+                // then its body's, where a breakpoint on it stops.)
+                LLVMSetCurrentDebugLocation2(self.ctx.builder, std::mem::zeroed::<LLVMMetadataRef>());
             }
         } else if self.ctx.debug_enabled {
             // No span for this function - clear any stale debug location
@@ -270,57 +351,7 @@ impl FnCodegen {
                 );
             }
 
-            // Locals
-            for local in self.ir_fn.local_defs.iter_ref() {
-                if local.ty.is_void() || local.ty.is_never() { continue; }
-                let local_llvm_ty = self.ctx.llvm_type(local.ty);
-                if LLVMGetTypeKind(local_llvm_ty) == LLVMTypeKind::Void { continue; }
-
-                let lname = local.name;
-                if lname.len() == 0 { continue; }
-                // Skip compiler-generated temps (names starting with _)
-                if lname[0] == '_' { continue; }
-
-                let alloca = self.locals.get(&local.id._value);
-                if alloca.is_none() { continue; }
-
-                let di_ty = self.ctx.get_or_create_di_type(local.ty);
-                let di_ty_ptr = di_ty as &void as usize;
-                if di_ty_ptr == 0 { continue; }
-
-                // Use the local's span for line info, fall back to function start
-                let var_line = if local.span.start != 0u32 || local.span.end != 0u32 {
-                    let (l, _) = file_info.line_col(local.span.start);
-                    l
-                } else {
-                    fn_line
-                };
-
-                let var_loc = LLVMDIBuilderCreateDebugLocation(
-                    self.ctx.context, var_line, 0u32,
-                    self.di_subprogram, std::mem::zeroed::<LLVMMetadataRef>(),
-                );
-
-                let di_var = LLVMDIBuilderCreateAutoVariable(
-                    self.ctx.di_builder,
-                    self.di_subprogram,
-                    &lname[0] as &libc::c_char, lname.len(),
-                    di_file,
-                    var_line,
-                    di_ty,
-                    1i32, // always_preserve
-                    0u32, // flags
-                    0u32, // align
-                );
-                LLVMDIBuilderInsertDeclareRecordAtEnd(
-                    self.ctx.di_builder,
-                    alloca.unwrap(),
-                    di_var,
-                    empty_expr,
-                    var_loc,
-                    self.entry_bb,
-                );
-            }
+            // (Locals are declared where their `let` is.)
         }
 
         // The deferred expressions' flags (cleared), and with any, the block
@@ -336,11 +367,22 @@ impl FnCodegen {
             }
         }
 
-        // Branch from entry to body
+        // Branch from entry to body, at the function's line: the first
+        // location in the entry block, after the parameters are stored, is
+        // where the prologue ends for debuggers (a breakpoint on the function).
+        if (self.di_subprogram as usize) != 0 {
+            LLVMSetCurrentDebugLocation2(self.ctx.builder, LLVMDIBuilderCreateDebugLocation(self.ctx.context,
+                self.di_line, 0u32, self.di_subprogram, std::mem::zeroed::<LLVMMetadataRef>()));
+        }
         LLVMBuildBr(self.ctx.builder, body_bb);
 
         // Generate body
         LLVMPositionBuilderAtEnd(self.ctx.builder, body_bb);
+        // (From the function's line: every call must have a location.)
+        if (self.di_subprogram as usize) != 0 {
+            LLVMSetCurrentDebugLocation2(self.ctx.builder, LLVMDIBuilderCreateDebugLocation(self.ctx.context,
+                self.di_line, 0u32, self.di_subprogram, std::mem::zeroed::<LLVMMetadataRef>()));
+        }
 
         if self.ir_fn.body.is_some() {
             let body_expr = self.ir_fn.body.unwrap();
@@ -414,6 +456,8 @@ impl FnCodegen {
     /// (so that one in a loop is not allocated again at each iteration).
     fn entry_alloca(self: &mut FnCodegen, ty: LLVMTypeRef, align_of: LLVMTypeRef) -> LLVMValueRef {
         let current = LLVMGetInsertBlock(self.ctx.builder);
+        // (Positioning before an instruction takes its debug location too.)
+        let loc = LLVMGetCurrentDebugLocation2(self.ctx.builder);
         let terminator = LLVMGetBasicBlockTerminator(self.entry_bb);
         if (terminator as usize) != 0 {
             LLVMPositionBuilderBefore(self.ctx.builder, terminator);
@@ -423,6 +467,7 @@ impl FnCodegen {
         let slot = LLVMBuildAlloca(self.ctx.builder, ty, self.temp_cname());
         LLVMSetAlignment(slot, LLVMABIAlignmentOfType(self.ctx.target_data, align_of));
         LLVMPositionBuilderAtEnd(self.ctx.builder, current);
+        LLVMSetCurrentDebugLocation2(self.ctx.builder, loc);
         slot
     }
 
@@ -599,6 +644,7 @@ impl FnCodegen {
             }
         }
         IrTag::Block => {
+            let entered = self.enter_di_block(expr.span);
             let result = LLVMGetUndef(self.ctx.void_type);
             for item in expr.items().iter() {
                 // Check if current block is terminated
@@ -608,6 +654,9 @@ impl FnCodegen {
                     break; // Block already terminated, skip rest
                 }
                 result = self.gen_expr(item);
+            }
+            if entered {
+                self.di_scopes.pop();
             }
             result
         }
@@ -820,6 +869,10 @@ impl FnCodegen {
                         self.safe_store(init_val, alloca.unwrap());
                     }
                 }
+            }
+            let alloca = self.locals.get(&expr.id()._value);
+            if alloca.is_some() {
+                self.declare_local(expr.id()._value, alloca.unwrap());
             }
             LLVMGetUndef(self.ctx.void_type)
         }
@@ -2220,6 +2273,8 @@ impl FnCodegen {
     fn free(self: &mut FnCodegen) {
         self.locals.free();
         self.defers.free();
+        self.di_scopes.free();
+        self.local_info.free();
     }
 }
 

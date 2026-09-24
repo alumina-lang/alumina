@@ -11,6 +11,7 @@ use diagnostics::DiagnosticContext;
 use aluminac_common::arena::Arena;
 use std::collections::{HashMap, HashSet, Vector};
 use std::option::Option;
+use std::string::{StringBuf, split};
 use mono::lower::Mono;
 
 // Frame in the monomorphization call stack for diagnostics
@@ -68,6 +69,10 @@ struct MonoCtx {
     fn_cache: HashMap<MonoKey, usize>,
     // Index in `ir_functions` of each function, by mangled name.
     fn_indices: HashMap<&[u8], usize>,
+    /// The namespace of each function (by definition id), for debug
+    /// information; built on first use (see `fn_namespace`).
+    fn_namespaces: HashMap<usize, &[u8]>,
+    fn_namespaces_built: bool,
     // The statics (by global index) whose initializers are being lowered.
     statics_in_progress: Vector<usize>,
     // The functions whose signatures are being resolved.
@@ -88,6 +93,9 @@ struct MonoCtx {
 
     // Name mangling counter
     mangle_counter: usize,
+    /// How many functions have each symbol name `mangle_fn_name` made
+    /// (the ones after the first get a suffix).
+    fn_symbols: HashMap<&[u8], usize>,
 
     // Canonical type instances (stable pointers)
     void_ty: &IrTy,
@@ -195,6 +203,8 @@ impl MonoCtx {
             baked_globals: HashMap::new(),
             fn_cache: HashMap::new(),
             fn_indices: HashMap::new(),
+            fn_namespaces: HashMap::new(),
+            fn_namespaces_built: false,
             statics_in_progress: Vector::new(),
             signatures_in_progress: Vector::new(),
             struct_cache: HashMap::new(),
@@ -204,6 +214,7 @@ impl MonoCtx {
             enum_cache: HashMap::new(),
             ty_cache: HashMap::new(),
             mangle_counter: 0,
+            fn_symbols: HashMap::new(),
             void_ty: void_ty,
             no_hint: arena.alloc(IrTy::mk_void()),
             never_ty: never_ty,
@@ -365,6 +376,40 @@ impl MonoCtx {
         // _AL<base><counter> — counter is at most 20 decimal digits.
         let buf = self.arena.alloc_slice::<u8>(3usize + base.len() + 20usize);
         std::fmt::format_in!(buf, "_AL{}{}", base, self.mangle_counter).unwrap()
+    }
+
+    /// The symbol name of a function: its path, as C++ compilers name them
+    /// (Itanium ABI), so that debuggers, profilers and `nm -C` show it:
+    /// `_ZN4main3addE` is `main::add`. The last name has the type arguments,
+    /// `_ZN4main11report<i32>E`; the second function with the same path (two
+    /// local functions `f`, an instance of a local function in two instances
+    /// of the function it is in) gets a suffix, `_ZN4main1fE.1`.
+    fn mangle_fn_name(self: &mut MonoCtx, namespace: &[u8], name: &[u8], type_args: &[&IrTy]) -> &[u8] {
+        let last = StringBuf::new();
+        defer last.free();
+        write_fn_name(&last, name, type_args);
+
+        let buf = StringBuf::new();
+        defer buf.free();
+        buf.extend_from_slice(if namespace.is_empty() { "_Z" } else { "_ZN" });
+        for segment in namespace.split("::") {
+            if !segment.is_empty() {
+                std::fmt::write!(&buf, "{}{}", segment.len(), segment).unwrap();
+            }
+        }
+        std::fmt::write!(&buf, "{}{}", last.len(), last.as_slice()).unwrap();
+        if !namespace.is_empty() {
+            buf.extend_from_slice("E");
+        }
+
+        let count = self.fn_symbols.get(&buf.as_slice());
+        if count.is_some() {
+            self.fn_symbols.insert(self.arena.alloc_slice_copy(buf.as_slice()), count.unwrap() + 1);
+            std::fmt::write!(&buf, ".{}", count.unwrap()).unwrap();
+        } else {
+            self.fn_symbols.insert(self.arena.alloc_slice_copy(buf.as_slice()), 1);
+        }
+        self.arena.alloc_slice_copy(buf.as_slice())
     }
 
     // Deterministic per-def global mangling. Two fn-local `const X` in
@@ -552,6 +597,8 @@ impl MonoCtx {
     }
 
     fn free(self: &mut MonoCtx) {
+        self.fn_namespaces.free();
+        self.fn_symbols.free();
         self.fn_defs.free();
         self.struct_defs.free();
         self.enum_defs.free();
@@ -752,7 +799,53 @@ impl MonoCtx {
             abi: Option::none(),
             span: Span::empty(),
             type_args: &[],
+            namespace: "",
         });
+    }
+
+    /// The namespace (`a::b`, or `a::b::T` for a method of `T`) of the
+    /// function defined as `fn_id`: where it is declared (a mixed-in copy
+    /// of a protocol's method is in the protocol).
+    fn fn_namespace(self: &mut MonoCtx, fn_id: usize) -> &[u8] {
+        if !self.fn_namespaces_built {
+            self.fn_namespaces_built = true;
+            for i in 0usize..self.scopes.scopes.len() {
+                for pair in self.scopes.scopes[i].items {
+                    let item = pair.1;
+                    // (A mixed-in method has no span of its own.)
+                    if item.span.start == 0 && item.span.end == 0 && item.span.file_id == 0 {
+                        continue;
+                    }
+                    let id = switch item.kind.tag {
+                        scope::NamedItemTag::Function => item.kind.id()._value,
+                        scope::NamedItemTag::Method => item.kind.id2()._value,
+                        _ => continue,
+                    };
+                    if !self.fn_namespaces.contains(&id) {
+                        let path = self.scopes.module_path_for_scope(self.arena, i as u32);
+                        self.fn_namespaces.insert(id, MonoCtx::relative_path(path));
+                    }
+                }
+            }
+        }
+        self.fn_namespaces.get(&fn_id).unwrap_or("")
+    }
+
+    /// The namespace of a struct or enum with body scope `scope_idx`.
+    fn type_namespace(self: &mut MonoCtx, scope_idx: u32) -> &[u8] {
+        if scope_idx == 0 {
+            return "";
+        }
+        let parent = self.scopes.get(scope_idx).parent;
+        if parent.is_none() {
+            return "";
+        }
+        MonoCtx::relative_path(self.scopes.module_path_for_scope(self.arena, parent.unwrap()))
+    }
+
+    /// `::a::b` as `a::b` (`::` as empty).
+    fn relative_path(path: &[u8]) -> &[u8] {
+        if path.len() >= 2 && path[0] == ':' && path[1] == ':' { path[2..] } else { path }
     }
 }
 

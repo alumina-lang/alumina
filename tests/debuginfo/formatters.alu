@@ -1,0 +1,55 @@
+// The standard library's types, through tools/lldb/alumina_lldb.py.
+use std::collections::{Vector, HashMap, HashSet, Deque};
+use std::string::StringBuf;
+
+fn main() {
+    let name: &[u8] = "hello";
+    let xs = [1, 2, 3];
+    let xs_slice: &[i32] = &xs;
+    let bytes = [104u8, 105];
+    let v: Vector<i32> = Vector::new();
+    v.push(10);
+    v.push(20);
+    let s = StringBuf::from_slice("abc");
+    let some: Option<i32> = Option::some(7);
+    let none: Option<i32> = Option::none();
+    let ok: Result<i32, &[u8]> = Result::ok(1);
+    let err: Result<i32, &[u8]> = Result::err("bad");
+    let m: HashMap<i32, &[u8]> = HashMap::new();
+    m.insert(1, "one");
+    let hs: HashSet<i32> = HashSet::new();
+    hs.insert(5);
+    let d: Deque<i32> = Deque::new();
+    d.push(1);
+    d.push_front(0);
+    let small = 7u8;
+    let pair = (small, name);
+    println!("{} {} {} {}", xs_slice.len(), v.len(), m.len(), pair.0 + bytes[0]); // #break
+    defer { v.free(); s.free(); m.free(); hs.free(); d.free(); }
+}
+
+// lldb: frame variable name xs_slice v s some none ok err m hs d small pair
+// check: (&[u8]) name = "hello"
+// check: (&[i32]) xs_slice = len=3 {
+// check: [0] = 1
+// check: [2] = 3
+// check: (std::collections::vector::Vector<i32>) v = len=2 {
+// check: [1] = 20
+// check: (std::string::StringBuf) s = "abc"
+// check: (std::option::Option<i32>) some = some(7)
+// check: none = none
+// check-not: {}
+// check: ok = ok(1)
+// check: err = err("bad")
+// check: (std::collections::hashmap::HashMap<i32, &[u8], std::hash::xxhash::Xxh64>) m = len=1 {
+// check: [0] = (1, "one")
+// check: (std::collections::hashset::HashSet<i32, std::hash::xxhash::Xxh64>) hs = len=1 {
+// check: [0] = 5
+// check: (std::collections::deque::Deque<i32>) d = len=2 {
+// check: [0] = 0
+// check: [1] = 1
+// check: (u8) small = 7
+// check: ((u8, &[u8])) pair = (7, "hello")
+// lldb: frame variable v[1] xs_slice[0]
+// check: (i32) v[1] = 20
+// check: (i32) xs_slice[0] = 1

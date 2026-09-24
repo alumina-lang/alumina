@@ -1099,9 +1099,11 @@ impl Mono {
             is_union: def.is_union,
             is_zero_sized: def.fields.len() == 0,
             scope_idx: scope_idx,
-            type_args: type_args,
+            // (A copy: callers can pass type arguments on the stack.)
+            type_args: self.ctx.arena.alloc_slice_copy(type_args),
             is_packed: is_packed,
             attributes: def.attributes,
+            namespace: self.ctx.type_namespace(scope_idx),
         };
 
         let idx = self.ctx.ir_structs.len();
@@ -1248,6 +1250,7 @@ impl Mono {
             variants: variants,
             scope_idx: enum_scope_idx,
             attributes: def.attributes,
+            namespace: self.ctx.type_namespace(enum_scope_idx),
         };
 
         let idx = self.ctx.ir_enums.len();
@@ -1492,7 +1495,8 @@ impl Mono {
         } else if keep_name {
             def.name
         } else {
-            self.ctx.mangle_name(def.name)
+            let namespace = self.ctx.fn_namespace(def.id._value);
+            self.ctx.mangle_fn_name(namespace, def.name, type_args)
         };
 
         // Reserve index and cache it BEFORE lowering the body
@@ -1510,7 +1514,9 @@ impl Mono {
             is_variadic: def.is_variadic,
             abi: def.abi,
             span: def.span,
-            type_args: type_args,
+            // (A copy: callers can pass type arguments on the stack.)
+            type_args: self.ctx.arena.alloc_slice_copy(type_args),
+            namespace: self.ctx.fn_namespace(def.id._value),
         };
         self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
@@ -1602,6 +1608,7 @@ impl Mono {
             abi: Option::none(),
             span: def.span,
             type_args: &[],
+            namespace: self.ctx.fn_namespace(def.id._value),
         };
         self.local_defs.clear();
         self.ctx.fn_indices.insert(body_fn.mangled_name, self.ctx.ir_functions.len());
@@ -3590,14 +3597,11 @@ impl Mono {
         let loop_var_id = expr.id();
         let counter_id = self.ctx.id_gen.next_id();
         let end_var_id = self.ctx.id_gen.next_id();
-        for id in [loop_var_id, counter_id, end_var_id] {
+        self.local_types.insert(loop_var_id._value, iter_ty);
+        self.local_defs.push(IrLocalDef { id: loop_var_id, ty: iter_ty, name: expr.for_name(), span: expr.span });
+        for id in [counter_id, end_var_id] {
             self.local_types.insert(id._value, iter_ty);
-            self.local_defs.push(IrLocalDef {
-                id: id,
-                ty: iter_ty,
-                name: "",
-                span: Span::empty(),
-            });
+            self.local_defs.push(IrLocalDef { id: id, ty: iter_ty, name: "", span: Span::empty() });
         }
 
         let ir_let_counter = self.mk_let(counter_id, iter_ty, ir_start);
@@ -4767,7 +4771,7 @@ impl Mono {
         if expr.args().len() == 0 {
             // Simple case: for item in iterable
             self.local_types.insert(loop_var_id._value, elem_ty);
-            self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: "", span: Span::empty() });
+            self.local_defs.push(IrLocalDef { id: loop_var_id, ty: elem_ty, name: expr.for_name(), span: expr.span });
             let stmts = self.ctx.arena.alloc_slice::<&IrExpr>(1);
             stmts[0] = self.mk_let(loop_var_id, elem_ty, elem_ir);
             return stmts;
@@ -4806,7 +4810,7 @@ impl Mono {
             };
 
             self.local_types.insert(elem_id._value, field_ty);
-            self.local_defs.push(IrLocalDef { id: elem_id, ty: field_ty, name: "", span: Span::empty() });
+            self.local_defs.push(IrLocalDef { id: elem_id, ty: field_ty, name: elem_arg.str_val(), span: elem_arg.span });
 
             let ir_field = self.mk_field(self.mk_local(loop_var_id, elem_ty), i as u32, field_ty);
             stmts[1 + i] = self.mk_let(elem_id, field_ty, ir_field);
@@ -7071,6 +7075,7 @@ impl Mono {
             type_args: &[],
             is_packed: false,
             attributes: &[],
+            namespace: "",
         };
         let closure_fn_ref = IrFnRef { id: lambda_id, mangled_name: mangled };
 
@@ -7137,6 +7142,7 @@ impl Mono {
             abi: Option::none(),
             span: expr.span,
             type_args: &[],
+            namespace: "",
         };
         self.ctx.fn_indices.insert(placeholder.mangled_name, self.ctx.ir_functions.len());
         self.ctx.ir_functions.push(placeholder);
