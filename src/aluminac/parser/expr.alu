@@ -2449,6 +2449,10 @@ impl ExprParser {
     // Entry point: expand a macro with pre-parsed body.
     // Sets up param_args and variadic_args, then calls expand_macro_expr.
     fn do_expand_macro(self: &ExprParser, entry: MacroEntry, call_args: &[&Expr], span: Span) -> &Expr {
+        // (A builtin macro has no body to expand.)
+        if entry.is_builtin {
+            return self.expand_builtin_macro(entry.name, call_args, span);
+        }
         // Track the OUTERMOST macro call's span so that builtin location
         // macros (file!/line!/column!/stringify!) inside the body resolve
         // to the user's call site rather than to the macro body's position.

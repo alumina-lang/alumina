@@ -1,0 +1,16 @@
+// A large local array is zeroed with a memset: storing it as one value
+// (`store [65536 x i8] zeroinitializer`) crashed LLVM's x86_64 instruction
+// selection.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+fn fill(buf: &mut [u8]) -> usize {
+    buf[buf.len() - 1] = 7;
+    buf.len()
+}
+
+fn main() {
+    let buf: [u8; 65536];
+    assert_eq!(buf[12345], 0);
+    assert_eq!(fill(&buf), 65536);
+    assert_eq!(buf[65535], 7);
+}

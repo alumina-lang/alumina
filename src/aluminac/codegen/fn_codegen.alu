@@ -204,9 +204,17 @@ impl FnCodegen {
             let alloca = LLVMBuildAlloca(self.ctx.builder, alloca_ty, &lname[0] as &libc::c_char);
             LLVMSetAlignment(alloca, self.ctx.alignment_of(local.ty));
             // Zero-initialize all allocas to prevent issues with defer cleanup
-            // running on uninitialized variables from untaken branches
-            let zero = LLVMConstNull(alloca_ty);
-            LLVMBuildStore(self.ctx.builder, zero, alloca);
+            // running on uninitialized variables from untaken branches. (An
+            // aggregate with a memset, as clang does: storing a large one as a
+            // value, e.g. `[u8; 65536]`, overflows LLVM's instruction selection.)
+            let kind = LLVMGetTypeKind(alloca_ty);
+            if kind == LLVMTypeKind::Struct || kind == LLVMTypeKind::Array {
+                let size = LLVMConstInt(self.ctx.i64_type, LLVMABISizeOfType(self.ctx.target_data, alloca_ty), 0i32);
+                LLVMBuildMemSet(self.ctx.builder, alloca, LLVMConstInt(self.ctx.i8_type, 0u64, 0i32), size,
+                    self.ctx.alignment_of(local.ty));
+            } else {
+                LLVMBuildStore(self.ctx.builder, LLVMConstNull(alloca_ty), alloca);
+            }
             self.locals.insert(local.id._value, alloca);
         }
 

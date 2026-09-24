@@ -1,0 +1,24 @@
+// Consts and statics used as type arguments (`Type<FOO>`) are distinct types
+// per item, also when they have the same name.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::typing::Type;
+
+fn a() {
+    const FOO: i32 = 42;
+    let desc: Type<FOO> = Type::new();
+    assert_eq!(desc.value(), 42);
+}
+
+fn b() {
+    static FOO: i32 = 42;
+    let desc: Type<FOO> = Type::new();
+    let addr = desc.as_mut_ptr();
+    *addr = 1337;
+    assert_eq!(FOO, 1337);
+}
+
+fn main() {
+    a();
+    b();
+}

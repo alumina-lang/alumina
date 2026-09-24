@@ -284,6 +284,11 @@ fn write_docstring<T: std::io::Writable<T>>(
 
     let num_lines = doc_comment.split("\n").count();
     let doctest_start: Option<usize> = Option::none();
+    let doc_start_row = if doc_comment.starts_with("//!") || doctest_item == null {
+        0usize
+    } else {
+        std::cmp::max(doctest_item.node.start_point().row as usize, num_lines) - num_lines
+    };
 
     for (line_num, i) in doc_comment.split("\n").enumerate() {
         let docline =  if i.starts_with("///") {
@@ -311,9 +316,9 @@ fn write_docstring<T: std::io::Writable<T>>(
                             cb_type == CodeBlockType::Panics,
                             doctest_item.parse_context.filename[..],
                             // We assume that the docstring is contiguous (no empty or other comment lines in between)
-                            // and that the item is directly after the docstring. This is not exact, but we cannot
-                            // really do better than that easily.
-                            doctest_item.node.start_point().row as usize + doctest_start.unwrap() - num_lines
+                            // and that the item is directly after the docstring (a module's, `//!`, is at the
+                            // start of its file). This is not exact, but we cannot really do better than that easily.
+                            doc_start_row + doctest_start.unwrap()
                         );
                         name.free();
                     }

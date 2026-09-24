@@ -478,6 +478,15 @@ impl Mono {
             TyTag::FnPointer => {
                 let resolved_params = self.resolve_type_list(ty.elems());
                 let resolved_ret = self.resolve_type(ty.ret_ty());
+                // `Fn(A...) -> R` is the protocol `Callable<(A...), R>` (as in
+                // alumina-boot); `fn(A...) -> R` a function pointer.
+                let callable = if ty.is_fn_protocol() { self.ctx.get_lang_item("proto_callable") } else { Option::none() };
+                if callable.is_some() {
+                    let args = self.ctx.arena.alloc_slice::<&IrTy>(2);
+                    args[0] = self.ctx.make_tuple_ty(resolved_params);
+                    args[1] = resolved_ret;
+                    return self.ctx.make_protocol_ty(callable.unwrap(), args);
+                }
                 self.ctx.make_fn_ptr_ty(resolved_params, resolved_ret)
             }
             TyTag::EtCetera => {
@@ -865,12 +874,18 @@ impl Mono {
                             return self.ctx.make_array_ty(elem, len_holder.array_size());
                         }
                     } else if lang == "typeop_generic_args_of" && type_args.len() >= 1 {
-                        // generic_args_of<T>: tuple of T's generic args.
-                        // Aluminac's grammar doesn't (yet) allow generic enums, so the
-                        // only kind that carries type-args is Struct.
+                        // generic_args_of<T>: tuple of T's generic args (a struct's
+                        // or a function's; enums are not generic).
                         let t = type_args[0];
                         if t.tag == IrTyTag::Struct {
                             return self.ctx.make_tuple_ty(t.struct_ref().type_args);
+                        }
+                        // (A function instance, e.g. `add<i32>`.)
+                        if t.tag == IrTyTag::Fn {
+                            let idx = self.ctx.fn_indices.get(&t.fn_item_ref().mangled_name);
+                            if idx.is_some() {
+                                return self.ctx.make_tuple_ty(self.ctx.ir_functions[idx.unwrap()].type_args);
+                            }
                         }
                         return self.ctx.make_tuple_ty(&[]);
                     } else if lang == "typeop_underlying_function_of" && type_args.len() >= 1 {
@@ -960,7 +975,7 @@ impl Mono {
                 let current = self.ctx.protocol_defs.get(&self.resolving_protocols[self.resolving_protocols.len() - 1].0).unwrap();
                 self.emit_diag(diagnostics::CodeDiagnostic::generic_error(current.span,
                     "recursive protocol bounds are not supported"));
-                return self.ctx.arena.alloc(IrTy::mk_protocol_with_args(item_ref.id._value, type_args));
+                return self.ctx.make_protocol_ty(item_ref.id._value, type_args);
             }
             // The protocol's own parameters' bounds (e.g. `F: Formatter<F>`
             // in `Formattable<Self, F>`) must hold for the arguments.
@@ -979,7 +994,7 @@ impl Mono {
                 self.type_map.free();
                 self.type_map = outer_type_map;
             }
-            return self.ctx.arena.alloc(IrTy::mk_protocol_with_args(item_ref.id._value, type_args));
+            return self.ctx.make_protocol_ty(item_ref.id._value, type_args);
         }
 
         // Const/static items used as type-args (`underlying_type_of<MY_CONST>`,
@@ -1934,7 +1949,8 @@ impl Mono {
                 //
                 // The element type T is inferred from the present operand. When
                 // both are present they must agree (else fallback to usize); when
-                // neither is present (RangeFull), T defaults to usize.
+                // neither is present (RangeFull), T is the context's, else i32
+                // (as for an untyped integer literal, and in alumina-boot).
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
 
                 let has_lower = expr.lhs() as &void as usize != 0;
@@ -1975,8 +1991,10 @@ impl Mono {
                     raw_lower.ty
                 } else if has_upper {
                     raw_upper.ty
+                } else if bound_hint.is_some() {
+                    bound_hint.unwrap()
                 } else {
-                    usize_ty
+                    self.ctx.intern_builtin_ty(BuiltinType::I32)
                 };
 
                 let lang_name: &[u8] = if has_lower && has_upper {
@@ -2449,15 +2467,16 @@ impl Mono {
             synthetic[i] = GenericParam::plain(Id { _value: ids[i] }, "_proto");
         }
         let inf = mono::infer::Inference::new(self, synthetic);
-        // The receiver (one pointer off each side), then the rest of the call.
+        // The receiver, auto-(de)referenced to the self parameter's
+        // indirection (as for any method call), then the rest of the call.
         if def.params.len() > 0 {
             let self_param_ty = def.params[0].ty;
-            let self_arg_ty = receiver_ty;
             if self_param_ty.tag == TyTag::Pointer {
                 self_param_ty = self_param_ty.inner();
-                if self_arg_ty.tag == IrTyTag::Pointer {
-                    self_arg_ty = self_arg_ty.inner();
-                }
+            }
+            let self_arg_ty = receiver_ty;
+            while self_arg_ty.tag == IrTyTag::Pointer {
+                self_arg_ty = self_arg_ty.inner();
             }
             inf.unify(self, self_param_ty, self_arg_ty);
         }
@@ -3176,7 +3195,8 @@ impl Mono {
                         self.type_map.insert(other.id._value, inferred[i]);
                     }
                 }
-                let hint = self.resolve_type(bound);
+                // (The signature, as a function pointer: a lambda's hint.)
+                let hint = self.ctx.make_fn_ptr_ty(self.resolve_type_list(bound.elems()), self.resolve_type(bound.ret_ty()));
                 self.type_map.free();
                 self.type_map = outer_type_map;
 
@@ -6497,7 +6517,11 @@ impl Mono {
     fn satisfies_bound(self: &mut Mono, ty: &IrTy, bound: &Ty) -> bool {
         // `Fn(A) -> R` (directly or through an alias) is sugar for the
         // Callable protocol.
-        if bound.tag == TyTag::FnPointer || self.resolve_type(bound).tag == IrTyTag::FnPointer {
+        let is_callable = bound.tag == TyTag::FnPointer || {
+            let resolved = self.resolve_type(bound);
+            resolved.tag == IrTyTag::Protocol && self.ctx.is_lang_item(resolved.proto_id(), "proto_callable")
+        };
+        if is_callable {
             return ty.tag == IrTyTag::Fn || ty.tag == IrTyTag::FnPointer || ty.tag == IrTyTag::Closure;
         }
         self.type_matches(ty, bound)

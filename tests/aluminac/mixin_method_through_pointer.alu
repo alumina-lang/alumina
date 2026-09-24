@@ -1,0 +1,11 @@
+// A mixed-in method taking `self: Self`, called through a pointer: `Self` is
+// the impl's type (the receiver is dereferenced), not the pointer's.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+fn main() {
+    let y: u16 = 0x0123;
+    let p = &y;
+    assert_eq!(p.swap_bytes(), 0x2301);
+    let buf: [u8; 2] = [0x01, 0x23];
+    assert_eq!((&buf[0] as &u16).from_be(), 0x0123);
+}

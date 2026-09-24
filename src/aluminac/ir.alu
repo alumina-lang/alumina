@@ -169,6 +169,8 @@ impl IrTy {
             IrTyTag::Fn => self.fn_item_ref().mangled_name == other.fn_item_ref().mangled_name,
             IrTyTag::Protocol =>
                 self.proto_id() == other.proto_id() && same_types(self.proto_type_args(), other.proto_type_args()),
+            IrTyTag::ItemRef =>
+                self.item_ref_id() == other.item_ref_id() && self.item_ref_is_const() == other.item_ref_is_const(),
             // Void, Never
             _ => true,
         }
@@ -202,6 +204,10 @@ impl IrTy {
             IrTyTag::Protocol => {
                 self.proto_id().hash(hasher);
                 hash_types(self.proto_type_args(), hasher);
+            }
+            IrTyTag::ItemRef => {
+                self.item_ref_id().hash(hasher);
+                self.item_ref_is_const().hash(hasher);
             }
             _ => {}
         }

@@ -92,6 +92,17 @@ impl TypeName {
                 self.write_args(f, func.type_args)
             }
             IrTyTag::Protocol => {
+                // (`Callable<(A...), R>` is written `Fn(A...) -> R`, as in alumina-boot.)
+                let args = ty.proto_type_args();
+                if self.ctx.is_lang_item(ty.proto_id(), "proto_callable") && args.len() == 2
+                    && (args[0].tag == IrTyTag::Tuple || args[0].is_void()) {
+                    f.write_str("Fn(")?;
+                    if args[0].tag == IrTyTag::Tuple {
+                        self.write_list(f, args[0].elems(), ", ")?;
+                    }
+                    f.write_str(")")?;
+                    return if args[1].is_void() { Result::ok(()) } else { write!(f, " -> {}", self.of(args[1])) };
+                }
                 let name = self.ctx.protocol_defs.get(&ty.proto_id())
                     .map(|p: &ProtocolDef| -> &[u8] { p.name })
                     .unwrap_or("<protocol>");

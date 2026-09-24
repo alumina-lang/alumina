@@ -468,6 +468,21 @@ impl MonoCtx {
         self.cache_ty(key, self.arena.alloc(IrTy::mk_fn_pointer(params, ret)))
     }
 
+    /// The protocol `proto_id` with `args` (interned, so that the same
+    /// protocol type is one type, e.g. for `type_id`).
+    fn make_protocol_ty(self: &mut MonoCtx, proto_id: usize, args: &[&IrTy]) -> &IrTy {
+        let key: usize = proto_id * 31 + args.len();
+        for i in 0usize..args.len() {
+            key = key * 31 + (args[i] as &void as usize);
+        }
+        let cached = self.cached_ty(key, |=proto_id, =args, t: &IrTy| -> bool {
+            t.tag == IrTyTag::Protocol && t.proto_id() == proto_id && MonoCtx::same_refs(t.proto_type_args(), args)
+        });
+        if cached.is_some() { return cached.unwrap(); }
+        let owned = self.arena.alloc_slice_copy::<&IrTy>(args);
+        self.cache_ty(key, self.arena.alloc(IrTy::mk_protocol_with_args(proto_id, owned)))
+    }
+
     fn make_fn_ty(self: &mut MonoCtx, fn_ref: IrFnRef) -> &IrTy {
         // (By mangled name: every instantiation of a function has its own
         // type.)

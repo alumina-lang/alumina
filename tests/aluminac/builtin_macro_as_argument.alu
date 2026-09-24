@@ -1,0 +1,14 @@
+// A builtin macro passed to another macro (as format_args!'s receiver, to
+// reduce!, or called universally) is expanded as a builtin.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::fmt::format_args;
+use std::concat;
+use std::macros::reduce;
+
+fn main() {
+    let s = format_args!(concat, "{} + {} = {}", "1", "2", "3");
+    assert_eq!(s, "1 + 2 = 3");
+    let t = reduce!(concat, "a", "b", "c");
+    assert_eq!(t, "abc");
+}
