@@ -1,0 +1,75 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: a mixin'd protocol-default method whose own generic is a
+// bare Placeholder in *return* position with a protocol bound (and no
+// RangeOf-style bound to derive it from) — e.g.
+// `fn unit_float<T: FloatingPoint>(self: &mut Self) -> T` — must infer
+// `T` from the call's expected type when dispatched through the mixin.
+//
+// Before the fix `T` stayed void through try_lower_method_call's
+// generic inference (no parameter carries it, no RangeOf bound), so the
+// body computed `x as void` = 0 and the method returned 0.0. Surfaced
+// as std/random's WeightedIndex<f64>::sample returning the wrong bucket
+// (next_float<T: FloatingPoint> degrading to 0.0).
+//
+// The fix binds from expected type ONLY if the generic has >=1 protocol
+// bound that the expected type satisfies — so a leaked `bool` (the
+// `assert!(f() >= x)` operand-propagation hazard) is rejected because
+// bool does not conform to FloatingPoint/Integer, while f64 binds. The
+// io tests test_null / test_slice_reader are the canary for that
+// regression and stay green.
+
+use std::builtins::{FloatingPoint, Integer};
+
+protocol Src<Self> {
+    fn raw(self: &mut Self) -> u64;
+}
+
+protocol SrcExt<Self: Src<Self>> {
+    // T only in return position, bound FloatingPoint, no other source.
+    fn unit<T: FloatingPoint>(self: &mut Self) -> T {
+        (self.raw() as T) / (u64::max_value() as T)
+    }
+    // T only in return position, bound Integer.
+    fn scaled<T: Integer>(self: &mut Self) -> T {
+        (self.raw() % 1000) as T
+    }
+}
+
+struct Fixed { v: u64 }
+impl Fixed {
+    fn new(v: u64) -> Fixed { Fixed { v: v } }
+    fn raw(self: &mut Fixed) -> u64 { self.v }
+    mixin Src<Fixed>;
+    mixin SrcExt<Fixed>;
+}
+
+// Mirrors WeightedIndex::sample: the rng is a generic only bounded by
+// the base protocol Src, yet calls the SrcExt method unit().
+fn pick<R: Src<R>>(rng: &mut R, total: f64) -> f64 {
+    let u: f64 = rng.unit();
+    u * total
+}
+
+fn main() -> i32 {
+    // (a) direct typed-let binding through the mixin.
+    let a = Fixed::new(0);
+    let ua: f64 = a.unit();
+    if ua != 0.0 { return 1; }
+
+    let b = Fixed::new(u64::max_value());
+    let ub: f64 = b.unit();
+    if !(ub > 0.99 && ub <= 1.0) { return 2; }
+
+    // (b) Integer-bounded return-only generic.
+    let c = Fixed::new(1234);
+    let sc: i64 = c.scaled();
+    if sc != 234 { return 3; }
+
+    // (c) called from a generic fn bounded only by the base protocol Src
+    //     (the std/random WeightedIndex::sample<R: Rng<R>> shape).
+    let d = Fixed::new(u64::max_value() / 2);
+    let r = pick(&d, 10.0);
+    if !(r > 4.9 && r < 5.1) { return 4; }
+
+    0
+}

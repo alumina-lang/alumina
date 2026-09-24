@@ -1,0 +1,132 @@
+// Test complex #[cfg()] evaluation: not(), all(), any(), and top-level blocks.
+// ALUMINAC_FLAGS: --cfg feature_a --cfg feature_b
+
+// Simple cfg: function included when flag is present
+#[cfg(feature_a)]
+fn feature_a_val() -> i32 { 1i32 }
+
+// Simple cfg: function excluded when flag is absent
+#[cfg(nonexistent)]
+fn should_not_exist() -> i32 { 999i32 }
+
+// cfg(not(...)): included when flag is absent
+#[cfg(not(nonexistent))]
+fn not_nonexistent() -> i32 { 2i32 }
+
+// cfg(not(...)): excluded when flag is present
+#[cfg(not(feature_a))]
+fn not_feature_a() -> i32 { 999i32 }
+
+// cfg(all(...)): included when all flags are present
+#[cfg(all(feature_a, feature_b))]
+fn all_ab() -> i32 { 3i32 }
+
+// cfg(all(...)): excluded when any flag is absent
+#[cfg(all(feature_a, nonexistent))]
+fn all_missing() -> i32 { 999i32 }
+
+// cfg(any(...)): included when any flag is present
+#[cfg(any(nonexistent, feature_b))]
+fn any_b() -> i32 { 4i32 }
+
+// cfg(any(...)): excluded when no flag is present
+#[cfg(any(nonexistent, also_nonexistent))]
+fn any_missing() -> i32 { 999i32 }
+
+// Nested: cfg(all(not(...), ...))
+#[cfg(all(not(nonexistent), feature_a))]
+fn nested_all_not() -> i32 { 5i32 }
+
+// Nested: cfg(any(not(...), ...))
+#[cfg(any(not(feature_a), nonexistent))]
+fn nested_any_not_excluded() -> i32 { 999i32 }
+
+#[cfg(any(not(nonexistent), also_nonexistent))]
+fn nested_any_not_included() -> i32 { 6i32 }
+
+// Top-level block with cfg
+#[cfg(feature_a)]
+{
+    fn block_included() -> i32 { 7i32 }
+}
+
+#[cfg(nonexistent)]
+{
+    fn block_excluded() -> i32 { 999i32 }
+}
+
+#[cfg(not(nonexistent))]
+{
+    fn block_not_included() -> i32 { 8i32 }
+}
+
+// cfg on struct
+#[cfg(feature_a)]
+struct IncludedStruct { val: i32 }
+
+#[cfg(nonexistent)]
+struct ExcludedStruct { val: i32 }
+
+// cfg on enum
+#[cfg(feature_a)]
+enum IncludedEnum {
+    A = 0i32,
+    B = 1i32,
+}
+
+#[cfg(nonexistent)]
+enum ExcludedEnum {
+    X = 0i32,
+}
+
+// cfg on const
+#[cfg(feature_a)]
+const INCLUDED_CONST: i32 = 42i32;
+
+#[cfg(nonexistent)]
+const EXCLUDED_CONST: i32 = 999i32;
+
+// cfg on type alias
+#[cfg(feature_a)]
+type IncludedAlias = i32;
+
+#[cfg(nonexistent)]
+type ExcludedAlias = i32;
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Simple flag presence
+    if feature_a_val() != 1i32 { return 1i32; }
+
+    // not()
+    if not_nonexistent() != 2i32 { return 2i32; }
+
+    // all()
+    if all_ab() != 3i32 { return 3i32; }
+
+    // any()
+    if any_b() != 4i32 { return 4i32; }
+
+    // Nested combinations
+    if nested_all_not() != 5i32 { return 5i32; }
+    if nested_any_not_included() != 6i32 { return 6i32; }
+
+    // Top-level blocks
+    if block_included() != 7i32 { return 7i32; }
+    if block_not_included() != 8i32 { return 8i32; }
+
+    // Struct
+    let s: IncludedStruct = IncludedStruct { val: 10i32 };
+    if s.val != 10i32 { return 9i32; }
+
+    // Enum
+    let e: IncludedEnum = IncludedEnum::B;
+
+    // Const
+    if INCLUDED_CONST != 42i32 { return 11i32; }
+
+    // Type alias
+    let x: IncludedAlias = 100i32;
+    if x != 100i32 { return 12i32; }
+
+    0i32
+}

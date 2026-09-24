@@ -1,0 +1,81 @@
+// Test for-loop desugaring with .iter() calls
+
+// Inline Option to avoid sysroot dependency
+struct Option<T> {
+    _is_some: bool,
+    _inner: T,
+}
+
+impl Option<T> {
+    fn some(val: T) -> Option<T> {
+        Option::<T> { _is_some: true, _inner: val }
+    }
+    fn none() -> Option<T> {
+        let o: Option<T>;
+        o._is_some = false;
+        o
+    }
+    fn is_none(self: &Option<T>) -> bool {
+        !self._is_some
+    }
+}
+
+// A simple iterator that counts from 0 to limit-1
+struct CountIter {
+    current: i32,
+    limit: i32,
+}
+
+impl CountIter {
+    fn next(self: &mut CountIter) -> Option<i32> {
+        if self.current < self.limit {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option::some(val)
+        } else {
+            Option::none()
+        }
+    }
+}
+
+// A collection that has an .iter() method
+struct Counter {
+    limit: i32,
+}
+
+impl Counter {
+    fn new(limit: i32) -> Counter {
+        Counter { limit: limit }
+    }
+
+    fn iter(self: &Counter) -> CountIter {
+        CountIter { current: 0i32, limit: self.limit }
+    }
+}
+
+fn test_for_iter() -> i32 {
+    // Test 1: for-loop over a type with .iter() method
+    let c = Counter::new(5);
+    let sum = 0i32;
+    for i in c {
+        sum = sum + i;
+    }
+    // 0 + 1 + 2 + 3 + 4 = 10
+    if sum != 10 { return 1i32; }
+
+    // Test 2: for-loop over a range still works
+    let sum2 = 0i32;
+    for i in 0i32..5i32 {
+        sum2 = sum2 + i;
+    }
+    if sum2 != 10 { return 2i32; }
+
+    // Note: for-loop over arrays requires sysroot (slice.iter())
+    // Array for-loops are tested in for_loop.alu with sysroot
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    test_for_iter()
+}

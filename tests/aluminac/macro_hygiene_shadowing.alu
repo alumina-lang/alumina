@@ -1,0 +1,44 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Macro hygiene under variable shadowing: a macro that introduces a local
+// `_tmp` must not collide with the caller's `_tmp`. Pre-parsed macro bodies
+// already carry their own ids for inner bindings; the expander remaps them
+// to fresh ids and (importantly) does NOT add an entry under the original
+// name to the caller's scope — doing so would overwrite the caller's
+// same-named local via the by-name lookup HashMap.
+
+macro double_save($val) {
+    {
+        let _tmp = $val;
+        _tmp + _tmp
+    }
+}
+
+macro side_effect_only($val) {
+    {
+        let _tmp = $val;
+        _tmp;
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let _tmp = 10i32;
+
+    // double_save's inner _tmp = 100. Result = 200.
+    let r = double_save!(_tmp * 10);
+    if r != 200i32 { return 1i32; }
+
+    // The caller's _tmp must remain 10 — the macro's _tmp is hygienic.
+    if _tmp != 10i32 { return 2i32; }
+
+    // Same check for a value-discarding macro shape.
+    side_effect_only!(99i32);
+    if _tmp != 10i32 { return 3i32; }
+
+    // Argument expression that itself names _tmp resolves at the call site.
+    let r = double_save!(_tmp + 5i32);
+    if r != 30i32 { return 4i32; }
+    if _tmp != 10i32 { return 5i32; }
+
+    0i32
+}

@@ -1,0 +1,572 @@
+// `stringify!`: code printed as alumina-boot prints its AST
+// (src/alumina-boot/src/ast/pretty.rs), i.e. after macro expansion and name
+// resolution. Names are those of the items and variables referred to (so
+// `libc::abort` is `abort`), operators nested in operators are
+// parenthesized (`a + b + c` is `(a + b) + c`), a block without statements
+// is its value (`{ a }` is `a`, `{}` is `()`), and `while` is the loop
+// alumina-boot desugars it to.
+
+use parser::*;
+use ast::*;
+use scope::*;
+use std::string::StringBuf;
+use std::fmt::write;
+use std::option::Option;
+
+/// `expr` printed (see the module comment).
+fn pretty_print(ctx: &mut ParseContext, scope_idx: u32, expr: &Expr) -> &[u8] {
+    let printer = Printer { scopes: ctx.scopes, scope_idx: scope_idx, out: StringBuf::new() };
+    defer printer.out.free();
+    printer.expr(expr);
+    ctx.intern_str(printer.out.as_slice())
+}
+
+struct Printer {
+    scopes: &ScopeArena,
+    /// Where the code is (its names are looked up around it first).
+    scope_idx: u32,
+    out: StringBuf,
+}
+
+/// A block without statements is its value.
+fn unblock(e: &Expr) -> &Expr {
+    let e = e;
+    while e.tag == ExprTag::Block && e.args().len() == 1 {
+        e = e.args()[0];
+    }
+    e
+}
+
+fn is_void(e: &Expr) -> bool {
+    unblock(e).tag == ExprTag::Void
+}
+
+/// Whether it is parenthesized as an operand (as in alumina-boot).
+fn is_compound(e: &Expr) -> bool {
+    switch e.tag {
+        ExprTag::Binary, ExprTag::Unary, ExprTag::Ref, ExprTag::Deref, ExprTag::Cast,
+        ExprTag::TypeCheck, ExprTag::Range, ExprTag::Defer => true,
+        ExprTag::Assign => e.assign_op() != AssignOp::Assign,
+        ExprTag::Break, ExprTag::Return, ExprTag::Yield => e.opt_expr().is_some(),
+        ExprTag::If, ExprTag::When => e.opt_expr().is_some() && !is_void(e.opt_expr().unwrap()),
+        _ => false,
+    }
+}
+
+/// Whether a scope item is the declaration of `id`.
+fn declares(kind: &NamedItemKind, id: Id) -> bool {
+    switch kind.tag {
+        NamedItemTag::Function, NamedItemTag::Struct, NamedItemTag::Enum, NamedItemTag::Protocol,
+        NamedItemTag::TypeAlias, NamedItemTag::Static, NamedItemTag::Const, NamedItemTag::Macro,
+        NamedItemTag::Local, NamedItemTag::Param, NamedItemTag::GenericParam => kind.id()._value == id._value,
+        NamedItemTag::Method, NamedItemTag::EnumVariant => kind.id2()._value == id._value,
+        _ => false,
+    }
+}
+
+impl Printer {
+    fn str(self: &mut Printer, s: &[u8]) {
+        self.out.extend_from_slice(s);
+    }
+
+    /// The name `id` was declared with (looked for in the scopes around
+    /// the code, then anywhere).
+    fn name(self: &mut Printer, id: Id) -> &[u8] {
+        let scope = Option::some(self.scope_idx);
+        while scope.is_some() {
+            let found = self.name_in(scope.unwrap(), id);
+            if found.is_some() {
+                return found.unwrap();
+            }
+            scope = self.scopes.get(scope.unwrap()).parent;
+        }
+        for i in 0u32..self.scopes.scopes.len() as u32 {
+            let found = self.name_in(i, id);
+            if found.is_some() {
+                return found.unwrap();
+            }
+        }
+        "?"
+    }
+
+    fn name_in(self: &Printer, scope_idx: u32, id: Id) -> Option<&[u8]> {
+        for (_, item) in self.scopes.get(scope_idx).items.iter() {
+            if declares(&item.kind, id) {
+                return Option::some(item.name);
+            }
+        }
+        Option::none()
+    }
+
+    fn expr(self: &mut Printer, e: &Expr) {
+        self.expr_full(e, false, false);
+    }
+
+    /// As an operand.
+    fn operand(self: &mut Printer, e: &Expr) {
+        self.expr_full(e, false, true);
+    }
+
+    /// In braces (a block, as a body).
+    fn body(self: &mut Printer, e: &Expr) {
+        self.expr_full(e, true, false);
+    }
+
+    fn list(self: &mut Printer, items: &[&Expr]) {
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                self.str(", ");
+            }
+            self.expr(item);
+        }
+    }
+
+    fn expr_full(self: &mut Printer, e: &Expr, braces: bool, need_parens: bool) {
+        let e = unblock(e);
+        switch e.tag {
+            // (These are never wrapped.)
+            ExprTag::Block => {
+                let items = e.args();
+                self.str("{ ");
+                for stmt in items[0..items.len() - 1] {
+                    self.stmt(stmt);
+                    self.str(" ");
+                }
+                if !is_void(items[items.len() - 1]) {
+                    self.expr(items[items.len() - 1]);
+                    self.str(" ");
+                }
+                self.str("}");
+                return;
+            }
+            ExprTag::Void => return self.str(if braces { "{}" } else { "()" }),
+            ExprTag::If, ExprTag::When => if !is_compound(e) {
+                self.str(if e.tag == ExprTag::If { "if " } else { "when " });
+                self.expr(e.cond());
+                self.str(" ");
+                self.body(e.lhs());
+                return;
+            },
+            _ => {}
+        }
+        let parens = !braces && need_parens && is_compound(e);
+        if braces {
+            self.str("{ ");
+        } else if parens {
+            self.str("(");
+        }
+        self.expr_inner(e);
+        if braces {
+            self.str(" }");
+        } else if parens {
+            self.str(")");
+        }
+    }
+
+    fn stmt(self: &mut Printer, e: &Expr) {
+        if e.tag == ExprTag::Let {
+            self.let_decl(e);
+        } else {
+            self.expr(e);
+        }
+        self.str(";");
+    }
+
+    fn let_decl(self: &mut Printer, e: &Expr) {
+        let data = e._data.let_expr;
+        self.str("let ");
+        self.str(data.str_val);
+        if data.opt_ty.is_some() {
+            self.str(": ");
+            self.ty(data.opt_ty.unwrap());
+        }
+        if data.opt_expr.is_some() {
+            self.str(" = ");
+            self.expr(data.opt_expr.unwrap());
+        }
+    }
+
+    fn expr_inner(self: &mut Printer, e: &Expr) {
+        switch e.tag {
+            ExprTag::IntLit => {
+                if e.is_negative() {
+                    self.str("-");
+                }
+                let _ = write!(&self.out, "{}", e.int_magnitude());
+                if e.type_suffix().is_some() {
+                    self.str(e.type_suffix().unwrap().name());
+                }
+            }
+            ExprTag::FloatLit => self.str(e.str_val()),
+            ExprTag::BoolLit => self.str(if e.bool_val() { "true" } else { "false" }),
+            ExprTag::StringLit => self.string_lit(e.str_val()),
+            ExprTag::NullLit => self.str("null"),
+            ExprTag::Local, ExprTag::Param => {
+                if e.id()._value == 0 {
+                    self.str(e._data.id_ref.str_val);
+                } else {
+                    self.str(self.name(e.id()));
+                }
+            }
+            ExprTag::BoundValue => self.str(e._data.id_ref.str_val),
+            ExprTag::StaticRef, ExprTag::FnRef => self.str(self.name(e.id())),
+            ExprTag::EnumRef => {
+                self.str(self.name(e.id()));
+                self.str("::");
+                self.str(self.name(e.id2()));
+            }
+            ExprTag::Defered => {
+                self.str(self.name(e.id()));
+                self.str("::");
+                self.str(e.str_val());
+            }
+            ExprTag::MacroInvocation => self.str(e._data.macro_expr.str_val),
+            ExprTag::Binary => {
+                self.operand(e.lhs());
+                self.str(" ");
+                self.str(e.bin_op().symbol());
+                self.str(" ");
+                self.operand(e.rhs());
+            }
+            ExprTag::Unary => {
+                self.str(e.un_op().symbol());
+                self.operand(e.lhs());
+            }
+            ExprTag::Assign => {
+                let op = e.assign_op().bin_op();
+                if op.is_none() {
+                    self.expr(e.lhs());
+                    self.str(" = ");
+                    self.expr(e.rhs());
+                } else {
+                    self.operand(e.lhs());
+                    self.str(" ");
+                    self.str(op.unwrap().symbol());
+                    self.str("= ");
+                    self.operand(e.rhs());
+                }
+            }
+            ExprTag::Call => {
+                self.operand(e.lhs());
+                self.type_args(e.type_args(), true);
+                self.str("(");
+                self.list(e.args());
+                self.str(")");
+            }
+            ExprTag::TurbofishValue => {
+                self.expr(e.lhs());
+                self.type_args(e.type_args(), true);
+            }
+            ExprTag::FieldAccess => {
+                self.expr(e.lhs());
+                self.str(".");
+                self.str(e._data.field.str_val);
+            }
+            ExprTag::TupleIndex => {
+                self.expr(e.lhs());
+                let dynamic = e._data.index.opt_expr;
+                if dynamic.is_some() {
+                    self.str(".(");
+                    self.expr(dynamic.unwrap());
+                    self.str(")");
+                } else {
+                    let _ = write!(&self.out, ".{}", e.index_val());
+                }
+            }
+            ExprTag::Index => {
+                self.operand(e.lhs());
+                self.str("[");
+                self.expr(e.rhs());
+                self.str("]");
+            }
+            ExprTag::Ref => {
+                self.str("&");
+                self.operand(e.lhs());
+            }
+            ExprTag::Deref => {
+                self.str("*");
+                self.operand(e.lhs());
+            }
+            ExprTag::Cast, ExprTag::TypeCheck => {
+                self.operand(e.lhs());
+                self.str(if e.tag == ExprTag::Cast { " as " } else { " is " });
+                self.ty(e.ty());
+            }
+            ExprTag::If, ExprTag::When => {
+                self.str(if e.tag == ExprTag::If { "if " } else { "when " });
+                self.expr(e.cond());
+                self.str(" ");
+                self.body(e.lhs());
+                self.str(" else ");
+                self.body(e.opt_expr().unwrap());
+            }
+            ExprTag::While => {
+                self.str("loop { if /* loop_condition */ ");
+                self.expr(e.cond());
+                self.str(" ");
+                self.body(e.lhs());
+                self.str(" else { break } }");
+            }
+            ExprTag::Loop => {
+                self.str("loop ");
+                self.body(e.lhs());
+            }
+            ExprTag::For => {
+                self.str("for ");
+                self.str(self.name(e._data.for_expr.id));
+                self.str(" in ");
+                self.expr(e._data.for_expr.lhs);
+                self.str(" ");
+                self.body(e._data.for_expr.rhs);
+            }
+            ExprTag::Switch => {
+                self.str("switch ");
+                self.expr(e.lhs());
+                self.str(" { ");
+                for arm in e.switch_arms() {
+                    if arm.pattern.is_empty() {
+                        self.str("_");
+                    } else {
+                        self.list(arm.pattern);
+                    }
+                    self.str(" => ");
+                    self.expr(arm.body);
+                    self.str(", ");
+                }
+                self.str("}");
+            }
+            ExprTag::Break, ExprTag::Return, ExprTag::Yield => {
+                self.str(switch e.tag {
+                    ExprTag::Break => "break",
+                    ExprTag::Return => "return",
+                    _ => "yield",
+                });
+                if e.opt_expr().is_some() {
+                    self.str(" ");
+                    self.operand(e.opt_expr().unwrap());
+                }
+            }
+            ExprTag::Continue => self.str("continue"),
+            ExprTag::Defer => {
+                self.str("defer ");
+                self.operand(e._data.defer.lhs);
+            }
+            ExprTag::Let => self.let_decl(e),
+            ExprTag::StructLit => {
+                self.ty_full(e._data.struct_lit.ty, true);
+                self.str(" { ");
+                for (i, init) in e.field_inits().iter_ref().enumerate() {
+                    if i > 0 {
+                        self.str(", ");
+                    }
+                    self.str(init.name);
+                    self.str(": ");
+                    self.expr(init.value);
+                }
+                self.str(" }");
+            }
+            ExprTag::TupleLit => {
+                self.str("(");
+                self.list(e.args());
+                self.str(")");
+            }
+            ExprTag::ArrayLit => {
+                self.str("[");
+                self.list(e.args());
+                self.str("]");
+            }
+            ExprTag::Lambda => self.lambda(e),
+            ExprTag::Range => {
+                let data = e._data.range;
+                if data.lhs as &void as usize != 0 {
+                    self.operand(data.lhs);
+                }
+                self.str(if data.flag { "..=" } else { ".." });
+                if data.rhs as &void as usize != 0 {
+                    self.operand(data.rhs);
+                }
+            }
+            ExprTag::EtCetera => {
+                self.operand(e.lhs());
+                self.str("...");
+            }
+            ExprTag::Zeroed => self.str("_"),
+            _ => self.str("/* ? */"),
+        }
+    }
+
+    fn lambda(self: &mut Printer, e: &Expr) {
+        let data = e._data.lambda;
+        self.str("|");
+        let first = true;
+        for binding in data.closure_bindings {
+            if !first {
+                self.str(", ");
+            }
+            first = false;
+            self.str(if binding.bound_type == BoundType::ByReference { "&" } else { "=" });
+            self.str(binding.name);
+        }
+        for param in data.lambda_params {
+            if !first {
+                self.str(", ");
+            }
+            first = false;
+            self.str(param.name);
+            if param.ty.is_some() {
+                self.str(": ");
+                self.ty(param.ty.unwrap());
+            }
+        }
+        self.str("|");
+        if data.opt_ty.is_some() && !(data.opt_ty.unwrap().tag == TyTag::Builtin
+            && data.opt_ty.unwrap().builtin() == BuiltinType::Void) {
+            self.str(" -> ");
+            self.ty(data.opt_ty.unwrap());
+        }
+        self.str(" ");
+        self.body(data.lhs);
+    }
+
+    fn string_lit(self: &mut Printer, s: &[u8]) {
+        self.str("\"");
+        for c in s {
+            switch c {
+                '\t' => self.str("\\t"),
+                '\r' => self.str("\\r"),
+                '\\' => self.str("\\\\"),
+                '"' => self.str("\\\""),
+                '\0' => self.str("\\0"),
+                '\n' => self.str("\\n"),
+                _ => if (c >= 0x01u8 && c <= 0x1au8) || c >= 0x80u8 {
+                    let _ = write!(&self.out, "\\x{}", std::fmt::hex(c).zero_pad(2));
+                } else {
+                    self.out.push(c);
+                },
+            }
+        }
+        self.str("\"");
+    }
+
+    fn type_args(self: &mut Printer, args: &[&Ty], turbofish: bool) {
+        if args.is_empty() {
+            return;
+        }
+        self.str(if turbofish { "::<" } else { "<" });
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                self.str(", ");
+            }
+            self.ty(arg);
+        }
+        self.str(">");
+    }
+
+    fn ty(self: &mut Printer, t: &Ty) {
+        self.ty_full(t, false);
+    }
+
+    fn ty_full(self: &mut Printer, t: &Ty, turbofish: bool) {
+        switch t.tag {
+            TyTag::Placeholder, TyTag::Named => self.str(self.name(t.id())),
+            TyTag::Builtin, TyTag::Never => self.str(t.builtin().name()),
+            TyTag::Pointer, TyTag::Slice => {
+                self.str(if t.is_const() { "&" } else { "&mut " });
+                if t.tag == TyTag::Slice {
+                    self.str("[");
+                }
+                self.ty_full(t.inner(), turbofish);
+                if t.tag == TyTag::Slice {
+                    self.str("]");
+                }
+            }
+            TyTag::Dyn => {
+                self.str(if t.is_const() { "&dyn " } else { "&mut dyn " });
+                // (Several protocols are a tuple of them.)
+                if t.inner().tag == TyTag::Tuple {
+                    self.str("(");
+                    for (i, proto) in t.inner().elems().iter().enumerate() {
+                        if i > 0 {
+                            self.str(" + ");
+                        }
+                        self.ty_full(proto, turbofish);
+                    }
+                    self.str(")");
+                } else {
+                    self.ty_full(t.inner(), turbofish);
+                }
+            }
+            TyTag::Typeof => {
+                self.str("typeof(");
+                self.expr(t.typeof_expr());
+                self.str(")");
+            }
+            TyTag::Array => {
+                self.str("[");
+                self.ty_full(t.inner(), turbofish);
+                self.str("; ");
+                self.expr(t.typeof_expr());
+                self.str("]");
+            }
+            TyTag::Tuple => {
+                self.str("(");
+                for (i, elem) in t.elems().iter().enumerate() {
+                    if i > 0 {
+                        self.str(", ");
+                    }
+                    self.ty_full(elem, turbofish);
+                }
+                self.str(")");
+            }
+            TyTag::FnPointer => {
+                self.str(if t.is_fn_protocol() { "Fn(" } else { "fn(" });
+                for (i, param) in t.elems().iter().enumerate() {
+                    if i > 0 {
+                        self.str(", ");
+                    }
+                    self.ty_full(param, turbofish);
+                }
+                self.str(") -> ");
+                self.ty_full(t.ret_ty(), turbofish);
+            }
+            TyTag::Generic => {
+                self.ty(t.inner());
+                self.type_args(t.elems(), turbofish);
+            }
+            TyTag::When => {
+                self.str("when ");
+                self.expr(t.typeof_expr());
+                self.str(" { ");
+                self.ty_full(t.inner(), turbofish);
+                self.str(" } else { ");
+                self.ty_full(t.ret_ty(), turbofish);
+                self.str(" }");
+            }
+            TyTag::EtCetera => {
+                self.ty_full(t.inner(), turbofish);
+                self.str("...");
+            }
+            TyTag::DerefOf => {
+                self.str("*");
+                self.ty_full(t.inner(), turbofish);
+            }
+            TyTag::TupleIndexOf => {
+                self.ty_full(t.inner(), turbofish);
+                let index = t._data.when.typeof_expr;
+                if index.tag == ExprTag::IntLit && index.type_suffix().is_none() {
+                    let _ = write!(&self.out, ".{}", index.int_val());
+                } else {
+                    self.str(".(");
+                    self.expr(index);
+                    self.str(")");
+                }
+            }
+            TyTag::Defered => {
+                self.ty_full(t.inner(), turbofish);
+                self.str("::");
+                self.str(t.defered_name());
+            }
+            _ => self.str("?"),
+        }
+    }
+}

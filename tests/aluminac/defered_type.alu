@@ -1,0 +1,21 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `T::name` in a type, with `T` a generic parameter, is the type of `T`'s
+// associated function `name` (as in alumina-boot, which has no associated
+// types); aluminac reported an unresolved type path. `stringify!` prints it
+// as written.
+
+struct Foo {}
+impl Foo {
+    fn make() -> i32 { 42 }
+}
+
+fn get<T>() -> i32 {
+    let f: T::make = T::make;
+    if std::stringify!(0 as T::make) != "0 as T::make" { return 0; }
+    f()
+}
+
+fn main() -> i32 {
+    if get::<Foo>() != 42 { return 1; }
+    0
+}

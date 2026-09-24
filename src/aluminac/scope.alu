@@ -1,0 +1,703 @@
+// Scope and name resolution for the self-hosted Alumina compiler
+
+use ast::{Id, IdGen, Item, ItemRef, Ty, GenericParam, FnDef, StructDef, EnumDef,
+          ProtocolDef, TypeAlias, StaticDef,
+          BuiltinType, BoundType};
+use aluminac_common::arena::Arena;
+use std::collections::{HashMap, Vector};
+
+// What kind of thing a name refers to
+// Use aliases being followed (a chain longer than this is a cycle).
+const MAX_ALIAS_DEPTH: usize = 64;
+static ALIAS_DEPTH: usize = 0;
+static ALIAS_CYCLE: bool = false;
+
+enum NamedItemTag {
+    Function = 0i32,
+    Method = 1i32,
+    Struct = 2i32,
+    Enum = 3i32,
+    EnumVariant = 4i32,
+    Protocol = 5i32,
+    TypeAlias = 6i32,
+    Static = 7i32,
+    Const = 8i32,
+    Macro = 9i32,
+    Module = 10i32,
+    Local = 11i32,
+    Param = 12i32,
+    UseAlias = 13i32,
+    BoundValue = 14i32,
+    GenericParam = 15i32,
+    BuiltinType = 16i32,
+}
+
+struct _NIKIdPair {
+    id: Id,
+    id2: Id,
+}
+
+struct _NIKUseAliasData {
+    path_segments: &[&[u8]],
+}
+
+union _NamedItemData {
+    id: Id,                        // Function, Struct, Enum, Protocol, TypeAlias, Static, Const, Macro, Local, Param, GenericParam
+    id_pair: _NIKIdPair,           // Method, EnumVariant, BoundValue
+    use_alias: _NIKUseAliasData,   // UseAlias
+    builtin: BuiltinType,          // BuiltinType
+}
+
+struct NamedItemKind {
+    tag: NamedItemTag,
+    scope_idx: u32,         // cross-cutting: Module, UseAlias, Struct/Enum/Protocol/BuiltinType with scope, BoundValue (as BoundType)
+    _data: _NamedItemData,
+}
+
+impl NamedItemKind {
+    fn id(self: &NamedItemKind) -> Id { self._data.id }
+    fn id2(self: &NamedItemKind) -> Id { self._data.id_pair.id2 }
+    fn path_segments(self: &NamedItemKind) -> &[&[u8]] { self._data.use_alias.path_segments }
+    fn builtin(self: &NamedItemKind) -> BuiltinType { self._data.builtin }
+
+    fn _no_data() -> _NamedItemData { _NamedItemData { id: Id { _value: 0 } } }
+
+    fn function(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Function, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn method(type_id: Id, fn_id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Method, scope_idx: 0, _data: _NamedItemData { id_pair: _NIKIdPair { id: type_id, id2: fn_id } } }
+    }
+    fn struct_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Struct, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn struct_kind_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Struct, scope_idx: scope_idx, _data: _NamedItemData { id: id } }
+    }
+    fn enum_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Enum, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn enum_kind_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Enum, scope_idx: scope_idx, _data: _NamedItemData { id: id } }
+    }
+    fn enum_variant(enum_id: Id, variant_id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::EnumVariant, scope_idx: 0, _data: _NamedItemData { id_pair: _NIKIdPair { id: enum_id, id2: variant_id } } }
+    }
+    fn protocol(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Protocol, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn protocol_with_scope(id: Id, scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Protocol, scope_idx: scope_idx, _data: _NamedItemData { id: id } }
+    }
+    fn type_alias(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::TypeAlias, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn static_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Static, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn const_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Const, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn macro_kind(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Macro, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn module(scope_idx: u32) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Module, scope_idx: scope_idx, _data: NamedItemKind::_no_data() }
+    }
+    fn local(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Local, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn param(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::Param, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn use_alias(scope_idx: u32, segments: &[&[u8]]) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::UseAlias, scope_idx: scope_idx, _data: _NamedItemData { use_alias: _NIKUseAliasData { path_segments: segments } } }
+    }
+    fn bound_value(id: Id, self_param_id: Id, bound_type: BoundType) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::BoundValue, scope_idx: bound_type as u32, _data: _NamedItemData { id_pair: _NIKIdPair { id: id, id2: self_param_id } } }
+    }
+    fn generic_param(id: Id) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::GenericParam, scope_idx: 0, _data: _NamedItemData { id: id } }
+    }
+    fn builtin_type(bt: BuiltinType) -> NamedItemKind {
+        NamedItemKind { tag: NamedItemTag::BuiltinType, scope_idx: 0, _data: _NamedItemData { builtin: bt } }
+    }
+}
+
+struct NamedItem {
+    name: &[u8],
+    kind: NamedItemKind,
+    span: ast::Span,
+}
+
+enum ScopeKind {
+    Root,
+    Module,
+    Function,
+    Block,
+    Impl,
+    Protocol,
+}
+
+struct Scope {
+    kind: ScopeKind,
+    parent: Option<u32>,    // index into ScopeArena
+    items: HashMap<&[u8], NamedItem>,
+    star_imports: &[u32],   // scope indices to search for star imports
+    // For impl blocks: what type is being implemented
+    impl_target: Option<&Ty>,
+    // For functions: generic params
+    generic_params: &[GenericParam],
+}
+
+impl Scope {
+    fn new(kind: ScopeKind, parent: Option<u32>) -> Scope {
+        Scope {
+            kind: kind,
+            parent: parent,
+            items: HashMap::new(),
+            star_imports: &[],
+            impl_target: Option::none(),
+            generic_params: &[],
+        }
+    }
+}
+
+struct ScopeArena {
+    scopes: std::collections::Vector<Scope>,
+    // Mixin info: maps (scope_idx << 32 | fn_id) -> (protocol_id, type_args, impl_generic_ids)
+    // Used to propagate mixin type args (e.g. [Counter, i32] from `mixin IteratorExt<Counter, i32>`)
+    // to monomorphization when calling mixin'd methods.
+    mixin_proto_ids: HashMap<u64, usize>,
+    mixin_type_args: HashMap<u64, &[&Ty]>,
+    mixin_impl_generic_ids: HashMap<u64, &[Id]>,
+    // The declarations (by `span_key`) names have resolved to, for the
+    // unused-item lints.
+    used: std::collections::HashSet<u64>,
+    // Function scopes whose parameters are not checked for use (functions
+    // without bodies).
+    unchecked_scopes: std::collections::HashSet<u32>,
+    /// The function each function scope is the scope of: its id and name.
+    fn_scope_owners: HashMap<u32, (usize, &[u8])>,
+}
+
+impl ScopeArena {
+    fn new() -> ScopeArena {
+        ScopeArena {
+            scopes: std::collections::Vector::new(),
+            mixin_proto_ids: HashMap::new(),
+            mixin_type_args: HashMap::new(),
+            mixin_impl_generic_ids: HashMap::new(),
+            used: std::collections::HashSet::new(),
+            unchecked_scopes: std::collections::HashSet::new(),
+            fn_scope_owners: HashMap::new(),
+        }
+    }
+
+    fn span_key(span: ast::Span) -> u64 {
+        ((span.file_id as u64) << 32) | (span.start as u64)
+    }
+
+    /// Note that a name resolved to `item`.
+    fn mark_used(self: &ScopeArena, item: NamedItem) {
+        if !item.span.is_empty() {
+            (self as &mut ScopeArena).used.insert(ScopeArena::span_key(item.span));
+        }
+    }
+
+    /// The warnings for variables, parameters, closure bindings and
+    /// imports of functions that are never used (as alumina-boot's
+    /// `check_unused_items`; names starting with `_` are exempt).
+    fn check_unused_items(self: &ScopeArena, diag: &mut diagnostics::DiagnosticContext) {
+        // (The same declaration can be in several scopes, e.g. the items
+        // of a block, once for each linear segment.)
+        let reported: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        defer reported.free();
+        for (idx, scope) in self.scopes.iter_ref().enumerate() {
+            if scope.kind != ScopeKind::Function && scope.kind != ScopeKind::Block
+                || self.unchecked_scopes.contains(&(idx as u32)) {
+                continue;
+            }
+            for pair in scope.items {
+                let item = pair.1;
+                if item.span.is_empty() || item.name.is_empty() || item.name[0] == '_' || item.name[0] == '$'
+                    || self.used.contains(&ScopeArena::span_key(item.span))
+                    || !reported.insert(ScopeArena::span_key(item.span)) {
+                    continue;
+                }
+                let (lint, what) = switch item.kind.tag {
+                    NamedItemTag::Local => ("unused_variable", "unused variable"),
+                    NamedItemTag::Param => {
+                        if item.name == "self" { continue; }
+                        ("unused_parameter", "unused parameter")
+                    }
+                    NamedItemTag::BoundValue => ("unused_closure_binding", "unused closure binding"),
+                    NamedItemTag::UseAlias => ("unused_import", "unused import"),
+                    _ => continue,
+                };
+                let hint: &[u8] = if item.kind.tag == NamedItemTag::Param { " (prefix with `_` if required)" } else { "" };
+                diag.emit(diagnostics::CodeDiagnostic::lint(item.span, lint,
+                    std::fmt::format!("{} `{}`{}", what, item.name, hint).unwrap().as_slice()));
+            }
+        }
+    }
+
+    fn create_scope(self: &mut ScopeArena, kind: ScopeKind, parent: Option<u32>) -> u32 {
+        let idx = self.scopes.len() as u32;
+        self.scopes.push(Scope::new(kind, parent));
+        idx
+    }
+
+    fn get(self: &ScopeArena, idx: u32) -> &Scope {
+        &self.scopes[idx as usize]
+    }
+
+    fn get_mut(self: &mut ScopeArena, idx: u32) -> &mut Scope {
+        &self.scopes[idx as usize]
+    }
+
+    fn add_item(self: &mut ScopeArena, scope_idx: u32, item: NamedItem) {
+        let scope = self.get_mut(scope_idx);
+        scope.items.insert(item.name, item);
+    }
+
+    /// Update a BuiltinType entry's scope_idx so that `u8::method()` style
+    /// static calls can navigate into the lang item struct's scope.
+    fn set_builtin_scope(self: &mut ScopeArena, scope_idx: u32, name: &[u8], struct_scope: u32) {
+        let scope = self.get_mut(scope_idx);
+        let found = scope.items.get_mut(&name);
+        if found.is_some() {
+            let item = found.unwrap();
+            if item.kind.tag == NamedItemTag::BuiltinType {
+                item.kind.scope_idx = struct_scope;
+            }
+        }
+    }
+
+    fn add_star_import(self: &mut ScopeArena, scope_idx: u32, import_scope: u32, arena: &mut Arena) {
+        let scope = self.get_mut(scope_idx);
+        let old = scope.star_imports;
+        let new_imports = arena.alloc_slice::<u32>(old.len() + 1);
+        for i in 0usize..old.len() {
+            new_imports[i] = old[i];
+        }
+        new_imports[old.len()] = import_scope;
+        scope.star_imports = new_imports;
+    }
+
+    // Find a protocol's scope_idx by its item id.
+    // Searches all scopes for a Protocol NamedItem with matching id.
+    fn find_protocol_scope_by_id(self: &ScopeArena, proto_id: usize) -> Option<u32> {
+        for scope in self.scopes.iter_ref() {
+            for pair in scope.items {
+                if pair.1.kind.tag == NamedItemTag::Protocol && pair.1.kind.id()._value == proto_id {
+                    return Option::some(pair.1.kind.scope_idx);
+                }
+            }
+        }
+        Option::none()
+    }
+
+    // The scope that *contains* the named function/method with this id
+    // (i.e. the enclosing module/impl scope, not a body scope). Used by
+    // the `module_path` / `type_name` reflection intrinsics for
+    // `IrTyTag::Fn` types — FnDef carries no scope_idx, so we locate it
+    // by scanning, mirroring find_protocol_scope_by_id.
+    fn find_fn_container_scope_by_id(self: &ScopeArena, fn_id: usize) -> Option<u32> {
+        for i in 0usize..self.scopes.len() {
+            let scope = &self.scopes[i];
+            for pair in scope.items {
+                let tag = pair.1.kind.tag;
+                if tag == NamedItemTag::Function && pair.1.kind.id()._value == fn_id {
+                    return Option::some(i as u32);
+                }
+                if tag == NamedItemTag::Method && pair.1.kind.id2()._value == fn_id {
+                    return Option::some(i as u32);
+                }
+            }
+        }
+        Option::none()
+    }
+
+    fn mixin_key(scope_idx: u32, fn_id: usize) -> u64 {
+        ((scope_idx as u64) << 32u64) | (fn_id as u64)
+    }
+
+    fn set_mixin_info(self: &mut ScopeArena, scope_idx: u32, fn_id: usize, proto_id: usize, type_args: &[&Ty], impl_generic_ids: &[Id]) {
+        let key = ScopeArena::mixin_key(scope_idx, fn_id);
+        self.mixin_proto_ids.insert(key, proto_id);
+        self.mixin_type_args.insert(key, type_args);
+        self.mixin_impl_generic_ids.insert(key, impl_generic_ids);
+    }
+
+    fn get_mixin_type_args(self: &ScopeArena, scope_idx: u32, fn_id: usize) -> Option<&[&Ty]> {
+        self.mixin_type_args.get(&ScopeArena::mixin_key(scope_idx, fn_id))
+    }
+
+    fn get_mixin_impl_generic_ids(self: &ScopeArena, scope_idx: u32, fn_id: usize) -> Option<&[Id]> {
+        self.mixin_impl_generic_ids.get(&ScopeArena::mixin_key(scope_idx, fn_id))
+    }
+
+    fn get_mixin_proto_id(self: &ScopeArena, scope_idx: u32, fn_id: usize) -> Option<usize> {
+        self.mixin_proto_ids.get(&ScopeArena::mixin_key(scope_idx, fn_id))
+    }
+
+    // Resolve a name starting from the given scope
+    fn resolve(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let found = self.resolve_raw(scope_idx, name);
+        if found.is_some() {
+            let item = found.unwrap();
+            // Follow use aliases
+            if item.kind.tag == NamedItemTag::UseAlias {
+                return self.follow_use_alias(item);
+            }
+            return found;
+        }
+        Option::none()
+    }
+
+    // Resolve without following use aliases
+    fn resolve_raw(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let scope = self.get(scope_idx);
+
+        // 1. Check current scope
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            self.mark_used(found.unwrap());
+            return found;
+        }
+
+        // 2. Check star imports
+        for import_idx in scope.star_imports {
+            let imp_found = self.get(import_idx).items.get(&name);
+            if imp_found.is_some() {
+                return imp_found;
+            }
+        }
+
+        // 3. Check parent scope
+        if scope.parent.is_some() {
+            return self.resolve_raw(scope.parent.unwrap(), name);
+        }
+
+        Option::none()
+    }
+
+    // Walk the scope chain looking for a free Function named `name`, skipping
+    // past non-Function matches at intermediate scopes. Used by parse_field's
+    // UFCS-hint resolution: a method named `find` mixin'd into the receiver's
+    // impl scope is registered as NamedItemTag::Method, but plain `resolve`
+    // would still return that Method as the first match — shadowing a same-
+    // named free fn in an outer module scope. For UFCS-hint purposes we want
+    // the free fn specifically, so step over non-Function matches.
+    fn resolve_function_for_ufcs(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<Id> {
+        let s = scope_idx;
+        loop {
+            let scope = self.get(s);
+            let found = scope.items.get(&name);
+            if found.is_some() {
+                let item = found.unwrap();
+                if item.kind.tag == NamedItemTag::Function {
+                    return Option::some(item.kind.id());
+                }
+                if item.kind.tag == NamedItemTag::UseAlias {
+                    let target = self.follow_use_alias(item);
+                    if target.is_some() {
+                        let target_item = target.unwrap();
+                        if target_item.kind.tag == NamedItemTag::Function {
+                            self.mark_used(item);
+                            return Option::some(target_item.kind.id());
+                        }
+                    }
+                }
+                // Non-Function match: skip past it, but check star-imports
+                // and parents — those may carry the actual free fn.
+            }
+            for import_idx in scope.star_imports {
+                let imp_found = self.get(import_idx).items.get(&name);
+                if imp_found.is_some() {
+                    let imp_fn = imp_found.unwrap();
+                    if imp_fn.kind.tag == NamedItemTag::Function {
+                        return Option::some(imp_fn.kind.id());
+                    }
+                }
+            }
+            if scope.parent.is_none() { break; }
+            s = scope.parent.unwrap();
+        }
+        Option::none()
+    }
+
+    // Resolve a multi-segment path (e.g. std::io::println)
+    fn resolve_path(self: &ScopeArena, scope_idx: u32, segments: &[&[u8]]) -> Option<NamedItem> {
+        if segments.len() == 0 {
+            return Option::none();
+        }
+
+        // (A path from the root module, `::x::y`.)
+        if segments[0].is_empty() {
+            return self.resolve_in_module(0u32, segments[1..]);
+        }
+
+        if segments.len() == 1 {
+            return self.resolve(scope_idx, segments[0]);
+        }
+
+        // For multi-segment paths, resolve the first segment but only accept
+        // items that can have children (modules, structs, enums). This prevents
+        // local variables/parameters from shadowing module names.
+        let first = self.resolve_scoped(scope_idx, segments[0]);
+        if first.is_none() {
+            return Option::none();
+        }
+
+        // Walk through remaining segments
+        let item = first.unwrap();
+        let result = if item.kind.tag == NamedItemTag::Module {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NamedItemTag::Struct && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NamedItemTag::Enum && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NamedItemTag::Protocol && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else if item.kind.tag == NamedItemTag::BuiltinType && item.kind.scope_idx != 0u32 {
+            self.resolve_in_module(item.kind.scope_idx, segments[1..])
+        } else {
+            Option::none()
+        };
+        result
+    }
+
+    // Resolve a name but only return items that can have :: children
+    // (modules, structs with scopes, enums with scopes). Skips locals/params.
+    fn resolve_scoped(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let found = self.resolve_scoped_raw(scope_idx, name);
+        if found.is_some() {
+            let item = found.unwrap();
+            // Follow use aliases
+            if item.kind.tag == NamedItemTag::UseAlias {
+                return self.follow_use_alias(item);
+            }
+            return found;
+        }
+        Option::none()
+    }
+
+    // Like resolve_raw but only matches scope-bearing items
+    fn resolve_scoped_raw(self: &ScopeArena, scope_idx: u32, name: &[u8]) -> Option<NamedItem> {
+        let scope = self.get(scope_idx);
+
+        // Check current scope for scope-bearing items
+        let found = scope.items.get(&name);
+        if found.is_some() {
+            let item = found.unwrap();
+            let tag = item.kind.tag;
+            if tag == NamedItemTag::Module || tag == NamedItemTag::Struct || tag == NamedItemTag::Enum || tag == NamedItemTag::Protocol || tag == NamedItemTag::UseAlias {
+                self.mark_used(item);
+                return found;
+            }
+            // BuiltinType with a scope_idx (from #[lang(builtin_X)] struct) can be navigated
+            if tag == NamedItemTag::BuiltinType && item.kind.scope_idx != 0u32 {
+                return found;
+            }
+            // TypeAlias is not scope-bearing but should shadow parent scope items
+            // (e.g. `type Result<T> = std::result::Result<T, Error>` should shadow
+            // the prelude's Result). Return None to let the parser handle it via Defered.
+            if tag == NamedItemTag::TypeAlias {
+                return Option::none();
+            }
+            // Found something else (local var, etc.) but it's not a scope-bearing item; continue looking
+        }
+
+        // Check star imports. As in alumina-boot, a path's first segment is
+        // also looked up in the ancestors of a star-imported scope: through
+        // the root's `use std::prelude::*`, every child of `std` (`mem`,
+        // `typing`, ...) can start a path anywhere.
+        for import_idx in scope.star_imports {
+            let cur: Option<u32> = Option::some(import_idx);
+            while cur.is_some() {
+                let imported = self.get(cur.unwrap());
+                let imp_found = imported.items.get(&name);
+                if imp_found.is_some() && ScopeArena::is_scope_bearing(imp_found.unwrap()) {
+                    return imp_found;
+                }
+                cur = imported.parent;
+            }
+        }
+
+        // Check parent scope
+        if scope.parent.is_some() {
+            return self.resolve_scoped_raw(scope.parent.unwrap(), name);
+        }
+
+        Option::none()
+    }
+
+    /// Whether an item can start a multi-segment path (`item::x`).
+    fn is_scope_bearing(item: NamedItem) -> bool {
+        switch item.kind.tag {
+            NamedItemTag::Module, NamedItemTag::Struct, NamedItemTag::Enum,
+            NamedItemTag::Protocol, NamedItemTag::UseAlias => true,
+            NamedItemTag::BuiltinType => item.kind.scope_idx != 0u32,
+            _ => false,
+        }
+    }
+
+    // Follow use aliases to their target (none if there is none, which is
+    // the case for aliases that lead back to themselves).
+    fn follow_use_alias(self: &ScopeArena, item: NamedItem) -> Option<NamedItem> {
+        if item.kind.tag != NamedItemTag::UseAlias {
+            return Option::some(item);
+        }
+        if ALIAS_DEPTH >= MAX_ALIAS_DEPTH {
+            ALIAS_CYCLE = true;
+            return Option::none();
+        }
+        ALIAS_DEPTH += 1;
+        let target = self.resolve_path(item.kind.scope_idx, item.kind.path_segments());
+        ALIAS_DEPTH -= 1;
+        target
+    }
+
+    /// Every `use` outside functions must name an item (as in
+    /// alumina-boot, which resolves them eagerly; aluminac otherwise
+    /// resolves them only when used).
+    fn check_use_aliases(self: &ScopeArena, diag: &mut diagnostics::DiagnosticContext) {
+        // (A cycle is reported once, not for each of its aliases.)
+        let cycle_reported = false;
+        for scope in self.scopes.iter_ref() {
+            // (Those in functions are resolved when used, as in alumina-boot.)
+            if scope.kind == ScopeKind::Function || scope.kind == ScopeKind::Block {
+                continue;
+            }
+            for pair in scope.items {
+                let item = pair.1;
+                if item.kind.tag != NamedItemTag::UseAlias || item.span.is_empty() {
+                    continue;
+                }
+                ALIAS_CYCLE = false;
+                let target = self.follow_use_alias(item);
+                if ALIAS_CYCLE {
+                    if !cycle_reported {
+                        diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span, "cycle detected while resolving aliases"));
+                        cycle_reported = true;
+                    }
+                } else if target.is_none() {
+                    let segments = item.kind.path_segments().iter();
+                    let path = std::string::join("::", &segments);
+                    diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span,
+                        std::fmt::format!("could not resolve the path `{}`", path).unwrap().as_slice()));
+                    path.free();
+                }
+            }
+        }
+    }
+
+    // Resolve a path within a specific module scope (no parent lookup)
+    fn resolve_in_module(self: &ScopeArena, scope_idx: u32, segments: &[&[u8]]) -> Option<NamedItem> {
+        if segments.len() == 0 {
+            return Option::none();
+        }
+
+        // The module's own items, then its star imports.
+        let scope = self.get(scope_idx);
+        let found = scope.items.get(&segments[0]);
+        if found.is_none() {
+            for import_idx in scope.star_imports {
+                found = self.get(import_idx).items.get(&segments[0]);
+                if found.is_some() {
+                    break;
+                }
+            }
+        }
+        if found.is_none() {
+            return Option::none();
+        }
+
+        let resolved = self.follow_use_alias(found.unwrap());
+        if segments.len() == 1 || resolved.is_none() {
+            return resolved;
+        }
+        // (Through the items with scopes of their own.)
+        let ritem = resolved.unwrap();
+        let descendable = switch ritem.kind.tag {
+            NamedItemTag::Module => true,
+            NamedItemTag::Struct, NamedItemTag::Enum, NamedItemTag::Protocol, NamedItemTag::BuiltinType =>
+                ritem.kind.scope_idx != 0,
+            _ => false,
+        };
+        if descendable {
+            self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+        } else {
+            Option::none()
+        }
+    }
+
+    fn free(self: &mut ScopeArena) {
+        for scope in self.scopes.iter_mut() {
+            scope.items.free();
+        }
+        self.scopes.free();
+        self.fn_scope_owners.free();
+    }
+
+    /// The function whose body `scope_idx` is in (its id and name), if any.
+    fn enclosing_fn(self: &ScopeArena, scope_idx: u32) -> Option<(usize, &[u8])> {
+        let cur: Option<u32> = Option::some(scope_idx);
+        while cur.is_some() {
+            let owner = self.fn_scope_owners.get(&cur.unwrap());
+            if owner.is_some() {
+                return owner;
+            }
+            let scope = self.get(cur.unwrap());
+            if scope.kind == ScopeKind::Module || scope.kind == ScopeKind::Impl {
+                return Option::none();
+            }
+            cur = scope.parent;
+        }
+        Option::none()
+    }
+
+    /// Recover the source name of `scope_idx` by searching its parent's items
+    /// for a NamedItem that points back to it. Returns "" if not found (e.g.
+    /// the root scope or anonymous scopes like blocks).
+    fn scope_name(self: &ScopeArena, scope_idx: u32) -> &[u8] {
+        if scope_idx == 0 { return ""; }
+        let scope = self.get(scope_idx);
+        if scope.parent.is_none() { return ""; }
+        let parent = self.get(scope.parent.unwrap());
+        for pair in parent.items {
+            if pair.1.kind.scope_idx == scope_idx {
+                return pair.1.name;
+            }
+        }
+        ""
+    }
+
+    /// The absolute path of the module containing `scope_idx`, spelled as
+    /// alumina-boot spells paths: `::a::b`, and `::` for the root module.
+    fn module_path_for_scope(self: &ScopeArena, arena: &mut Arena, scope_idx: u32) -> &[u8] {
+        let segments: std::collections::Vector<&[u8]> = std::collections::Vector::new();
+        defer segments.free();
+        let cur: Option<u32> = Option::some(scope_idx);
+        while cur.is_some() {
+            let scope = self.get(cur.unwrap());
+            if scope.kind == ScopeKind::Module && !self.scope_name(cur.unwrap()).is_empty() {
+                segments.push(self.scope_name(cur.unwrap()));
+            }
+            cur = scope.parent;
+        }
+
+        let path = std::string::StringBuf::new();
+        defer path.free();
+        for i in 0usize..segments.len() {
+            path.extend_from_slice("::");
+            path.extend_from_slice(segments[segments.len() - 1 - i]);
+        }
+        if path.is_empty() {
+            return "::";
+        }
+        arena.alloc_slice_copy(path.as_slice())
+    }
+}

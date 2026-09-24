@@ -1,0 +1,84 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: each impl block's K/V/H must rebind to its OWN ids in the
+// method's function scope.
+//
+// Aluminac (and alumina-boot) reuses a struct's shared scope across all
+// `impl Foo<...>` blocks. Each impl's generic params register K, V, H in
+// THAT scope via add_item — which overwrites by name. After pass1 visits
+// every impl, the struct's scope retains only the LAST impl's K/V/H ids.
+//
+// Pre-fix, pass2's build_function parsed each method's parameter types
+// against this shared scope, so a method from impl 1 referenced impl N's
+// K id (because that's what `K` currently resolved to). The impl's recorded
+// `impl_generic_param_ids` was correctly impl 1's K, but the parsed
+// Placeholder in `key: K` pointed at impl N's K. At mono time the bindings
+// didn't line up — the parameter type was resolved against type_map[impl_N_K]
+// which was bound to whatever the OTHER impl had mono'd most recently.
+//
+// Concretely: with sysroot's `HashMap<K, V, H>` (three impl blocks: the
+// main one, one for `get_borrowed`, and one for iterators), declaring
+// `HashMap<&[u8], NamedItem>` and `HashMap<u64, usize>` in the same
+// program steered `scope.items.insert(item.name, item)` to expect u64 as
+// the key. Symptom: `type mismatch: expected 'u64', got '&[u8]'` at the
+// insert call.
+//
+// Fix: in pass1 capture each impl's generic param NAMES alongside ids
+// into `PendingFunction.impl_generic_param_names`. In pass2's
+// `build_function`, re-register those (name, id) pairs in the method's
+// function scope BEFORE parsing its parameter types. Function scope
+// shadows the impl/struct scope during resolution, so each method sees
+// its OWN impl's K/V/H ids.
+//
+// This test reproduces the shape directly: two impl blocks of the same
+// struct, with the same generic-param name (K) in each, plus a separate
+// instantiation that picks up the later impl's binding. The check is
+// that all four calls work correctly (no parameter type mismatch).
+
+struct MultiImpl<K, V> {
+    _k: K,
+    _v: V,
+}
+
+impl MultiImpl<K, V> {
+    fn make_first(k: K, v: V) -> MultiImpl<K, V> {
+        MultiImpl::<K, V> { _k: k, _v: v }
+    }
+    fn first_kv(self: &MultiImpl<K, V>) -> (K, V) {
+        (self._k, self._v)
+    }
+}
+
+// Second impl with the SAME generic param names. In pass1 these K/V
+// NamedItems would normally overwrite the first impl's K/V entries in
+// MultiImpl's shared scope — without the rebind fix, first_kv's `K` would
+// resolve to second impl's K id, and at mono time the type substitution
+// would silently misalign.
+impl MultiImpl<K, V> {
+    fn second_kv(self: &MultiImpl<K, V>) -> (V, K) {
+        (self._v, self._k)
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Distinct K types across instantiations to surface any cross-instance
+    // type_map pollution: the slice instantiation's K=&[u8] would, pre-fix,
+    // collide with the i32 instantiation's K=i32 and produce a type error
+    // at the call site.
+    let a = MultiImpl::make_first::<i32, i64>(7i32, 42i64);
+    let (k1, v1) = a.first_kv();
+    if k1 != 7i32 { return 1i32; }
+    if v1 != 42i64 { return 2i32; }
+
+    let (v2, k2) = a.second_kv();
+    if v2 != 42i64 { return 3i32; }
+    if k2 != 7i32 { return 4i32; }
+
+    // Different K. Pre-fix the second instantiation would clobber the
+    // first one's mono cache, but the rebind isolates them.
+    let b = MultiImpl::make_first::<&[u8], usize>("abc", 99usize);
+    let (k3, v3) = b.first_kv();
+    if k3 != "abc" { return 5i32; }
+    if v3 != 99usize { return 6i32; }
+
+    0i32
+}

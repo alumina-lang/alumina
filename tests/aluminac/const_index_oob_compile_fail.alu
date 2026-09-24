@@ -1,0 +1,15 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Wrapping-negative const index must be rejected. `0usize - 1usize` evaluates
+// to usize::MAX, which exceeds any literal's length and trips access_index's
+// `>= len` guard. The OOB result lives in a const-required position (array
+// length) so const-eval failure surfaces as a hard compile error rather
+// than silently falling back to runtime.
+
+const STR: &[u8] = "hello";
+const BAD_INDEX: usize = 0usize - 1usize;
+
+fn main(args: &[&[u8]]) -> i32 {
+    let bad: [u8; STR[BAD_INDEX] as usize];
+    bad.len() as i32
+}

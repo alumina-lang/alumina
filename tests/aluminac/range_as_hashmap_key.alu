@@ -1,0 +1,30 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Range<T> can be used as a HashMap key — exercises the full
+// Equatable + Hashable surface end-to-end through the standard
+// hash-based collection.
+
+use std::range::Range;
+use std::collections::HashMap;
+
+fn main(args: &[&[u8]]) -> i32 {
+    let m: HashMap<Range<i32>, i32> = HashMap::new();
+    defer m.free();
+
+    m.insert(1i32..5i32, 100);
+    m.insert(2i32..6i32, 200);
+    m.insert(0i32..10i32, 300);
+
+    if m.get(&(1i32..5i32)).unwrap_or(0) != 100 { return 1i32; }
+    if m.get(&(2i32..6i32)).unwrap_or(0) != 200 { return 2i32; }
+    if m.get(&(0i32..10i32)).unwrap_or(0) != 300 { return 3i32; }
+
+    // Miss returns None.
+    if !m.get(&(99i32..100i32)).is_none() { return 4i32; }
+
+    // Updating an existing key stays at three entries.
+    m.insert(1i32..5i32, 1000);
+    if m.get(&(1i32..5i32)).unwrap_or(0) != 1000 { return 5i32; }
+    if m.len() != 3usize { return 6i32; }
+
+    0i32
+}

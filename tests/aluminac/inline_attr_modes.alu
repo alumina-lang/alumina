@@ -1,0 +1,30 @@
+// Test: #[inline(always|never|ir)] are now parsed with their argument
+// instead of being silently treated as plain `#[inline]`. Behaviour is
+// observable via the LLVM attributes added in codegen/mod.alu, but at
+// runtime we only check that compilation produces a working binary —
+// inlining is a hint, not a semantic change.
+//
+// Without the fix, `#[inline(never)]` would be lowered as a hint to
+// inline (the opposite intent), but the program would still execute
+// correctly, so the test's purpose is mainly to assert that the parser
+// accepts each form without error.
+
+#[inline]
+fn hint_inline(x: i32) -> i32 { x + 1 }
+
+#[inline(always)]
+fn force_inline(x: i32) -> i32 { x + 2 }
+
+#[inline(never)]
+fn forbid_inline(x: i32) -> i32 { x + 3 }
+
+#[inline(ir)]
+fn ir_inline(x: i32) -> i32 { x + 4 }
+
+fn main() -> i32 {
+    if hint_inline(10) != 11 { return 1; }
+    if force_inline(10) != 12 { return 2; }
+    if forbid_inline(10) != 13 { return 3; }
+    if ir_inline(10) != 14 { return 4; }
+    0
+}

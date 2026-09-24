@@ -1,0 +1,12 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_ERROR: duplicate lang item `slice_new`
+// BOOT_DIVERGES: alumina-boot silently lets one definition win
+// A lang item can be defined only once; a second definition used to
+// silently replace the sysroot's.
+
+#[lang(slice_new)]
+fn my_slice_new<T>(ptr: &T, len: usize) -> &[T] {
+    std::mem::slice::from_raw(ptr, len)
+}
+
+fn main() {}

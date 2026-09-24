@@ -1,0 +1,26 @@
+// Verify the stop_iteration and with_span_of intrinsics compile and behave
+// per their documented contracts:
+//   - stop_iteration() never returns at runtime; the type system treats it
+//     as `!`. We reach it from a never-taken branch.
+//   - with_span_of<T, E>(expr: E) -> E is identity at the value level;
+//     alumina-boot uses T's source span for diagnostics, aluminac just
+//     returns the value unchanged.
+
+extern "intrinsic" fn stop_iteration() -> !;
+extern "intrinsic" fn with_span_of<T, E>(expr: E) -> E;
+
+fn main() -> i32 {
+    // identity behavior of with_span_of
+    let v = with_span_of::<i32, i32>(42i32);
+    if v != 42i32 { return 1i32; }
+
+    let v2 = with_span_of::<bool, u8>(7u8);
+    if v2 != 7u8 { return 2i32; }
+
+    // stop_iteration in dead branch — must compile.
+    if false {
+        stop_iteration();
+    }
+
+    0i32
+}

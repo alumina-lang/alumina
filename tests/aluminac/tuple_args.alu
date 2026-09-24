@@ -1,0 +1,21 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `#[tuple_args]`: a function whose single parameter is a tuple is called
+// with the tuple's elements as separate arguments (as in alumina-boot, which
+// spells it `tuple_args`; aluminac only knew a `tuple_call` of its own).
+
+#[tuple_args]
+fn second<T>(tup: (i32, T)) -> T { tup.1 }
+
+#[tuple_args]
+fn sum(t: (i32, i32, i32)) -> i32 { t.0 + t.1 + t.2 }
+
+#[tuple_args]
+fn count(t: ()) -> i32 { 0 }
+
+fn main() -> i32 {
+    if second(1, "hello") != "hello" { return 1; }
+    if 1.second(2u8) != 2u8 { return 2; }
+    if sum(1, 2, 3) != 6 { return 3; }
+    if count() != 0 { return 4; }
+    0
+}

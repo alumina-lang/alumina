@@ -1,0 +1,15 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A generic function used as a value is instantiated with the type
+// arguments its expected function pointer type implies (as in alumina-boot).
+
+fn twice_pointer(f: fn(i32) -> i32, x: i32) -> i32 { f(f(x)) }
+
+fn inc<T: std::builtins::Integer>(x: T) -> T { x + (1 as T) }
+fn id<T>(x: T) -> T { x }
+
+fn main() -> i32 {
+    if twice_pointer(inc, 1) != 3 { return 1; }
+    let p: fn(u64) -> u64 = id;
+    if p(7) != 7 { return 3; }
+    0
+}

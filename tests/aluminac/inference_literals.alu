@@ -1,0 +1,25 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// BOOT_DIVERGES: aluminac infers more than alumina-boot: an untyped literal's type is only a default, which the expected type or a typed argument overrides
+// Type arguments are inferred from untyped literals last: `id(5)` is `u8`
+// where a `u8` is expected, and `same(1, 2u8)` is `u8` (alumina-boot binds
+// `i32` from the literal and reports a mismatch).
+
+fn id<T>(x: T) -> T { x }
+fn same<T>(a: T, _b: T) -> T { a }
+fn size<T>(_x: T) -> usize { std::mem::size_of::<T>() }
+
+struct W<T> { v: T }
+impl W<T> {
+    fn new(v: T) -> W<T> { W { v: v } }
+}
+
+fn main() -> i32 {
+    let a: u8 = id(200);
+    let c: i8 = same(-3, 4);
+    let w: W<u16> = W::new(65535);
+    let f: f32 = id(2.5);
+    if a != 200 || c != -3 || w.v != 65535 || f != 2.5 { return 1; }
+    // (Typed arguments win; alone, a literal keeps its default.)
+    if size(same(1, 2u8)) != 1 || size(same(-1, 2i64)) != 8 || size(id(7)) != 4 { return 2; }
+    0
+}

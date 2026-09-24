@@ -1,0 +1,96 @@
+use std::result::try;
+use std::typing::matches;
+use std::collections::HashMap;
+use tree_sitter::{Node, Parser, TSLanguage, TSSymbolType, TSFieldId};
+use node_kinds::{NodeKind, FieldKind, NODE_KINDS, FIELD_IDS, NODE_KIND_NAMES, FIELD_NAMES};
+
+extern "C" fn tree_sitter_alumina() -> &TSLanguage;
+
+/// A parser of Alumina (with `NODE_KINDS` and `FIELD_IDS` set up).
+fn parser() -> Parser {
+    let language = tree_sitter_alumina();
+    link_node_kinds(language);
+    let parser = Parser::new();
+    parser.set_language(language).unwrap();
+    parser
+}
+
+/// Set up `NODE_KINDS` and `FIELD_IDS` for `language`, by name: node_kinds.alu has
+/// the names only, so it does not go stale when the grammar's ids change.
+fn link_node_kinds(language: &TSLanguage) {
+    if !NODE_KINDS.is_empty() {
+        return;
+    }
+    let kinds: HashMap<&[u8], NodeKind> = HashMap::new();
+    defer kinds.free();
+    for (name, kind) in NODE_KIND_NAMES {
+        kinds.insert(name, kind);
+    }
+    let symbols = language.symbols();
+    let node_kinds = std::mem::slice::alloc::<NodeKind>(symbols.upper as usize);
+    node_kinds.fill(NodeKind::Invalid);
+    for symbol in symbols {
+        if language.symbol_type(symbol) == TSSymbolType::Regular {
+            node_kinds[symbol as usize] = kinds.get(&language.symbol_name(symbol)).unwrap_or(NodeKind::Invalid);
+        }
+    }
+
+    let fields: HashMap<&[u8], FieldKind> = HashMap::new();
+    defer fields.free();
+    for (name, field) in FIELD_NAMES {
+        fields.insert(name, field);
+    }
+    let field_ids = std::mem::slice::alloc::<TSFieldId>(FIELD_NAMES.len());
+    field_ids.fill(0 as TSFieldId);
+    for id in language.fields() {
+        let field = fields.get(&language.field_name(id));
+        if field.is_some() {
+            field_ids[field.unwrap() as usize] = id;
+        }
+    }
+
+    NODE_KINDS = node_kinds;
+    FIELD_IDS = field_ids;
+}
+
+macro child_by($node, $field) {
+    $node.child_by_field_id(FIELD_IDS[$field as usize])
+}
+
+macro children_by($node, $field, $cursor) {
+    $node.children_by_field_id(FIELD_IDS[$field as usize], $cursor)
+}
+
+protocol NodeVisitorExt<Self, ReturnType> {
+    fn visit_children(self: &mut Self, node: Node) -> ReturnType {
+        let cursor = node.walk();
+        defer cursor.free();
+
+        when matches::<ReturnType, ()>() {
+            for node in node.children(&cursor) {
+                self.visit(node);
+            }
+        } else {
+            for node in node.children(&cursor) {
+                self.visit(node)?;
+            }
+            ReturnType::ok(())
+        }
+    }
+
+    fn visit_children_by_field(self: &mut Self, node: Node, field: FieldKind) -> ReturnType {
+        let cursor = node.walk();
+        defer cursor.free();
+
+        when matches::<ReturnType, ()>() {
+            for node in children_by!(node, field, &cursor) {
+                self.visit(node);
+            }
+        } else {
+            for node in children_by!(node, field, &cursor) {
+                self.visit(node)?;
+            }
+            ReturnType::ok(())
+        }
+    }
+}

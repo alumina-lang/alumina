@@ -1,0 +1,58 @@
+// Regression test for the "macro defined inside a function body can't see
+// the function's locals" issue, fixed 2026-05-11.
+//
+// Before the fix:
+//   `parse_block` pre-parses inner macros AFTER pass1/pass2 of inner items
+//   but BEFORE walking the block's `let` statements. So a function-local
+//   declared earlier in the function body wasn't registered in block_scope
+//   when the macro body was parsed, and the macro body's reference to
+//   the local fell through to `ExprTag::Local { id: 0 }` (sentinel) —
+//   later type-checking as void.
+//
+// After the fix:
+//   `parse_identifier` records the source name on the unresolved Local's
+//   `str_val` when parsing inside a macro body; `expand_macro_expr`
+//   re-resolves the name against the call-site scope, picking up the
+//   correctly-scoped local.
+
+fn macro_reads_enclosing_local() -> bool {
+    let buf: [u8; 16];
+    buf[0] = 42u8;
+
+    macro check($idx) {
+        buf[$idx]
+    }
+
+    check!(0usize) == 42u8
+}
+
+fn macro_writes_enclosing_local() -> bool {
+    let counter: i32 = 0i32;
+
+    macro bump() {
+        counter = counter + 1i32;
+    }
+
+    bump!();
+    bump!();
+    bump!();
+    counter == 3i32
+}
+
+fn macro_takes_addr_of_local() -> bool {
+    let v: i32 = 7i32;
+
+    macro deref_and_double() {
+        let p = &v;
+        (*p) * 2i32
+    }
+
+    deref_and_double!() == 14i32
+}
+
+fn main() -> i32 {
+    if !macro_reads_enclosing_local() { return 1; }
+    if !macro_writes_enclosing_local() { return 2; }
+    if !macro_takes_addr_of_local() { return 3; }
+    0
+}

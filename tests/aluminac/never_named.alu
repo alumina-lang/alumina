@@ -1,0 +1,28 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Test: `std::builtins::never` (the #[lang(builtin_never)] struct) names the
+// never type `!`. A function declared `-> never` and one declared `-> !`
+// are interchangeable at the call site (both produce the bottom type that
+// coerces to anything).
+use std::builtins::never;
+
+extern "intrinsic" fn unreachable() -> !;
+
+fn diverge_bang() -> ! {
+    unreachable()
+}
+
+fn diverge_named() -> never {
+    unreachable()
+}
+
+fn coerce_to_int() -> i32 {
+    // never coerces into any other type; the call's "result" is dead code.
+    if false { diverge_named(); }
+    if false { diverge_bang(); }
+    42
+}
+
+fn main() -> i32 {
+    if coerce_to_int() != 42 { return 1; }
+    0
+}

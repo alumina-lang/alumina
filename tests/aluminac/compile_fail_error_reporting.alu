@@ -1,0 +1,22 @@
+// Tests that the compiler rejects invalid code with proper error messages.
+// This file intentionally contains errors.
+//
+// The test runner treats files with "compile_fail" in the name as expected
+// compile failures.
+
+struct Foo {
+    x: i32,
+}
+
+fn bad_deref(x: i32) -> i32 {
+    *x  // Cannot dereference non-pointer type
+}
+
+fn bad_field() -> i32 {
+    let f = Foo { x: 42i32 };
+    f.nonexistent  // Field does not exist
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    bad_deref(1i32) + bad_field()
+}

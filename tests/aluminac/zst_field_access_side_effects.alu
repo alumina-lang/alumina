@@ -1,0 +1,74 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: a field access whose field type is zero-sized / `()` must
+// still evaluate its base expression for side effects and control flow.
+//
+// Codegen's IrTag::FieldAccess short-circuited `return undef` when the
+// field's LLVM type was void/ZST WITHOUT evaluating `expr.lhs()`. So
+// `<side-effecting-or-diverging-expr>.zst_field` dropped the entire base
+// — including a nested early `return`. Surfaced as `HashMap<K, ()>::get`
+// (`Option::some(self._get_slot(..)?.item.1)`) eliding the `?`
+// early-return and false-positiving on absent keys, which hangs
+// HashSet-using code (mono_enum's `taken_values.contains()` dedup loop
+// in the new protocol-driven HashMap).
+
+struct HU { item: (u64, ()) }
+
+fn slot(p: bool, h: &HU) -> Option<&HU> {
+    if p { Option::some(h) } else { Option::none() }
+}
+
+// Mirrors HashMap<K,()>::get's `Option::some(self._get_slot(..)?.item.1)`
+// shape: an early `return Option::none()` nested inside a block-expr that
+// is the base of a `.item.1` (zero-sized) field access, inside
+// `Option::some(...)`, where the enclosing fn returns `Option<()>`.
+fn get_unit(p: bool, h: &HU) -> Option<()> {
+    Option::some({
+        let o = slot(p, h);
+        if o.is_some() { o.unwrap() } else { return Option::none() }
+    }.item.1)
+}
+
+// Contrast: identical shape, non-ZST field — always worked.
+struct HI { item: (u64, i32) }
+fn slot_i(p: bool, h: &HI) -> Option<&HI> {
+    if p { Option::some(h) } else { Option::none() }
+}
+fn get_i32(p: bool, h: &HI) -> Option<i32> {
+    Option::some({
+        let o = slot_i(p, h);
+        if o.is_some() { o.unwrap() } else { return Option::none() }
+    }.item.1)
+}
+
+// A counter side effect must run exactly once on the present path and
+// must NOT continue past the early return on the absent path.
+fn bump_then_unit(counter: &mut i32, p: bool, h: &HU) -> Option<()> {
+    Option::some({
+        let o = slot(p, h);
+        if o.is_some() {
+            *counter = *counter + 1;
+            o.unwrap()
+        } else {
+            return Option::none();
+        }
+    }.item.1)
+}
+
+fn main() -> i32 {
+    let hu = HU { item: (1u64, ()) };
+    let hi = HI { item: (1u64, 7i32) };
+
+    if !get_unit(true, &hu).is_some() { return 1; }   // present -> Some
+    if get_unit(false, &hu).is_some() { return 2; }    // absent  -> None (early return honored)
+
+    if !get_i32(true, &hi).is_some() { return 3; }
+    if get_i32(false, &hi).is_some() { return 4; }
+
+    let c = 0i32;
+    bump_then_unit(&c, true, &hu);
+    bump_then_unit(&c, false, &hu);   // early return: must not bump
+    bump_then_unit(&c, true, &hu);
+    if c != 2 { return 5; }            // bumped only on the 2 present calls
+
+    0
+}

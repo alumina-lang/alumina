@@ -1,0 +1,42 @@
+// Only the deferred expressions whose `defer` ran run at the function's
+// exit, last first, and each once (also in a loop); the result is computed
+// before them.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+static LOG: [i32; 8];
+static N: usize = 0;
+
+fn log(x: i32) {
+    LOG[N] = x;
+    N += 1;
+}
+
+#[allow(defer_in_a_loop)]
+fn f(c: bool, early: bool) -> i32 {
+    let x = 10;
+    defer log(1);
+    if c {
+        defer log(2);
+    }
+    if early {
+        return x;
+    }
+    for _ in 0..3 {
+        defer log(3);
+    }
+    x = 20;
+    x
+}
+
+fn main() {
+    assert_eq!(f(false, false), 20);
+    assert_eq!(N, 2);
+    assert_eq!(LOG[0], 3);
+    assert_eq!(LOG[1], 1);
+
+    N = 0;
+    assert_eq!(f(true, true), 10);
+    assert_eq!(N, 2);
+    assert_eq!(LOG[0], 2);
+    assert_eq!(LOG[1], 1);
+}

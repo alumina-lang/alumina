@@ -1,0 +1,36 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// The constant evaluator's heap: allocations freed during evaluation, and
+// ones baked into constants (`const_bake`), which become globals of their own.
+use std::collections::{HashMap, Vector};
+use std::runtime::const_bake;
+
+const HASH: HashMap<u32, u32> = {
+    let m: HashMap<u32, u32> = HashMap::new();
+    m.insert(1, 2);
+    m.insert(3, 4);
+    m.const_bake!()
+};
+
+const V: Vector<&[u8]> = {
+    let v: Vector<&[u8]> = Vector::new();
+    v.push("hello");
+    v.push("world");
+    v.const_bake!()
+};
+
+fn main() {
+    assert_eq!(HASH.get(&1).unwrap(), 2);
+    assert_eq!(HASH.get(&3).unwrap(), 4);
+    assert!(HASH.get(&5).is_none());
+    assert_eq!(V.len(), 2);
+    assert_eq!(V[0], "hello");
+    assert_eq!(V[1], "world");
+    let s = std::runtime::const_eval!({
+        let a = std::mem::slice::alloc::<i32>(3);
+        a[0] = 1; a[1] = 2; a[2] = 3;
+        let sum = a[0] + a[1] + a[2];
+        a.free();
+        sum
+    });
+    assert_eq!(s, 6);
+}

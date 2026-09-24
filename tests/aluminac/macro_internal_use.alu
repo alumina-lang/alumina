@@ -1,0 +1,25 @@
+// Verifies that a `use` declaration inside a macro body brings the named
+// function into the macro body's lexical scope for UFCS dispatch.
+//
+// Previously, the parser suppressed UFCS hints during macro body
+// pre-parsing (`if !in_macro_body`), so the only workaround was to use
+// fully-qualified paths inside macro bodies. The hint is now set at
+// definition time, matching user intent for "macro pulls in a helper".
+
+mod helpers {
+    fn doubled(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+macro double_via_ufcs($x) {
+    use helpers::doubled;
+    $x.doubled()
+}
+
+fn main() -> i32 {
+    let x = 7;
+    let d = double_via_ufcs!(x);
+    if d != 14 { return 1; }
+    0
+}

@@ -555,6 +555,24 @@ impl Command {
             })
         }
     }
+
+    /// Spawn a process and wait for it to finish, returning its exit status.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::process::Command;
+    /// use std::fs::Path;
+    ///
+    /// let status = Command::new(Path::new("/bin/sh"))
+    ///     .args(&["-c", "exit 3"])
+    ///     .status()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(status.code(), Option::some(3));
+    /// ```
+    fn status(self: &Command) -> Result<ExitStatus> {
+        self.spawn()?.wait()
+    }
 }
 
 #[docs(no_index)]
@@ -852,6 +870,19 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(output.stdout[..] as &[u8], "HELLO=world\nFOO=bar\n");
         assert_eq!(output.stderr[..] as &[u8], &[]);
+    }
+
+    #[test]
+    fn test_status() {
+        let sh = find_binary("sh").unwrap();
+        defer sh.free();
+
+        let status = Command::new(sh.as_path()).args(&["-c", "exit 3"]).status().unwrap();
+        assert!(!status.success());
+        assert_eq!(status.code(), Option::some(3));
+
+        let status = Command::new(sh.as_path()).args(&["-c", "true"]).status().unwrap();
+        assert!(status.success());
     }
 
     #[test]

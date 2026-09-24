@@ -1,0 +1,35 @@
+// Mixin: pull default protocol methods into a concrete type.
+
+protocol Greetable<Self> {
+    fn greet(self: &Self) -> i32 {
+        42i32
+    }
+    fn farewell(self: &Self) -> i32 {
+        99i32
+    }
+}
+
+struct Dog {
+    sound: i32,
+}
+
+impl Dog {
+    // Direct method overrides the mixin default
+    fn greet(self: &Dog) -> i32 {
+        self.sound
+    }
+    // farewell comes from the mixin
+    mixin Greetable<Dog>;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let d = Dog { sound: 10i32 };
+
+    // Direct method
+    if d.greet() != 10i32 { return 1i32; }
+
+    // Mixin-provided default method
+    if d.farewell() != 99i32 { return 2i32; }
+
+    0i32
+}

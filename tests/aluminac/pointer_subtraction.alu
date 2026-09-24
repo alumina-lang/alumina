@@ -1,0 +1,36 @@
+// Pointer-pointer subtraction lowers to ptrtoint + isub + sdiv (when the
+// pointee size is > 1). Required by sysroot's `string::find` and various
+// other places that compute element distances by subtracting raw pointers.
+// Without this, codegen emits `sub i8* %a, i8* %b` which fails LLVM IR
+// verification.
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Byte pointers: distance equals byte difference.
+    let arr: [u8; 16];
+    for i in 0usize..16usize { arr[i] = i as u8; }
+    let p1: &u8 = &arr[7];
+    let p0: &u8 = &arr[2];
+    let diff_u8 = p1 - p0;
+    if diff_u8 != 5isize { return 1i32; }
+
+    // i32 pointers: byte distance / sizeof(i32).
+    let arr32: [i32; 8];
+    for i in 0usize..8usize { arr32[i] = i as i32; }
+    let q1: &i32 = &arr32[5];
+    let q0: &i32 = &arr32[1];
+    let diff_i32 = q1 - q0;
+    if diff_i32 != 4isize { return 2i32; }
+
+    // i64 pointers: same — byte distance / sizeof(i64).
+    let arr64: [i64; 4];
+    for i in 0usize..4usize { arr64[i] = i as i64; }
+    let r1: &i64 = &arr64[3];
+    let r0: &i64 = &arr64[0];
+    let diff_i64 = r1 - r0;
+    if diff_i64 != 3isize { return 3i32; }
+
+    // Self-subtraction is zero.
+    if p1 - p1 != 0isize { return 4i32; }
+
+    0i32
+}

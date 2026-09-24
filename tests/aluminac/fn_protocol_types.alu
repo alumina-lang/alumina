@@ -1,0 +1,21 @@
+// `Fn(A...) -> R` is the protocol `Callable<(A...), R>` (not a function
+// pointer), named as it is written; `generic_args_of` works on function
+// instances too.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::typing::{type_name, is_same, matches};
+use std::builtins::{Callable, generic_args_of};
+
+fn add<T>(x: T, y: T) -> T { x + y }
+
+fn main() {
+    assert!(is_same::<Fn(u8) -> u8, Callable<(u8), u8>>());
+    assert!(is_same::<Fn(u8, u16), Callable<(u8, u16), ()>>());
+    assert!(!is_same::<Fn(u8) -> u8, fn(u8) -> u8>());
+    assert_eq!(type_name::<Fn()>(), "Fn()");
+    assert_eq!(type_name::<Fn(u8, u16)>(), "Fn(u8, u16)");
+    assert_eq!(type_name::<Callable<(), i32>>(), "Fn() -> i32");
+    assert_eq!(type_name::<fn(u8) -> u8>(), "fn(u8) -> u8");
+    assert!(matches::<generic_args_of<add<i32>>, (i32,)>());
+    assert_eq!(add(1, 2), 3);
+}

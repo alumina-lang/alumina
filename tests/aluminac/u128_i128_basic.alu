@@ -1,0 +1,75 @@
+// Test: u128 / i128 builtin types and #[lang(builtin_u128/builtin_i128)] linkage.
+//
+// Exercises:
+// - 128-bit arithmetic at the LLVM-codegen level
+// - Lang-item-linked static and instance methods on u128/i128 (resolved through
+//   `#[lang(builtin_X)]` impl blocks in sysroot-aluminac/std/builtins.alu)
+// - Casts between 64-bit and 128-bit integers
+// - Negative i128 literals
+//
+// Numeric values are kept within 64-bit literal range (the parser stores
+// integer literals in u64 before suffixing); 128-bit-only values are
+// constructed via wrapping arithmetic (e.g. `0u128 - 1u128`).
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+fn main() -> i32 {
+    // u128 arithmetic
+    let a: u128 = 100u128;
+    let b: u128 = 200u128;
+    let c: u128 = a + b;
+    if c != 300u128 { return 1; }
+    if c - a != 200u128 { return 2; }
+    if a * 3u128 != 300u128 { return 3; }
+    if c / 3u128 != 100u128 { return 4; }
+
+    // u128 lang-item-linked static method (min_value)
+    if u128::min_value() != 0u128 { return 5; }
+
+    // u128 max_value via wrapping subtraction. Verify low 64 bits are all-ones.
+    let max = u128::max_value();
+    if (max as u64) != 18446744073709551615u64 { return 6; }
+    // Verify high 64 bits via shift down
+    if ((max >> 64u128) as u64) != 18446744073709551615u64 { return 7; }
+
+    // u128 lang-item-linked free-function-style methods
+    let one: u128 = 1u128;
+    if !u128::less_than(&one, &c) { return 8; }
+    if u128::greater_than(&one, &c) { return 9; }
+    if !u128::equals(&c, &c) { return 10; }
+    if u128::not_equals(&c, &c) { return 11; }
+
+    // u128 compare → Ordering
+    if u128::compare(&one, &c) != std::cmp::Ordering::Less { return 12; }
+    if u128::compare(&c, &one) != std::cmp::Ordering::Greater { return 13; }
+    if u128::compare(&c, &c) != std::cmp::Ordering::Equal { return 14; }
+
+    // i128 arithmetic with negative literal
+    let x: i128 = -100i128;
+    let y: i128 = 50i128;
+    let z: i128 = x + y;
+    if z != -50i128 { return 15; }
+    if -z != 50i128 { return 16; }
+
+    // i128 abs (sysroot exposes `std::math::abs` as a free function rather than
+    // a method on signed integers).
+    let neg: i128 = -42i128;
+    if std::math::abs(neg) != 42i128 { return 17; }
+    let pos: i128 = 42i128;
+    if std::math::abs(pos) != 42i128 { return 18; }
+
+    // i128 lang-item-linked free-function-style methods
+    if !i128::less_than(&x, &y) { return 19; }
+    if i128::greater_than(&x, &y) { return 20; }
+    if !i128::equals(&x, &x) { return 21; }
+
+    // Casts between 64-bit and 128-bit
+    let big: u64 = 12345678901234567890u64;
+    let widened: u128 = big as u128;
+    if (widened as u64) != big { return 22; }
+
+    let signed: i64 = -1234567890i64;
+    let widened_signed: i128 = signed as i128;
+    if (widened_signed as i64) != signed { return 23; }
+
+    0
+}

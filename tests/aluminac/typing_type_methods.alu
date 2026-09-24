@@ -1,0 +1,41 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `Type::new::<T>()` returns the type descriptor; the methods on it
+// mirror sysroot's `std::typing::Type<T>` (debug_name, fields, variants,
+// is_struct/enum/etc). Wired so DefaultHashable / DefaultEquatable can
+// be ported when the rest of typing.alu unifies.
+
+use std::typing::Type;
+
+struct Point { x: i32, y: i32 }
+enum Color { Red, Green, Blue }
+
+fn main(args: &[&[u8]]) -> i32 {
+    let t_int = Type::new::<i32>();
+    if !t_int.is_integer()  { return 1i32; }
+    if !t_int.is_signed()   { return 2i32; }
+    if !t_int.is_numeric()  { return 3i32; }
+    if !t_int.is_primitive(){ return 4i32; }
+    if t_int.is_struct()    { return 5i32; }
+    if t_int.is_enum()      { return 6i32; }
+    if t_int.debug_name() != "i32" { return 7i32; }
+
+    let t_struct = Type::new::<Point>();
+    if !t_struct.is_struct() { return 10i32; }
+    if t_struct.is_enum()    { return 11i32; }
+    let f = t_struct.fields();
+    if f.0.name().unwrap() != "x" { return 12i32; }
+    if f.1.name().unwrap() != "y" { return 13i32; }
+
+    let t_enum = Type::new::<Color>();
+    if !t_enum.is_enum()   { return 20i32; }
+    if t_enum.is_struct()  { return 21i32; }
+    let v = t_enum.variants();
+    if v.len() != 3usize { return 22i32; }
+    if v[0].name() != "Red" { return 23i32; }
+
+    let t_ptr = Type::new::<&u8>();
+    if !t_ptr.is_pointer() { return 30i32; }
+    if t_ptr.is_integer()  { return 31i32; }
+
+    0i32
+}

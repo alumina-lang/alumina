@@ -1,0 +1,34 @@
+// Test: RangeOf<T> matches ranges whose endpoint type is T.
+// Also exercises the range-literal type-inference fix — `0i32..10i32`
+// now produces `Range<i32>`, not `Range<usize>`.
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+use std::builtins::RangeOf;
+
+fn main() -> i32 {
+    let r_i32 = 0i32..10i32;
+    if !(r_i32 is RangeOf<i32>) { return 1; }
+    if r_i32 is RangeOf<u32> { return 2; }
+    if r_i32 is RangeOf<usize> { return 3; }
+
+    let r_u64 = 0u64..100u64;
+    if !(r_u64 is RangeOf<u64>) { return 4; }
+    if r_u64 is RangeOf<usize> { return 5; }
+
+    let r_usize = 0usize..100usize;
+    if !(r_usize is RangeOf<usize>) { return 6; }
+    if r_usize is RangeOf<u64> { return 7; }
+
+    let r_inclusive = 0i32..=99i32;
+    if !(r_inclusive is RangeOf<i32>) { return 8; }
+    if r_inclusive is RangeOf<u32> { return 9; }
+
+    // A non-range value never matches RangeOf<T>.
+    let scalar: usize = 42usize;
+    if scalar is RangeOf<usize> { return 10; }
+
+    let arr: [usize; 3] = [1usize, 2usize, 3usize];
+    if arr is RangeOf<usize> { return 11; }
+
+    0
+}

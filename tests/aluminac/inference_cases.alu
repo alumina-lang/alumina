@@ -1,0 +1,463 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Type inference in the calls alumina-boot infers (each case a module).
+
+mod case0 {
+    // closure_capture_generic
+    fn apply<F: Fn() -> R, R>(f: F) -> R { f() }
+    fn run() {
+    let k = 7u64; let r = apply(|=k| -> u64 { k }); let _ = r;
+    }
+}
+
+mod case1 {
+    // default_param
+    struct D<T = u8> { v: T }
+    fn mk<T = i32>() -> D<T> { std::mem::zeroed() }
+    fn run() {
+    let d = mk(); let _ = d;
+    }
+}
+
+mod case2 {
+    // deref_generic
+    fn get<T>(p: &mut T) -> T { *p }
+    fn run() {
+    let x = 3i16; let y = get(&x as &mut i16); let _ = y;
+    }
+}
+
+mod case3 {
+    // fn_bound_args
+    fn apply<A, R, F: Fn(A) -> R>(f: F, a: A) -> R { f(a) }
+    fn run() {
+    let r = apply(|x: i32| -> i64 { x as i64 }, 5); let _ = r;
+    }
+}
+
+mod case4 {
+    // fn_bound_ret
+    fn apply<F: Fn(i32) -> R, R>(f: F) -> R { f(1) }
+    fn run() {
+    let r = apply(|x: i32| -> u8 { x as u8 }); let _ = r;
+    }
+}
+
+mod case5 {
+    // fn_ptr_arg
+    fn call<A, R>(f: fn(A) -> R, a: A) -> R { f(a) }
+    fn dbl(x: i32) -> i32 { x * 2 }
+    fn run() {
+    let r = call(dbl, 4); let _ = r;
+    }
+}
+
+mod case6 {
+    // generic_return_chain
+    fn wrap<T>(t: T) -> (T, T) { (t, t) }
+    fn run() {
+    let (a, b) = wrap(1u8); let _ = (a, b);
+    }
+}
+
+mod case7 {
+    // iter_chain
+
+    fn run() {
+    let s = [1, 2, 3].iter().map(|x: i32| -> i32 { x * 2 }).sum(); let _: i32 = s;
+    }
+}
+
+mod case8 {
+    // method_generic
+    struct B {}
+    impl B { fn conv<T>(self: &B, t: T) -> T { t } }
+    fn run() {
+    let b = B {}; let x = b.conv(3u32); let _ = x;
+    }
+}
+
+mod case9 {
+    // method_ret_hint
+    struct B {}
+    impl B { fn make<T>(self: &B) -> T { std::mem::zeroed() } }
+    fn run() {
+    let b = B {}; let x: f64 = b.make(); let _ = x;
+    }
+}
+
+mod case10 {
+    // nested_generic
+    use std::option::Option;
+    fn unwrap_or<T>(o: Option<T>, d: T) -> T { o.unwrap_or(d) }
+    fn run() {
+    let x = unwrap_or(Option::none(), 5); let _ = x;
+    }
+}
+
+mod case11 {
+    // none_arg_hint
+    use std::option::Option;
+    fn take(o: Option<u32>) -> bool { o.is_some() }
+    fn run() {
+    let _ = take(Option::none());
+    }
+}
+
+mod case12 {
+    // option_map
+    use std::option::Option;
+    fn run() {
+    let o = Option::some(5); let m = o.map(|x: i32| -> i64 { x as i64 }); let _ = m;
+    }
+}
+
+mod case13 {
+    // ptr_arg
+    fn first<T>(p: &T) -> T { *p }
+    fn run() {
+    let x = 5u16; let y = first(&x); let _ = y;
+    }
+}
+
+mod case14 {
+    // range_of
+    fn cnt<R: std::builtins::RangeOf<T>, T>(r: R) -> usize { 0 }
+    fn run() {
+    let _ = cnt(0..5);
+    }
+}
+
+mod case15 {
+    // ret_hint
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let a: i64 = make(); let _ = a;
+    }
+}
+
+mod case16 {
+    // ret_hint_generic
+    use std::option::Option;
+    fn run() {
+    let a: Option<i32> = Option::none(); let _ = a;
+    }
+}
+
+mod case17 {
+    // slice_arg
+    fn len<T>(s: &[T]) -> usize { s.len() }
+    fn run() {
+    let a = [1, 2, 3]; let _ = len(&a); let _ = len(a[..]);
+    }
+}
+
+mod case18 {
+    // struct_lit_hint
+    struct W<T> { v: T }
+    fn run() {
+    let w: W<i64> = W { v: 5 }; let _ = w;
+    }
+}
+
+mod case19 {
+    // struct_lit_infer
+    struct Pair<A, B> { a: A, b: B }
+    fn run() {
+    let p = Pair { a: 1u8, b: true }; let _ = p;
+    }
+}
+
+mod case20 {
+    // tuple_arg
+    fn fst<A, B>(t: (A, B)) -> A { t.0 }
+    fn run() {
+    let x = fst((1u8, 2i64)); let _ = x;
+    }
+}
+
+mod case21 {
+    // vec_from_slice
+    use std::collections::Vector;
+    fn run() {
+    let v = Vector::from_slice(&[1u8, 2u8]); v.free();
+    }
+}
+
+mod case22 {
+    // vec_new_hint
+    use std::collections::Vector;
+    fn run() {
+    let v: Vector<u8> = Vector::new(); v.free();
+    }
+}
+
+mod case23 {
+    // b_array_of_generic
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let a: [u16; 2] = [make(), make()]; let _ = a;
+    }
+}
+
+mod case24 {
+    // b_assign_generic
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let x: u32 = 5; x = make(); let _ = x;
+    }
+}
+
+mod case25 {
+    // b_binop_generic
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let x: u32 = 5; let y = x + make(); let _ = y;
+    }
+}
+
+mod case26 {
+    // b_cast_of_generic
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let x = make::<u8>() as i32; let _ = x;
+    }
+}
+
+mod case27 {
+    // b_closure_to_method_bound
+    use std::option::Option;
+    fn run() {
+    let o = Option::some(2u8); let v = o.map(|x: u8| -> u16 { x as u16 }).unwrap_or(0); let _ = v;
+    }
+}
+
+mod case28 {
+    // b_collect_vec
+    use std::collections::Vector;
+    fn run() {
+    let v: Vector<i32> = [1, 2].iter().to_vector(); v.free();
+    }
+}
+
+mod case29 {
+    // b_compare_generic
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let x: u32 = 5; let _ = x == make();
+    }
+}
+
+mod case30 {
+    // b_defer_free_new
+    use std::collections::Vector;
+    fn run() {
+    let v: Vector<u8> = Vector::with_capacity(4); defer v.free(); v.push(1);
+    }
+}
+
+mod case31 {
+    // b_deferred_new
+    use std::collections::Vector;
+    fn mk<T>() -> T { T::new() }
+    fn run() {
+    let v: Vector<u8> = mk(); v.free();
+    }
+}
+
+mod case32 {
+    // b_fn_value_generic
+    fn id<T>(x: T) -> T { x }
+    fn run() {
+    let f: fn(u8) -> u8 = id; let _ = f(1);
+    }
+}
+
+mod case33 {
+    // b_fn_value_generic_bound
+    fn id<T>(x: T) -> T { x }
+    fn call<F: Fn(u8) -> u8>(f: F) -> u8 { f(1) }
+    fn run() {
+    let _ = call(id::<u8>);
+    }
+}
+
+mod case34 {
+    // b_generic_method_generic_struct
+    struct W<T> { v: T }
+    impl W<T> { fn with<U>(self: &W<T>, u: U) -> (T, U) { (self.v, u) } }
+    fn run() {
+    let w = W { v: 1u8 }; let p = w.with(2i64); let _ = p;
+    }
+}
+
+mod case35 {
+    // b_generic_static_ctor_infer
+    struct W<T> { v: T }
+    impl W<T> { fn new(v: T) -> W<T> { W { v: v } } }
+    fn run() {
+    let w = W::new(5u16); let _ = w;
+    }
+}
+
+mod case36 {
+    // b_if_branches_hint
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let c = true; let x: u32 = if c { make() } else { 5 }; let _ = x;
+    }
+}
+
+mod case37 {
+    // b_method_arg_hint
+    use std::collections::Vector;
+    use std::option::Option;
+    fn run() {
+    let v: Vector<Option<u8>> = Vector::new(); v.push(Option::none()); v.free();
+    }
+}
+
+mod case38 {
+    // b_mixin_generic_method
+    use std::collections::Vector;
+    fn run() {
+    let v: Vector<u8> = Vector::new(); v.push(3); let m = v.iter().max(); let _ = m; v.free();
+    }
+}
+
+mod case39 {
+    // b_nested_hint_arg
+    use std::collections::Vector;
+    fn takes(v: Vector<u8>) -> usize { let n = v.len(); v.free(); n }
+    fn run() {
+    let _ = takes(Vector::new());
+    }
+}
+
+mod case40 {
+    // b_option_or_default_hint
+    use std::option::Option;
+    fn run() {
+    let o: Option<u8> = Option::none(); let x = o.unwrap_or(7); let _ = x;
+    }
+}
+
+mod case41 {
+    // b_protocol_method_on_T
+    use std::cmp::Equatable;
+    fn eq<T: Equatable<T>>(a: T, b: T) -> bool { a.equals(&b) }
+    fn run() {
+    let _ = eq(1, 2); let _ = eq(1u8, 2u8);
+    }
+}
+
+mod case42 {
+    // b_ref_hint
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn takes(p: &i32) -> i32 { *p }
+    fn run() {
+    let _ = takes(&make());
+    }
+}
+
+mod case43 {
+    // b_return_hint
+    use std::option::Option;
+    fn f() -> Option<i32> { Option::none() }
+    fn run() {
+    let _ = f();
+    }
+}
+
+mod case44 {
+    // b_slice_of_array_ref
+    fn first<T>(s: &[T]) -> T { s[0] }
+    fn run() {
+    let a = [1u8, 2u8]; let _ = first(&a);
+    }
+}
+
+mod case45 {
+    // b_some_of_new
+    use std::collections::Vector;
+    use std::option::Option;
+    fn run() {
+    let o: Option<Vector<u8>> = Option::some(Vector::new()); o.unwrap().free();
+    }
+}
+
+mod case46 {
+    // b_struct_field_hint
+    use std::collections::Vector;
+    struct S { v: Vector<i32> }
+    fn run() {
+    let s = S { v: Vector::new() }; s.v.free();
+    }
+}
+
+mod case47 {
+    // b_sum_hint
+
+    fn run() {
+    let s: u64 = [1u64, 2u64].iter().sum(); let _ = s;
+    }
+}
+
+mod case48 {
+    // b_tuple_hint
+    fn make<T>() -> T { std::mem::zeroed() }
+    fn run() {
+    let t: (u8, i16) = (make(), make()); let _ = t;
+    }
+}
+
+fn main() {
+    case0::run();
+    case1::run();
+    case2::run();
+    case3::run();
+    case4::run();
+    case5::run();
+    case6::run();
+    case7::run();
+    case8::run();
+    case9::run();
+    case10::run();
+    case11::run();
+    case12::run();
+    case13::run();
+    case14::run();
+    case15::run();
+    case16::run();
+    case17::run();
+    case18::run();
+    case19::run();
+    case20::run();
+    case21::run();
+    case22::run();
+    case23::run();
+    case24::run();
+    case25::run();
+    case26::run();
+    case27::run();
+    case28::run();
+    case29::run();
+    case30::run();
+    case31::run();
+    case32::run();
+    case33::run();
+    case34::run();
+    case35::run();
+    case36::run();
+    case37::run();
+    case38::run();
+    case39::run();
+    case40::run();
+    case41::run();
+    case42::run();
+    case43::run();
+    case44::run();
+    case45::run();
+    case46::run();
+    case47::run();
+    case48::run();
+}

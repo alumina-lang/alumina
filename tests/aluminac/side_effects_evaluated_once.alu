@@ -1,0 +1,46 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// BOOT_DIVERGES: alumina-boot evaluates a range index before an array (C argument order) and zero-sized struct fields first
+// Every operand is evaluated, exactly once and in order, including those
+// with no runtime representation (zero-sized values, `()`):
+// - `f()[i]` on an array evaluated `f()` twice;
+// - `arr[a..f()]` evaluated the range once per bound;
+// - `() == ()` folded to `true` without evaluating either side;
+// - assigning to a zero-sized place skipped evaluating the place;
+// - struct literals were evaluated in declaration order, not as written.
+
+static LOG: [u8; 64] = std::mem::zeroed();
+static LEN: usize = 0;
+
+fn log(c: u8) { LOG[LEN] = c; LEN += 1; }
+fn logged() -> &[u8] {
+    let s = LOG[0..LEN];
+    LEN = 0;
+    s
+}
+
+struct Z {}
+struct P { a: i32, b: i32, z: Z }
+static ZS: Z = Z {};
+
+fn arr(c: u8) -> [i32; 3] { log(c); [1, 2, 3] }
+fn idx(c: u8, i: usize) -> usize { log(c); i }
+fn unit(c: u8) { log(c); }
+fn val(c: u8, v: i32) -> i32 { log(c); v }
+fn zst_place(c: u8) -> &mut Z { log(c); &ZS }
+fn zst(c: u8) -> Z { log(c); Z {} }
+fn units(c: u8) -> [(); 2] { log(c); [(), ()] }
+
+fn main() -> i32 {
+    if arr('a')[idx('b', 1)] != 2 || logged() != "ab" { return 1; }
+    let s = arr('a')[idx('b', 1)..idx('c', 3)];
+    if s.len() != 2 || s[0] != 2 || logged() != "abc" { return 2; }
+    if !(unit('a') == unit('b')) || unit('c') != unit('d') || logged() != "abcd" { return 3; }
+    *zst_place('a') = zst('b');
+    if logged().len() != 2 { return 4; }
+    let p = P { b: val('a', 2), z: zst('b'), a: val('c', 1) };
+    if p.a != 1 || p.b != 2 || logged() != "abc" { return 5; }
+    let _ = [unit('a'), unit('b')];
+    let _ = units('c') == units('d');
+    if logged() != "abcd" { return 6; }
+    0
+}

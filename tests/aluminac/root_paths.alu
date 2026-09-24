@@ -1,0 +1,30 @@
+// Paths from the root module (`::std::...`), in `use` and in expressions and
+// types, including an import of an item from the root that re-exports it.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use ::std::result::Result;
+use ::std::option::Option as Opt;
+
+mod inner {
+    use ::std::collections::Vector;
+
+    fn total(v: &Vector<i32>) -> i32 {
+        v.iter().sum()
+    }
+}
+
+fn half(x: i32) -> Result<i32, ()> {
+    if x % 2 == 0 { Result::ok(x / 2) } else { Result::err(()) }
+}
+
+fn main() {
+    let v: ::std::collections::Vector<i32> = ::std::collections::Vector::new();
+    defer v.free();
+    v.push(1);
+    v.push(2);
+    assert_eq!(inner::total(&v), 3);
+    assert_eq!(half(4).unwrap(), 2);
+    assert!(half(3).is_err());
+    let o: Opt<i32> = Opt::some(1);
+    assert_eq!(o.unwrap(), 1);
+}

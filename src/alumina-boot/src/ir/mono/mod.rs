@@ -2306,7 +2306,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
             };
             let mut fields = fields.to_vec();
             // TODO: This is a hack, we rely on the fact that the fields ids are set in order of definition
-            fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+            fields.sort_by_key(|(a, _)| *a);
             fields
         };
 
@@ -4703,10 +4703,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
                             .get()
                             .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedItem))?
                             .expr,
-                        func.args
-                            .iter()
-                            .zip(args.into_iter())
-                            .map(|(a, b)| (a.id, b)),
+                        func.args.iter().zip(args).map(|(a, b)| (a.id, b)),
                     )?;
 
                     self.local_defs.append(&mut additional_defs);

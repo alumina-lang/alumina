@@ -47,15 +47,11 @@ impl<'ir> DeadCodeEliminator<'ir> {
 
     pub fn visit_item(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
         match item.get().with_no_span()? {
-            Item::Static(s) => {
-                if s.ty.is_zero_sized() {
-                    return Ok(());
-                }
+            Item::Static(s) if s.ty.is_zero_sized() => {
+                return Ok(());
             }
-            Item::Const(c) => {
-                if c.ty.is_zero_sized() {
-                    return Ok(());
-                }
+            Item::Const(c) if c.ty.is_zero_sized() => {
+                return Ok(());
             }
             _ => {}
         };

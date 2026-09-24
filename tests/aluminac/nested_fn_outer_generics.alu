@@ -1,0 +1,37 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Nested fns inherit the enclosing fn's generic params lexically. Mono'ing
+// the outer fn multiple times with different type-args must produce a
+// distinct copy of the nested fn each time — otherwise the first nested
+// mono is reused and locks in whichever placeholder bindings the outer
+// happened to install first.
+//
+// This is the same shape as `Result::unwrap`'s `unwrap_panic_err` helper:
+// the nested fn's parameter type references the outer's generic, and the
+// recursive mono of the outer (through `?` in `format_integer`) needs its
+// own copy of the nested fn with the recursive call's E bound, not the
+// outer call's.
+
+use std::mem::size_of;
+
+fn outer<T>(val: T) -> usize {
+    fn inner(x: T) -> usize {
+        // size_of::<T>() reflects the outer's T, so each outer
+        // instantiation needs its own mono of `inner` — a shared one
+        // would always return the first outer's size_of.
+        size_of::<T>()
+    }
+    inner(val)
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // i32 is 4 bytes
+    if outer::<i32>(0i32) != 4usize { return 1i32; }
+    // i64 is 8 bytes
+    if outer::<i64>(0i64) != 8usize { return 2i32; }
+    // u8 is 1 byte
+    if outer::<u8>(0u8) != 1usize { return 3i32; }
+    // usize is 8 bytes on a 64-bit target (matches the only host we
+    // currently bootstrap on)
+    if outer::<usize>(0usize) != 8usize { return 4i32; }
+    0i32
+}

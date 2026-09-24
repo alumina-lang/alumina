@@ -1,0 +1,53 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+//
+// Regression for the `Option::some(util::cast(...))` chain inside a
+// function whose return type is Option<i32>. Pre-fix, aluminac's
+// type-arg inference for the OUTER Option::some<T> lowered the arg
+// `util::cast(x)` with the outer's expected_type (Option<i32>) still
+// installed, which then flowed into util::cast<T1, T2>'s own return-
+// type-from-hint inference and mis-bound T2 to the whole Option<i32>.
+// Option::some<T> then saw arg-type Option<i32> and bound T=Option<i32>
+// — Option<Option<i32>> got bitcast back to Option<i32> at the return,
+// producing the wrong value (0xFF2A = 65322 instead of 42 for input
+// 42, reading garbage from the discriminant/value of the wider type).
+//
+// Surfaced in `sysroot/std/process/unix.alu`'s
+// `ExitStatus::code() -> Option<i32>` which uses exactly this shape
+// (`Option::some(util::cast(libc::WEXITSTATUS(s)))`). Without the fix,
+// `cmd.spawn().unwrap().wait().unwrap().code().unwrap()` returned 65322
+// for a child that exited with `exit 42`. Test 5 of
+// `tests/aluminac/process_basic.alu` exercises this end-to-end.
+
+fn outer(x: i32) -> Option<i32> {
+    // The util::cast must infer T2=i32 from the surrounding
+    // Option::some<T=i32> param-type, not from the outer return slot.
+    Option::some(std::util::cast(x))
+}
+
+// Parallel shape with a different concrete inner type, just to verify
+// the fix isn't a one-off for i32.
+fn outer_u8(x: u32) -> Option<u8> {
+    Option::some(std::util::cast(x))
+}
+
+// And nested deeper: Option::some(util::cast(util::cast(x))). Both
+// inner casts must thread their T2 from the param-type chain.
+fn outer_chain(x: i64) -> Option<i32> {
+    Option::some(std::util::cast(std::util::cast::<i64, i32>(x)))
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = outer(42i32);
+    if r.is_none() { return 1i32; }
+    if r.unwrap() != 42i32 { return 2i32; }
+
+    let r2 = outer_u8(7u32);
+    if r2.is_none() { return 3i32; }
+    if r2.unwrap() != 7u8 { return 4i32; }
+
+    let r3 = outer_chain(1234i64);
+    if r3.is_none() { return 5i32; }
+    if r3.unwrap() != 1234i32 { return 6i32; }
+
+    0i32
+}

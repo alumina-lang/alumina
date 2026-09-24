@@ -1,0 +1,357 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::collections::HashMap;
+use std::collections::HashSet;
+
+fn test_basic() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+    map.insert(3i32, 30i32);
+
+    if map.len() != 3usize { return 1i32; }
+    if map.is_empty() { return 2i32; }
+    if map.get(&1i32).unwrap() != 10i32 { return 3i32; }
+    if map.get(&2i32).unwrap() != 20i32 { return 4i32; }
+    if map.get(&3i32).unwrap() != 30i32 { return 5i32; }
+    if map.get(&4i32).is_some() { return 6i32; }
+    0i32
+}
+
+fn test_insert_returns_old() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    let r1 = map.insert(1i32, 10i32);
+    if r1.is_some() { return 10i32; }
+
+    let r2 = map.insert(1i32, 20i32);
+    if !r2.is_some() { return 11i32; }
+    if r2.unwrap() != 10i32 { return 12i32; }
+
+    if map.get(&1i32).unwrap() != 20i32 { return 13i32; }
+    0i32
+}
+
+fn test_with_capacity() -> i32 {
+    let map = HashMap::with_capacity::<i32, i32>(100usize);
+    defer map.free();
+
+    if map.len() != 0usize { return 20i32; }
+
+    // Should be able to insert 100 elements without rehash
+    let i = 0i32;
+    while i < 100i32 {
+        map.insert(i, i * 2i32);
+        i = i + 1i32;
+    }
+    if map.len() != 100usize { return 21i32; }
+    if map.get(&50i32).unwrap() != 100i32 { return 22i32; }
+    0i32
+}
+
+fn test_contains_key() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+
+    // sysroot HashMap has no contains_key — use get(..).is_some()
+    if !map.get(&1i32).is_some() { return 30i32; }
+    if !map.get(&2i32).is_some() { return 31i32; }
+    if map.get(&3i32).is_some() { return 32i32; }
+    0i32
+}
+
+fn test_remove() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+    map.insert(3i32, 30i32);
+
+    let r = map.remove(&2i32);
+    if !r.is_some() { return 40i32; }
+    if r.unwrap() != 20i32 { return 41i32; }
+    if map.len() != 2usize { return 42i32; }
+    if map.get(&2i32).is_some() { return 43i32; }
+
+    // Remove non-existent key
+    let r2 = map.remove(&99i32);
+    if r2.is_some() { return 44i32; }
+
+    // Remaining keys still accessible
+    if map.get(&1i32).unwrap() != 10i32 { return 45i32; }
+    if map.get(&3i32).unwrap() != 30i32 { return 46i32; }
+    0i32
+}
+
+fn test_get_ref() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 42i32);
+    let r = map.get_ref(&1i32);
+    if !r.is_some() { return 50i32; }
+    if *r.unwrap() != 42i32 { return 51i32; }
+
+    let r2 = map.get_ref(&99i32);
+    if r2.is_some() { return 52i32; }
+    0i32
+}
+
+fn test_get_mut() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 42i32);
+    let r = map.get_mut(&1i32);
+    if !r.is_some() { return 60i32; }
+    *r.unwrap() = 100i32;
+
+    if map.get(&1i32).unwrap() != 100i32 { return 61i32; }
+    0i32
+}
+
+fn test_clear() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+    map.clear();
+
+    if map.len() != 0usize { return 70i32; }
+    if !map.is_empty() { return 71i32; }
+    if map.get(&1i32).is_some() { return 72i32; }
+
+    // Can still insert after clear
+    map.insert(3i32, 30i32);
+    if map.get(&3i32).unwrap() != 30i32 { return 73i32; }
+    0i32
+}
+
+fn test_retain() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+    map.insert(3i32, 30i32);
+    map.insert(4i32, 40i32);
+    map.insert(5i32, 50i32);
+
+    // Keep only entries where key is even
+    map.retain(|k: &i32, _v: &i32| -> bool { *k % 2i32 == 0i32 });
+    if map.len() != 2usize { return 80i32; }
+    if !map.get(&2i32).is_some() { return 81i32; }
+    if !map.get(&4i32).is_some() { return 82i32; }
+    if map.get(&1i32).is_some() { return 83i32; }
+    if map.get(&3i32).is_some() { return 84i32; }
+    if map.get(&5i32).is_some() { return 85i32; }
+    0i32
+}
+
+fn test_reserve() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    // sysroot HashMap exposes no public capacity(); just verify reserve
+    // succeeds and the subsequent inserts all land.
+    map.reserve(50usize);
+
+    // Insert 50 elements - should not need to rehash
+    let i = 0i32;
+    while i < 50i32 {
+        map.insert(i, i);
+        i = i + 1i32;
+    }
+    if map.len() != 50usize { return 91i32; }
+    0i32
+}
+
+fn test_move() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+
+    let map2 = map.move();
+    defer map2.free();
+
+    if map.len() != 0usize { return 100i32; }
+    if map2.len() != 2usize { return 101i32; }
+    if map2.get(&1i32).unwrap() != 10i32 { return 102i32; }
+    0i32
+}
+
+fn test_clone() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+
+    let map2 = map.clone();
+    defer map2.free();
+
+    if map2.len() != 2usize { return 110i32; }
+    if map2.get(&1i32).unwrap() != 10i32 { return 111i32; }
+
+    // Modifying original shouldn't affect clone
+    map.insert(3i32, 30i32);
+    if map2.len() != 2usize { return 112i32; }
+    0i32
+}
+
+fn test_iter() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+    map.insert(3i32, 30i32);
+
+    let iter = map.iter();
+    let sum_keys = 0i32;
+    let sum_vals = 0i32;
+    let count = 0usize;
+    loop {
+        let entry = iter.next();
+        if entry.is_none() { break; }
+        let pair = entry.unwrap();
+        sum_keys = sum_keys + pair.0;
+        sum_vals = sum_vals + pair.1;
+        count = count + 1usize;
+    }
+    if count != 3usize { return 120i32; }
+    if sum_keys != 6i32 { return 121i32; }
+    if sum_vals != 60i32 { return 122i32; }
+    0i32
+}
+
+fn test_many_entries() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    // Insert many entries to trigger multiple rehashes
+    let i = 0i32;
+    while i < 200i32 {
+        map.insert(i, i * 3i32);
+        i = i + 1i32;
+    }
+    if map.len() != 200usize { return 130i32; }
+
+    // Verify all entries
+    let j = 0i32;
+    while j < 200i32 {
+        if map.get(&j).unwrap() != j * 3i32 { return 131i32; }
+        j = j + 1i32;
+    }
+    0i32
+}
+
+fn test_hashset_basic() -> i32 {
+    let set = HashSet::new::<i32>();
+    defer set.free();
+
+    if !set.insert(1i32) { return 140i32; }
+    if !set.insert(2i32) { return 141i32; }
+    if set.insert(1i32) { return 142i32; }  // duplicate, should return false
+
+    if set.len() != 2usize { return 143i32; }
+    if !set.contains(&1i32) { return 144i32; }
+    if !set.contains(&2i32) { return 145i32; }
+    if set.contains(&3i32) { return 146i32; }
+
+    if !set.remove(&1i32) { return 147i32; }
+    if set.remove(&1i32) { return 148i32; }  // already removed
+    if set.len() != 1usize { return 149i32; }
+    0i32
+}
+
+fn test_hashset_with_capacity() -> i32 {
+    let set = HashSet::with_capacity::<i32>(50usize);
+    defer set.free();
+
+    let i = 0i32;
+    while i < 50i32 {
+        set.insert(i);
+        i = i + 1i32;
+    }
+    if set.len() != 50usize { return 150i32; }
+    0i32
+}
+
+fn test_remove_and_reinsert() -> i32 {
+    let map = HashMap::new::<i32, i32>();
+    defer map.free();
+
+    map.insert(1i32, 10i32);
+    map.insert(2i32, 20i32);
+    map.insert(3i32, 30i32);
+
+    map.remove(&2i32);
+    // Inserting with same key should work (tombstone reuse)
+    map.insert(2i32, 200i32);
+    if map.get(&2i32).unwrap() != 200i32 { return 160i32; }
+    if map.len() != 3usize { return 161i32; }
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_basic();
+    if r != 0i32 { return r; }
+
+    let r = test_insert_returns_old();
+    if r != 0i32 { return r; }
+
+    let r = test_with_capacity();
+    if r != 0i32 { return r; }
+
+    let r = test_contains_key();
+    if r != 0i32 { return r; }
+
+    let r = test_remove();
+    if r != 0i32 { return r; }
+
+    let r = test_get_ref();
+    if r != 0i32 { return r; }
+
+    let r = test_get_mut();
+    if r != 0i32 { return r; }
+
+    let r = test_clear();
+    if r != 0i32 { return r; }
+
+    let r = test_retain();
+    if r != 0i32 { return r; }
+
+    let r = test_reserve();
+    if r != 0i32 { return r; }
+
+    let r = test_move();
+    if r != 0i32 { return r; }
+
+    let r = test_clone();
+    if r != 0i32 { return r; }
+
+    let r = test_iter();
+    if r != 0i32 { return r; }
+
+    let r = test_many_entries();
+    if r != 0i32 { return r; }
+
+    let r = test_hashset_basic();
+    if r != 0i32 { return r; }
+
+    let r = test_hashset_with_capacity();
+    if r != 0i32 { return r; }
+
+    let r = test_remove_and_reinsert();
+    if r != 0i32 { return r; }
+
+    0i32
+}

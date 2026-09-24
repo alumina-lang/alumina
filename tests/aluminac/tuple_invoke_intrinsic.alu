@@ -1,0 +1,35 @@
+// Test the `tuple_invoke` intrinsic: applies a callable to a tuple of args.
+// The callable can be a function item, a function pointer, or a closure.
+
+extern "intrinsic" fn tuple_invoke<Fun, Args, Ret>(f: Fun, args: Args) -> Ret;
+
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn three_args(a: i32, b: i32, c: i32) -> i32 {
+    a * 100 + b * 10 + c
+}
+
+fn no_args() -> i32 {
+    42
+}
+
+fn main() -> i32 {
+    // Direct fn item
+    let r1: i32 = tuple_invoke(add, (3, 4));
+    if r1 != 7 { return 1; }
+
+    let r2: i32 = tuple_invoke(three_args, (1, 2, 3));
+    if r2 != 123 { return 2; }
+
+    let r3: i32 = tuple_invoke(no_args, ());
+    if r3 != 42 { return 3; }
+
+    // Function pointer
+    let fp: fn(i32, i32) -> i32 = add;
+    let r4: i32 = tuple_invoke(fp, (10, 20));
+    if r4 != 30 { return 4; }
+
+    0
+}

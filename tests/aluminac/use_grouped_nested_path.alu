@@ -1,0 +1,19 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `use outer::{shallow, inner::deep};` — the nested-path arm of a grouped use
+// list used to drop the outer prefix, so `deep` aliased to [inner, deep]
+// instead of [outer, inner, deep] and resolved at the wrong scope (or not at
+// all). Sysroot's `use mem::{size_of, slice::from_raw};` pattern relies on this.
+
+mod outer {
+    mod inner {
+        fn deep() -> i32 { 42i32 }
+    }
+    fn shallow() -> i32 { 1i32 }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    use outer::{shallow, inner::deep};
+    if shallow() != 1i32 { return 1i32; }
+    if deep() != 42i32 { return 2i32; }
+    0i32
+}

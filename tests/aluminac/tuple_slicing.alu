@@ -1,0 +1,18 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `t.(a..b)` is the tuple of t's elements in the (constant) range, as in
+// alumina-boot. (aluminac used to treat the range as index 0.)
+
+fn main() -> i32 {
+    let a = (0, 1u8, 2u16, 3u32, 4u64);
+    let b = a.(1..3);
+    if b.0 != 1u8 || b.1 != 2u16 { return 1; }
+    let c = a.(..=1);
+    if c.0 != 0 || c.1 != 1u8 { return 2; }
+    let d = a.(3..);
+    if d.0 != 3u32 || d.1 != 4u64 { return 3; }
+    if a.(..) != a { return 4; }
+    const I: usize = 2;
+    if a.(I) != 2u16 { return 5; }
+    if std::mem::size_of::<typeof(a.(4..))>() != 8 { return 6; }
+    0
+}

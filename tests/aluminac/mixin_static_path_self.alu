@@ -1,0 +1,54 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: a mixin'd protocol method called via a *static path*
+// `Type::method(args)` (e.g. `u16::parse(s: &[u8])`) must bind `Self`
+// from the path type (the mixin's type-args), NOT from the first value
+// argument. lower_call's first-arg Self heuristic used to fire whenever
+// args.len()>0, wrongly binding Self=&[u8] for `Int::parse(s)` — which
+// made std/net's address parser mono `parse_integer::<&[u8]>` and fail
+// to compile. The static-path-mixin binding (via the
+// process_mixins-stashed impl_scope_idx in lhs.id2) must take
+// precedence over the first-arg rule.
+
+protocol P<Self> {
+    fn make(s: &[u8]) -> Self {
+        helper::<Self>(s)
+    }
+    fn tag2(s: &[u8], n: i32) -> Self {
+        helper::<Self>(s)
+    }
+}
+
+fn helper<T>(_s: &[u8]) -> T {
+    std::mem::zeroed::<T>()
+}
+
+struct W { v: i32 }
+impl W {
+    fn from(x: i32) -> W { W { v: x } }
+    mixin P<W>;
+}
+
+struct Q { a: u64, b: u64 }
+impl Q {
+    mixin P<Q>;
+}
+
+fn main() -> i32 {
+    let w = W::make("abc");
+    if w.v != 0 { return 1; }
+    let w2 = W::tag2("xy", 7);
+    if w2.v != 0 { return 2; }
+    let q = Q::make("zzz");
+    if q.a != 0 || q.b != 0 { return 3; }
+
+    // A mixin'd protocol method on a *builtin* taken as a FnRef value
+    // (callback) — `opt.and_then(u8::parse)` — must bind Self=u8, not ()
+    // (std/net's `segments.next().and_then(u8::parse)`; without the
+    // FnRef-materialization-site proto-generic binding this mono'd
+    // `parse_integer::<()>` → checked_mul on ()).
+    let s: std::option::Option<&[u8]> = std::option::Option::some("42");
+    let r = s.and_then(u8::parse);
+    if !(r.is_some() && r.unwrap() == 42u8) { return 4; }
+
+    0
+}

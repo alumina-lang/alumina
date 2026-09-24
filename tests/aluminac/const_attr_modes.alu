@@ -1,0 +1,32 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// alumina-boot syntax `#[const(always)]` / `#[const(never)]` should parse
+// without error and map to AttrTag::ConstOnly / AttrTag::NoConst (parity
+// with the canonical compiler — sysroot's `panicking::const_panic_impl`
+// uses this form). Aluminac doesn't currently enforce these gates; the
+// goal is just that the attribute is recognized rather than silently
+// stored as the generic `Custom("const")` (which would leak through to
+// any tool consulting it via has_attribute).
+//
+// This file is a parse-and-run smoke test: if the parser had rejected
+// the syntax (or any of the bodies failed to compile), the test would
+// fail at compile time, not at runtime.
+
+#[const(always)]
+fn always_const() -> i32 { 42i32 }
+
+#[const(never)]
+fn never_const() -> i32 { 99i32 }
+
+#[const_only]
+fn const_only_legacy() -> i32 { 7i32 }
+
+#[no_const]
+fn no_const_legacy() -> i32 { 8i32 }
+
+fn main(args: &[&[u8]]) -> i32 {
+    if always_const() != 42i32 { return 1i32; }
+    if never_const() != 99i32 { return 2i32; }
+    if const_only_legacy() != 7i32 { return 3i32; }
+    if no_const_legacy() != 8i32 { return 4i32; }
+    0i32
+}

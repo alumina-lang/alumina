@@ -1,0 +1,219 @@
+// The C calling convention, for the functions C can call or be called as:
+// `extern "C"` ones, exported ones, and those whose address is taken (a
+// function pointer may be called from C, and indirect calls take the C
+// convention). In alumina-boot, which emits C, every function is a C
+// function; aluminac passes values its own way elsewhere, since that costs
+// nothing.
+//
+// LLVM passes an aggregate member by member, which is what C does only for
+// some of them; the others are coerced, as clang does:
+// - AArch64 (AAPCS64, also Apple's): a homogeneous floating-point aggregate
+//   (up to four floats or doubles) member by member; others of up to 16
+//   bytes packed into one or two 64-bit registers (unless they are made of
+//   64-bit integers and pointers, which LLVM passes alike); larger ones
+//   through memory (a pointer to a copy, or a buffer for the result).
+// - x86_64 (System V): up to 16 bytes, each eightbyte in an SSE register if
+//   it holds only floating-point values, else in an integer one (unless the
+//   eightbytes are single 64-bit values, which LLVM passes alike); larger
+//   ones through memory (`byval`, and for a result a buffer).
+
+use llvm::*;
+use ir::*;
+use codegen::CodegenCtx;
+use aluminac::target::Arch;
+use std::collections::Vector;
+
+/// How a value is passed.
+enum Pass {
+    /// As its LLVM type.
+    Direct,
+    /// As `PassInfo::ty` (the same bytes).
+    Coerce,
+    /// As a pointer to a copy (for a result: a buffer the caller provides).
+    Indirect,
+}
+
+struct PassInfo {
+    how: Pass,
+    /// The LLVM type it is passed as.
+    ty: LLVMTypeRef,
+}
+
+/// A function's signature as it is called.
+struct Signature {
+    /// Of each parameter, and the LLVM type of its value.
+    params: &[PassInfo],
+    originals: &[LLVMTypeRef],
+    ret: PassInfo,
+    ret_original: LLVMTypeRef,
+    /// Whether it returns nothing (the result is `()`, `!` or a buffer).
+    ret_void: bool,
+    /// Whether the first parameter is the result's buffer.
+    sret: bool,
+    fn_type: LLVMTypeRef,
+}
+
+impl Signature {
+    /// The LLVM parameter index of parameter `i`.
+    fn param_index(self: &Signature, i: usize) -> u32 {
+        (i + if self.sret { 1usize } else { 0usize }) as u32
+    }
+}
+
+/// The signature of a function with the given parameter and result types,
+/// in the C convention or aluminac's own.
+fn signature(ctx: &mut CodegenCtx, param_tys: &[&IrTy], ret: &IrTy, variadic: bool, c_abi: bool) -> Signature {
+    let originals = ctx.arena.alloc_slice::<LLVMTypeRef>(param_tys.len());
+    let params = ctx.arena.alloc_slice::<PassInfo>(param_tys.len());
+    for (i, ty) in param_tys.iter().enumerate() {
+        let llvm_ty = ctx.llvm_type(ty);
+        // (A `()` parameter is a `{}`: void is not a value.)
+        originals[i] = ctx.value_type(llvm_ty);
+        params[i] = if c_abi { classify(ctx, originals[i]) } else { PassInfo { how: Pass::Direct, ty: originals[i] } };
+    }
+    let ret_original = ctx.llvm_type(ret);
+    let ret_void = ret.is_void() || ret.is_never() || ret.tag == IrTyTag::Fn
+        || LLVMGetTypeKind(ret_original) == LLVMTypeKind::Void;
+    let ret_info = if ret_void || !c_abi {
+        PassInfo { how: Pass::Direct, ty: ret_original }
+    } else {
+        classify(ctx, ret_original)
+    };
+    let sret = ret_info.how == Pass::Indirect;
+
+    let llvm_params: Vector<LLVMTypeRef> = Vector::new();
+    defer llvm_params.free();
+    if sret {
+        llvm_params.push(ctx.ptr_type);
+    }
+    for p in params {
+        llvm_params.push(p.ty);
+    }
+    let llvm_ret = if ret_void || sret { ctx.void_type } else { ret_info.ty };
+    let fn_type = LLVMFunctionType(llvm_ret, if llvm_params.is_empty() { null } else { &llvm_params[0] },
+        llvm_params.len() as u32, if variadic { 1i32 } else { 0i32 });
+    Signature {
+        params: params,
+        originals: originals,
+        ret: ret_info,
+        ret_original: ret_original,
+        ret_void: ret_void,
+        sret: sret,
+        fn_type: fn_type,
+    }
+}
+
+/// How C passes a value of LLVM type `ty` (as an argument or a result).
+fn classify(ctx: &mut CodegenCtx, ty: LLVMTypeRef) -> PassInfo {
+    let direct = PassInfo { how: Pass::Direct, ty: ty };
+    let kind = LLVMGetTypeKind(ty);
+    if kind != LLVMTypeKind::Struct && kind != LLVMTypeKind::Array {
+        return direct;
+    }
+    let size = LLVMABISizeOfType(ctx.target_data, ty);
+    if size == 0 {
+        return direct;
+    }
+    let leaves: Vector<(u64, LLVMTypeRef)> = Vector::new();
+    defer leaves.free();
+    flatten(ctx, ty, 0, &leaves);
+
+    if ctx.target.arch == Arch::AArch64 {
+        if is_homogeneous_float(leaves.as_slice()) {
+            return direct;
+        }
+        if size > 16 {
+            return PassInfo { how: Pass::Indirect, ty: ctx.ptr_type };
+        }
+        if words_only(ctx, leaves.as_slice(), size) {
+            return direct;
+        }
+        let coerced = if size <= 8 { ctx.i64_type } else { LLVMArrayType(ctx.i64_type, 2u32) };
+        return PassInfo { how: Pass::Coerce, ty: coerced };
+    }
+
+    // x86_64
+    if size > 16 {
+        // (A result too: LLVM would return one of up to four integers or
+        // four doubles in registers.)
+        return PassInfo { how: Pass::Indirect, ty: ctx.ptr_type };
+    }
+    if words_only(ctx, leaves.as_slice(), size) {
+        return direct;
+    }
+    let chunks = ((size + 7) / 8) as usize;
+    let parts = ctx.arena.alloc_slice::<LLVMTypeRef>(chunks);
+    for c in 0usize..chunks {
+        let (start, end) = ((c * 8) as u64, (c * 8 + 8) as u64);
+        let floats = 0u32;
+        let doubles = 0u32;
+        let others = 0u32;
+        for (offset, leaf) in leaves {
+            if offset >= start && offset < end {
+                switch LLVMGetTypeKind(leaf) {
+                    LLVMTypeKind::Float => floats += 1,
+                    LLVMTypeKind::Double => doubles += 1,
+                    _ => others += 1,
+                }
+            }
+        }
+        parts[c] = if others == 0 && doubles == 1 && floats == 0 {
+            ctx.f64_type
+        } else if others == 0 && doubles == 0 && floats == 2 {
+            LLVMVectorType(ctx.f32_type, 2u32)
+        } else if others == 0 && doubles == 0 && floats == 1 {
+            ctx.f32_type
+        } else {
+            // (An integer of the bytes left.)
+            LLVMIntTypeInContext(ctx.context, (std::cmp::min(8u64, size - start) * 8) as u32)
+        };
+    }
+    let coerced = if chunks == 1 { parts[0] } else { LLVMStructTypeInContext(ctx.context, &parts[0], chunks as u32, 0i32) };
+    PassInfo { how: Pass::Coerce, ty: coerced }
+}
+
+/// The scalar members of an aggregate, with their offsets.
+fn flatten(ctx: &mut CodegenCtx, ty: LLVMTypeRef, offset: u64, leaves: &mut Vector<(u64, LLVMTypeRef)>) {
+    switch LLVMGetTypeKind(ty) {
+        LLVMTypeKind::Struct => {
+            for i in 0u32..LLVMCountStructElementTypes(ty) {
+                flatten(ctx, LLVMStructGetTypeAtIndex(ty, i), offset + LLVMOffsetOfElement(ctx.target_data, ty, i), leaves);
+            }
+        }
+        LLVMTypeKind::Array => {
+            let elem = LLVMGetElementType(ty);
+            let stride = LLVMABISizeOfType(ctx.target_data, elem);
+            for i in 0u32..LLVMGetArrayLength(ty) {
+                flatten(ctx, elem, offset + (i as u64) * stride, leaves);
+            }
+        }
+        _ => leaves.push((offset, ty)),
+    }
+}
+
+/// Whether the members are one to four of the same floating-point type.
+fn is_homogeneous_float(leaves: &[(u64, LLVMTypeRef)]) -> bool {
+    if leaves.is_empty() || leaves.len() > 4 {
+        return false;
+    }
+    let first = leaves[0].1;
+    let kind = LLVMGetTypeKind(first);
+    (kind == LLVMTypeKind::Float || kind == LLVMTypeKind::Double)
+        && leaves.iter().all(|=first, l: (u64, LLVMTypeRef)| -> bool { l.1 == first })
+}
+
+/// Whether the members are 64-bit integers and pointers filling the
+/// aggregate (so that LLVM passes it as C does).
+fn words_only(ctx: &CodegenCtx, leaves: &[(u64, LLVMTypeRef)], size: u64) -> bool {
+    (leaves.len() as u64) * 8 == size
+        && leaves.iter().all(|&ctx, l: (u64, LLVMTypeRef)| -> bool {
+            l.0 % 8 == 0 && switch LLVMGetTypeKind(l.1) {
+                LLVMTypeKind::Pointer => true,
+                LLVMTypeKind::Integer => LLVMGetIntTypeWidth(l.1) == 64,
+                // (On x86_64, a double in an eightbyte of its own is
+                // passed as C does too.)
+                LLVMTypeKind::Double => ctx.target.arch == Arch::X86_64,
+                _ => false,
+            }
+        })
+}

@@ -1,0 +1,1263 @@
+// The intermediate representation monomorphization produces from the syntax
+// tree (`ast`): concrete types and expressions, with no generics left, which
+// codegen compiles and the constant evaluator interprets (with its values,
+// also here).
+//
+// As in `ast`, discriminated unions are a tag and a union of payloads.
+
+use ast::*;
+use aluminac_common::arena::Arena;
+use std::collections::{HashMap, HashSet};
+use std::fmt::write;
+use std::string::StringBuf;
+
+// === IR (Monomorphized) types ===
+
+// IrTy tags
+enum IrTyTag {
+    Builtin = 0i32,
+    Pointer = 1i32,
+    Array = 2i32,
+    Tuple = 3i32,
+    FnPointer = 4i32,
+    Struct = 5i32,
+    Enum = 6i32,
+    Void = 7i32,
+    Never = 8i32,
+    Slice = 9i32,       // fat pointer: (data_ptr, len) - tracks element type
+    Closure = 10i32,    // closure: struct of captures + associated function
+    Fn = 11i32,         // function item: ZST representing a specific function
+    Protocol = 12i32,   // protocol marker: carries the protocol's def-id for `is`-checks
+    ItemRef = 13i32,    // const/static item used as a generic type-arg —
+                        // carries the StaticDef's id and a flag distinguishing
+                        // const-vs-static. Resolved by typeop_underlying_type_of
+                        // and value_of intrinsics.
+}
+
+// Slice struct field indices (fat pointer layout: {data_ptr, len})
+const SLICE_DATA_FIELD: u32 = 0u32;
+const SLICE_LEN_FIELD: u32 = 1u32;
+
+struct _IrTyPointerData {
+    inner: &IrTy,
+    is_const: bool,
+}
+
+struct _IrTyArrayData {
+    inner: &IrTy,
+    array_size: usize,
+}
+
+struct _IrTyFnPtrData {
+    elems: &[&IrTy],
+    ret_ty: &IrTy,
+}
+
+struct _IrTySliceData {
+    inner: &IrTy,
+    is_const: bool,
+    elems: &[&IrTy],               // fat pointer tuple {ptr, len}
+}
+
+struct _IrTyClosureData {
+    struct_ref: IrStructRef,
+    closure_fn: IrFnRef,
+}
+
+struct _IrTyFnData {
+    fn_ref: IrFnRef,
+}
+
+struct _IrTyProtocolData {
+    proto_id: usize,
+    type_args: &[&IrTy],
+}
+
+struct _IrTyItemRefData {
+    id: usize,
+    is_const: bool,
+}
+
+union _IrTyData {
+    builtin: BuiltinType,           // Builtin, Never
+    pointer: _IrTyPointerData,      // Pointer
+    array: _IrTyArrayData,          // Array
+    elems: &[&IrTy],               // Tuple
+    fn_ptr: _IrTyFnPtrData,        // FnPointer
+    struct_ref: IrStructRef,        // Struct
+    enum_ref: IrEnumRef,            // Enum
+    closure: _IrTyClosureData,      // Closure
+    slice: _IrTySliceData,          // Slice
+    fn_item: _IrTyFnData,          // Fn
+    proto: _IrTyProtocolData,       // Protocol
+    item_ref: _IrTyItemRefData,     // ItemRef
+}
+
+struct IrTy {
+    tag: IrTyTag,
+    _data: _IrTyData,
+}
+
+fn same_types(a: &[&IrTy], b: &[&IrTy]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (i, ty) in a.iter().enumerate() {
+        if !ty.same_as(b[i]) {
+            return false;
+        }
+    }
+    true
+}
+
+fn hash_types<H: std::hash::Hasher<H>>(tys: &[&IrTy], hasher: &mut H) {
+    tys.len().hash(hasher);
+    for ty in tys {
+        ty.hash_structure(hasher);
+    }
+}
+
+impl IrTy {
+    // Accessors
+    fn builtin(self: &IrTy) -> BuiltinType { self._data.builtin }
+    fn inner(self: &IrTy) -> &IrTy {
+        if self.tag == IrTyTag::Slice { self._data.slice.inner }
+        else if self.tag == IrTyTag::Array { self._data.array.inner }
+        else { self._data.pointer.inner }
+    }
+    fn is_const(self: &IrTy) -> bool {
+        if self.tag == IrTyTag::Slice { self._data.slice.is_const }
+        else if self.tag == IrTyTag::Pointer { self._data.pointer.is_const }
+        else { false }
+    }
+    fn array_size(self: &IrTy) -> usize { self._data.array.array_size }
+    fn elems(self: &IrTy) -> &[&IrTy] {
+        if self.tag == IrTyTag::Slice { self._data.slice.elems }
+        else if self.tag == IrTyTag::FnPointer { self._data.fn_ptr.elems }
+        else { self._data.elems }
+    }
+    fn ret_ty(self: &IrTy) -> &IrTy { self._data.fn_ptr.ret_ty }
+    fn fn_item_ref(self: &IrTy) -> IrFnRef { self._data.fn_item.fn_ref }
+    /// The struct, or for a closure its environment struct (the captures).
+    fn struct_ref(self: &IrTy) -> IrStructRef {
+        if self.tag == IrTyTag::Closure { self._data.closure.struct_ref } else { self._data.struct_ref }
+    }
+    fn enum_ref(self: &IrTy) -> IrEnumRef { self._data.enum_ref }
+    fn closure_fn(self: &IrTy) -> IrFnRef { self._data.closure.closure_fn }
+
+    /// Whether two types are the same type (types are not all interned, so
+    /// this compares their structure).
+    fn same_as(self: &IrTy, other: &IrTy) -> bool {
+        if self == other {
+            return true;
+        }
+        if self.tag != other.tag {
+            return false;
+        }
+        switch self.tag {
+            IrTyTag::Builtin => self.builtin() == other.builtin(),
+            IrTyTag::Pointer, IrTyTag::Slice =>
+                self.is_const() == other.is_const() && self.inner().same_as(other.inner()),
+            IrTyTag::Array => self.array_size() == other.array_size() && self.inner().same_as(other.inner()),
+            IrTyTag::Tuple => same_types(self.elems(), other.elems()),
+            IrTyTag::FnPointer => same_types(self.elems(), other.elems()) && self.ret_ty().same_as(other.ret_ty()),
+            IrTyTag::Struct => {
+                let (a, b) = (self.struct_ref(), other.struct_ref());
+                a.id._value == b.id._value && same_types(a.type_args, b.type_args)
+            }
+            IrTyTag::Closure => self.closure_fn().mangled_name == other.closure_fn().mangled_name,
+            IrTyTag::Enum => self.enum_ref().id._value == other.enum_ref().id._value,
+            IrTyTag::Fn => self.fn_item_ref().mangled_name == other.fn_item_ref().mangled_name,
+            IrTyTag::Protocol =>
+                self.proto_id() == other.proto_id() && same_types(self.proto_type_args(), other.proto_type_args()),
+            IrTyTag::ItemRef =>
+                self.item_ref_id() == other.item_ref_id() && self.item_ref_is_const() == other.item_ref_is_const(),
+            // Void, Never
+            _ => true,
+        }
+    }
+
+    /// Hash the type's structure, consistently with `same_as`.
+    fn hash_structure<H: std::hash::Hasher<H>>(self: &IrTy, hasher: &mut H) {
+        (self.tag as i32).hash(hasher);
+        switch self.tag {
+            IrTyTag::Builtin => (self.builtin() as i32).hash(hasher),
+            IrTyTag::Pointer, IrTyTag::Slice => {
+                self.is_const().hash(hasher);
+                self.inner().hash_structure(hasher);
+            }
+            IrTyTag::Array => {
+                self.array_size().hash(hasher);
+                self.inner().hash_structure(hasher);
+            }
+            IrTyTag::Tuple => hash_types(self.elems(), hasher),
+            IrTyTag::FnPointer => {
+                hash_types(self.elems(), hasher);
+                self.ret_ty().hash_structure(hasher);
+            }
+            IrTyTag::Struct => {
+                self.struct_ref().id._value.hash(hasher);
+                hash_types(self.struct_ref().type_args, hasher);
+            }
+            IrTyTag::Closure => self.closure_fn().mangled_name.hash(hasher),
+            IrTyTag::Enum => self.enum_ref().id._value.hash(hasher),
+            IrTyTag::Fn => self.fn_item_ref().mangled_name.hash(hasher),
+            IrTyTag::Protocol => {
+                self.proto_id().hash(hasher);
+                hash_types(self.proto_type_args(), hasher);
+            }
+            IrTyTag::ItemRef => {
+                self.item_ref_id().hash(hasher);
+                self.item_ref_is_const().hash(hasher);
+            }
+            _ => {}
+        }
+    }
+
+    fn mk_builtin(bt: BuiltinType) -> IrTy {
+        IrTy { tag: IrTyTag::Builtin, _data: _IrTyData { builtin: bt } }
+    }
+    fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::Pointer, _data: _IrTyData { pointer: _IrTyPointerData { inner: pointee, is_const: is_const } } }
+    }
+    fn mk_array(elem: &IrTy, size: usize) -> IrTy {
+        IrTy { tag: IrTyTag::Array, _data: _IrTyData { array: _IrTyArrayData { inner: elem, array_size: size } } }
+    }
+    fn mk_tuple(elems: &[&IrTy]) -> IrTy {
+        IrTy { tag: IrTyTag::Tuple, _data: _IrTyData { elems: elems } }
+    }
+    fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
+        IrTy { tag: IrTyTag::FnPointer, _data: _IrTyData { fn_ptr: _IrTyFnPtrData { elems: params, ret_ty: ret } } }
+    }
+    fn mk_fn(fn_ref: IrFnRef) -> IrTy {
+        IrTy { tag: IrTyTag::Fn, _data: _IrTyData { fn_item: _IrTyFnData { fn_ref: fn_ref } } }
+    }
+    fn mk_struct(s: IrStructRef) -> IrTy {
+        IrTy { tag: IrTyTag::Struct, _data: _IrTyData { struct_ref: s } }
+    }
+    fn mk_closure(s: IrStructRef, fn_ref: IrFnRef) -> IrTy {
+        IrTy { tag: IrTyTag::Closure, _data: _IrTyData { closure: _IrTyClosureData { struct_ref: s, closure_fn: fn_ref } } }
+    }
+    fn mk_enum(e: IrEnumRef) -> IrTy {
+        IrTy { tag: IrTyTag::Enum, _data: _IrTyData { enum_ref: e } }
+    }
+    fn mk_void() -> IrTy {
+        IrTy { tag: IrTyTag::Void, _data: _IrTyData { builtin: BuiltinType::Void } }
+    }
+    fn mk_never() -> IrTy {
+        IrTy { tag: IrTyTag::Never, _data: _IrTyData { builtin: BuiltinType::Never } }
+    }
+    fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::Slice, _data: _IrTyData { slice: _IrTySliceData { inner: elem, is_const: is_const, elems: &[] } } }
+    }
+
+    fn mk_protocol(proto_id: usize) -> IrTy {
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto: _IrTyProtocolData { proto_id: proto_id, type_args: &[] } } }
+    }
+
+    fn mk_protocol_with_args(proto_id: usize, type_args: &[&IrTy]) -> IrTy {
+        IrTy { tag: IrTyTag::Protocol, _data: _IrTyData { proto: _IrTyProtocolData { proto_id: proto_id, type_args: type_args } } }
+    }
+
+    fn proto_id(self: &IrTy) -> usize { self._data.proto.proto_id }
+    fn proto_type_args(self: &IrTy) -> &[&IrTy] { self._data.proto.type_args }
+
+    fn mk_item_ref(id: usize, is_const: bool) -> IrTy {
+        IrTy { tag: IrTyTag::ItemRef, _data: _IrTyData { item_ref: _IrTyItemRefData { id: id, is_const: is_const } } }
+    }
+    fn item_ref_id(self: &IrTy) -> usize { self._data.item_ref.id }
+    fn item_ref_is_const(self: &IrTy) -> bool { self._data.item_ref.is_const }
+
+    fn is_void(self: &IrTy) -> bool {
+        self.tag == IrTyTag::Void || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void)
+    }
+    fn is_never(self: &IrTy) -> bool {
+        self.tag == IrTyTag::Never || (self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Never)
+    }
+    fn is_zero_sized(self: &IrTy) -> bool {
+        if self.tag == IrTyTag::Void { return true; }
+        if self.tag == IrTyTag::Fn { return true; }
+        if self.tag == IrTyTag::Builtin && self.builtin() == BuiltinType::Void { return true; }
+        if self.tag == IrTyTag::Tuple {
+            for elem in self.elems().iter() {
+                if !elem.is_zero_sized() { return false; }
+            }
+            return true;
+        }
+        if self.tag == IrTyTag::Array {
+            return self.array_size() == 0 || self.inner().is_zero_sized();
+        }
+        if self.tag == IrTyTag::Struct || self.tag == IrTyTag::Closure {
+            return self.struct_ref().is_zero_sized;
+        }
+        false
+    }
+}
+
+struct IrStructRef {
+    id: Id,
+    name: &[u8],
+    fields: &[IrField],
+    is_union: bool,
+    is_zero_sized: bool,
+    scope_idx: u32,  // scope index for method resolution (0 = no methods)
+    type_args: &[&IrTy],  // type args used to instantiate this struct (for method dispatch)
+    is_packed: bool,
+    attributes: &[Attribute],
+    /// The module the type is in (see IrFunction::namespace).
+    namespace: &[u8],
+}
+
+impl IrStructRef {
+    fn empty() -> IrStructRef {
+        IrStructRef { id: Id { _value: 0 }, name: "", fields: &[],
+                       is_union: false, is_zero_sized: true, scope_idx: 0, type_args: &[],
+                       is_packed: false, attributes: &[], namespace: "" }
+    }
+}
+
+struct IrField {
+    name: &[u8],
+    ty: &IrTy,
+}
+
+struct IrEnumRef {
+    id: Id,
+    name: &[u8],
+    underlying: &IrTy,
+    variants: &[IrEnumVariant],
+    scope_idx: u32,
+    attributes: &[Attribute],
+    /// The module the type is in (see IrFunction::namespace).
+    namespace: &[u8],
+}
+
+impl IrEnumRef {
+    fn empty() -> IrEnumRef {
+        IrEnumRef { id: Id { _value: 0 }, name: "",
+                     underlying: null, variants: &[], scope_idx: 0, attributes: &[], namespace: "" }
+    }
+}
+
+struct IrEnumVariant {
+    name: &[u8],
+    value: u64,
+}
+
+// === IR Expressions ===
+
+// IrExpr tags
+enum IrTag {
+    IntLit = 0i32,
+    FloatLit = 1i32,
+    BoolLit = 2i32,
+    StringLit = 3i32,
+    NullLit = 4i32,
+    Local = 5i32,
+    Param = 6i32,
+    FnRef = 7i32,
+    GlobalRef = 8i32,
+    Block = 9i32,
+    Binary = 10i32,
+    Unary = 11i32,
+    Assign = 12i32,
+    Call = 13i32,
+    FieldAccess = 14i32,
+    Index = 15i32,
+    Ref = 16i32,
+    Deref = 17i32,
+    Cast = 18i32,
+    If = 19i32,
+    While = 21i32,
+    Loop = 22i32,
+    Break = 23i32,
+    Continue = 24i32,
+    Return = 25i32,
+    Let = 26i32,
+    StructLit = 27i32,
+    TupleLit = 28i32,
+    ArrayLit = 29i32,
+    Defer = 30i32,
+    Void = 31i32,
+    Zeroed = 32i32,
+    Unreachable = 34i32,
+    Undef = 35i32,
+    Transmute = 39i32,    // transmute intrinsic; lhs holds the value, ty holds target type
+    Trap = 40i32,
+    StackAlloc = 41i32,   // stack allocation; lhs holds size expr, ty holds return pointer type
+    InlineAsm = 45i32,    // inline assembly; str_val holds asm string
+    LlvmIntrinsic = 46i32, // generic LLVM intrinsic call; str_val=intrinsic name, items=args, ty=return type
+    ConstPanic = 47i32,   // const_panic intrinsic — str_val holds the panic message; const_eval surfaces it as a compile error, codegen treats as unreachable
+    ConstWarning = 48i32, // const_warning intrinsic — str_val holds the message; const_eval surfaces a warning, codegen no-ops
+    ConstNote = 49i32,    // const_note intrinsic — str_val holds the message; const_eval surfaces a note, codegen no-ops
+    InConstContext = 50i32, // in_const_context intrinsic — const_eval returns true, codegen emits false
+    AtomicOp = 51i32,     // atomic intrinsic; str_val = op ("load"/"store"/"rmw"/"cmpxchg"/"fence"), items = args, ty = return type
+    TypeLayout = 52i32,   // codegen_type_func("sizeof" / "_Alignof"): the size or alignment of a type per LLVM's data layout
+    ConstAlloc = 53i32,   // const_alloc::<T>(len) -> &mut T: an allocation of the constant evaluator (items = [len]); unreachable at run time
+    ConstFree = 54i32,    // const_free(ptr) (items = [ptr]); unreachable at run time
+    ConstBake = 55i32,    // const_bake(value): the value, with the allocations it reaches kept as constants (items = [value]); unreachable at run time
+}
+
+// Call target tags
+enum CallKind {
+    Direct = 0i32,
+    Indirect = 1i32,
+}
+
+struct IrCallTarget {
+    tag: CallKind,
+    fn_ref: IrFnRef,       // for CallKind::Direct
+    callee: &IrExpr,        // for CallKind::Indirect
+}
+
+// IrExpr sub-structs for union variants
+struct _IrLitData { int_val: u64, int_val_hi: u64, float_val: f64, bool_val: bool, str_val: &[u8] }
+struct _IrVarData { id: Id, param_idx: u32 }
+struct _IrBinData { bin_op: BinOp, lhs: &IrExpr, rhs: &IrExpr }
+struct _IrUnData { un_op: UnOp, lhs: &IrExpr }
+struct _IrAssignData { lhs: &IrExpr, rhs: &IrExpr }
+struct _IrCallData { call_target: IrCallTarget, items: &[&IrExpr] }
+struct _IrFieldAccessData { lhs: &IrExpr, field_idx: u32 }
+struct _IrSingleData { lhs: &IrExpr }
+struct _IrCastData { lhs: &IrExpr, ir_ty: &IrTy }
+struct _IrIfData {
+    cond: &IrExpr,
+    lhs: &IrExpr,
+    opt_expr: Option<&IrExpr>,
+    /// For an `if`, its condition's value at run time if it is known when
+    /// compiling (0 if not, 1 for false, 2 for true): only that branch is
+    /// compiled.
+    run_time_cond: u8,
+}
+struct _IrRetData { opt_expr: Option<&IrExpr> }
+struct _IrBlockData { items: &[&IrExpr] }
+struct _IrLetData { id: Id, ir_ty: &IrTy, opt_expr: Option<&IrExpr> }
+struct _IrStructLitData { items: &[&IrExpr], ir_ty: &IrTy }
+struct _IrTypeOpData { ir_ty: &IrTy }
+struct _IrCodegenData { str_val: &[u8], items: &[&IrExpr] }
+struct _IrTypeLayoutData { query: &[u8], of: &IrTy }
+struct _IrIdxData { lhs: &IrExpr, rhs: &IrExpr }
+
+union _IrExprData {
+    lit: _IrLitData,
+    var: _IrVarData,
+    bin: _IrBinData,
+    un: _IrUnData,
+    assign: _IrAssignData,
+    call: _IrCallData,
+    field: _IrFieldAccessData,
+    single: _IrSingleData,
+    cast: _IrCastData,
+    if_data: _IrIfData,
+    ret: _IrRetData,
+    block: _IrBlockData,
+    let_data: _IrLetData,
+    struct_lit: _IrStructLitData,
+    type_op: _IrTypeOpData,
+    codegen: _IrCodegenData,
+    type_layout: _IrTypeLayoutData,
+    idx: _IrIdxData,
+    fn_ref: IrFnRef,
+    global_ref: IrGlobalRef,
+}
+
+struct IrExpr {
+    tag: IrTag,
+    ty: &IrTy,
+    span: Span,
+    _data: _IrExprData,
+}
+
+impl IrExpr {
+    /// A node of a kind without parts (e.g. `Zeroed`, `Undef`, `NullLit`).
+    fn of(tag: IrTag, ty: &IrTy) -> IrExpr {
+        let e = IrExpr::void_expr(ty);
+        e.tag = tag;
+        e
+    }
+
+    /// A block, tuple or array of `items`.
+    fn list(tag: IrTag, ty: &IrTy, items: &[&IrExpr]) -> IrExpr {
+        let e = IrExpr::of(tag, ty);
+        e._data.block.items = items;
+        e
+    }
+
+    /// A struct literal of `items` (a value for each field, in order).
+    fn struct_lit(ty: &IrTy, items: &[&IrExpr]) -> IrExpr {
+        let e = IrExpr::of(IrTag::StructLit, ty);
+        e._data.struct_lit = _IrStructLitData { items: items, ir_ty: ty };
+        e
+    }
+
+    fn string_lit(ty: &IrTy, value: &[u8]) -> IrExpr {
+        let e = IrExpr::of(IrTag::StringLit, ty);
+        e._data.lit.str_val = value;
+        e
+    }
+
+    /// A reference to a function (as a value).
+    fn of_fn(ty: &IrTy, target: IrFnRef) -> IrExpr {
+        let e = IrExpr::of(IrTag::FnRef, ty);
+        e._data.fn_ref = target;
+        e
+    }
+
+    /// A reference to a global (as a place).
+    fn of_global(ty: &IrTy, target: IrGlobalRef) -> IrExpr {
+        let e = IrExpr::of(IrTag::GlobalRef, ty);
+        e._data.global_ref = target;
+        e
+    }
+
+    fn void_expr(void_ty: &IrTy) -> IrExpr {
+        let r = std::mem::zeroed::<IrExpr>();
+        r.tag = IrTag::Void;
+        r.ty = void_ty;
+        r.span = Span::empty();
+        r
+    }
+
+    // Simple single-variant accessors
+    fn int_val(self: &IrExpr) -> u64 { self._data.lit.int_val }
+    fn int_val_hi(self: &IrExpr) -> u64 { self._data.lit.int_val_hi }
+    fn int_val_u128(self: &IrExpr) -> u128 {
+        ((self._data.lit.int_val_hi as u128) << 64) | (self._data.lit.int_val as u128)
+    }
+    fn float_val(self: &IrExpr) -> f64 { self._data.lit.float_val }
+    fn bool_val(self: &IrExpr) -> bool { self._data.lit.bool_val }
+    fn bin_op(self: &IrExpr) -> BinOp { self._data.bin.bin_op }
+    fn un_op(self: &IrExpr) -> UnOp { self._data.un.un_op }
+    fn call_target(self: &IrExpr) -> &IrCallTarget { &self._data.call.call_target }
+    fn field_idx(self: &IrExpr) -> u32 { self._data.field.field_idx }
+    fn param_idx(self: &IrExpr) -> u32 { self._data.var.param_idx }
+    fn fn_ref(self: &IrExpr) -> &IrFnRef { &self._data.fn_ref }
+    fn global_ref(self: &IrExpr) -> &IrGlobalRef { &self._data.global_ref }
+
+    // Dispatch-based accessors for shared fields
+    fn lhs(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::Binary { self._data.bin.lhs }
+        else if self.tag == IrTag::Unary { self._data.un.lhs }
+        else if self.tag == IrTag::Assign { self._data.assign.lhs }
+        else if self.tag == IrTag::FieldAccess { self._data.field.lhs }
+        else if self.tag == IrTag::Index { self._data.idx.lhs }
+        else if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.lhs }
+        else if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.lhs }
+        else { self._data.single.lhs }  // Ref, Deref, Defer, Loop
+    }
+
+    fn rhs(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::Binary { self._data.bin.rhs }
+        else if self.tag == IrTag::Assign { self._data.assign.rhs }
+        else if self.tag == IrTag::Index { self._data.idx.rhs }
+        else { self._data.idx.rhs }  // fallback
+    }
+
+    fn cond(self: &IrExpr) -> &IrExpr {
+        if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.cond }
+        else { self._data.if_data.cond }  // fallback
+    }
+
+    fn items(self: &IrExpr) -> &[&IrExpr] {
+        if self.tag == IrTag::Call { self._data.call.items }
+        else if self.tag == IrTag::StructLit { self._data.struct_lit.items }
+        else if self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::AtomicOp
+            || self.tag == IrTag::ConstPanic || self.tag == IrTag::ConstWarning || self.tag == IrTag::ConstNote
+            || self.tag == IrTag::ConstAlloc || self.tag == IrTag::ConstFree || self.tag == IrTag::ConstBake { self._data.codegen.items }
+        else { self._data.block.items }  // Block, TupleLit, ArrayLit
+    }
+
+    fn ir_ty(self: &IrExpr) -> &IrTy {
+        if self.tag == IrTag::Cast || self.tag == IrTag::Transmute { self._data.cast.ir_ty }
+        else if self.tag == IrTag::Let { self._data.let_data.ir_ty }
+        else if self.tag == IrTag::StructLit { self._data.struct_lit.ir_ty }
+        else { self._data.type_op.ir_ty }  // Zeroed
+    }
+
+    fn opt_expr(self: &IrExpr) -> Option<&IrExpr> {
+        if self.tag == IrTag::If || self.tag == IrTag::While { self._data.if_data.opt_expr }
+        else if self.tag == IrTag::Let { self._data.let_data.opt_expr }
+        else { self._data.ret.opt_expr }  // Return, Break
+    }
+
+    fn str_val(self: &IrExpr) -> &[u8] {
+        if self.tag == IrTag::InlineAsm || self.tag == IrTag::LlvmIntrinsic || self.tag == IrTag::AtomicOp || self.tag == IrTag::ConstPanic || self.tag == IrTag::ConstWarning || self.tag == IrTag::ConstNote { self._data.codegen.str_val }
+        else { self._data.lit.str_val }  // StringLit
+    }
+
+    fn id(self: &IrExpr) -> Id {
+        if self.tag == IrTag::Let { self._data.let_data.id }
+        else { self._data.var.id }  // Local, Param
+    }
+
+    /// The expressions this one is made of, in evaluation order.
+    fn children(self: &IrExpr) -> IrChildren {
+        IrChildren { expr: self, index: 0 }
+    }
+
+    /// The `index`th of `children()`, if there is one.
+    fn child(self: &IrExpr, index: usize) -> Option<&IrExpr> {
+        let in_list = |items: &[&IrExpr], i: usize| -> Option<&IrExpr> {
+            if i < items.len() { Option::some(items[i]) } else { Option::none() }
+        };
+        switch self.tag {
+            IrTag::Binary, IrTag::Assign, IrTag::Index => switch index {
+                0 => Option::some(self.lhs()),
+                1 => Option::some(self.rhs()),
+                _ => Option::none(),
+            },
+            IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Transmute, IrTag::Ref, IrTag::Deref,
+            IrTag::Defer, IrTag::Loop, IrTag::StackAlloc => {
+                let inner = self.lhs();
+                if index == 0 && inner as &void != null { Option::some(inner) } else { Option::none() }
+            }
+            IrTag::If, IrTag::While => switch index {
+                0 => Option::some(self.cond()),
+                1 => Option::some(self.lhs()),
+                2 => self.opt_expr(),
+                _ => Option::none(),
+            },
+            IrTag::Call => if self.call_target().tag == CallKind::Indirect {
+                if index == 0 { Option::some(self.call_target().callee) } else { in_list(self.items(), index - 1) }
+            } else {
+                in_list(self.items(), index)
+            },
+            IrTag::Block, IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::LlvmIntrinsic,
+            IrTag::AtomicOp, IrTag::ConstPanic, IrTag::ConstWarning, IrTag::ConstNote, IrTag::ConstAlloc,
+            IrTag::ConstFree, IrTag::ConstBake => in_list(self.items(), index),
+            IrTag::Let, IrTag::Return, IrTag::Break => if index == 0 { self.opt_expr() } else { Option::none() },
+            // Literals, variables, references to items and the like.
+            _ => Option::none(),
+        }
+    }
+
+    /// Replace, in place, the ids of the variables it uses and declares
+    /// (those in `remap`).
+    fn remap_locals(self: &IrExpr, remap: &HashMap<usize, usize>) {
+        let e = self as &mut IrExpr;
+        switch e.tag {
+            IrTag::Local, IrTag::Param => {
+                e._data.var.id._value = remap.get(&e._data.var.id._value).unwrap_or(e._data.var.id._value);
+            }
+            IrTag::Let => {
+                e._data.let_data.id._value = remap.get(&e._data.let_data.id._value).unwrap_or(e._data.let_data.id._value);
+            }
+            _ => {}
+        }
+        for child in self.children() {
+            child.remap_locals(remap);
+        }
+    }
+
+    /// Whether evaluating it has no effects (as alumina-boot's `Expr::pure`).
+    fn is_pure(self: &IrExpr) -> bool {
+        switch self.tag {
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::Local, IrTag::Param, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void, IrTag::Zeroed,
+            IrTag::Undef => true,
+            IrTag::Binary, IrTag::Index, IrTag::Unary, IrTag::FieldAccess, IrTag::Cast, IrTag::Ref,
+            IrTag::Deref, IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block, IrTag::If =>
+                self.children().all(IrExpr::is_pure),
+            _ => false,
+        }
+    }
+
+    /// Whether it may be constant (it reads no variables).
+    fn may_be_constant(self: &IrExpr) -> bool {
+        switch self.tag {
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::InConstContext, IrTag::TypeLayout, IrTag::FnRef, IrTag::GlobalRef, IrTag::Void,
+            IrTag::Zeroed => true,
+            IrTag::Call => self.call_target().tag == CallKind::Direct && self.children().all(IrExpr::may_be_constant),
+            IrTag::Binary, IrTag::Index, IrTag::Unary, IrTag::Cast, IrTag::Transmute, IrTag::FieldAccess,
+            IrTag::Ref, IrTag::TupleLit, IrTag::ArrayLit, IrTag::StructLit, IrTag::Block =>
+                self.children().all(IrExpr::may_be_constant),
+            _ => false,
+        }
+    }
+
+    /// Whether it may depend on `in_const_context()` (a call may).
+    fn mentions_const_context(self: &IrExpr) -> bool {
+        switch self.tag {
+            IrTag::InConstContext, IrTag::Call => true,
+            IrTag::Binary, IrTag::Unary, IrTag::Cast, IrTag::Block, IrTag::If =>
+                self.children().any(IrExpr::mentions_const_context),
+            _ => false,
+        }
+    }
+
+    /// Whether it denotes a place (that can be assigned to or referenced).
+    fn is_place(self: &IrExpr) -> bool {
+        switch self.tag {
+            IrTag::Local, IrTag::Param, IrTag::GlobalRef, IrTag::Deref, IrTag::Index => true,
+            IrTag::FieldAccess => self.lhs().is_place(),
+            _ => false,
+        }
+    }
+
+    /// Whether evaluating it (a place) twice is the same as once (no side
+    /// effects, e.g. no calls).
+    fn is_simple_place(self: &IrExpr) -> bool {
+        switch self.tag {
+            IrTag::Local, IrTag::Param, IrTag::GlobalRef => true,
+            IrTag::FieldAccess, IrTag::Deref => self.lhs().is_simple_place(),
+            _ => false,
+        }
+    }
+
+    /// Whether it is a constant a global can be initialized with directly:
+    /// literals, aggregates and arithmetic of them, and addresses of globals
+    /// and functions.
+    fn is_plain_constant(self: &IrExpr) -> bool {
+        switch self.tag {
+            IrTag::IntLit, IrTag::FloatLit, IrTag::BoolLit, IrTag::StringLit, IrTag::NullLit,
+            IrTag::Void, IrTag::Zeroed, IrTag::Undef, IrTag::FnRef => true,
+            IrTag::Ref => self.lhs().tag == IrTag::GlobalRef,
+            IrTag::Cast, IrTag::Unary, IrTag::Binary, IrTag::StructLit, IrTag::TupleLit, IrTag::ArrayLit =>
+                self.children().all(IrExpr::is_plain_constant),
+            _ => false,
+        }
+    }
+}
+
+/// The children of an IR expression (see `IrExpr::children`).
+struct IrChildren {
+    expr: &IrExpr,
+    index: usize,
+}
+
+impl IrChildren {
+    fn next(self: &mut IrChildren) -> Option<&IrExpr> {
+        let child = self.expr.child(self.index);
+        self.index += 1;
+        child
+    }
+
+    mixin std::iter::Iterator<IrChildren, &IrExpr>;
+    mixin std::iter::IteratorExt<IrChildren, &IrExpr>;
+}
+
+struct IrFnRef {
+    id: Id,
+    mangled_name: &[u8],
+}
+
+impl IrFnRef {
+    fn empty() -> IrFnRef {
+        IrFnRef { id: Id { _value: 0 }, mangled_name: "" }
+    }
+}
+
+struct IrGlobalRef {
+    id: Id,
+    mangled_name: &[u8],
+}
+
+impl IrGlobalRef {
+    fn empty() -> IrGlobalRef {
+        IrGlobalRef { id: Id { _value: 0 }, mangled_name: "" }
+    }
+}
+
+struct IrLocalDef {
+    id: Id,
+    ty: &IrTy,
+    name: &[u8],
+    span: Span,
+}
+
+struct IrFunction {
+    id: Id,
+    name: &[u8],
+    mangled_name: &[u8],
+    params: &[IrParam],
+    return_type: &IrTy,
+    body: Option<&IrExpr>,
+    local_defs: &[IrLocalDef],
+    attributes: &[Attribute],
+    is_variadic: bool,
+    abi: Option<&[u8]>,
+    span: Span,
+    // Type args this function was mono'd with — used by `ir_type_name` to render
+    // function-as-type-arg paths (`type_name<u32>`) source-readably.
+    type_args: &[&IrTy],
+    /// The module (or type, for a method) the function is in, `a::b::T`
+    /// (empty for the root module), for debug information.
+    namespace: &[u8],
+}
+
+struct IrParam {
+    id: Id,
+    ty: &IrTy,
+    name: &[u8],
+}
+
+struct IrGlobal {
+    id: Id,
+    name: &[u8],
+    mangled_name: &[u8],
+    ty: &IrTy,
+    init: Option<&IrExpr>,
+    is_const: bool,
+    is_extern: bool,
+    attributes: &[Attribute],
+    /// For a const whose initializer the const evaluator could not reduce:
+    /// where it gave up (reported if codegen cannot fold it either).
+    const_failure: Option<aluminac::const_eval::ConstEvalFailure>,
+}
+
+// === Const evaluation value types ===
+
+// ConstValue tags
+enum CValTag {
+    Void = 0i32,
+    Bool = 1i32,
+    Int = 2i32,         // integer value (u64 storage, BuiltinType for width)
+    Float = 3i32,       // float value (f64 storage, BuiltinType for width)
+    Bytes = 4i32,       // string/byte slice data
+    Tuple = 5i32,
+    Array = 6i32,
+    Struct = 7i32,
+    FnPtr = 8i32,
+    Pointer = 9i32,
+    Lvalue = 10i32,
+    Uninitialized = 11i32,
+}
+
+// ConstLValue tags
+enum CLVTag {
+    Variable = 0i32,
+    Alloc = 1i32,
+    Field = 2i32,
+    Index = 3i32,
+    TupleIndex = 4i32,
+    ConstItem = 5i32,
+}
+
+struct _CLVFieldData {
+    inner: &ConstLValue,
+    field_idx: u32,
+}
+
+struct _CLVIndexData {
+    inner: &ConstLValue,
+    index: usize,
+}
+
+union _ConstLValueData {
+    id: Id,                  // Variable, Alloc, ConstItem
+    field: _CLVFieldData,    // Field
+    idx: _CLVIndexData,      // Index, TupleIndex
+}
+
+struct ConstLValue {
+    tag: CLVTag,
+    _data: _ConstLValueData,
+}
+
+impl ConstLValue {
+    fn id(self: &ConstLValue) -> Id { self._data.id }
+    fn inner(self: &ConstLValue) -> &ConstLValue { self._data.field.inner }
+    fn field_idx(self: &ConstLValue) -> u32 { self._data.field.field_idx }
+    fn index(self: &ConstLValue) -> usize { self._data.idx.index }
+
+    fn variable(id: Id) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Variable, _data: _ConstLValueData { id: id } }
+    }
+    /// An allocation of the constant evaluator's heap.
+    fn alloc(id: Id) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Alloc, _data: _ConstLValueData { id: id } }
+    }
+    /// The variable or allocation the place is in.
+    fn root(self: &ConstLValue) -> &ConstLValue {
+        switch self.tag {
+            CLVTag::Field, CLVTag::Index, CLVTag::TupleIndex => self.inner().root(),
+            _ => self,
+        }
+    }
+    fn mk_field(inner: &ConstLValue, field_idx: u32) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Field, _data: _ConstLValueData { field: _CLVFieldData { inner: inner, field_idx: field_idx } } }
+    }
+    fn mk_index(inner: &ConstLValue, index: usize) -> ConstLValue {
+        ConstLValue { tag: CLVTag::Index, _data: _ConstLValueData { idx: _CLVIndexData { inner: inner, index: index } } }
+    }
+    fn mk_tuple_index(inner: &ConstLValue, index: usize) -> ConstLValue {
+        ConstLValue { tag: CLVTag::TupleIndex, _data: _ConstLValueData { idx: _CLVIndexData { inner: inner, index: index } } }
+    }
+}
+
+struct ConstField {
+    field_idx: u32,
+    value: ConstValue,
+}
+
+struct _CVIntData {
+    builtin_type: BuiltinType,
+    /// The value's bits (as of the type's width).
+    int_val: u128,
+}
+
+struct _CVFloatData {
+    builtin_type: BuiltinType,
+    float_val: f64,
+}
+
+struct _CVBytesData {
+    bytes: &[u8],
+    bytes_offset: usize,
+}
+
+struct _CVPointerData {
+    lvalue: &ConstLValue,
+    pointee_ty: &IrTy,
+}
+
+union _ConstValueData {
+    int_data: _CVIntData,           // Bool, Int
+    float_data: _CVFloatData,       // Float
+    bytes_data: _CVBytesData,       // Bytes
+    elems: &[ConstValue],           // Tuple, Array
+    fields: &[ConstField],          // Struct
+    fn_ref: IrFnRef,                // FnPtr
+    ptr_data: _CVPointerData,       // Pointer
+    lvalue: &ConstLValue,           // Lvalue
+}
+
+struct ConstValue {
+    tag: CValTag,
+    _data: _ConstValueData,
+}
+
+impl ConstValue {
+    /// Whether it contains pointers (other than to string literals, which
+    /// are values of their own).
+    fn contains_pointer(self: &ConstValue) -> bool {
+        switch self.tag {
+            CValTag::Pointer, CValTag::Lvalue => true,
+            CValTag::Tuple, CValTag::Array => self.elems().iter().any(|e: ConstValue| -> bool { e.contains_pointer() }),
+            CValTag::Struct => self.fields().iter().any(|f: ConstField| -> bool { f.value.contains_pointer() }),
+            _ => false,
+        }
+    }
+
+    // Accessors - builtin_type is at offset 0 in both int_data and float_data
+    fn builtin_type(self: &ConstValue) -> BuiltinType { self._data.int_data.builtin_type }
+    /// The value's low 64 bits (see `bits`).
+    fn int_val(self: &ConstValue) -> u64 { self._data.int_data.int_val as u64 }
+    fn bits(self: &ConstValue) -> u128 { self._data.int_data.int_val }
+    fn float_val(self: &ConstValue) -> f64 { self._data.float_data.float_val }
+    fn bytes(self: &ConstValue) -> &[u8] { self._data.bytes_data.bytes }
+    fn bytes_offset(self: &ConstValue) -> usize { self._data.bytes_data.bytes_offset }
+    fn elems(self: &ConstValue) -> &[ConstValue] { self._data.elems }
+    fn fields(self: &ConstValue) -> &[ConstField] { self._data.fields }
+    fn fn_ref(self: &ConstValue) -> IrFnRef { self._data.fn_ref }
+    fn lvalue(self: &ConstValue) -> &ConstLValue { self._data.lvalue }
+    fn pointee_ty(self: &ConstValue) -> &IrTy { self._data.ptr_data.pointee_ty }
+
+    fn make_void() -> ConstValue {
+        ConstValue { tag: CValTag::Void, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
+    }
+
+    // Lets Result<ConstValue, _>::unwrap_err format the ok value on its (cold)
+    // panic path via the Formattable branch, avoiding the generic DebugAdapter.
+    fn fmt<F: std::fmt::Formatter<F>>(self: &ConstValue, f: &mut F) -> std::fmt::Result {
+        write!(f, "ConstValue(tag={})", self.tag as i32)
+    }
+
+    fn make_bool(v: bool) -> ConstValue {
+        ConstValue { tag: CValTag::Bool, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Bool, int_val: if v { 1u128 } else { 0u128 } } } }
+    }
+
+    fn make_int(v: u64, bt: BuiltinType) -> ConstValue {
+        ConstValue::make_bits(v as u128, bt)
+    }
+
+    fn make_bits(v: u128, bt: BuiltinType) -> ConstValue {
+        ConstValue { tag: CValTag::Int, _data: _ConstValueData { int_data: _CVIntData { builtin_type: bt, int_val: v } } }
+    }
+
+    fn make_float(v: f64, bt: BuiltinType) -> ConstValue {
+        ConstValue { tag: CValTag::Float, _data: _ConstValueData { float_data: _CVFloatData { builtin_type: bt, float_val: v } } }
+    }
+
+    fn make_bytes(data: &[u8], offset: usize) -> ConstValue {
+        ConstValue { tag: CValTag::Bytes, _data: _ConstValueData { bytes_data: _CVBytesData { bytes: data, bytes_offset: offset } } }
+    }
+
+    fn make_tuple(elems: &[ConstValue]) -> ConstValue {
+        ConstValue { tag: CValTag::Tuple, _data: _ConstValueData { elems: elems } }
+    }
+
+    fn make_array(elems: &[ConstValue]) -> ConstValue {
+        ConstValue { tag: CValTag::Array, _data: _ConstValueData { elems: elems } }
+    }
+
+    fn make_struct(fields: &[ConstField]) -> ConstValue {
+        ConstValue { tag: CValTag::Struct, _data: _ConstValueData { fields: fields } }
+    }
+
+    fn make_fn_ptr(fr: IrFnRef) -> ConstValue {
+        ConstValue { tag: CValTag::FnPtr, _data: _ConstValueData { fn_ref: fr } }
+    }
+
+    fn make_pointer(lv: &ConstLValue, ty: &IrTy) -> ConstValue {
+        ConstValue { tag: CValTag::Pointer, _data: _ConstValueData { ptr_data: _CVPointerData { lvalue: lv, pointee_ty: ty } } }
+    }
+
+    fn make_lvalue(lv: &ConstLValue) -> ConstValue {
+        ConstValue { tag: CValTag::Lvalue, _data: _ConstValueData { lvalue: lv } }
+    }
+
+    fn make_uninitialized() -> ConstValue {
+        ConstValue { tag: CValTag::Uninitialized, _data: _ConstValueData { int_data: _CVIntData { builtin_type: BuiltinType::Void, int_val: 0 } } }
+    }
+
+    fn is_truthy(self: &ConstValue) -> bool {
+        if self.tag == CValTag::Bool { return self.int_val() != 0u64; }
+        if self.tag == CValTag::Int { return self.int_val() != 0u64; }
+        false
+    }
+
+    /// Extract a u64 value (for enum variants, array sizes, etc.)
+    fn as_u64(self: &ConstValue) -> Option<u64> {
+        if self.tag == CValTag::Int || self.tag == CValTag::Bool {
+            Option::some(self.int_val())
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Extract a bool value
+    fn as_bool(self: &ConstValue) -> Option<bool> {
+        switch self.tag {
+            CValTag::Bool => Option::some(self.int_val() != 0u64),
+            CValTag::Int => Option::some(self.int_val() != 0u64),
+            _ => Option::none(),
+        }
+    }
+
+    /// Extract a usize value
+    fn as_usize(self: &ConstValue) -> Option<usize> {
+        if self.tag == CValTag::Int || self.tag == CValTag::Bool {
+            Option::some(self.int_val() as usize)
+        } else {
+            Option::none()
+        }
+    }
+}
+
+// === Compilation unit ===
+
+struct CompilationUnit {
+    functions: &mut [IrFunction],
+    globals: &mut [IrGlobal],
+    structs: &mut [IrStructRef],
+    enums: &mut [IrEnumRef],
+}
+
+impl CompilationUnit {
+    /// Report expressions with effects that appear more than once in a
+    /// function (they would be evaluated as many times): only values
+    /// without effects may be shared, so this is a compiler bug.
+    fn check_evaluated_once(self: &CompilationUnit, diag: &mut diagnostics::DiagnosticContext) {
+        let seen: HashSet<usize> = HashSet::new();
+        defer seen.free();
+        for f in self.functions.iter_ref() {
+            if f.body.is_some() {
+                seen.clear();
+                check_expr_evaluated_once(f.body.unwrap(), &seen, diag);
+            }
+        }
+    }
+}
+
+fn check_expr_evaluated_once(e: &IrExpr, seen: &mut HashSet<usize>, diag: &mut diagnostics::DiagnosticContext) {
+    // (Leaves stand for an evaluation where they appear: the `#[inline(ir)]`
+    // copies of a body share them.)
+    let leaf = switch e.tag {
+        IrTag::Unreachable, IrTag::Trap, IrTag::InConstContext, IrTag::TypeLayout, IrTag::InlineAsm => true,
+        _ => false,
+    };
+    if !seen.insert(e as usize) {
+        // (A shared subtree is checked once.)
+        if !leaf && !e.is_pure() {
+            diag.emit(diagnostics::CodeDiagnostic::generic_error(diag.written_span(e.span),
+                "internal compiler error: an expression with effects is evaluated more than once"));
+        }
+        return;
+    }
+    for child in e.children() {
+        check_expr_evaluated_once(child, seen, diag);
+    }
+}
+
+// === Names ===
+
+fn write_path(buf: &mut StringBuf, namespace: &[u8], name: &[u8], qualified: bool) {
+    if qualified && !namespace.is_empty() {
+        buf.extend_from_slice(namespace);
+        buf.extend_from_slice("::");
+    }
+    buf.extend_from_slice(name);
+}
+
+/// The name of a type as it is written in source code; `qualified`: with the
+/// path of a struct or enum (the ones in it always have theirs).
+fn write_type_name(buf: &mut StringBuf, ty: &IrTy, qualified: bool) {
+    // (Type argument lists can hold null for an argument never given.)
+    if ty as &void as usize == 0 {
+        buf.extend_from_slice("()");
+        return;
+    }
+    switch ty.tag {
+        IrTyTag::Builtin => buf.extend_from_slice(ty.builtin().name()),
+        IrTyTag::Void => buf.extend_from_slice("()"),
+        IrTyTag::Never => buf.extend_from_slice("!"),
+        IrTyTag::Pointer => {
+            buf.extend_from_slice(if ty.is_const() { "&" } else { "&mut " });
+            write_type_name(buf, ty.inner(), true);
+        }
+        IrTyTag::Slice => {
+            buf.extend_from_slice(if ty.is_const() { "&[" } else { "&mut [" });
+            write_type_name(buf, ty.inner(), true);
+            buf.extend_from_slice("]");
+        }
+        IrTyTag::Array => {
+            buf.extend_from_slice("[");
+            write_type_name(buf, ty.inner(), true);
+            write!(buf, "; {}]", ty.array_size()).unwrap();
+        }
+        IrTyTag::Tuple => {
+            buf.extend_from_slice("(");
+            write_type_list(buf, ty.elems());
+            buf.extend_from_slice(")");
+        }
+        IrTyTag::FnPointer => {
+            buf.extend_from_slice("fn(");
+            write_type_list(buf, ty.elems());
+            buf.extend_from_slice(")");
+            if !ty.ret_ty().is_void() {
+                buf.extend_from_slice(" -> ");
+                write_type_name(buf, ty.ret_ty(), true);
+            }
+        }
+        IrTyTag::Struct => {
+            write_path(buf, ty.struct_ref().namespace, ty.struct_ref().name, qualified);
+            let args = ty.struct_ref().type_args;
+            if !args.is_empty() {
+                buf.extend_from_slice("<");
+                write_type_list(buf, args);
+                buf.extend_from_slice(">");
+            }
+        }
+        IrTyTag::Enum => write_path(buf, ty.enum_ref().namespace, ty.enum_ref().name, qualified),
+        // (A closure by its function's path, `main::f::{closure#0}`.)
+        IrTyTag::Closure => write_symbol_name(buf, ty.closure_fn().mangled_name),
+        IrTyTag::Fn => {
+            write_symbol_name(buf, ty.fn_item_ref().mangled_name);
+        }
+        _ => buf.extend_from_slice("{unknown}"),
+    }
+}
+
+fn write_type_list(buf: &mut StringBuf, tys: &[&IrTy]) {
+    for (i, t) in tys.iter().enumerate() {
+        if i > 0 {
+            buf.extend_from_slice(", ");
+        }
+        write_type_name(buf, t, true);
+    }
+}
+
+/// The end of the segment of `path` (`a::g<b::C>::d`) at `start`: the next
+/// `::` not in type arguments, or the end.
+fn path_segment_end(path: &[u8], start: usize) -> usize {
+    let depth = 0usize;
+    let i = start;
+    while i < path.len() {
+        let c = path[i];
+        if c == '<' || c == '(' || c == '[' {
+            depth += 1;
+        } else if (c == '>' && !(i > 0 && path[i - 1] == '-')) || c == ')' || c == ']' {
+            if depth > 0 { depth -= 1; }
+        } else if depth == 0 && c == ':' && i + 1 < path.len() && path[i + 1] == ':' {
+            return i;
+        }
+        i += 1;
+    }
+    path.len()
+}
+
+/// `namespace::name<type_args>`.
+fn write_item_path(buf: &mut StringBuf, namespace: &[u8], name: &[u8], type_args: &[&IrTy]) {
+    if !namespace.is_empty() {
+        buf.extend_from_slice(namespace);
+        buf.extend_from_slice("::");
+    }
+    write_fn_name(buf, name, type_args);
+}
+
+/// The last name in a symbol `MonoCtx::mangle_path` made (`report<i32>` in
+/// `_ZN4main11report<i32>E.1`), if it is one.
+fn symbol_last_name(mangled: &[u8]) -> Option<&[u8]> {
+    if mangled.len() < 3 || mangled[..2] != "_Z" {
+        return Option::none();
+    }
+    let i = if mangled[2] == 'N' { 3usize } else { 2usize };
+    let last: Option<&[u8]> = Option::none();
+    while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+        let len = 0usize;
+        while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+            len = len * 10 + (mangled[i] - '0') as usize;
+            i += 1;
+        }
+        if i + len > mangled.len() {
+            return Option::none();
+        }
+        last = Option::some(mangled[i..i + len]);
+        i += len;
+    }
+    last
+}
+
+/// A function's name with its type arguments, `report<i32>`.
+fn write_fn_name(buf: &mut StringBuf, name: &[u8], type_args: &[&IrTy]) {
+    buf.extend_from_slice(name);
+    if !type_args.is_empty() {
+        buf.extend_from_slice("<");
+        write_type_list(buf, type_args);
+        buf.extend_from_slice(">");
+    }
+}
+
+/// The path of a function in its symbol name (`_ZN4main3addE`, see
+/// `MonoCtx::mangle_path`: `main::add`; `_AL<name><n>`: `<name>`).
+fn write_symbol_name(buf: &mut StringBuf, mangled: &[u8]) {
+    if mangled.len() > 2 && mangled[..2] == "_Z" {
+        let i = if mangled[2] == 'N' { 3usize } else { 2usize };
+        let first = true;
+        while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+            let len = 0usize;
+            while i < mangled.len() && mangled[i] >= '0' && mangled[i] <= '9' {
+                len = len * 10 + (mangled[i] - '0') as usize;
+                i += 1;
+            }
+            if i + len > mangled.len() {
+                break;
+            }
+            if !first {
+                buf.extend_from_slice("::");
+            }
+            buf.extend_from_slice(mangled[i..i + len]);
+            first = false;
+            i += len;
+        }
+        return;
+    }
+    let end = mangled.len();
+    while end > 0 && mangled[end - 1] >= '0' && mangled[end - 1] <= '9' {
+        end -= 1;
+    }
+    let start = if mangled.len() >= 3 && mangled[..3] == "_AL" { 3usize } else { 0usize };
+    buf.extend_from_slice(if start < end { mangled[start..end] } else { mangled });
+}

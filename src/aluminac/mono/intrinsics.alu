@@ -1,0 +1,992 @@
+// Intrinsic lowering for the monomorphization engine
+//
+// Handles compiler intrinsics like size_of, transmute, const_eval, etc.
+// Extracted from lower.alu for modularity.
+
+use mono::*;
+use mono::lower::Mono;
+use ast::*;
+use ir::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use layout::{compute_type_size, compute_type_align};
+use aluminac_common::arena::Arena;
+use std::collections::{HashMap, HashSet, Vector};
+use std::option::Option;
+
+fn lower_intrinsic(m: &mut Mono, name: &[u8], type_args: &[&Ty], ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    switch name {
+        "const_eval" => lower_const_eval(m, ir_type_args, expr),
+        "is_const_evaluable" => lower_is_const_evaluable(m, expr),
+        "in_const_context" => lower_in_const_context(m),
+        "size_of" => lower_size_of(m, ir_type_args, expr),
+        "codegen_type_func" => lower_codegen_type_func(m, ir_type_args, expr),
+        "align_of" => lower_align_of(m, ir_type_args, expr),
+        "unreachable" => lower_unreachable(m),
+        "trap" => lower_trap(m),
+        "uninitialized" => lower_uninitialized(m, ir_type_args),
+        "zeroed" => lower_zeroed(m, ir_type_args),
+        "dangling" => lower_dangling(m, ir_type_args),
+        "transmute" => lower_transmute(m, ir_type_args, expr),
+        "stack_alloc" => lower_stack_alloc(m, ir_type_args, expr),
+        "llvm" => lower_llvm(m, ir_type_args, expr),
+        "atomic_load" => lower_atomic(m, ir_type_args, expr, "load"),
+        "atomic_store" => lower_atomic(m, ir_type_args, expr, "store"),
+        "atomic_xchg" => lower_atomic(m, ir_type_args, expr, "rmw:xchg"),
+        "atomic_fetch_add" => lower_atomic(m, ir_type_args, expr, "rmw:add"),
+        "atomic_fetch_sub" => lower_atomic(m, ir_type_args, expr, "rmw:sub"),
+        "atomic_fetch_and" => lower_atomic(m, ir_type_args, expr, "rmw:and"),
+        "atomic_fetch_nand" => lower_atomic(m, ir_type_args, expr, "rmw:nand"),
+        "atomic_fetch_or" => lower_atomic(m, ir_type_args, expr, "rmw:or"),
+        "atomic_fetch_xor" => lower_atomic(m, ir_type_args, expr, "rmw:xor"),
+        "atomic_cmpxchg" => lower_atomic(m, ir_type_args, expr, "cmpxchg"),
+        "atomic_fence" => lower_atomic(m, ir_type_args, expr, "fence"),
+        "const_panic" => lower_const_panic(m, expr),
+        "const_warning" => lower_const_diag_tag(m, expr, IrTag::ConstWarning, m.ctx.void_ty),
+        "const_note" => lower_const_diag_tag(m, expr, IrTag::ConstNote, m.ctx.void_ty),
+        "const_alloc", "const_free", "const_bake" => lower_const_heap(m, ir_type_args, name, expr),
+        "compile_fail", "compile_warn", "compile_note" =>
+            lower_compile_diag(m, name, expr),
+        "volatile" => lower_volatile(m, ir_type_args, expr),
+        "type_id" => lower_type_id(m, ir_type_args),
+        "type_name" => lower_type_name(m, ir_type_args, false),
+        "named_type_name" => lower_type_name(m, ir_type_args, true),
+        "module_path" => lower_module_path(m, ir_type_args),
+        "has_attribute" => lower_has_attribute(m, ir_type_args, expr),
+        "length_of" => lower_length_of(m, type_args, ir_type_args, expr),
+        "asm" => lower_asm(m, expr),
+        "tag" => lower_tag(m, expr),
+        "expect" => lower_expect(m, expr),
+        "tuple_invoke" => lower_tuple_invoke(m, expr),
+        "stop_iteration" => lower_stop_iteration(m),
+        "with_span_of" => lower_with_span_of(m, expr),
+        "attributed" => lower_attributed(m, ir_type_args, expr),
+        "enum_variants" => lower_enum_variants(m, ir_type_args),
+        "fields" => lower_fields(m, ir_type_args),
+        "value_of" => lower_value_of(m, ir_type_args, expr),
+        "vtable" => lower_empty_descriptor_slice(m, "vtable"),
+        _ => lower_unknown(m, name, expr),
+    }
+}
+
+fn lower_const_eval(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // const_eval<T>(expr) -> T: evaluate expression at compile time
+    if !expr.args().is_empty() {
+        let ir_expr = m.lower_expr(expr.args()[0]);
+        let outcome = m.evaluate(ir_expr, false);
+        if !outcome.warning_msg.is_empty() {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_warning(expr.span, outcome.warning_msg));
+        }
+        if !outcome.note_msg.is_empty() {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_note(expr.span, outcome.note_msg));
+        }
+        if outcome.value.is_some() {
+            let value = outcome.value.unwrap();
+            if value.contains_pointer() {
+                m.adopt_baked(outcome.heap);
+                if !m.only_baked_pointers(value) {
+                    // (A pointer into the evaluator's memory: evaluated
+                    // again at run time.)
+                    return ir_expr;
+                }
+            }
+            return m.constvalue_to_ir(value, ir_expr.ty);
+        }
+        // `const_eval` must be evaluable (as alumina-boot).
+        if !outcome.panic_msg.is_empty() {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span, outcome.panic_msg));
+        } else {
+            m.report_const_failure(outcome.failure, expr.span);
+        }
+        return ir_expr;
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_is_const_evaluable(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // is_const_evaluable<T>(expr) -> bool: check if expression can be const-evaluated
+    if !expr.args().is_empty() {
+        let ir_expr = m.lower_expr(expr.args()[0]);
+        return m.mk_bool_lit(m.try_const_eval(ir_expr).is_some());
+    }
+    m.mk_bool_lit(false)
+}
+
+fn lower_in_const_context(m: &mut Mono) -> &IrExpr {
+    // Lowers to IrTag::InConstContext: const_eval folds this to `true`,
+    // codegen emits `false`. Matches alumina-boot's context-sensitive
+    // semantics so sysroot's `if in_const_context() { ... }` branches
+    // reach the const-only side when reached during const evaluation.
+    m.alloc(IrExpr::of(IrTag::InConstContext, m.ctx.bool_ty))
+}
+
+/// `codegen_type_func::<T, Ret>(name)`: alumina-boot's C type functions.
+/// aluminac supports `sizeof` and `_Alignof`, answered from LLVM's data
+/// layout (so e.g. the lang tests check aluminac's own layout against it).
+fn lower_codegen_type_func(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    let query: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    if ir_type_args.len() != 2 || (query != "sizeof" && query != "_Alignof") {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(
+            expr.span, "aluminac supports `codegen_type_func` only for \"sizeof\" and \"_Alignof\""));
+        return m.mk_void();
+    }
+    let result = IrExpr::void_expr(ir_type_args[1]);
+    result.tag = IrTag::TypeLayout;
+    result._data.type_layout = _IrTypeLayoutData { query: query, of: ir_type_args[0] };
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_size_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
+    // size_of<T>() -> usize - compute at monomorphization time
+    let measured_ty = if !ir_type_args.is_empty() {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let sz = layout::compute_type_size(measured_ty, m.ctx.pointer_size);
+    m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), sz as u64)
+}
+
+fn lower_align_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
+    let measured_ty = if !ir_type_args.is_empty() {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let al = layout::compute_type_align(measured_ty, m.ctx.pointer_size);
+    m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), al as u64)
+}
+
+fn lower_unreachable(m: &mut Mono) -> &IrExpr {
+    let result = IrExpr::void_expr(m.ctx.never_ty);
+    result.tag = IrTag::Unreachable;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_trap(m: &mut Mono) -> &IrExpr {
+    let result = IrExpr::void_expr(m.ctx.never_ty);
+    result.tag = IrTag::Trap;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_uninitialized(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // uninitialized<T>() -> T  (undef)
+    let ret_ty = if !ir_type_args.is_empty() {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::Undef;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_zeroed(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    let ret_ty = if !ir_type_args.is_empty() {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::Zeroed;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_dangling(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // dangling<Ptr>() -> Ptr  (returns alignment as integer cast to pointer)
+    let ret_ty = if !ir_type_args.is_empty() {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    // Use align_of on the pointee type, then cast to pointer
+    let ir_align = if ret_ty.tag == IrTyTag::Pointer {
+        let al = layout::compute_type_align(ret_ty.inner(), m.ctx.pointer_size);
+        m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), al as u64)
+    } else {
+        m.mk_int_lit(m.ctx.intern_builtin_ty(BuiltinType::USize), 1u64)
+    };
+    // Cast alignment to pointer type
+    m.mk_cast(ir_align, ret_ty)
+}
+
+fn lower_transmute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // transmute<T1, T2>(val) -> T2
+    let ret_ty = if ir_type_args.len() > 1 {
+        ir_type_args[1]
+    } else {
+        m.ctx.void_ty
+    };
+    let ir_val: &IrExpr = if expr.args().is_empty() {
+        m.alloc(IrExpr::of(IrTag::Undef, m.ctx.void_ty))
+    } else if !ir_type_args.is_empty() {
+        m.lower_expr_coerced(expr.args()[0], ir_type_args[0])
+    } else {
+        m.lower_expr(expr.args()[0])
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::Transmute;
+    result._data.cast.lhs = ir_val;
+    // (The target type; the const evaluator reads it.)
+    result._data.cast.ir_ty = ret_ty;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_stack_alloc(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // stack_alloc<T>(size) -> &mut T. The signature in
+    // `sysroot-aluminac/std/intrinsics.alu` is
+    //   extern "intrinsic" fn stack_alloc<T>(size: usize) -> &mut T;
+    // so the IR result type is a pointer to T, not T itself. Without the
+    // wrap, codegen's `IrTag::StackAlloc` path bitcasts the i8* alloca
+    // straight to T (often an integer) and LLVM rejects the resulting
+    // pointer-to-non-pointer-sized-int bitcast.
+    let ret_ty = if !ir_type_args.is_empty() {
+        m.ctx.make_ptr_ty(ir_type_args[0], false)
+    } else {
+        m.ctx.void_ty
+    };
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::StackAlloc;
+    if !expr.args().is_empty() {
+        result._data.single.lhs = m.lower_expr(expr.args()[0]);
+    }
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_llvm(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // llvm<Ret>(name, args...) -> Ret
+    let ret_ty = if !ir_type_args.is_empty() {
+        ir_type_args[0]
+    } else {
+        m.ctx.void_ty
+    };
+    // First arg is the intrinsic name string
+    let intrinsic_name: &[u8] = "";
+    if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        intrinsic_name = expr.args()[0].str_val();
+    }
+    // Remaining args become call arguments
+    let arg_count = if expr.args().len() > 1 { expr.args().len() - 1 } else { 0usize };
+    let ir_args = m.ctx.arena.alloc_slice::<&IrExpr>(arg_count);
+    for i in 0usize..arg_count {
+        ir_args[i] = m.lower_expr(expr.args()[i + 1]);
+    }
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::LlvmIntrinsic;
+    result._data.codegen.str_val = intrinsic_name;
+    result._data.codegen.items = ir_args;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_atomic(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr, op: &[u8]) -> &IrExpr {
+    // Atomic intrinsics. Return type is the T type-arg (void for
+    // store/fence, bool for cmpxchg — the sysroot decl pins those).
+    // All args are lowered and stored positionally; codegen interprets
+    // them per `op`:
+    //   load(ptr, ordering) -> T
+    //   store(ptr, value, ordering)
+    //   rmw(op_code, ptr, value, ordering) -> T
+    //   cmpxchg(ptr, expected, desired, weak, succ_ord, fail_ord) -> bool
+    //   fence(ordering)
+    let ret_ty = if !ir_type_args.is_empty() { ir_type_args[0] } else { m.ctx.void_ty };
+    if op == "store" || op == "fence" {
+        ret_ty = m.ctx.void_ty;
+    } else if op == "cmpxchg" {
+        ret_ty = m.ctx.bool_ty;
+    }
+    let n = expr.args().len();
+    let ir_args = m.ctx.arena.alloc_slice::<&IrExpr>(n);
+    for i in 0usize..n {
+        ir_args[i] = m.lower_expr(expr.args()[i]);
+    }
+    let result = IrExpr::void_expr(ret_ty);
+    result.tag = IrTag::AtomicOp;
+    result._data.codegen.str_val = op;
+    result._data.codegen.items = ir_args;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_const_panic(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // const_panic(msg) -> !: a compile error if reached during constant
+    // evaluation (with the message, which must evaluate to a constant
+    // string), unreachable at run time.
+    lower_const_diag_tag(m, expr, IrTag::ConstPanic, m.ctx.never_ty)
+}
+
+/// `const_panic` / `const_warning` / `const_note`: the message expression
+/// (as an item, for the evaluator), plus the text of a literal one.
+fn lower_const_diag_tag(m: &mut Mono, expr: &Expr, tag: IrTag, ty: &IrTy) -> &IrExpr {
+    let msg: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let items: &[&IrExpr] = if !expr.args().is_empty() && expr.args()[0].tag != ExprTag::StringLit {
+        let slice_ty = m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true);
+        let arg = m.lower_expr_coerced(expr.args()[0], slice_ty);
+        let items = m.ctx.arena.alloc_slice::<&IrExpr>(1);
+        items[0] = m.check_and_coerce(arg, slice_ty, expr.args()[0].span);
+        items
+    } else {
+        &[]
+    };
+    let result = IrExpr::void_expr(ty);
+    result.tag = tag;
+    result._data.codegen.str_val = msg;
+    result._data.codegen.items = items;
+    m.ctx.arena.alloc(result)
+}
+
+/// const_alloc::<T>(len) -> &mut T, const_free::<T>(ptr), const_bake::<T>(value) -> T:
+/// the constant evaluator's heap (unreachable at run time).
+fn lower_const_heap(m: &mut Mono, ir_type_args: &[&IrTy], name: &[u8], expr: &Expr) -> &IrExpr {
+    let items = m.ctx.arena.alloc_slice::<&IrExpr>(1);
+    items[0] = m.mk_void();
+    // (`T` is that of the argument unless given.)
+    let lowered = false;
+    let elem_ty = if ir_type_args.len() >= 1 && !ir_type_args[0].is_void() {
+        ir_type_args[0]
+    } else if expr.args().len() == 1 && name != "const_alloc" {
+        items[0] = m.lower_expr(expr.args()[0]);
+        lowered = true;
+        if name == "const_free" && items[0].ty.tag == IrTyTag::Pointer { items[0].ty.inner() } else { items[0].ty }
+    } else {
+        m.ctx.void_ty
+    };
+    let (tag, result_ty, arg_ty) = switch name {
+        "const_alloc" => (IrTag::ConstAlloc, m.ctx.make_ptr_ty(elem_ty, false), m.ctx.usize_ty),
+        "const_free" => (IrTag::ConstFree, m.ctx.void_ty, m.ctx.make_ptr_ty(elem_ty, false)),
+        _ => (IrTag::ConstBake, elem_ty, elem_ty),
+    };
+    if expr.args().len() == 1 {
+        let arg = if lowered { items[0] } else { m.lower_expr_coerced(expr.args()[0], arg_ty) };
+        items[0] = m.check_and_coerce(arg, arg_ty, expr.args()[0].span);
+    }
+    let result = IrExpr::void_expr(result_ty);
+    result.tag = tag;
+    result._data.codegen.items = items;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_compile_diag(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
+    // compile_fail (error), compile_warn (warning), compile_note (note) — emit a
+    // diagnostic at compile time using the (string-literal) message argument and
+    // the call-site span. compile_fail aborts the build by raising an error;
+    // compile_warn / compile_note continue.
+    //
+    // A non-string-literal argument is silently treated as an empty message —
+    // lowering the argument here would be premature work since we want the
+    // diagnostic to come from the call site, not from inside a generic body.
+    let msg: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let span = expr.span;
+
+    if name == "compile_fail" {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(span, msg));
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Unreachable;
+        m.ctx.arena.alloc(result)
+    } else if name == "compile_warn" {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_warning(span, msg));
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        m.ctx.arena.alloc(result)
+    } else {
+        // compile_note
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_note(span, msg));
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        m.ctx.arena.alloc(result)
+    }
+}
+
+fn lower_volatile(m: &mut Mono, _ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // volatile<Ptr>(ptr) -> Ptr - identity for now
+    if !expr.args().is_empty() {
+        return m.lower_expr(expr.args()[0]);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Undef;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_type_id(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // type_id<T>() -> usize - unique ID per type
+    // Use pointer to type as ID (stable within compilation)
+    let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
+    let measured_ty = if !ir_type_args.is_empty() { ir_type_args[0] } else { m.ctx.void_ty };
+    m.mk_int_lit(usize_ty, (measured_ty as &void as usize) as u64)
+}
+
+fn lower_type_name(m: &mut Mono, ir_type_args: &[&IrTy], named_only: bool) -> &IrExpr {
+    let u8_ty = m.ctx.intern_builtin_ty(BuiltinType::U8);
+    let slice_ty = m.ctx.make_slice_ty(u8_ty, true);
+    let measured_ty = if !ir_type_args.is_empty() { ir_type_args[0] } else { m.ctx.void_ty };
+    let type_str: &[u8] = "";
+    if named_only {
+        // Return the short name for named types, void for anonymous
+        switch measured_ty.tag {
+            IrTyTag::Struct => {
+                type_str = measured_ty.struct_ref().name;
+            }
+            IrTyTag::Enum => {
+                type_str = measured_ty.enum_ref().name;
+            }
+            IrTyTag::Fn => {
+                // Named-function type (e.g. test.alu's `F: NamedFunction`).
+                // alumina-boot's type_name returns the function's short name.
+                let fn_ref = measured_ty.fn_item_ref();
+                let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
+                if def_opt.is_some() {
+                    type_str = def_opt.unwrap().name;
+                }
+            }
+            _ => {}
+        }
+        // For non-named types, return void instead of empty string
+        if type_str.is_empty() {
+            let result = IrExpr::void_expr(m.ctx.void_ty);
+            result.tag = IrTag::Void;
+            return m.ctx.arena.alloc(result);
+        }
+    } else {
+        // type_name: return the full type name
+        type_str = m.ir_type_name(measured_ty);
+    }
+    let result = IrExpr::void_expr(slice_ty);
+    result.tag = IrTag::StringLit;
+    result._data.lit.str_val = type_str;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_module_path(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // module_path<T>() -> &[u8]: returns the `::`-joined module path of T's
+    // declaration. For struct/enum, walk up *from the parent* of the type's
+    // own scope to collect Module ancestors — pass1 creates a Module-kind
+    // scope for the struct/enum body itself (it's where method lookups live),
+    // so starting at the type's own scope_idx would erroneously include its
+    // own name. Other types fall back to void so std::typing::Type::module_path's
+    // `when ... is ()` branch returns None.
+    let scope_idx: u32 = 0;
+    // For Fn types the container scope IS the module (no body scope to
+    // skip), so module_path is taken from it directly rather than from
+    // its parent — tracked separately via `fn_container`.
+    let fn_container: u32 = 0;
+    if !ir_type_args.is_empty() {
+        let t = ir_type_args[0];
+        switch t.tag {
+            IrTyTag::Struct => {
+                scope_idx = t.struct_ref().scope_idx;
+            }
+            IrTyTag::Enum => {
+                scope_idx = t.enum_ref().scope_idx;
+            }
+            IrTyTag::Fn => {
+                let fn_ref = t.fn_item_ref();
+                let cont = m.ctx.scopes.find_fn_container_scope_by_id(fn_ref.id._value);
+                if cont.is_some() {
+                    fn_container = cont.unwrap();
+                }
+            }
+            _ => {}
+        }
+    }
+    let path: &[u8] = "";
+    if fn_container != 0 {
+        path = m.ctx.scopes.module_path_for_scope(m.ctx.arena, fn_container);
+    } else if scope_idx != 0 {
+        let parent = m.ctx.scopes.get(scope_idx).parent;
+        if parent.is_some() {
+            path = m.ctx.scopes.module_path_for_scope(m.ctx.arena, parent.unwrap());
+        }
+    }
+    if path.is_empty() {
+        return m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty));
+    }
+    let u8_ty = m.ctx.intern_builtin_ty(BuiltinType::U8);
+    let slice_ty = m.ctx.make_slice_ty(u8_ty, true);
+    let result = IrExpr::void_expr(slice_ty);
+    result.tag = IrTag::StringLit;
+    result._data.lit.str_val = path;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_has_attribute(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // has_attribute<T>(name: &[u8]) -> bool. The argument is required to
+    // be a string literal — we can only resolve custom attribute names at
+    // compile time. T is normally a Fn item; in that case we look up the
+    // FnDef in fn_defs and check its AttrTag::Custom entries.
+    let name: &[u8] = if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    if name.is_empty() || ir_type_args.is_empty() {
+        return m.mk_bool_lit(false);
+    }
+    let t = ir_type_args[0];
+    let attrs: &[Attribute] = switch t.tag {
+        IrTyTag::Fn => {
+            let fn_ref = t.fn_item_ref();
+            let def_opt = m.ctx.fn_defs.get(&fn_ref.id._value);
+            def_opt.map(|v: &FnDef| -> &[Attribute] { v.attributes }).unwrap_or(&[])
+        }
+        IrTyTag::Struct => t.struct_ref().attributes,
+        IrTyTag::Enum => t.enum_ref().attributes,
+        _ => &[],
+    };
+    for i in 0usize..attrs.len() {
+        if attrs[i].tag == AttrTag::Custom && attrs[i].str_val() == name {
+            return m.mk_bool_lit(true);
+        }
+    }
+    m.mk_bool_lit(false)
+}
+
+fn lower_length_of(m: &mut Mono, _type_args: &[&Ty], ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
+    // length_of<T>() -> usize - array/tuple length
+    let usize_ty = m.ctx.intern_builtin_ty(BuiltinType::USize);
+    let measured_ty = if !ir_type_args.is_empty() { ir_type_args[0] } else { m.ctx.void_ty };
+    let length: u64 = 0;
+    if measured_ty.tag == IrTyTag::Array {
+        length = measured_ty.array_size() as u64;
+    } else if measured_ty.tag == IrTyTag::Tuple {
+        length = measured_ty.elems().len() as u64;
+    }
+    m.mk_int_lit(usize_ty, length)
+}
+
+fn lower_asm(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // Inline assembly
+    if !expr.args().is_empty() && expr.args()[0].tag == ExprTag::StringLit {
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::InlineAsm;
+        result._data.codegen.str_val = expr.args()[0].str_val();
+        result._data.codegen.items = &[];
+        return m.ctx.arena.alloc(result);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_tag(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // tag(tag, expr) - identity, just lower the expression
+    if expr.args().len() > 1 {
+        return m.lower_expr(expr.args()[1]);
+    }
+    let result = IrExpr::void_expr(m.ctx.void_ty);
+    result.tag = IrTag::Void;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_expect(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // expect(value, to_be) -> value: branch-prediction hint. Lowers to
+    // llvm.expect.i1; codegen handles the i8 (alumina bool storage) ↔ i1
+    // conversion sandwich. With <2 args we silently drop to identity so
+    // existing tests that don't pass `to_be` keep working.
+    if expr.args().len() < 2 {
+        if !expr.args().is_empty() {
+            return m.lower_expr(expr.args()[0]);
+        }
+        return m.alloc(IrExpr::of(IrTag::Undef, m.ctx.bool_ty));
+    }
+    let val_ir = m.lower_expr(expr.args()[0]);
+    let to_be_ir = m.lower_expr(expr.args()[1]);
+    let ir_args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
+    ir_args[0] = val_ir;
+    ir_args[1] = to_be_ir;
+    let result = IrExpr::void_expr(m.ctx.bool_ty);
+    result.tag = IrTag::LlvmIntrinsic;
+    result._data.codegen.str_val = "llvm.expect.i1";
+    result._data.codegen.items = ir_args;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_tuple_invoke(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // tuple_invoke<Fun, Args, Ret>(f: Fun, args: Args) -> Ret
+    // Lowers to a call to f with each tuple-element of args as a positional arg.
+    // Mirrors alumina-boot's intr_tuple_invoke.
+    if expr.args().len() < 2 {
+        m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+            "tuple_invoke requires (callee, tuple) arguments"));
+        return m.mk_void();
+    }
+    let ir_callee = m.lower_expr(expr.args()[0]);
+    let ir_tuple = m.lower_expr(expr.args()[1]);
+
+    let n: usize = 0;
+    switch ir_tuple.ty.tag {
+        IrTyTag::Tuple => {
+            n = ir_tuple.ty.elems().len();
+        }
+        IrTyTag::Struct => {
+            // Non-trivial tuples may be lowered as anonymous structs.
+            n = ir_tuple.ty.struct_ref().fields.len();
+        }
+        IrTyTag::Void => {
+            n = 0;
+        }
+        _ => {
+            m.emit_diag(diagnostics::CodeDiagnostic::generic_error(expr.span,
+                "tuple_invoke: second argument must be a tuple"));
+            return m.mk_void();
+        }
+    }
+
+    let split_args = m.ctx.arena.alloc_slice::<&IrExpr>(n);
+    for i in 0usize..n {
+        let elem_ty = if ir_tuple.ty.tag == IrTyTag::Tuple {
+            ir_tuple.ty.elems()[i]
+        } else {
+            ir_tuple.ty.struct_ref().fields[i].ty
+        };
+        split_args[i] = m.mk_field(ir_tuple, i as u32, elem_ty);
+    }
+
+    switch ir_callee.ty.tag {
+        IrTyTag::Fn => {
+            // Match on (id, mangled_name) and break — multiple monos of the
+            // same source fn share `id`. See the equivalent fix in
+            // mono/lower.alu's lower_call Fn/Closure return-type path.
+            let fn_ref = ir_callee.ty.fn_item_ref();
+            let ret_ty = m.ctx.void_ty;
+            for i in 0usize..m.ctx.ir_functions.len() {
+                if m.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    ret_ty = m.ctx.ir_functions[i].return_type;
+                    break;
+                }
+            }
+            return m.mk_call(fn_ref, split_args, ret_ty);
+        }
+        IrTyTag::FnPointer => {
+            let ret_ty = ir_callee.ty.ret_ty();
+            let result = IrExpr::void_expr(ret_ty);
+            result.tag = IrTag::Call;
+            result._data.call.call_target = IrCallTarget {
+                tag: CallKind::Indirect,
+                fn_ref: IrFnRef::empty(),
+                callee: ir_callee,
+            };
+            result._data.call.items = split_args;
+            return m.ctx.arena.alloc(result);
+        }
+        IrTyTag::Closure => {
+            let closure_ty = ir_callee.ty;
+            let fn_ref = closure_ty.closure_fn();
+            // Same (id, mangled_name) + break rule as above.
+            let ret_ty = m.ctx.void_ty;
+            for i in 0usize..m.ctx.ir_functions.len() {
+                if m.ctx.ir_functions[i].id._value == fn_ref.id._value
+                    && m.ctx.ir_functions[i].mangled_name == fn_ref.mangled_name {
+                    ret_ty = m.ctx.ir_functions[i].return_type;
+                    break;
+                }
+            }
+            let ref_expr = m.mk_ref(ir_callee, false);
+            let all_args = m.ctx.arena.alloc_slice::<&IrExpr>(n + 1usize);
+            all_args[0] = ref_expr;
+            for i in 0usize..n {
+                all_args[i + 1usize] = split_args[i];
+            }
+            return m.mk_call(fn_ref, all_args, ret_ty);
+        }
+        _ => {}
+    }
+
+    m.emit_diag(diagnostics::CodeDiagnostic::not_callable(expr.span));
+    m.mk_void()
+}
+
+fn lower_stop_iteration(m: &mut Mono) -> &IrExpr {
+    // stop_iteration() -> !  Used by sysroot's static_for_next to bail when
+    // the iterator is exhausted. The const evaluator detects Unreachable and
+    // bails the static-for loop. At runtime (shouldn't be reached) we trap.
+    let result = IrExpr::void_expr(m.ctx.never_ty);
+    result.tag = IrTag::Unreachable;
+    m.ctx.arena.alloc(result)
+}
+
+fn lower_with_span_of(m: &mut Mono, expr: &Expr) -> &IrExpr {
+    // with_span_of<T, E>(expr: E) -> E: identity at the value level. alumina-boot
+    // attaches the span of T to E for diagnostics; aluminac doesn't track that
+    // separately so just return the value unchanged.
+    if !expr.args().is_empty() {
+        return m.lower_expr(expr.args()[0]);
+    }
+    m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty))
+}
+
+fn lower_empty_descriptor_slice(m: &mut Mono, _kind: &[u8]) -> &IrExpr {
+    // fields<T> / vtable<T> stub — returns an empty slice with void element
+    // type. Caller code that iterates does nothing on empty input, which is
+    // wrong for reflection-driven code but lets signatures type-check
+    // through the usual void-coerce path. (`enum_variants` no longer uses
+    // this — it has a real implementation via `lower_enum_variants`.)
+    let void_ty = m.ctx.void_ty;
+    let slice_ty = m.ctx.make_slice_ty(void_ty, true);
+    let empty_str: &[u8] = "";
+    m.alloc(IrExpr::string_lit(slice_ty, empty_str))
+}
+
+fn lower_enum_variants(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // enum_variants<T: Enum>() -> [EnumVariant<T>; N]
+    //
+    // Builds an array literal whose elements are calls to the
+    // `enum_variant_new` lang item — one per variant. Mirrors alumina-boot's
+    // `intr_enum_variants` (in `src/alumina-boot/src/ir/mono/intrinsics.rs`).
+    //
+    // Falls back to an empty void slice when:
+    //   - the type arg isn't an enum (mis-typed call site);
+    //   - the `enum_variant_new` lang item isn't declared in the sysroot;
+    //   - the lang-item function isn't registered in fn_defs.
+    if ir_type_args.len() < 1 || ir_type_args[0].tag != IrTyTag::Enum {
+        return lower_empty_descriptor_slice(m, "enum_variant");
+    }
+    let enum_ty = ir_type_args[0];
+    let enum_ref = enum_ty.enum_ref();
+
+    let lang_id_opt = m.ctx.get_lang_item("enum_variant_new");
+    if lang_id_opt.is_none() {
+        return lower_empty_descriptor_slice(m, "enum_variant");
+    }
+    let fn_def_opt = m.ctx.fn_defs.get(&lang_id_opt.unwrap());
+    if fn_def_opt.is_none() {
+        return lower_empty_descriptor_slice(m, "enum_variant");
+    }
+    let def = fn_def_opt.unwrap();
+
+    let type_args_buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
+    type_args_buf[0] = enum_ty;
+    let fn_idx = m.mono_function(def, type_args_buf);
+    let ir_fn = m.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+    let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+    let return_ty = ir_fn.return_type;
+
+    let n_variants = enum_ref.variants.len();
+    let entries = m.ctx.arena.alloc_slice::<&IrExpr>(n_variants);
+    let underlying_ty = enum_ref.underlying;
+
+    for i in 0usize..n_variants {
+        let variant = &enum_ref.variants[i];
+        let name_expr = m.alloc(IrExpr::string_lit(m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true), variant.name));
+
+        let int_lit = m.mk_int_lit(underlying_ty, variant.value);
+        let cast_to_enum = m.mk_cast(int_lit, enum_ty);
+
+        let args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
+        args[0] = name_expr;
+        args[1] = cast_to_enum;
+        entries[i] = m.mk_call(fn_ref, args, return_ty);
+    }
+
+    let arr_ty = m.ctx.arena.alloc(IrTy::mk_array(return_ty, n_variants)) as &IrTy;
+    m.alloc(IrExpr::list(IrTag::ArrayLit, arr_ty, entries))
+}
+
+fn lower_fields(m: &mut Mono, ir_type_args: &[&IrTy]) -> &IrExpr {
+    // fields<T: Struct | Union | Closure>() -> (Field<T, F0>, Field<T, F1>, ...)
+    // (a closure's fields are its captures)
+    //
+    // Builds a tuple whose i-th element is a call to the
+    // `field_descriptor_new` lang item parameterised by `(StructT, FieldT_i)`,
+    // with arguments `(field_name_string, byte_offset)`. Returns a tuple
+    // (not an array) because each `Field<S, T_i>` is a distinct type.
+    //
+    // Layout follows the same algorithm as `layout::compute_type_size`:
+    //   - struct: per-field alignment padding, packed structs skip padding;
+    //   - union: every field starts at offset 0.
+    //
+    // Falls back to an empty void slice when the type isn't a struct/union
+    // or when the lang item isn't declared. Mirrors alumina-boot's
+    // `intr_fields` (in `src/alumina-boot/src/ir/mono/intrinsics.rs`).
+    if ir_type_args.len() < 1
+        || (ir_type_args[0].tag != IrTyTag::Struct && ir_type_args[0].tag != IrTyTag::Closure) {
+        return lower_empty_descriptor_slice(m, "field_descriptor");
+    }
+    let struct_ty = ir_type_args[0];
+    let struct_ref = struct_ty.struct_ref();
+
+    let lang_id_opt = m.ctx.get_lang_item("field_descriptor_new");
+    if lang_id_opt.is_none() {
+        return lower_empty_descriptor_slice(m, "field_descriptor");
+    }
+    let fn_def_opt = m.ctx.fn_defs.get(&lang_id_opt.unwrap());
+    if fn_def_opt.is_none() {
+        return lower_empty_descriptor_slice(m, "field_descriptor");
+    }
+    let def = fn_def_opt.unwrap();
+
+    let n_fields = struct_ref.fields.len();
+    let entries = m.ctx.arena.alloc_slice::<&IrExpr>(n_fields);
+    let elem_tys = m.ctx.arena.alloc_slice::<&IrTy>(n_fields);
+    let usize_ty = m.ctx.usize_ty;
+    let u8_slice_ty = m.ctx.make_slice_ty(m.ctx.intern_builtin_ty(BuiltinType::U8), true);
+    let pointer_size = m.ctx.pointer_size;
+    let aggregate = layout::AggregateLayout::of_struct(&struct_ref);
+
+    for i in 0usize..n_fields {
+        let field = &struct_ref.fields[i];
+        let field_offset = aggregate.add(layout::layout_of(field.ty, pointer_size));
+
+        // Mono field_descriptor_new<StructT, FieldT> for this (struct, field) pair.
+        let type_args_buf = m.ctx.arena.alloc_slice::<&IrTy>(2);
+        type_args_buf[0] = struct_ty;
+        type_args_buf[1] = field.ty;
+        let fn_idx = m.mono_function(def, type_args_buf);
+        let ir_fn = m.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        let return_ty = ir_fn.return_type;
+        elem_tys[i] = return_ty;
+
+        let name_expr = m.alloc(IrExpr::string_lit(u8_slice_ty, field.name));
+        let offset_expr = m.mk_int_lit(usize_ty, field_offset as u64);
+
+        let args = m.ctx.arena.alloc_slice::<&IrExpr>(2);
+        args[0] = name_expr;
+        args[1] = offset_expr;
+        entries[i] = m.mk_call(fn_ref, args, return_ty);
+    }
+
+    let tuple_ty = m.ctx.make_tuple_ty(elem_tys);
+    m.alloc(IrExpr::list(IrTag::TupleLit, tuple_ty, entries))
+}
+
+fn lower_attributed(m: &mut Mono, ir_type_args: &[&IrTy], expr: &Expr) -> &IrExpr {
+    // attributed<Args: Tuple>(name: &[u8]) -> (Type<I_0>, Type<I_1>, ...)
+    //
+    // Filters fn_defs whose attributes contain `Attribute::Custom(name)`,
+    // mono's each with the Args type-args, and returns a tuple of Type<I>
+    // descriptors built via the `type_descriptor_new` lang item. Mirrors
+    // alumina-boot's `intr_attributed`.
+    //
+    // Falls back to an empty void slice when the name isn't a string
+    // literal, when type_descriptor_new isn't registered, or when no items
+    // match — sysroot's typing.alu's `for const idx in 0..cases.len()`
+    // loop handles len()==0 cleanly.
+
+    // Lookup helpers used by both the success and fallback paths.
+    let attr_name: &[u8] = if expr.args().len() >= 1 && expr.args()[0].tag == ExprTag::StringLit {
+        expr.args()[0].str_val()
+    } else {
+        ""
+    };
+    let lang_id_opt = m.ctx.get_lang_item("type_descriptor_new");
+
+    if attr_name.is_empty() || lang_id_opt.is_none() {
+        return lower_empty_descriptor_slice(m, "attributed");
+    }
+    let td_def_opt = m.ctx.fn_defs.get(&lang_id_opt.unwrap());
+    if td_def_opt.is_none() {
+        return lower_empty_descriptor_slice(m, "attributed");
+    }
+    let td_def = td_def_opt.unwrap();
+
+    // Tuple type-args from Args: when ir_type_args[0] is a Tuple, unpack;
+    // when () (void), use empty; otherwise treat as a single-arg list.
+    let args_ty: &[&IrTy] = &[];
+    if ir_type_args.len() >= 1 {
+        let a0 = ir_type_args[0];
+        if a0.tag == IrTyTag::Tuple {
+            args_ty = a0.elems();
+        } else if !a0.is_void() {
+            let buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
+            buf[0] = a0;
+            args_ty = buf;
+        }
+    }
+
+    let entries: Vector<&IrExpr> = Vector::new();
+    defer entries.free();
+    let elem_tys: Vector<&IrTy> = Vector::new();
+    defer elem_tys.free();
+
+    let it = m.ctx.fn_defs.iter();
+    loop {
+        let pair_opt = it.next();
+        if pair_opt.is_none() { break; }
+        let pair = pair_opt.unwrap();
+        let def = pair.1;
+        // Match by Attribute::Custom(name).
+        let matched = false;
+        for ai in 0usize..def.attributes.len() {
+            let a = def.attributes[ai];
+            if a.tag == AttrTag::Custom && a.str_val() == attr_name {
+                matched = true;
+                break;
+            }
+        }
+        if !matched { continue; }
+
+        // Mono the matched function with the Args type-args. The Fn ZST
+        // is the item type for the descriptor.
+        let fn_idx = m.mono_function(def, args_ty);
+        let ir_fn = m.ctx.ir_functions[fn_idx]; // copy: lowering below may grow ir_functions
+        let fn_ref = IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name };
+        let fn_ty = m.ctx.make_fn_ty(fn_ref);
+
+        // Mono type_descriptor_new<fn_ty> and emit a call.
+        let td_buf = m.ctx.arena.alloc_slice::<&IrTy>(1);
+        td_buf[0] = fn_ty;
+        let td_idx = m.mono_function(td_def, td_buf);
+        let td_ir = m.ctx.ir_functions[td_idx]; // copy: lowering below may grow ir_functions
+        let td_ref = IrFnRef { id: td_ir.id, mangled_name: td_ir.mangled_name };
+        let entry = m.mk_call(td_ref, &[], td_ir.return_type);
+        entries.push(entry);
+        elem_tys.push(td_ir.return_type);
+    }
+
+    if entries.is_empty() {
+        return lower_empty_descriptor_slice(m, "attributed");
+    }
+
+    let elems_slice = m.ctx.arena.alloc_slice_copy::<&IrTy>(elem_tys.as_slice());
+    let tuple_ty = m.ctx.make_tuple_ty(elems_slice);
+    let items_slice = m.ctx.arena.alloc_slice_copy::<&IrExpr>(entries.as_slice());
+    m.alloc(IrExpr::list(IrTag::TupleLit, tuple_ty, items_slice))
+}
+
+fn lower_value_of(m: &mut Mono, ir_type_args: &[&IrTy], _expr: &Expr) -> &IrExpr {
+    // value_of<T: Const | Static>() -> T
+    //
+    // For a const, inline the const-evaluated value. For a static, emit
+    // a load of the global. T at the IR level is an IrTy::ItemRef carrying
+    // the StaticDef's id.
+    if ir_type_args.len() < 1 || ir_type_args[0].tag != IrTyTag::ItemRef {
+        let result = IrExpr::void_expr(m.ctx.void_ty);
+        result.tag = IrTag::Void;
+        return m.ctx.arena.alloc(result);
+    }
+    let item_id = ir_type_args[0].item_ref_id();
+    let sd_opt = m.ctx.static_defs.get(&item_id);
+    if sd_opt.is_none() {
+        return m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty));
+    }
+    let sd = sd_opt.unwrap();
+    // Build a StaticRef expression — lower_expr's StaticRef path then handles
+    // global-emission, const-eval inlining (for consts), and type recovery.
+    let static_ref = IrExpr::void_expr(m.ctx.void_ty);
+    static_ref.tag = IrTag::Void;
+    // Use a synthetic Expr to ride through the existing StaticRef path so
+    // we don't duplicate the emission + const-eval logic.
+    let synth = Expr::void_expr();
+    synth.tag = ExprTag::StaticRef;
+    synth._data.id_ref.id = sd.id;
+    let synth_e = m.ctx.arena.alloc(synth) as &Expr;
+    m.lower_expr(synth_e)
+}
+
+fn lower_unknown(m: &mut Mono, name: &[u8], expr: &Expr) -> &IrExpr {
+    // Unknown intrinsic - emit void with error
+    m.emit_diag(diagnostics::CodeDiagnostic::unknown_intrinsic(expr.span, name));
+    m.alloc(IrExpr::of(IrTag::Void, m.ctx.void_ty))
+}

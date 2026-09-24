@@ -1,0 +1,39 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// AnyOption / AnyResult — type aliases that resolve to SameBaseAs protocol
+// instances. Match any monomorphization of Option<T> / Result<T, E>
+// regardless of the inner types. Required: aluminac's `is`-check follows
+// non-generic TypeAlias indirections so `value is AnyOption` reaches the
+// SameBaseAs branch.
+
+use std::option::AnyOption;
+use std::result::AnyResult;
+
+fn main(args: &[&[u8]]) -> i32 {
+    // AnyOption matches any Option<T>
+    let a = Option::some(1i32);
+    if !(a is AnyOption) { return 1i32; }
+
+    let b: Option<i32> = Option::none();
+    if !(b is AnyOption) { return 2i32; }
+
+    // Different inner type — still matches.
+    let c = Option::some(true);
+    if !(c is AnyOption) { return 3i32; }
+
+    // Non-Option doesn't match.
+    let d = 42i32;
+    if (d is AnyOption) { return 4i32; }
+
+    // AnyResult matches any Result<T, E>
+    let r1: Result<i32, &[u8]> = Result::ok(7);
+    if !(r1 is AnyResult) { return 5i32; }
+
+    let r2: Result<bool, i32> = Result::err(99);
+    if !(r2 is AnyResult) { return 6i32; }
+
+    // Cross-doesn't-match.
+    if (a is AnyResult) { return 7i32; }
+    if (r1 is AnyOption) { return 8i32; }
+
+    0i32
+}

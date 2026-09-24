@@ -1,0 +1,49 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: switch arms with const-reference patterns must use the const's
+// actual value, not silently collapse to 0.
+//
+// Pre-fix, `mono/lower.alu`'s switch-lowering only extracted values from
+// `IrTag::IntLit`, `Cast(IntLit)`, and `BoolLit` patterns — every other
+// pattern shape (including GlobalRef for const references like
+// `libc::DT_DIR`) fell to a hardcoded `values[j] = 0`. So `switch x {
+// LIBC_DT_DIR => Dir, LIBC_DT_REG => Reg, ... }` collapsed all const-ref
+// arms onto switch case 0, the discriminant value 4 fell to the default,
+// and DirEntry::file_type() returned Unknown for every entry. That made
+// load_sysroot fail to recurse into subdirectories, root scope ended up
+// with only the 17 builtin types, and lookups for `std::cmp::Equatable`
+// etc. silently missed — the self-host bootstrap blocker tracked under
+// "substantial-sysroot-file swaps" in PORTING_STATUS.
+//
+// Fix: when pattern is anything else, try `try_const_eval` on the lowered
+// pattern expression and extract the integer/bool value.
+
+const CASE_FOUR: u8 = 4;
+const CASE_EIGHT: u8 = 8;
+const CASE_TEN: i32 = 10;
+const CASE_NEG_ONE: i32 = -1;
+
+fn classify_u8(x: u8) -> i32 {
+    switch x {
+        CASE_FOUR => 100,
+        CASE_EIGHT => 200,
+        _ => 999
+    }
+}
+
+fn classify_i32(x: i32) -> i32 {
+    switch x {
+        CASE_TEN => 1000,
+        CASE_NEG_ONE => 2000,
+        _ => 9999
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    if classify_u8(4u8) != 100 { return 1; }
+    if classify_u8(8u8) != 200 { return 2; }
+    if classify_u8(0u8) != 999 { return 3; }
+    if classify_i32(10i32) != 1000 { return 4; }
+    if classify_i32(-1i32) != 2000 { return 5; }
+    if classify_i32(0i32) != 9999 { return 6; }
+    0
+}

@@ -1,0 +1,37 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: explicit `Fn-item as fn(...)` cast with a signature change
+// must emit a FnRef IR node so codegen can take the function's address.
+// Before the fix, gen_cast's coerce_value fallthrough produced a broken
+// pointer (calling it segfaulted). This shape is what `callable::as_callback`
+// uses to turn a closure's underlying Fn into a `fn(&mut void, Args...)`
+// callback pointer.
+
+use std::builtins::{underlying_function_of, arguments_of};
+
+fn main() -> i32 {
+    let count: i32 = 0i32;
+    let inc = |&count, x: i32| {
+        count = count + x;
+    };
+
+    // Pattern from sysroot's `callable::as_callback`:
+    let fn_ptr_typed = std::util::unit::<underlying_function_of<typeof(inc)>>()
+        as fn(arguments_of<underlying_function_of<typeof(inc)>>...) -> ();
+    let fn_ptr_void = fn_ptr_typed as fn(&mut void, i32);
+    let state = &inc as &mut void;
+
+    fn_ptr_void(state, 1i32);
+    fn_ptr_void(state, 2i32);
+    fn_ptr_void(state, 4i32);
+
+    if count != 7i32 { return 1i32; }
+
+    // Also test the shorter `as_callback()` API directly.
+    let val: i32 = 100i32;
+    let add_val = |&val, x: i32| -> i32 { val + x };
+    let (st, cb) = add_val.as_callback();
+    if cb(st, 5i32) != 105i32 { return 2i32; }
+    if cb(st, 11i32) != 111i32 { return 3i32; }
+
+    0i32
+}

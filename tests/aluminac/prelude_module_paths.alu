@@ -1,0 +1,14 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// As in alumina-boot, `std`'s modules can start a path anywhere without a
+// `use`: the root's `use std::prelude::*` star import is resolved with the
+// prelude's enclosing scopes (i.e. `std`) as fallback. aluminac only
+// exposed the modules named by some `use` in scope.
+
+fn main() -> i32 {
+    if !typing::is_same::<i32, i32>() { return 1; }
+    if mem::size_of::<u64>() != 8 { return 2; }
+    let v: collections::Vector<i32> = collections::Vector::new();
+    defer v.free();
+    if !v.is_empty() { return 3; }
+    0
+}

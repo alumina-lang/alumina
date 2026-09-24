@@ -1,0 +1,16 @@
+// A universal macro call (`x.m!(...)`) in a macro's body: it is expanded
+// with the macro, as the macro its name resolves to where it is written.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+macro double($x) {
+    $x * 2
+}
+
+macro quadruple($x) {
+    $x.double!().double!()
+}
+
+fn main() {
+    assert_eq!(quadruple!(3), 12);
+    assert_eq!(5.quadruple!(), 20);
+}

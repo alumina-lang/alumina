@@ -1,0 +1,805 @@
+// Compiler pipeline for the self-hosted Alumina compiler
+//
+// Orchestrates the full compilation pipeline:
+// 1. Parse source files using tree-sitter
+// 2. Build scopes and resolve names
+// 3. Monomorphize generic code
+// 4. Generate LLVM IR and emit object/executable
+
+use aluminac_common::arena::Arena;
+use aluminac::ast::*;
+use aluminac::scope::*;
+use aluminac::diagnostics::DiagnosticContext;
+use aluminac::cfg::CfgSet;
+use aluminac::target::Target;
+use tree_sitter::Tree;
+use std::collections::Vector;
+use std::option::Option;
+use std::string::{StringBuf, starts_with, ends_with, contains};
+use std::fs::{Path, PathBuf, FileType, read_directory};
+
+extern "C" fn exit(code: i32) -> !;
+
+enum OutputFormat {
+    Object,
+    Assembly,
+    LlvmIr,
+    Bitcode,
+    Executable,
+}
+
+enum OptLevel {
+    O0 = 0i32,
+    O1 = 1i32,
+    O2 = 2i32,
+    O3 = 3i32,
+    Os = 4i32,
+}
+
+struct CompilerOptions {
+    output_file: &[u8],
+    output_format: OutputFormat,
+    optimize: OptLevel,
+    dump_ir: bool,
+    verify_ir: bool,
+    test_mode: bool,
+    debug_info: bool,
+    sysroot: &[u8],
+    cfg: CfgSet,
+    /// Target triple given with `--target`; the host when absent.
+    target_triple: Option<&[u8]>,
+    extra_link_args: &[u8],
+}
+
+impl CompilerOptions {
+    fn default() -> CompilerOptions {
+        CompilerOptions {
+            output_file: "a.out",
+            output_format: OutputFormat::Executable,
+            optimize: OptLevel::O0,
+            dump_ir: false,
+            verify_ir: true,
+            test_mode: false,
+            debug_info: false,
+            sysroot: "",
+            cfg: CfgSet::new(),
+            target_triple: Option::none(),
+            extra_link_args: "",
+        }
+    }
+}
+
+struct Compiler {
+    arena: Arena,
+    target: Target,
+    id_gen: IdGen,
+    diag: DiagnosticContext,
+    scopes: ScopeArena,
+    options: CompilerOptions,
+    source_files: Vector<SourceEntry>,
+    all_items: Vector<Item>,
+    /// The first source file given (not the sysroot's), which names the
+    /// module (and its debug information's compile unit).
+    main_file: &[u8],
+}
+
+struct SourceEntry {
+    path: &[u8],
+    contents: &[u8],
+    module_path: &[u8], // e.g. "aluminac::ast" or "" for root
+}
+
+impl Compiler {
+    fn new(options: CompilerOptions, target: Target) -> Compiler {
+        Compiler {
+            arena: Arena::new(),
+            target: target,
+            id_gen: IdGen::new(),
+            diag: DiagnosticContext::new(),
+            scopes: ScopeArena::new(),
+            options: options,
+            source_files: Vector::new(),
+            all_items: Vector::new(),
+            main_file: "",
+        }
+    }
+
+    fn add_source(self: &mut Compiler, path: &[u8], contents: &[u8], module_path: &[u8]) {
+        // Register with diagnostics
+        self.diag.add_file(path, contents, &self.arena);
+
+        self.source_files.push(SourceEntry {
+            path: path,
+            contents: contents,
+            module_path: module_path,
+        });
+    }
+
+    fn add_source_file(self: &mut Compiler, path: &[u8], module_path: &[u8]) -> bool {
+        let result = std::fs::File::read_to_string(Path::new(path));
+        if result.is_err() {
+            eprintln!("error: cannot open file");
+            return false;
+        }
+        let source = result.unwrap();
+        defer source.free();
+
+        // Empty files register no items; skip them (preserves prior behavior).
+        if source.as_slice().is_empty() {
+            return true;
+        }
+
+        // Source text must outlive the StringBuf, so copy it into the arena.
+        let contents = self.arena.alloc_slice_copy::<u8>(source.as_slice());
+        self.add_source(path, contents, module_path);
+        true
+    }
+
+    /// Load all .alu files from the sysroot directory recursively.
+    /// Each file gets a module path derived from its relative path within sysroot.
+    /// e.g. sysroot/std/mem.alu -> "std::mem", sysroot/std/mod.alu -> "std"
+    fn load_sysroot(self: &mut Compiler) -> bool {
+        let sysroot = self.options.sysroot;
+        if sysroot.is_empty() {
+            return true;
+        }
+
+        // Use a stack for iterative directory traversal
+        // Each entry is (directory_path, module_prefix)
+        // module_prefix is like "" for root, "std" for std/, "std::collections" etc.
+        let dir_stack: Vector<(PathBuf, StringBuf)> = Vector::new();
+        defer dir_stack.free();
+
+        let root_path = PathBuf::from_str(sysroot);
+        let root_prefix = StringBuf::new();
+        dir_stack.push((root_path, root_prefix));
+
+        while !dir_stack.is_empty() {
+            let entry_pair = dir_stack.pop().unwrap();
+            let dir_path = entry_pair.0;
+            let mod_prefix = entry_pair.1;
+
+            let dir_iter_result = read_directory(dir_path.as_path());
+            if dir_iter_result.is_err() {
+                eprintln!("error: cannot open sysroot directory");
+                dir_path.free();
+                mod_prefix.free();
+                return false;
+            }
+            let dir_iter = dir_iter_result.unwrap();
+            // The entries in name order: the order the files are read in
+            // matters to nothing, but the listing's order varies with the
+            // file system (sorted on APFS, hashed on ext4), and a fixed one
+            // makes the output the same everywhere.
+            let entries: Vector<(&[u8], bool)> = Vector::new();
+            #[allow(defer_in_a_loop)]
+            defer entries.free();
+            loop {
+                let entry_opt = dir_iter.next();
+                if entry_opt.is_none() { break; }
+                let entry_result = entry_opt.unwrap();
+                if entry_result.is_err() { continue; }
+                let entry = entry_result.unwrap();
+                let name = self.arena.alloc_slice_copy::<u8>(entry.name()) as &[u8];
+                entries.push((name, entry.file_type() == FileType::Directory));
+            }
+            std::cmp::sort_by(entries.as_slice_mut(), |a: &(&[u8], bool), b: &(&[u8], bool)| -> std::cmp::Ordering {
+                a.0.compare(&b.0)
+            });
+            for (name, is_dir) in entries {
+
+                // Skip . and ..
+                // Use character-level comparison to avoid potential slice == issues
+                let skip = false;
+                if name.len() == 1 && name[0] == '.' {
+                    skip = true;
+                }
+                if name.len() == 2 && name[0] == '.' && name[1] == '.' {
+                    skip = true;
+                }
+                if skip {
+                    continue;
+                }
+
+                if is_dir {
+                    // Build child path and module prefix
+                    let child_path = PathBuf::from_path(dir_path.as_path());
+                    child_path.push(Path::new(name));
+
+                    let child_prefix = StringBuf::new();
+                    if !mod_prefix.is_empty() {
+                        child_prefix.extend_from_slice(mod_prefix.as_slice());
+                        child_prefix.extend_from_slice("::");
+                    }
+                    child_prefix.extend_from_slice(name);
+
+                    dir_stack.push((child_path, child_prefix));
+                } else if name.ends_with(".alu") {
+                    // Skip test.alu in the sysroot root unless in test mode
+                    if name == "test.alu" && mod_prefix.is_empty() && !self.options.test_mode {
+                        continue;
+                    }
+
+                    // Build full file path
+                    let file_path = PathBuf::from_path(dir_path.as_path());
+                    file_path.push(Path::new(name));
+
+                    // Build module path: strip .alu suffix, handle "mod" specially
+                    let stem = name[0..name.len() - 4]; // strip ".alu"
+                    let module_path = StringBuf::new();
+
+                    if stem == "mod" {
+                        // mod.alu -> just the directory's module prefix
+                        if !mod_prefix.is_empty() {
+                            module_path.extend_from_slice(mod_prefix.as_slice());
+                        }
+                        // root mod.alu has empty module_path (maps to root scope)
+                    } else {
+                        if !mod_prefix.is_empty() {
+                            module_path.extend_from_slice(mod_prefix.as_slice());
+                            module_path.extend_from_slice("::");
+                        }
+                        module_path.extend_from_slice(stem);
+                    }
+
+                    // Read the file using std::fs
+                    let file_path_slice = file_path.inner.as_slice();
+                    let read_result = std::fs::File::read_to_string(file_path.as_path());
+                    if read_result.is_err() {
+                        eprintln!("error: cannot read sysroot file");
+                        file_path.free();
+                        module_path.free();
+                        continue;
+                    }
+                    let file_contents = read_result.unwrap();
+
+                    // Copy path and contents into arena for lifetime management
+                    let path_copy: &[u8] = if !file_path_slice.is_empty() {
+                        let p = self.arena.alloc_slice::<u8>(file_path_slice.len());
+                        file_path_slice.copy_to_nonoverlapping(&p[0]);
+                        p as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    let contents_copy: &[u8] = if !file_contents.is_empty() {
+                        let c = self.arena.alloc_slice::<u8>(file_contents.len());
+                        file_contents.as_slice().copy_to_nonoverlapping(&c[0]);
+                        c as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    let mod_path_copy: &[u8] = if !module_path.is_empty() {
+                        let m = self.arena.alloc_slice::<u8>(module_path.len());
+                        module_path.as_slice().copy_to_nonoverlapping(&m[0]);
+                        m as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    self.add_source(
+                        path_copy as &[u8],
+                        contents_copy as &[u8],
+                        mod_path_copy as &[u8],
+                    );
+
+                    file_path.free();
+                    file_contents.free();
+                    module_path.free();
+                }
+            }
+
+            let _ = dir_iter.close();
+            dir_path.free();
+            mod_prefix.free();
+        }
+
+        true
+    }
+
+    fn compile(self: &mut Compiler) -> bool {
+        if self.source_files.is_empty() {
+            eprintln!("error: no source files");
+            return false;
+        }
+
+        // Create root scope
+        let root_scope = self.scopes.create_scope(ScopeKind::Root, Option::none());
+
+        // Register builtin types in root scope
+        self.register_builtins(root_scope);
+
+        // Parse all source files
+        let parser = aluminac_common::common::parser();
+
+        // Two-phase parsing: first register all names across all files (Pass 1),
+        // then parse all function bodies (Pass 2). This ensures cross-module
+        // references resolve correctly regardless of file processing order.
+        let trees: Vector<Tree> = Vector::new();
+        let contexts: Vector<aluminac::parser::ParseContext> = Vector::new();
+        defer trees.free();
+        defer contexts.free();
+
+        // Phase 0: Create all module scopes first so use imports can resolve across files
+        let file_scopes: Vector<u32> = Vector::new();
+        defer file_scopes.free();
+        for i in 0usize..self.source_files.len() {
+            let entry = &self.source_files[i];
+            let file_scope = if entry.module_path.is_empty() || entry.module_path == "::" {
+                root_scope
+            } else {
+                self.resolve_or_create_module_scope(root_scope, entry.module_path)
+            };
+            file_scopes.push(file_scope);
+        }
+
+        // Phase 1: Parse all files, run Pass 1 to register names in scopes
+        let syntax_errors = false;
+        for i in 0usize..self.source_files.len() {
+            let entry = &self.source_files[i];
+            let file_scope = file_scopes[i];
+
+            let tree = parser.parse_string(entry.contents);
+            let raw_node = tree_sitter::ts_tree_root_node(tree.inner);
+            let root = tree_sitter::Node { inner: raw_node };
+
+            // Check for syntax errors before proceeding
+            let reported = self.diag.errors.len();
+            aluminac::parser::check_syntax_errors(root, entry.contents, i as u32, &self.diag);
+            syntax_errors = syntax_errors || self.diag.errors.len() > reported;
+
+            let ctx = aluminac::parser::parse_file_pass1(
+                root,
+                entry.contents,
+                i as u32,
+                &self.arena,
+                &self.scopes,
+                &self.id_gen,
+                &self.diag,
+                file_scope,
+                &self.options.cfg,
+            );
+
+            trees.push(tree);
+            contexts.push(ctx);
+        }
+        // (What follows would report errors that are only consequences of
+        // the syntax errors, as in alumina-boot.)
+        if syntax_errors {
+            for i in 0usize..trees.len() {
+                trees[i].free();
+                contexts.as_slice_mut()[i].free();
+            }
+            parser.free();
+            self.diag.emit_all();
+            return false;
+        }
+
+        // Phase 1.5a: Link #[lang(builtin_X)] struct scopes to root BuiltinType entries
+        aluminac::parser::link_builtin_lang_items(contexts.as_slice(), &self.scopes, root_scope);
+
+        // Phase 1.5b: Collect macro definitions from all files
+        for ctx in contexts.as_slice_mut().iter_mut() {
+            aluminac::parser::collect_macros(ctx);
+        }
+        // Share macros across all contexts
+        aluminac::parser::share_macros(contexts.as_slice_mut());
+
+        // Phase 1.5c: The methods impls mix in (paths in any file may name them)
+        for ctx in contexts.as_slice_mut().iter_mut() {
+            aluminac::parser::register_mixins(ctx);
+        }
+
+        // Phase 2: Parse all function bodies (all names are now registered)
+        for ctx in contexts.as_slice_mut().iter_mut() {
+            let items = aluminac::parser::parse_file_pass2(ctx);
+
+            for j in 0usize..items.len() {
+                self.all_items.push(items[j]);
+            }
+        }
+
+        self.scopes.check_use_aliases(&self.diag);
+        self.scopes.check_unused_items(&self.diag);
+
+        // Cleanup
+        for i in 0usize..trees.len() {
+            trees[i].free();
+            contexts.as_slice_mut()[i].free();
+        }
+        parser.free();
+
+        self.diag.apply_lint_overrides();
+        if self.diag.has_errors {
+            self.diag.emit_all();
+            return false;
+        }
+
+        // Convert items to a slice for mono
+        let items_slice = self.arena.alloc_slice_copy::<Item>(self.all_items.as_slice());
+        // Monomorphize
+        let unit = aluminac::mono::monomorphize(
+            &self.arena,
+            &self.scopes,
+            &self.id_gen,
+            &self.diag,
+            items_slice,
+            self.options.test_mode,
+        );
+
+        self.diag.apply_lint_overrides();
+        if self.options.verify_ir {
+            unit.check_evaluated_once(&self.diag);
+        }
+        if self.diag.has_errors {
+            self.diag.emit_all();
+            return false;
+        }
+
+        // Code generation
+        let ctx = aluminac::codegen::generate(
+            &self.arena,
+            &self.diag,
+            &unit,
+            if self.main_file.is_empty() { "alumina_module" } else { self.main_file },
+            &self.target,
+            self.options.test_mode,
+            self.options.debug_info,
+            self.options.optimize,
+        );
+        self.diag.apply_lint_overrides();
+        if self.diag.has_errors {
+            self.diag.emit_all();
+            ctx.free();
+            return false;
+        }
+
+        // Flush warnings on success too — they don't fail compilation but
+        // should still surface (notably #[must_use] dropped-result warnings).
+        if self.diag.has_warnings {
+            self.diag.emit_all();
+        }
+
+        if self.options.dump_ir {
+            ctx.dump();
+        }
+
+        if self.options.verify_ir {
+            if !ctx.verify() {
+                eprintln!("error: LLVM IR verification failed");
+                if !self.options.dump_ir {
+                    ctx.dump();
+                }
+                ctx.free();
+                return false;
+            }
+        }
+
+        // Run optimization passes if requested
+        if self.options.optimize != OptLevel::O0 {
+            if !ctx.optimize() {
+                eprintln!("error: LLVM optimization passes failed");
+                ctx.free();
+                return false;
+            }
+        }
+
+        // Emit output
+        let success = switch self.options.output_format {
+            OutputFormat::Object => {
+                ctx.emit_to_object(self.options.output_file)
+            },
+            OutputFormat::Assembly => {
+                ctx.emit_to_assembly(self.options.output_file)
+            },
+            OutputFormat::LlvmIr => {
+                ctx.print_ir(self.options.output_file)
+            },
+            OutputFormat::Bitcode => {
+                ctx.write_bitcode(self.options.output_file)
+            },
+            OutputFormat::Executable => {
+                // Emit object file, then link
+                let obj_name = std::string::StringBuf::from_slice(self.options.output_file);
+                defer obj_name.free();
+                obj_name.extend_from_slice(".o");
+                let obj_file = obj_name.as_slice();
+                if !ctx.emit_to_object(obj_file) {
+                    eprintln!("error: failed to emit object file");
+                    ctx.free();
+                    return false;
+                }
+                ctx.free();
+                return self.link(obj_file, self.options.output_file);
+            },
+            _ => false,
+        };
+
+        if !success {
+            eprintln!("error: failed to write output file");
+        }
+
+        ctx.free();
+        success
+    }
+
+    fn link(self: &mut Compiler, obj_file: &[u8], output: &[u8]) -> bool {
+        // Link through the system C compiler driver, via the shell so that
+        // `cc` is found on PATH and `--link-args` may carry several
+        // space-separated arguments.
+        let cmd = std::fmt::format!("cc -o {} {} -lm", output, obj_file).unwrap();
+        defer cmd.free();
+        if !self.target.is_host {
+            std::fmt::write!(&cmd, " --target={}", self.target).unwrap();
+        }
+        if self.options.debug_info {
+            cmd.extend_from_slice(" -g");
+        }
+        if !self.options.extra_link_args.is_empty() {
+            std::fmt::write!(&cmd, " {}", self.options.extra_link_args).unwrap();
+        }
+
+        let link_ok = run_shell(cmd.as_slice());
+
+        // On macOS, debug information stays in the object files (the
+        // executable points to them): gather it into `<output>.dSYM` (as
+        // clang does), before the object is removed.
+        if link_ok && self.options.debug_info && self.target.os == aluminac::target::Os::MacOs {
+            let dsym = std::fmt::format!("dsymutil {}", output).unwrap();
+            defer dsym.free();
+            if !run_shell(dsym.as_slice()) {
+                eprintln!("warning: dsymutil failed; the executable has no debug information");
+            }
+        }
+
+        let _ = std::fs::remove_file(Path::new(obj_file));
+        link_ok
+    }
+
+    /// Given a module path like "aluminac::ast", resolve or create
+    /// the nested module scope hierarchy, returning the innermost scope.
+    fn resolve_or_create_module_scope(self: &mut Compiler, root_scope: u32, module_path: &[u8]) -> u32 {
+        let current = root_scope;
+        let iter = std::string::split(module_path, "::");
+        loop {
+            let seg = iter.next();
+            if seg.is_none() { break; }
+            let s = seg.unwrap();
+            if !s.is_empty() {
+                current = self.ensure_module_scope(current, s);
+            }
+        }
+        current
+    }
+
+    /// Ensure a child module scope exists under parent, or create one.
+    fn ensure_module_scope(self: &mut Compiler, parent: u32, name: &[u8]) -> u32 {
+        // Try to resolve existing module
+        let existing = self.scopes.resolve(parent, name);
+        if existing.is_some() {
+            let item = existing.unwrap();
+            if item.kind.tag == NamedItemTag::Module {
+                return item.kind.scope_idx;
+            }
+        }
+
+        // Create new module scope
+        let child = self.scopes.create_scope(ScopeKind::Module, Option::some(parent));
+        self.scopes.add_item(parent, NamedItem {
+            name: self.intern_name(name),
+            kind: NamedItemKind::module(child),
+            span: Span::empty(),
+        });
+        child
+    }
+
+    fn intern_name(self: &mut Compiler, s: &[u8]) -> &[u8] {
+        let buf = self.arena.alloc_slice::<u8>(s.len());
+        s.copy_to_nonoverlapping(&buf[0]);
+        buf
+    }
+
+    fn register_builtins(self: &mut Compiler, scope_idx: u32) {
+        // Register builtin types
+        // `!` (never) has no name of its own; `std::builtins::never` is its
+        // lang struct, as in alumina-boot.
+        let builtins: [(&[u8], BuiltinType); 16] = [
+            ("void", BuiltinType::Void),
+            ("bool", BuiltinType::Bool),
+            ("u8", BuiltinType::U8),
+            ("u16", BuiltinType::U16),
+            ("u32", BuiltinType::U32),
+            ("u64", BuiltinType::U64),
+            ("u128", BuiltinType::U128),
+            ("usize", BuiltinType::USize),
+            ("i8", BuiltinType::I8),
+            ("i16", BuiltinType::I16),
+            ("i32", BuiltinType::I32),
+            ("i64", BuiltinType::I64),
+            ("i128", BuiltinType::I128),
+            ("isize", BuiltinType::ISize),
+            ("f32", BuiltinType::F32),
+            ("f64", BuiltinType::F64),
+        ];
+
+        for (name, bt) in builtins {
+            self.scopes.add_item(scope_idx, NamedItem {
+                name: name,
+                kind: NamedItemKind::builtin_type(bt),
+                span: Span::empty(),
+            });
+        }
+    }
+
+    fn free(self: &mut Compiler) {
+        self.options.cfg.free();
+        self.target.free();
+        self.scopes.free();
+        self.diag.free();
+        self.source_files.free();
+        self.all_items.free();
+        self.arena.free();
+    }
+}
+
+// ============================================================
+// CLI entry point
+// ============================================================
+
+struct SourceArg {
+    module_path: &[u8],
+    file_path: &[u8],
+}
+
+/// Report a command line error and exit.
+fn usage_error(message: &[u8], arg: &[u8]) -> ! {
+    eprintln!("error: {} `{}` (see --help)", message, arg);
+    exit(1i32)
+}
+
+fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
+    let options = CompilerOptions::default();
+    let files: Vector<SourceArg> = Vector::new();
+
+    let i: usize = 1; // skip program name
+    // The value of an option that takes one (`-o <file>`).
+    macro value($flag) {
+        i += 1;
+        if i >= args.len() {
+            usage_error("missing value for", $flag);
+        }
+        args[i]
+    }
+
+    while i < args.len() {
+        let arg = args[i];
+        switch arg {
+            "-o" => options.output_file = value!(arg),
+            "-S" => options.output_format = OutputFormat::Assembly,
+            "-c" => options.output_format = OutputFormat::Object,
+            "--emit-llvm" => options.output_format = OutputFormat::LlvmIr,
+            "--emit-bc" => options.output_format = OutputFormat::Bitcode,
+            "-O0" => options.optimize = OptLevel::O0,
+            "-O", "-O1" => options.optimize = OptLevel::O1,
+            "-O2" => options.optimize = OptLevel::O2,
+            "-O3" => options.optimize = OptLevel::O3,
+            "-Os" => options.optimize = OptLevel::Os,
+            "-g" => options.debug_info = true,
+            // Debug mode, as in alumina-boot: enables `cfg(debug)` code such
+            // as bounds checks and debug assertions.
+            "-d", "--debug" => options.cfg.add_flag("debug"),
+            "--dump-ir" => options.dump_ir = true,
+            "--no-verify" => options.verify_ir = false,
+            "--link-args" => options.extra_link_args = value!(arg),
+            "--sysroot" => options.sysroot = value!(arg),
+            "--target" => options.target_triple = Option::some(value!(arg)),
+            "--cfg" => options.cfg.add_spec(value!(arg)),
+            "--test" => {
+                // `--test` implies `--cfg test`, as in alumina-boot.
+                options.test_mode = true;
+                options.cfg.add_flag("test");
+            },
+            "-h", "--help" => {
+                print_usage();
+                exit(0i32);
+            },
+            _ => {
+                if arg.is_empty() || arg[0] == '-' {
+                    usage_error("unknown option", arg);
+                }
+                // `module::path=file.alu`, or a bare file, which (as in
+                // alumina-boot) is a module named after the file's stem.
+                let eq_pos = arg.iter().find_index(|e: u8| -> bool { e == '=' });
+                files.push(if eq_pos.is_some() {
+                    let idx = eq_pos.unwrap();
+                    SourceArg { module_path: arg[..idx], file_path: arg[idx + 1..] }
+                } else {
+                    SourceArg { module_path: Path::new(arg).file_stem().unwrap_or(arg), file_path: arg }
+                });
+            },
+        }
+        i += 1;
+    }
+    // (As alumina-boot, the sysroot can be given in the environment.)
+    if options.sysroot.is_empty() {
+        let from_env = libc::getenv(&"ALUMINA_SYSROOT\0"[0] as &libc::c_char);
+        if from_env != null {
+            options.sysroot = std::ffi::CString::from_raw(from_env)[..];
+        }
+    }
+
+    (options, files)
+}
+
+/// Run a command through the shell; whether it succeeded.
+fn run_shell(cmd: &[u8]) -> bool {
+    std::process::Command::new(Path::new("/bin/sh"))
+        .args(&["-c", cmd])
+        .status()
+        .map(|status: std::process::ExitStatus| -> bool { status.success() })
+        .unwrap_or(false)
+}
+
+fn print_usage() {
+    eprint!("{}", std::concat!(
+        "Usage: aluminac [options] <[module::path=]file.alu...>\n",
+        "Options:\n",
+        "  -o <file>           Output file (default: a.out)\n",
+        "  -c                  Emit an object file\n",
+        "  -S                  Emit assembly\n",
+        "  --emit-llvm         Emit LLVM IR\n",
+        "  --emit-bc           Emit LLVM bitcode\n",
+        "  -O/-O1/-O2/-O3/-Os  Optimization level (default: -O0)\n",
+        "  -g                  Emit DWARF debug info\n",
+        "  -d, --debug         Debug mode (enables cfg(debug), e.g. bounds checks)\n",
+        "  --sysroot <dir>     Path to the standard library (default: $ALUMINA_SYSROOT)\n",
+        "  --target <triple>   Target triple (default: the host)\n",
+        "  --cfg <key[=value]> Set a conditional compilation key\n",
+        "  --test              Build the unit test runner\n",
+        "  --link-args <args>  Extra arguments for the linker\n",
+        "  --dump-ir           Dump LLVM IR to stderr\n",
+        "  --no-verify         Skip IR verification (aluminac's and LLVM's)\n",
+        "  -h, --help          Show this help\n",
+    ));
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let (options, files) = parse_args(args);
+    defer files.free();
+
+    let target_result = if options.target_triple.is_some() {
+        Target::parse(options.target_triple.unwrap())
+    } else {
+        Target::host()
+    };
+    if target_result.is_err() {
+        eprintln!("error: invalid target `{}`: {}", options.target_triple.unwrap_or("<host>"), target_result.unwrap_err());
+        return 1i32;
+    }
+    let target = target_result.unwrap();
+
+    // Compiler-provided cfg keys, as in alumina-boot. Keys given with
+    // `--cfg` take precedence.
+    target.add_cfgs(&options.cfg);
+    options.cfg.add_default("output_type", "executable");
+
+    let compiler = Compiler::new(options, target);
+    defer compiler.free();
+
+    // Load sysroot files first (they go into module scopes like "std::mem", etc.)
+    if !compiler.load_sysroot() {
+        return 1i32;
+    }
+
+    for file in files {
+        if !compiler.add_source_file(file.file_path, file.module_path) {
+            return 1i32;
+        }
+        if compiler.main_file.is_empty() {
+            compiler.main_file = file.file_path;
+        }
+    }
+
+    if compiler.compile() { 0i32 } else { 1i32 }
+}

@@ -1,0 +1,32 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A type conforms to a protocol if it has its methods *with their
+// signatures* (as alumina-boot): aluminac only checked the names, so a
+// `free(self: &S)` made `S` `Freeable`, and so did a slice's
+// `free(&mut [T])` a `&[u8]` (whose `free` would take `&mut &[u8]`).
+
+use std::mem::Freeable;
+use std::cmp::Equatable;
+use std::typing::matches;
+
+struct ConstFree {}
+impl ConstFree { fn free(self: &ConstFree) {} }
+
+struct MutFree {}
+impl MutFree { fn free(self: &mut MutFree) {} }
+
+struct WrongEquals {}
+impl WrongEquals {
+    fn equals(self: &WrongEquals, other: &i32) -> bool { *other == 0 }
+    fn not_equals(self: &WrongEquals, other: &WrongEquals) -> bool { false }
+}
+
+fn main() -> i32 {
+    if matches::<&[u8], Freeable<&[u8]>>() || matches::<&mut [u8], Freeable<&mut [u8]>>() { return 1; }
+    if matches::<ConstFree, Freeable<ConstFree>>() { return 2; }
+    if !matches::<MutFree, Freeable<MutFree>>() { return 3; }
+    if !matches::<std::collections::Vector<u8>, Freeable<std::collections::Vector<u8>>>() { return 4; }
+    if matches::<WrongEquals, Equatable<WrongEquals>>() { return 5; }
+    // (Generic methods, and methods of mixins.)
+    if !matches::<&[u8], Equatable<&[u8]>>() || !matches::<u8, Equatable<u8>>() { return 6; }
+    0
+}

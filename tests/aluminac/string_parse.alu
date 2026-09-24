@@ -1,0 +1,104 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+use std::string::*;
+
+fn test_parse_integer_i32() -> i32 {
+    let v = parse_integer::<i32>("123", 10u16);
+    if v.unwrap() != 123i32 { return 1i32; }
+
+    let v = parse_integer::<i32>("-42", 10u16);
+    if v.unwrap() != -42i32 { return 2i32; }
+
+    let v = parse_integer::<i32>("0", 10u16);
+    if v.unwrap() != 0i32 { return 3i32; }
+
+    let v = parse_integer::<i32>("ff", 16u16);
+    if v.unwrap() != 255i32 { return 4i32; }
+
+    let v = parse_integer::<i32>("1010", 2u16);
+    if v.unwrap() != 10i32 { return 5i32; }
+
+    let v = parse_integer::<i32>("77", 8u16);
+    if v.unwrap() != 63i32 { return 6i32; }
+
+    // Invalid input
+    let v = parse_integer::<i32>("", 10u16);
+    if v.is_some() { return 7i32; }
+
+    let v = parse_integer::<i32>("abc", 10u16);
+    if v.is_some() { return 8i32; }
+
+    // Note: sysroot's parse_integer returns Some(0) for "-" alone — quirk.
+
+    0i32
+}
+
+fn test_parse_integer_u64() -> i32 {
+    let v = parse_integer::<u64>("18446744073709551615", 10u16);
+    if v.unwrap() != 18446744073709551615u64 { return 10i32; }
+
+    // Overflow
+    let v = parse_integer::<u64>("18446744073709551616", 10u16);
+    if v.is_some() { return 11i32; }
+
+    let v = parse_integer::<u64>("0", 10u16);
+    if v.unwrap() != 0u64 { return 12i32; }
+
+    // Hex
+    let v = parse_integer::<u64>("DEADBEEF", 16u16);
+    if v.unwrap() != 3735928559u64 { return 13i32; }
+
+    0i32
+}
+
+fn test_parse_integer_i8() -> i32 {
+    let v = parse_integer::<i8>("127", 10u16);
+    if v.unwrap() != 127i8 { return 20i32; }
+
+    let v = parse_integer::<i8>("-128", 10u16);
+    if v.unwrap() != -128i8 { return 21i32; }
+
+    // Overflow
+    let v = parse_integer::<i8>("128", 10u16);
+    if v.is_some() { return 22i32; }
+
+    let v = parse_integer::<i8>("-129", 10u16);
+    if v.is_some() { return 23i32; }
+
+    0i32
+}
+
+fn test_parse_integer_u8() -> i32 {
+    let v = parse_integer::<u8>("255", 10u16);
+    if v.unwrap() != 255u8 { return 30i32; }
+
+    let v = parse_integer::<u8>("256", 10u16);
+    if v.is_some() { return 31i32; }
+
+    let v = parse_integer::<u8>("ff", 16u16);
+    if v.unwrap() != 255u8 { return 32i32; }
+
+    0i32
+}
+
+// parse_float tests removed: sysroot's parse_float depends on
+// std::fmt::ryu, which isn't ported to aluminac yet. alumina-boot's
+// make test-std covers parse_float via sysroot's own embedded tests.
+
+fn test_parse_integer_usize() -> i32 {
+    let v = parse_integer::<usize>("12345", 10u16);
+    if v.unwrap() != 12345usize { return 70i32; }
+
+    let v = parse_integer::<usize>("0", 10u16);
+    if v.unwrap() != 0usize { return 71i32; }
+
+    0i32
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let r = test_parse_integer_i32(); if r != 0i32 { return r; }
+    let r = test_parse_integer_u64(); if r != 0i32 { return r; }
+    let r = test_parse_integer_i8(); if r != 0i32 { return r; }
+    let r = test_parse_integer_u8(); if r != 0i32 { return r; }
+    let r = test_parse_integer_usize(); if r != 0i32 { return r; }
+    0i32
+}

@@ -1,0 +1,23 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Items in a block are visible from their declaration on, and a later item
+// of the same name shadows an earlier one (alumina-boot's linear scopes).
+// aluminac registered all of a block's items up front, so the last one won.
+
+fn main() -> i32 {
+    const A: i32 = 1;
+    let a1 = A;
+    const A: &[u8] = "two";
+    let a2 = A;
+    if a1 != 1 || a2 != "two" { return 1; }
+
+    let foo = 1;
+    if foo != 1 { return 2; }
+    fn foo() -> i32 { 10 }
+    if foo() != 10 { return 3; }
+    struct foo {}
+    impl foo { fn foo() -> i32 { 20 } }
+    if foo::foo() != 20 { return 4; }
+    const foo: i32 = 30;
+    if foo != 30 { return 5; }
+    0
+}

@@ -1,0 +1,21 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Type queries on slices, including through generic parameters
+// (`is_same_base_as::<T, &[()]>()` checked only struct ids), and protocol
+// conformance that depends on a method's bounds (`&[i32]` is not
+// `Formattable`: the slice's `fmt` needs `u8` elements).
+
+use std::typing::Type;
+use std::fmt::{Formattable, NullFormatter};
+
+fn formattable<T>() -> bool {
+    std::mem::uninitialized::<T>() is Formattable<T, NullFormatter>
+}
+
+fn main() -> i32 {
+    let d = Type::new::<&[i32]>();
+    if !d.is_slice() || d.is_pointer() || d.is_array() { return 1; }
+    if Type::new::<&i32>().is_slice() { return 2; }
+    if formattable::<&[i32]>() || !formattable::<&[u8]>() || !formattable::<i32>() { return 3; }
+    if formattable::<Option<()>>() || !formattable::<Option<u8>>() { return 4; }
+    0
+}

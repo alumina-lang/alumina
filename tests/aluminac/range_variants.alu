@@ -1,0 +1,59 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Range literal lowering uses the right lang item for each variant
+// (RangeFull/RangeFrom/RangeTo/RangeToInclusive/Range/RangeInclusive)
+// against the unified sysroot. Slice indexing through the new variants
+// must extract the right bounds — start/end depending on which fields
+// the variant carries.
+
+fn main() -> i32 {
+    let s: &[u8] = "abcdefgh";
+
+    // .. — full slice (RangeFull).
+    let a = s[..];
+    if a.len() != 8usize { return 1; }
+    if a[0] != 'a' as u8 { return 2; }
+    if a[7] != 'h' as u8 { return 3; }
+
+    // a.. — RangeFrom; from index a to end.
+    let b = s[3..];
+    if b.len() != 5usize { return 4; }
+    if b[0] != 'd' as u8 { return 5; }
+
+    // ..b — RangeTo; from start to index b (exclusive).
+    let c = s[..4];
+    if c.len() != 4usize { return 6; }
+    if c[0] != 'a' as u8 { return 7; }
+    if c[3] != 'd' as u8 { return 8; }
+
+    // ..=b — RangeToInclusive; from start to index b (inclusive).
+    let d = s[..=3];
+    if d.len() != 4usize { return 9; }
+    if d[3] != 'd' as u8 { return 10; }
+
+    // a..b — Range; from a to b (exclusive).
+    let e = s[2..5];
+    if e.len() != 3usize { return 11; }
+    if e[0] != 'c' as u8 { return 12; }
+    if e[2] != 'e' as u8 { return 13; }
+
+    // a..=b — RangeInclusive; from a to b (inclusive).
+    let f = s[2..=4];
+    if f.len() != 3usize { return 14; }
+    if f[0] != 'c' as u8 { return 15; }
+    if f[2] != 'e' as u8 { return 16; }
+
+    // for loops over ranges (used by std/iter through mixin Iterator).
+    let total: i32 = 0;
+    for i in 0i32..5i32 {
+        total = total + i;
+    }
+    if total != 10i32 { return 17; }
+
+    let total_inc: i32 = 0;
+    for i in 1i32..=4i32 {
+        total_inc = total_inc + i;
+    }
+    if total_inc != 10i32 { return 18; }
+
+    0
+}

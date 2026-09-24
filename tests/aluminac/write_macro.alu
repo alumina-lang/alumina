@@ -1,0 +1,70 @@
+// Test: write! macro with formatting
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+use std::fmt::{write, SliceFormatter, Formatter};
+
+fn main() -> i32 {
+    let buf: [u8; 128];
+    let f = SliceFormatter::new(&buf);
+
+    // Test 1: Simple string
+    let _ = write!(&f, "hello");
+    let result = f.get();
+    if result.len() != 5usize { return 1; }
+    if result[0] != 'h' as u8 { return 2; }
+    if result[4] != 'o' as u8 { return 3; }
+
+    // Test 2: String with integer
+    let buf2: [u8; 128];
+    let f2 = SliceFormatter::new(&buf2);
+    let x: i32 = 42;
+    let _ = write!(&f2, "x={}", x);
+    let r2 = f2.get();
+    // "x=42" = 4 chars
+    if r2.len() != 4usize { return 4; }
+    if r2[0] != 'x' as u8 { return 5; }
+    if r2[2] != '4' as u8 { return 6; }
+    if r2[3] != '2' as u8 { return 7; }
+
+    // Test 3: Multiple args
+    let buf3: [u8; 128];
+    let f3 = SliceFormatter::new(&buf3);
+    let a: i32 = 1;
+    let b: i32 = 2;
+    let _ = write!(&f3, "{} + {} = {}", a, b, a + b);
+    let r3 = f3.get();
+    // "1 + 2 = 3" = 9 chars
+    if r3.len() != 9usize { return 8; }
+    if r3[0] != '1' as u8 { return 9; }
+    if r3[4] != '2' as u8 { return 10; }
+    if r3[8] != '3' as u8 { return 11; }
+
+    // Test 4: Negative integer
+    let buf4: [u8; 128];
+    let f4 = SliceFormatter::new(&buf4);
+    let n: i32 = -42;
+    let _ = write!(&f4, "{}", n);
+    let r4 = f4.get();
+    // "-42" = 3 chars
+    if r4.len() != 3usize { return 12; }
+    if r4[0] != '-' as u8 { return 13; }
+
+    // Test 5: Bool
+    let buf5: [u8; 128];
+    let f5 = SliceFormatter::new(&buf5);
+    let _ = write!(&f5, "{}", true);
+    let r5 = f5.get();
+    if r5.len() != 4usize { return 14; }
+    if r5[0] != 't' as u8 { return 15; }
+
+    // Test 6: usize
+    let buf6: [u8; 128];
+    let f6 = SliceFormatter::new(&buf6);
+    let s: usize = 1024usize;
+    let _ = write!(&f6, "{}", s);
+    let r6 = f6.get();
+    // "1024" = 4 chars
+    if r6.len() != 4usize { return 16; }
+
+    0
+}

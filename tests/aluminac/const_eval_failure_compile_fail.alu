@@ -1,0 +1,14 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A const that cannot be evaluated at compile time is an error, pointing at
+// the sub-expression the evaluator gave up on. aluminac used to fall back
+// to a zero-initialized global, silently miscompiling every use.
+// EXPECTED_ERROR: this expression is not evaluable at compile time (not constant or unsupported expression)
+// EXPECTED_ERROR: while evaluating the constant `SUM`
+
+extern "C" fn rand() -> i32;
+
+const SUM: i32 = rand() + 1;
+
+fn main() -> i32 {
+    SUM
+}

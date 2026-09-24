@@ -1,0 +1,16 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A method taking `&mut self` cannot be called through a `&` pointer (or
+// on a const place): aluminac passed the pointer as it was.
+// EXPECTED_ERROR: type mismatch: expected '&mut S', got '&S'
+// EXPECTED_ERROR_COUNT: 1
+
+struct S { a: i32 }
+impl S {
+    fn set(self: &mut S) { self.a = 1; }
+}
+
+fn main() {
+    let s = S { a: 0 };
+    let p: &S = &s;
+    p.set();
+}

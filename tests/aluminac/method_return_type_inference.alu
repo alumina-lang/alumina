@@ -1,0 +1,21 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A method's own generic parameters are inferred from the expected return
+// type too (as in alumina-boot); one that nothing determines is "type hint
+// required" rather than `()`.
+
+struct Arena {}
+
+impl Arena {
+    fn make<T>(self: &Arena, n: usize) -> std::collections::Vector<T> {
+        std::collections::Vector::with_capacity(n)
+    }
+}
+
+fn main() -> i32 {
+    let a = Arena {};
+    let v: std::collections::Vector<u32> = a.make(4);
+    defer v.free();
+    v.push(1);
+    if v.len() != 1 || std::mem::size_of::<typeof(v[0])>() != 4 { return 1; }
+    0
+}

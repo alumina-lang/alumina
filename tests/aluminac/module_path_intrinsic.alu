@@ -1,0 +1,17 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// has_attribute<T>(name) reports custom attributes on items, and is false
+// for types without attributes (see module_path_real.alu for module_path).
+
+extern "intrinsic" fn has_attribute<T>(name: &[u8]) -> bool;
+
+struct Foo {}
+
+#[test::ignore]
+struct Bar {}
+
+fn main() -> i32 {
+    if has_attribute::<Foo>("test::ignore") { return 1; }
+    if !has_attribute::<Bar>("test::ignore") { return 2; }
+    if has_attribute::<i32>("anything") { return 3; }
+    0
+}

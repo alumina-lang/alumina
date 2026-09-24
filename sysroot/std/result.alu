@@ -87,6 +87,18 @@ macro yield_try($res) {
     }
 }
 
+/// Type alias matching any monomorphization of `Result<T, E>`, regardless of `T` or `E`.
+///
+/// Useful for `is`-checks at compile time:
+/// ```
+/// use std::result::AnyResult;
+///
+/// let r: Result<i32, &[u8]> = Result::ok(1);
+/// assert!(r is AnyResult);
+/// assert!(!(42 is AnyResult));
+/// ```
+type AnyResult = std::builtins::SameBaseAs<Result<(), ()>>;
+
 /// Either a success value or an error value.
 ///
 /// See [module level documentation](std::result) for more information.
@@ -369,6 +381,18 @@ impl Result<T, E> {
             func(self.unwrap())
         } else {
             Result::err(self.unwrap_err())
+        }
+    }
+
+    /// Transform the error value by calling the provided function, which returns a `Result`.
+    ///
+    /// If the success value is present, function is not called and the original value is
+    /// passed through. The error type may change to a new type `Em`.
+    fn or_else<Em, F: Fn(E) -> Result<T, Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
+        if self.is_ok() {
+            Result::ok(self.unwrap())
+        } else {
+            func(self.unwrap_err())
         }
     }
 

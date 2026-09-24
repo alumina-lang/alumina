@@ -1,0 +1,30 @@
+// Verify #[packed] structs have no internal alignment padding.
+// A packed struct of {u8, u32} has size 5 (vs 8 for the unpacked version),
+// since the u32 sits immediately after the u8 with no 3-byte gap.
+
+#[packed]
+struct PackedHeader {
+    tag: u8,
+    value: u32,
+}
+
+struct UnpackedHeader {
+    tag: u8,
+    value: u32,
+}
+
+#[packed]
+struct PackedTriple {
+    a: u8,
+    b: u8,
+    c: u32,
+}
+
+extern "intrinsic" fn size_of<T>() -> usize;
+
+fn main() -> i32 {
+    if size_of::<PackedHeader>() != 5usize { return 1i32; }
+    if size_of::<UnpackedHeader>() != 8usize { return 2i32; }
+    if size_of::<PackedTriple>() != 6usize { return 3i32; }
+    0i32
+}

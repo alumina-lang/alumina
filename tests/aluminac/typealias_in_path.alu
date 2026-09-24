@@ -1,0 +1,37 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: aluminac's `parse_scoped_identifier` fallback used to
+// only check segment[0] for TypeAlias / GenericParam anchors. Paths
+// like `fmt::Result::ok(())` (Result is a type alias mid-path) bottomed
+// out as "expression is not callable" because resolve_path filters
+// TypeAlias entries at any position. This pins the mid-path TypeAlias
+// resolution.
+
+mod inner {
+    struct Holder { x: i32 }
+
+    impl Holder {
+        fn from_val(v: i32) -> Holder {
+            Holder { x: v }
+        }
+    }
+
+    type AliasHolder = Holder;
+}
+
+fn main() -> i32 {
+    // TypeAlias mid-path: `inner::AliasHolder::from_val` walks
+    // inner (Module) -> AliasHolder (TypeAlias) -> from_val.
+    // resolve_path filters out the TypeAlias; the fallback walk in
+    // parse_scoped_identifier picks it up as a Defered anchor.
+    let h = inner::AliasHolder::from_val(42i32);
+    if h.x != 42i32 { return 1i32; }
+
+    // Use-aliased TypeAlias: `Alias::from_val` where Alias is a
+    // use-alias to inner::AliasHolder. The classify_anchor_item path
+    // must follow the UseAlias before checking for TypeAlias.
+    use inner::AliasHolder as Alias;
+    let h2 = Alias::from_val(99i32);
+    if h2.x != 99i32 { return 2i32; }
+
+    0i32
+}

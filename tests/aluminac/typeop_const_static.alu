@@ -1,0 +1,55 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+//
+// Verifies that const/static items can appear as type-args to
+// builtins::underlying_type_of, recovering the item's declared type.
+// Closes the `Const`/`Static` slot of the underlying_type_of typeop.
+
+const FOO: i32 = 42;
+static BAR: u64 = 7u64;
+
+fn main() -> i32 {
+    let a: std::builtins::underlying_type_of<FOO> = 0i32;
+    a = 5i32;
+    if a != 5i32 { return 1; }
+
+    let b: std::builtins::underlying_type_of<BAR> = 0u64;
+    b = 99u64;
+    if b != 99u64 { return 2; }
+
+    // The const's declared type round-trips through size_of.
+    if std::mem::size_of::<std::builtins::underlying_type_of<FOO>>() != 4usize {
+        return 3;
+    }
+    if std::mem::size_of::<std::builtins::underlying_type_of<BAR>>() != 8usize {
+        return 4;
+    }
+
+    // value_of fetches the const/static's value.
+    if std::intrinsics::value_of::<FOO>() != 42i32 { return 5; }
+    if std::intrinsics::value_of::<BAR>() != 7u64 { return 6; }
+
+    // proto_const / proto_static recognise const/static items via `is`.
+    let foo_ph = std::intrinsics::uninitialized::<FOO>();
+    let bar_ph = std::intrinsics::uninitialized::<BAR>();
+    if !(foo_ph is std::builtins::Const) { return 7; }
+    if foo_ph is std::builtins::Static { return 8; }
+    if bar_ph is std::builtins::Const { return 9; }
+    if !(bar_ph is std::builtins::Static) { return 10; }
+
+    // Item-as-type-arg flows through user generic functions.
+    let doubled = double_const::<FOO>();
+    if doubled != 84i32 { return 11; }
+    let stat = read_static::<BAR>();
+    if stat != 7u64 { return 12; }
+
+    0
+}
+
+fn double_const<T: std::builtins::Const>() -> std::builtins::underlying_type_of<T> {
+    let v = std::intrinsics::value_of::<T>();
+    v + v
+}
+
+fn read_static<T: std::builtins::Static>() -> std::builtins::underlying_type_of<T> {
+    std::intrinsics::value_of::<T>()
+}

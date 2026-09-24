@@ -1,222 +1,280 @@
+# Alumina: the compiler (aluminac), its standard library, tools, tests and docs.
+#
+# aluminac is written in Alumina and compiles to native code with LLVM. It is
+# bootstrapped with alumina-boot, the original compiler (Rust, emitting C):
+#
+#   alumina-boot -> aluminac stage 1 (via C) -> stage 2, which is `aluminac`
+#
+# and `make bootstrap` checks the fixpoint (stage 3, built by stage 2, emits
+# the same LLVM IR). Everything else is compiled with aluminac.
+#
+# Common targets:
+#   make                 build aluminac (./aluminac)
+#   make test            aluminac's test suites (see `test` below)
+#   make check           everything CI checks
+#   make docs            the standard library's documentation (build/<profile>/html)
+#   make install         aluminac and the sysroot, into PREFIX
+#   make boot            alumina-boot only (lint-boot, test-boot: its Rust lints and tests)
+#
+# Profiles: debug (default), RELEASE=1 (-O3), PROFILING=1 (optimized, with
+# debug info). Requirements: cargo, a C compiler, tree-sitter (the library and
+# the CLI), LLVM 22 (or LLVM_CONFIG=<path to llvm-config>), python3 (tests).
+
 PREFIX ?= /usr/local
+LLVM_CONFIG ?= llvm-config-22
+# (For the debug information tests.)
+LLDB ?= $(shell command -v lldb-22 || command -v lldb)
 
 BUILD_ROOT = build
 SYSROOT = sysroot
 
 ifdef RELEASE
-	BUILD_DIR = $(BUILD_ROOT)/release
-	CARGO_FLAGS += --profile release
-	CARGO_TARGET_DIR = target/release
-	CFLAGS += -O3 -g
-else ifdef FAST_DEBUG
-	# Compile in debug mode, but with alumina-boot compiled in release mode.
-	# It is significantly faster.
-	BUILD_DIR = $(BUILD_ROOT)/fast-debug
-	CARGO_FLAGS += --profile release
-	CARGO_TARGET_DIR = target/release
-	CFLAGS += -g0
-	ALUMINA_FLAGS += --debug
+	PROFILE = release
+	CFLAGS += -O2
+	ALUMINAC_FLAGS += -O3
 else ifdef PROFILING
-	BUILD_DIR = $(BUILD_ROOT)/profiling
-	CARGO_FLAGS += --profile profiling
-	CARGO_TARGET_DIR = target/profiling
-	CFLAGS += -g3 -fPIE -rdynamic -O3
-	ALUMINA_FLAGS += --debug
-else ifdef COVERAGE
-	CC ?= clang
-	BUILD_DIR = $(BUILD_ROOT)/coverage
-	CARGO_FLAGS += --profile coverage
-	CARGO_TARGET_DIR = target/coverage
-	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
-	ALUMINA_FLAGS += --debug
-	export RUSTFLAGS += -Cinstrument-coverage
-	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
+	PROFILE = profiling
+	CFLAGS += -O2 -g
+	ALUMINAC_FLAGS += -O2 -g
 else
-	CARGO_FLAGS += --profile dev
-	BUILD_DIR = $(BUILD_ROOT)/debug
-	CARGO_TARGET_DIR = target/debug
-	CFLAGS += -g3 -fPIE -rdynamic
-	ALUMINA_FLAGS += --debug
+	PROFILE = debug
+	CFLAGS += -g
+	ALUMINAC_FLAGS += -g --debug
 endif
+ALUMINAC_FLAGS += --cfg threading
 
-LDFLAGS ?= -lm
-ifndef STD_BACKTRACE
-	ALUMINA_FLAGS += --cfg libbacktrace
-	LDFLAGS += -lbacktrace
-endif
-ifndef NO_THREADS
-	ALUMINA_FLAGS += --cfg threading
-	LDFLAGS += -lpthread
-endif
-ifndef NO_MINICORO
-	MINICORO = $(BUILD_DIR)/minicoro.o
-	ALUMINA_FLAGS += --cfg coroutines
-else
-	MINICORO =
-endif
+BUILD_DIR = $(BUILD_ROOT)/$(PROFILE)
 
-ifdef TIMINGS
-	ALUMINA_FLAGS += -Ztimings
-endif
+.DEFAULT_GOAL := all
+.PHONY: all aluminac boot
+all: aluminac
 
-# Convert a list of source files to a list of <module>=<file> pairs. mod.alu files are treated
-# specially, they represent a module with the same name as the directory they are in.
+# A list of source files as <module>=<file> arguments: a/b/c.alu under $(2) is
+# module $(3)a::b::c, and a/b/mod.alu is module $(3)a::b.
 define alumina_modules
-    $(foreach src,$(1),$(subst -,_,$(subst ::mod,::,$(subst /,::,$(basename $(subst $(2),$(3),$(src))))))=$(src))
+	$(foreach src,$(1),$(subst -,_,$(subst ::mod,::,$(subst /,::,$(basename $(subst $(2),$(3),$(src))))))=$(src))
 endef
 
-ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
-CODEGEN = $(BUILD_DIR)/aluminac-generate
-STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
-LIBRARIES_TESTS = $(BUILD_DIR)/libraries-tests
-LANG_TESTS = $(BUILD_DIR)/lang-tests
-DOCTEST = $(BUILD_DIR)/doctest
+SYSROOT_FILES := $(shell find $(SYSROOT) -type f -name '*.alu')
+LIBRARY_SOURCES := $(shell find libraries -type f -name '*.alu')
+TREE_SITTER_SOURCES := $(shell find libraries/tree_sitter -type f -name '*.alu')
+ALUMINAC_COMMON_SOURCES := $(shell find libraries/aluminac-common -type f -name '*.alu')
+ALUMINAC_SOURCES := $(shell find src/aluminac -type f -name '*.alu')
 
-SYSROOT_AST = $(BUILD_DIR)/sysroot.ast
-SYSROOT_TEST_AST = $(BUILD_DIR)/sysroot-test.ast
-SYSROOT_TEST_STD_AST = $(BUILD_DIR)/sysroot-test-std.ast
+# (Evaluated only where used, so that targets not needing LLVM do not either.)
+LLVM_LIBS = $(shell $(LLVM_CONFIG) --ldflags --libs --system-libs)
 
-# If grammar changes, we need to rebuild the world
-COMMON_SOURCES = common/grammar.js
-BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f) $(shell find src/alumina-boot-macros/ -type f)
-SYSROOT_FILES = $(shell find $(SYSROOT) -type f -name '*.alu')
-ALU_LIBRARIES = $(shell find libraries/ -type f -name '*.alu')
+.PHONY: check-llvm
+check-llvm:
+	@command -v $(LLVM_CONFIG) >/dev/null 2>&1 || (echo "error: \`$(LLVM_CONFIG)\` not found: install LLVM 22, or pass LLVM_CONFIG=<path to llvm-config>." && exit 1)
 
-# Ensure build directory exists, but do not pollute all the rules with it
-$(BUILD_DIR)/.build:
-	mkdir -p $(BUILD_DIR)
-	@touch $@
+## ------------------------------ alumina-boot ------------------------------
 
-## ----------------- Bootstrap compiler (alumina-boot) -----------------
+# Built by cargo (always optimized: it only generates aluminac's stage 1);
+# here so that it is rebuilt when its sources change.
+BOOT = $(BUILD_ROOT)/alumina-boot
+BOOT_SOURCES := $(shell find src/alumina-boot src/alumina-boot-macros -type f) common/grammar.js
 
-# alumina-boot is entirely built by cargo, it is here in the Makefile just so it can
-# be a dependency and gets rebuilt if sources change.
-$(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
-	cargo build $(CARGO_FLAGS)
-	cp $(CARGO_TARGET_DIR)/alumina-boot $(ALUMINA_BOOT)
+$(BOOT): $(BOOT_SOURCES)
+	cargo build --release
+	@mkdir -p $(@D)
+	cp $${CARGO_TARGET_DIR:-target}/release/alumina-boot $@
 
-## ---------------------- Sysroot AST caching ------------------------
+boot: $(BOOT)
 
-ifdef CACHE_AST
-$(SYSROOT_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) \
-		-Zdump-ast=$@ -Zast-only
+.PHONY: lint-boot test-boot
+lint-boot:
+	cargo fmt -- --check
+	cargo clippy --all-targets
 
-$(SYSROOT_TEST_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) \
-		-Zdump-ast=$@ -Zast-only --cfg test
+test-boot:
+	cargo test --all-targets
 
-$(SYSROOT_TEST_STD_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) \
-		-Zdump-ast=$@ -Zast-only --cfg test --cfg test_std
+## ------------------------------ The grammar -------------------------------
 
-ALU_DEPS = $(SYSROOT_AST)
-ALU_TEST_DEPS = $(SYSROOT_TEST_AST)
-ALU_TEST_STD_DEPS = $(SYSROOT_TEST_STD_AST)
-ALUMINA_FLAGS_COMMON = --ast $(SYSROOT_AST) $(ALUMINA_FLAGS)
-ALUMINA_FLAGS_TEST = --ast $(SYSROOT_TEST_AST) $(ALUMINA_FLAGS) --cfg test
-ALUMINA_FLAGS_TEST_STD = --ast $(SYSROOT_TEST_STD_AST) $(ALUMINA_FLAGS) --cfg test --cfg test_std
-else
-ALU_DEPS = $(ALUMINA_BOOT) $(SYSROOT_FILES)
-ALU_TEST_DEPS = $(ALUMINA_BOOT) $(SYSROOT_FILES)
-ALU_TEST_STD_DEPS = $(ALUMINA_BOOT) $(SYSROOT_FILES)
-ALUMINA_FLAGS_COMMON = --sysroot $(SYSROOT) $(ALUMINA_FLAGS)
-ALUMINA_FLAGS_TEST = --sysroot $(SYSROOT) $(ALUMINA_FLAGS) --cfg test
-ALUMINA_FLAGS_TEST_STD = --sysroot $(SYSROOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std
-endif
+# The tree-sitter parser (alumina-boot's build script makes its own).
+PARSER = $(BUILD_DIR)/parser.o
 
-## ----------------------------- Minicoro ------------------------------
-
-$(BUILD_DIR)/minicoro.o: common/minicoro/minicoro.h
-	$(CC) $(CFLAGS) -DMINICORO_IMPL -DNDEBUG -xc -c $^ -o $@
-
-## --------------------------- Stdlib tests ----------------------------
-
-# Stdlib tests
-$(STDLIB_TESTS).c: $(ALU_TEST_STD_DEPS)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Zdeny-warnings --output $@
-
-$(STDLIB_TESTS): $(STDLIB_TESTS).c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-## ---------------------------- Lang tests -----------------------------
-
-LANG_TEST_FILES = $(shell find tests/lang -type f -name '*.alu')
-
-$(LANG_TESTS).c: $(ALU_TEST_DEPS) $(LANG_TEST_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) -Zdeny-warnings --output $@ \
-		$(call alumina_modules,$(LANG_TEST_FILES),tests/,)
-
-$(LANG_TESTS): $(LANG_TESTS).c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-## ------------------ Libraries  ------------------
-
-# Compile tree sitter grammar to C. Bootstrap compiler does it by itself in the Cargo
-# build script, but for aluminac, we need to do it in the Makefile.
 $(BUILD_DIR)/src/parser.c: common/grammar.js
-	cd common/ && tree-sitter generate -o $(abspath $(BUILD_DIR))/src grammar.js
+	cd common && tree-sitter generate -o $(abspath $(BUILD_DIR))/src grammar.js
 
-$(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
-	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@ $(LDFLAGS)
+$(PARSER): $(BUILD_DIR)/src/parser.c
+	$(CC) $(CFLAGS) -I$(BUILD_DIR)/src -c $< -o $@
 
-# node_kinds.alu is generated by the codegen util.
-CODEGEN_SOURCES = $(shell find tools/tree-sitter-codegen/ -type f -name '*.alu')
-TREE_SITTER_SOURCES = $(shell find libraries/tree_sitter/ -type f -name '*.alu')
+## -------------------------------- aluminac --------------------------------
 
-$(CODEGEN).c: $(ALU_DEPS) $(TREE_SITTER_SOURCES) $(CODEGEN_SOURCES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
+ALUMINAC = $(BUILD_DIR)/aluminac
+STAGE1 = $(BUILD_DIR)/aluminac-stage1
+STAGE3 = $(BUILD_DIR)/aluminac-stage3
+
+ALUMINAC_MODULES = \
+	$(call alumina_modules,$(TREE_SITTER_SOURCES) $(ALUMINAC_COMMON_SOURCES),libraries/,/) \
+	$(call alumina_modules,$(ALUMINAC_SOURCES),src/,/)
+ALUMINAC_DEPS = $(SYSROOT_FILES) $(TREE_SITTER_SOURCES) $(ALUMINAC_COMMON_SOURCES) $(ALUMINAC_SOURCES) $(PARSER)
+ALUMINAC_LINK = -ltree-sitter $(PARSER) $(LLVM_LIBS) -lpthread
+
+# Compiling with aluminac.
+ALUMINAC_CMD = $(ALUMINAC) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT)
+
+$(STAGE1).c: $(BOOT) $(ALUMINAC_DEPS) | check-llvm
+	@mkdir -p $(@D)
+	$(BOOT) --sysroot $(SYSROOT) --debug --cfg threading --cfg boot --output $@ $(ALUMINAC_MODULES)
+
+# (Uninitialized locals filled with a pattern: the compiler reading one is
+# then a bug that shows, not one that depends on what the stack held.)
+$(STAGE1): $(STAGE1).c $(PARSER)
+	$(CC) -g -w -ftrivial-auto-var-init=pattern -o $@ $(STAGE1).c $(PARSER) -lm -lpthread -ltree-sitter $(LLVM_LIBS)
+
+$(ALUMINAC): $(STAGE1) $(ALUMINAC_DEPS)
+	$(STAGE1) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT) --link-args "$(ALUMINAC_LINK)" -o $@ $(ALUMINAC_MODULES)
+
+aluminac: $(ALUMINAC)
+	ln -sf $(ALUMINAC) $@
+
+# The bootstrap fixpoint: stage 2 (aluminac) and stage 3 must compile aluminac
+# to the same LLVM IR. (The linked binaries can differ, e.g. the macOS linker
+# stamps a UUID in them.)
+$(STAGE3): $(ALUMINAC) $(ALUMINAC_DEPS)
+	$(ALUMINAC) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT) --link-args "$(ALUMINAC_LINK)" -o $@ $(ALUMINAC_MODULES)
+
+$(BUILD_DIR)/bootstrap/stage2.ll: $(ALUMINAC) $(ALUMINAC_DEPS)
+	@mkdir -p $(@D)
+	$(ALUMINAC) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT) --emit-llvm -o $@ $(ALUMINAC_MODULES)
+
+$(BUILD_DIR)/bootstrap/stage3.ll: $(STAGE3) $(ALUMINAC_DEPS)
+	@mkdir -p $(@D)
+	$(STAGE3) $(ALUMINAC_FLAGS) --sysroot $(SYSROOT) --emit-llvm -o $@ $(ALUMINAC_MODULES)
+
+.PHONY: bootstrap
+bootstrap: $(BUILD_DIR)/bootstrap/stage2.ll $(BUILD_DIR)/bootstrap/stage3.ll
+	@cmp -s $^ && echo "Bootstrap successful: stage 2 and stage 3 emit the same IR." \
+		|| (echo "Bootstrap failed: stage 2 and stage 3 emit different IR." && exit 1)
+
+## ------------------------------- Node kinds -------------------------------
+
+# The names of the grammar's node kinds and fields, for aluminac and its tools
+# (their ids are looked up at run time, see tools/tree-sitter-codegen). The file
+# is committed; `make regen-node-kinds` regenerates it when the grammar gains
+# or loses names, and `make check-node-kinds` checks that it is up to date.
+NODE_KINDS = libraries/aluminac-common/node_kinds.alu
+CODEGEN = $(BUILD_DIR)/tree-sitter-codegen
+CODEGEN_SOURCES := $(shell find tools/tree-sitter-codegen -type f -name '*.alu')
+
+$(CODEGEN): $(ALUMINAC) $(SYSROOT_FILES) $(TREE_SITTER_SOURCES) $(CODEGEN_SOURCES) $(PARSER)
+	$(ALUMINAC_CMD) --link-args "-ltree-sitter $(PARSER)" -o $@ \
 		$(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(CODEGEN_SOURCES),tools/,/)
 
-$(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
-
-libraries/aluminac/lib/node_kinds.alu: $(CODEGEN)
+$(BUILD_DIR)/gen/node_kinds.alu: $(CODEGEN)
+	@mkdir -p $(@D)
 	$(CODEGEN) --output $@
 
-$(LIBRARIES_TESTS).c: $(ALU_TEST_DEPS) $(ALU_LIBRARIES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) -Zdeny-warnings --output $@ \
-		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
+.PHONY: regen-node-kinds check-node-kinds
+regen-node-kinds: $(BUILD_DIR)/gen/node_kinds.alu
+	cp $< $(NODE_KINDS)
 
-$(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
+check-node-kinds: $(BUILD_DIR)/gen/node_kinds.alu
+	@cmp -s $< $(NODE_KINDS) || (echo "$(NODE_KINDS) is out of date, run \`make regen-node-kinds\`." && exit 1)
 
-## --------------------------------Tools -------------------------------
+## --------------------------------- Tests ----------------------------------
+
+# Coroutines (for the programs that use them) are minicoro's until they are
+# LLVM's; nothing else links it.
+MINICORO = $(BUILD_DIR)/minicoro.o
+CORO_FLAGS = --cfg coroutines
+
+$(MINICORO): common/minicoro/minicoro.h
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -DMINICORO_IMPL -DNDEBUG -xc -c $< -o $@
+
+LANG_TEST_FILES := $(shell find tests/lang -type f -name '*.alu')
+TESTS_DIR = $(BUILD_DIR)/tests
+
+# The standard library's unit tests.
+$(TESTS_DIR)/std: $(ALUMINAC) $(SYSROOT_FILES) $(MINICORO)
+	@mkdir -p $(@D)
+	$(ALUMINAC_CMD) $(CORO_FLAGS) --test --cfg test_std --link-args "$(MINICORO) -lpthread" -o $@
+
+# The language tests (tests/lang).
+$(TESTS_DIR)/lang: $(ALUMINAC) $(SYSROOT_FILES) $(LANG_TEST_FILES) $(MINICORO)
+	@mkdir -p $(@D)
+	$(ALUMINAC_CMD) $(CORO_FLAGS) --test --link-args "$(MINICORO) -lpthread" -o $@ \
+		$(call alumina_modules,$(LANG_TEST_FILES),tests/,)
+
+# The libraries' unit tests (libraries/).
+$(TESTS_DIR)/libraries: $(ALUMINAC) $(SYSROOT_FILES) $(LIBRARY_SOURCES) $(PARSER) $(MINICORO)
+	@mkdir -p $(@D)
+	$(ALUMINAC_CMD) $(CORO_FLAGS) --test --link-args "-ltree-sitter $(PARSER) $(MINICORO) -lpthread" -o $@ \
+		$(call alumina_modules,$(LIBRARY_SOURCES),libraries/,/)
+
+# aluminac's own unit tests.
+$(TESTS_DIR)/aluminac: $(ALUMINAC) $(ALUMINAC_DEPS)
+	@mkdir -p $(@D)
+	$(ALUMINAC_CMD) --test --link-args "$(ALUMINAC_LINK)" -o $@ $(ALUMINAC_MODULES)
+
+.PHONY: test test-std test-lang test-libraries test-unit test-features test-diag test-debuginfo test-docs cross-check
+test-std: $(TESTS_DIR)/std
+	$< $(TEST_FLAGS)
+
+test-lang: $(TESTS_DIR)/lang
+	$< $(TEST_FLAGS)
+
+test-libraries: $(TESTS_DIR)/libraries
+	$< $(TEST_FLAGS)
+
+test-unit: $(TESTS_DIR)/aluminac
+	$< $(TEST_FLAGS)
+
+# The compiler's feature tests (tests/aluminac/*.alu; TEST_FILTER=<name part>).
+test-features: $(ALUMINAC)
+	./tests/aluminac/run_tests.sh $(ALUMINAC) $(TEST_FILTER)
+
+# The diagnostics tests (tests/diag): the errors and warnings on the lines
+# the annotations give.
+test-diag: $(ALUMINAC)
+	python3 tests/aluminac/diag_check.py $(ALUMINAC) $(TEST_FILTER)
+
+# The debug information tests (tests/debuginfo): programs run in lldb.
+test-debuginfo: $(ALUMINAC)
+	LLDB="$(LLDB)" LLVM_DWARFDUMP="$$($(LLVM_CONFIG) --bindir)/llvm-dwarfdump" \
+		python3 tests/debuginfo/run.py $(ALUMINAC) $(TEST_FILTER)
+
+# Every example in the standard library's documentation, run.
+test-docs: $(BUILD_DIR)/doctest
+	$< $(TEST_FLAGS)
+
+test: test-unit test-features test-std test-lang test-libraries test-diag test-debuginfo test-docs
+
+# The feature tests compiled with alumina-boot: they must behave the same.
+cross-check: $(BOOT)
+	./tests/aluminac/cross_check.sh $(BOOT) $(TEST_FILTER)
+
+## ---------------------------------- Docs ----------------------------------
 
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc
-ALUMINA_DOC_SOURCES = $(shell find tools/alumina-doc/ -type f -name '*.alu')
+ALUMINA_DOC_SOURCES := $(shell find tools/alumina-doc -type f -name '*.alu')
+DOC_INPUTS = $(call alumina_modules,$(SYSROOT_FILES),$(SYSROOT)/,/) $(call alumina_modules,$(LIBRARY_SOURCES),libraries/,/)
 
-$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac/lib/node_kinds.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
-		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
+$(ALUMINA_DOC): $(ALUMINAC) $(SYSROOT_FILES) $(LIBRARY_SOURCES) $(ALUMINA_DOC_SOURCES) $(PARSER)
+	$(ALUMINAC_CMD) --link-args "-ltree-sitter $(PARSER) -lpthread" -o $@ \
+		$(call alumina_modules,$(LIBRARY_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINA_DOC_SOURCES),tools/,/)
 
-$(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
-
-$(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/static/*
-	@mkdir -p $(BUILD_DIR)/~doctest
-	ALUMINA_DOC_OUTPUT_DIR=$(BUILD_DIR)/~doctest $(ALUMINA_DOC) \
-		$(call alumina_modules,$(SYSROOT_FILES),sysroot/,/) \
-		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
-	@cp -rf tools/alumina-doc/static $(BUILD_DIR)/~doctest/html/
+# The HTML (build/<profile>/html) and the examples in it as tests (doctest.alu),
+# written together.
+$(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) $(LIBRARY_SOURCES) tools/alumina-doc/static/*
+	@rm -rf $(BUILD_DIR)/~doctest && mkdir -p $(BUILD_DIR)/~doctest
+	ALUMINA_DOC_OUTPUT_DIR=$(BUILD_DIR)/~doctest $(ALUMINA_DOC) $(DOC_INPUTS)
+	@cp -R tools/alumina-doc/static $(BUILD_DIR)/~doctest/html/
 	@rm -rf $(BUILD_DIR)/html $(BUILD_DIR)/doctest.alu
-	mv $(BUILD_DIR)/~doctest/* $(BUILD_DIR)/
-	@rmdir $(BUILD_DIR)/~doctest
+	@mv $(BUILD_DIR)/~doctest/* $(BUILD_DIR)/ && rmdir $(BUILD_DIR)/~doctest
 
-$(DOCTEST).c: $(ALU_TEST_DEPS) $(BUILD_DIR)/doctest.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) --output $@ $(BUILD_DIR)/doctest.alu \
-		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
+$(BUILD_DIR)/doctest: $(BUILD_DIR)/doctest.alu $(ALUMINAC) $(PARSER) $(MINICORO)
+	$(ALUMINAC_CMD) $(CORO_FLAGS) --test --link-args "-ltree-sitter $(PARSER) $(MINICORO) -lpthread" -o $@ \
+		$(BUILD_DIR)/doctest.alu $(call alumina_modules,$(LIBRARY_SOURCES),libraries/,/)
 
-$(DOCTEST): $(DOCTEST).c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-.PHONY: docs test-docs serve-docs watch-docs
+.PHONY: docs serve-docs watch-docs
 docs: $(BUILD_DIR)/doctest.alu
-
-test-docs: $(DOCTEST)
-	$(DOCTEST) $(TEST_FLAGS)
 
 serve-docs:
 	@cd $(BUILD_DIR)/html && python3 -m http.server
@@ -224,168 +282,79 @@ serve-docs:
 watch-docs:
 	@BUILD_DIR=$(BUILD_DIR) tools/alumina-doc/watch_docs.sh
 
-## ------------------------------ Examples -----------------------------
+## -------------------------------- Examples --------------------------------
+
+EXAMPLES := $(shell find examples -type f -name '*.alu')
+
+$(BUILD_DIR)/examples/%: examples/%.alu $(ALUMINAC) $(SYSROOT_FILES) $(MINICORO)
+	@mkdir -p $(@D)
+	$(ALUMINAC_CMD) $(CORO_FLAGS) --link-args "$(MINICORO) -lpthread" -o $@ main=$<
 
 .PHONY: examples
-
-EXAMPLES = $(shell find examples/ -type f -name '*.alu')
-
-$(BUILD_DIR)/examples/.build:
-	mkdir -p $(BUILD_DIR)/examples
-	@touch $@
-
-$(BUILD_DIR)/examples/%.c: examples/%.alu $(ALU_DEPS) $(BUILD_DIR)/examples/.build
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ main=$<
-
-$(BUILD_DIR)/examples/%: $(BUILD_DIR)/examples/%.c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
 examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 
-## ----------------------- Libc binding generation ----------------------
+## ---------------------------------- CI ------------------------------------
 
-.PHONY: libc-bindgen
+.PHONY: check
+check: lint-boot test-boot bootstrap check-node-kinds test examples
+
+## -------------------------------- Install ---------------------------------
+
+# aluminac finds the sysroot through ALUMINA_SYSROOT (or --sysroot); set it to
+# $(PREFIX)/share/alumina. (Build with RELEASE=1 for an optimized compiler.)
+# alumina-lldb is lldb with the formatters for Alumina's types.
+.PHONY: install install-boot
+install: $(ALUMINAC)
+	mkdir -p $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/alumina
+	cp $(ALUMINAC) $(DESTDIR)$(PREFIX)/bin/aluminac
+	rm -rf $(DESTDIR)$(PREFIX)/share/alumina/*
+	cp -R $(SYSROOT)/. $(DESTDIR)$(PREFIX)/share/alumina/
+	mkdir -p $(DESTDIR)$(PREFIX)/share/aluminac
+	cp tools/lldb/alumina_lldb.py $(DESTDIR)$(PREFIX)/share/aluminac/
+	cp tools/lldb/alumina-lldb $(DESTDIR)$(PREFIX)/bin/
+
+install-boot: $(BOOT)
+	mkdir -p $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/alumina
+	cp $(BOOT) $(DESTDIR)$(PREFIX)/bin/alumina-boot
+	rm -rf $(DESTDIR)$(PREFIX)/share/alumina/*
+	cp -R $(SYSROOT)/. $(DESTDIR)$(PREFIX)/share/alumina/
+
+## -------------------------------- Various ---------------------------------
+
+# quick.alu, for trying things out: `make quick` builds ./quick, `make quick-ir`
+# writes its IR to quick.ll.
+.PHONY: quick quick-ir
+quick: $(ALUMINAC)
+	$(ALUMINAC_CMD) -o $(BUILD_DIR)/quick quick=./quick.alu
+	ln -sf $(BUILD_DIR)/quick $@
+
+quick-ir: $(ALUMINAC)
+	$(ALUMINAC_CMD) --emit-llvm -o quick.ll quick=./quick.alu
+
+# Benchmarks and profiles of aluminac compiling the standard library's tests
+# (use PROFILING=1 for an optimized compiler with symbols; TIMES=<n> runs,
+# MARKDOWN=1 for a table).
+BENCH_INPUT = --test --cfg test_std -c -o /dev/null
+.PHONY: bench samply flamegraph
+bench: $(ALUMINAC)
+	./tools/bench.py -n$(or $(TIMES),20) $(if $(MARKDOWN),--markdown,) $(ALUMINAC_CMD) $(BENCH_INPUT)
+
+samply: $(ALUMINAC)
+	samply record -r 10000 --iteration-count 5 $(ALUMINAC_CMD) $(BENCH_INPUT)
+
+flamegraph: $(ALUMINAC)
+	flamegraph -F 10000 -o $(BUILD_DIR)/flamegraph.svg -- $(ALUMINAC_CMD) $(BENCH_INPUT)
+
+.PHONY: libc-bindgen cloc clean clean-all
 libc-bindgen:
 	./tools/libc-bindgen/generate.sh
 
-## ------------------------------ Various ------------------------------
-
-.PHONY: clean clean-all all install
-clean:
-	rm -rf $(BUILD_ROOT)/
-	rm -f quick.c quick alumina-boot
-
-clean-all: clean
-	cargo clean
-
-install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	install -T $(ALUMINA_BOOT) $(PREFIX)/bin/alumina-boot
-	rm -rf $(PREFIX)/share/alumina
-	mkdir -p $(PREFIX)/share/alumina
-	cp -r $(SYSROOT)/* $(PREFIX)/share/alumina
-
-# Some convenience symlinks
-alumina-boot: $(ALUMINA_BOOT)
-	ln -sf $(ALUMINA_BOOT) $@
-
-.PHONY: test-std test-alumina-boot test-libraries test-lang test
-
-test-std: alumina-boot $(STDLIB_TESTS)
-	$(STDLIB_TESTS) $(TEST_FLAGS)
-
-test-lang: alumina-boot $(LANG_TESTS)
-	$(LANG_TESTS) $(TEST_FLAGS)
-
-test-libraries: alumina-boot $(LIBRARIES_TESTS)
-	$(LIBRARIES_TESTS) $(TEST_FLAGS)
-
-test-alumina-boot:
-	cargo test $(CARGO_FLAGS) --all-targets
-
-test: test-alumina-boot test-std test-lang
-
-.DEFAULT_GOAL := all
-all: alumina-boot
-
-## ------------------ Ad-hoc manual testing shortcuts ------------------
-
-$(BUILD_DIR)/quick.c: $(ALU_DEPS) quick.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
-
-$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c $(MINICORO)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-quick: $(BUILD_DIR)/quick
-	ln -sf $^.c $@.c
-	ln -sf $^ $@
-
-## ------------------------------ Benchmarking -------------------------
-
-.PHONY: bench-std bench-std-cc flamegraph samply
-
-BENCH_CMD = ./tools/bench.py -n$(if $(TIMES),$(TIMES),20) $(if $(MARKDOWN),--markdown,)
-
-bench-std: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Ztimings --cfg test --cfg test_std --output /dev/null
-
-bench-std-cached: $(ALU_TEST_STD_DEPS)
-	@ if [ -z "$(CACHE_AST)" ]; then \
-		echo "ERROR: CACHE_AST=1 is not set"; \
-		exit 1; \
-	fi
-	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Ztimings --cfg test --cfg test_std --output /dev/null
-
-bench-std-cc: $(STDLIB_TESTS).c $(MINICORO)
-	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
-
-$(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	cargo flamegraph $(CARGO_FLAGS)  \
-		-F 10000 --dev -o $@ -- $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Ztimings --cfg test --cfg test_std --output /dev/null
-
-flamegraph: $(BUILD_DIR)/flamegraph.svg
-
-samply: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	samply record -r 10000 --reuse-threads --iteration-count 5  $(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Ztimings --cfg test --cfg test_std --output /dev/null
-
-## ------------------------------ Diag tests ----------------------------
-
-DIAG_CMD = ./tools/diag.py
-DIAG_CASES = $(shell find tests/diag -type f -name '*.alu')
-
-$(BUILD_DIR)/diag/.build:
-	mkdir -p $(BUILD_DIR)/diag
-	@touch $@
-
-$(BUILD_DIR)/diag/%-check: tests/diag/%.alu $(ALU_DEPS) $(BUILD_DIR)/diag/.build
-	@$(DIAG_CMD) $< $(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON)
-	@touch $@
-
-$(BUILD_DIR)/diag/%-annotate: tests/diag/%.alu $(ALU_DEPS) $(BUILD_DIR)/diag/.build
-	$(DIAG_CMD) --fix $< $(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON)
-	@touch $@
-
-test-diag: $(patsubst tests/diag/%.alu,$(BUILD_DIR)/diag/%-check,$(DIAG_CASES))
-diag-fix: $(patsubst tests/diag/%.alu,$(BUILD_DIR)/diag/%-annotate,$(DIAG_CASES))
-
-## ------------------------------ Coverage ------------------------------
-.PHONY: coverage all-tests-with-coverage
-coverage:
-	COVERAGE=1 CACHE_AST=1 $(MAKE) all-tests-with-coverage
-
-all-tests-with-coverage: test test-docs test-libraries test-diag examples
-	llvm-profdata$(LLVM_SUFFIX) merge \
-		-sparse  \
-		$(BUILD_DIR)/profiles/* \
-		-o $(BUILD_DIR)/profiles/merged.profdata
-
-	llvm-cov$(LLVM_SUFFIX) export \
-		-Xdemangler=rustfilt \
-		-format=lcov \
-		-instr-profile=$(BUILD_DIR)/profiles/merged.profdata $(ALUMINA_BOOT) \
-		$(BOOTSTRAP_SOURCES) > $(BUILD_DIR)/coverage.txt
-
-	llvm-cov$(LLVM_SUFFIX) show \
-		-Xdemangler=rustfilt \
-		-format=html \
-		-instr-profile=$(BUILD_DIR)/profiles/merged.profdata $(ALUMINA_BOOT) \
-		-output-dir=$(BUILD_DIR)/html \
-		$(BOOTSTRAP_SOURCES)
-
-serve-coverage:
-	@cd $(BUILD_ROOT)/coverage/html && python3 -m http.server
-
-## ----------------------------- Random ---------------------------------
-
-.PHONY: cloc
 cloc:
 	@cloc --read-lang-def=tools/cloc_language_def.txt $(shell git ls-files)
 
-## ------------------------------ Dist ----------------------------------
+clean:
+	rm -rf $(BUILD_ROOT)
+	rm -f aluminac quick quick.ll
 
-.PHONY: lint-rust dist-check
-
-lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
-	cargo fmt -- --check
-	cargo clippy $(CARGO_FLAGS) --all-targets
-
-dist-check: lint-rust test-libraries test-docs test-diag test examples
+clean-all: clean
+	cargo clean

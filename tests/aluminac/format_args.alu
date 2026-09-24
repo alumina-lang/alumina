@@ -1,0 +1,49 @@
+// Test the format_args builtin macro
+// format_args! parses a format string and calls a wrapper macro with
+// interleaved string pieces and arguments.
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+#[builtin] macro format_args($fmt, $args...) {}
+#[builtin] macro bind($mac, $args...) {}
+#[builtin] macro reduce($mac, $base, $args...) {}
+#[builtin] macro concat($a...) {}
+
+// Simple fold macro that counts pieces
+macro count_pieces($acc, $piece) {
+    $acc + 1i32
+}
+
+// Receiver macro that counts format pieces using reduce
+macro count_receiver($arg...) {
+    reduce!(
+        count_pieces,
+        0i32,
+        $arg$...
+    )
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Test 1: format_args with no placeholders
+    // "hello world" -> 1 piece (just the string)
+    let n1: i32 = format_args!(count_receiver, "hello world");
+    if n1 != 1i32 { return 1i32; }
+
+    // Test 2: format_args with one placeholder
+    // "hello {}!" -> 3 pieces: "hello ", arg, "!"
+    let name: &[u8] = "world";
+    let n2: i32 = format_args!(count_receiver, "hello {}!", name);
+    if n2 != 3i32 { return 2i32; }
+
+    // Test 3: format_args with two placeholders
+    // "{} and {}" -> arg1, " and ", arg2 = 3 pieces
+    let a: &[u8] = "foo";
+    let b: &[u8] = "bar";
+    let n3: i32 = format_args!(count_receiver, "{} and {}", a, b);
+    if n3 != 3i32 { return 3i32; }
+
+    // Test 4: concat!
+    let s = concat!("hello", " ", "world");
+    if s.len() != 11usize { return 4i32; }
+
+    0i32
+}

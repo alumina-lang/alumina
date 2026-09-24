@@ -1,0 +1,28 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// A character literal is a `u8` literal (as in alumina-boot), so
+// `Option::some('\n')` is an `Option<u8>` and compares with one. (aluminac
+// used to type it u32 and relied on expected-type special cases to make
+// such comparisons work — see io::LineIterator::next.)
+
+fn cmp_u8(x: Option<u8>) -> bool {
+    x == Option::some('\n')
+}
+
+fn main() -> i32 {
+    let a: Option<u8> = Option::some(10u8);     // '\n'
+    let b: Option<u8> = Option::some(11u8);
+    if !cmp_u8(a) { return 1; }
+    if cmp_u8(b) { return 2; }
+
+    let e: Option<u8> = Option::some('a');
+    if e.unwrap() != 97u8 { return 3; }
+
+    // Escapes, including a quote and a hex byte.
+    if '\'' != 39u8 || '\\' != 92u8 || '\x7f' != 127u8 || '\0' != 0u8 { return 4; }
+
+    // A char literal is a u8 everywhere.
+    let c = 'z';
+    if std::mem::size_of::<typeof(c)>() != 1 { return 5; }
+
+    0
+}

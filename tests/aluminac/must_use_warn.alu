@@ -1,0 +1,26 @@
+// Verify #[must_use] enforcement: a warning is emitted when a non-trailing
+// call drops a marked return value. The compile succeeds (warnings don't
+// fail compilation) and the binary runs to completion.
+//
+// The runner doesn't currently inspect compiler stderr, so this test pins
+// the binary's exit code rather than the warning text. The warning was
+// confirmed manually by running the compiler on this file directly.
+
+#[must_use]
+fn returns_status() -> i32 { 7 }
+
+fn use_it() -> i32 {
+    let _ = returns_status();
+    returns_status()
+}
+
+fn drop_one() {
+    returns_status();  // <- warning expected here (non-trailing)
+    returns_status();  // <- trailing, no warning
+}
+
+fn main() -> i32 {
+    if use_it() != 7 { return 1; }
+    drop_one();
+    0
+}

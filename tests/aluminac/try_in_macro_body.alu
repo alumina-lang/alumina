@@ -1,0 +1,18 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `?` in a macro body is `try!`, resolved where the macro is defined
+// (aluminac reported "no `try` macro in scope" for any `?` in a macro).
+
+macro checked($x) {
+    $x?
+}
+
+fn f(r: Result<i32, u8>) -> Result<i32, u8> {
+    let v = checked!(r);
+    Result::ok(v * 2)
+}
+
+fn main() -> i32 {
+    if f(Result::ok(21)).unwrap() != 42 { return 1; }
+    if f(Result::err(7u8)).unwrap_err() != 7u8 { return 2; }
+    0
+}

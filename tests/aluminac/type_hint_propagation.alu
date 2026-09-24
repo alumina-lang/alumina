@@ -1,0 +1,41 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Type hints flow from the context into subexpressions (as alumina-boot's
+// `type_hint`), so unsuffixed literals take the expected type through
+// blocks, if/else, when, switch arms, loop breaks, lambda bodies,
+// references and arithmetic -- there are no implicit conversions between
+// builtin types to fall back on.
+
+fn wide() -> u64 {
+    // 1 << 40 overflows i32; it is a u64 because the return type says so.
+    if wide_enabled() { 1 << 40 } else { 0 }
+}
+
+fn wide_enabled() -> bool { true }
+
+fn main() -> i32 {
+    if wide() != 1099511627776u64 { return 1; }
+
+    let a: u8 = { let _x = 1; 200 };
+    if a != 200u8 { return 2; }
+
+    let b: i64 = when true { -5000000000 } else { 0 };
+    if b != -5000000000i64 { return 3; }
+
+    let k = 2;
+    let c: u16 = switch k { 1 => 10, 2 => 60000, _ => 0 };
+    if c != 60000u16 { return 4; }
+
+    let d: usize = loop { break 3000000000; };
+    if d != 3000000000usize { return 5; }
+
+    let f = |x: u32| -> u32 { if x > 4000000000 { x } else { 4000000000 } };
+    if f(1) != 4000000000u32 { return 6; }
+
+    let s: &[u8] = &[250, 251, 252];
+    if s[2] != 252u8 { return 7; }
+
+    let e: f32 = 1.5 * 2.0;
+    if e != 3.0f32 { return 8; }
+
+    0
+}

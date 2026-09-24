@@ -1,0 +1,21 @@
+// A range literal without bounds (`..`) has the bound type its context
+// expects, else i32 (as an untyped integer literal, and as in alumina-boot).
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::typing::type_name;
+use std::range::RangeFull;
+
+fn first<T: builtins::Integer, R: builtins::RangeOf<T>>(_r: R) -> T {
+    std::mem::zeroed::<T>()
+}
+
+fn main() {
+    let a = ..;
+    assert_eq!(type_name::<typeof(a)>(), "RangeFull<i32>");
+    let b: RangeFull<u16> = ..;
+    assert_eq!(type_name::<typeof(b)>(), "RangeFull<u16>");
+    let c: i32 = first(..);
+    assert_eq!(c, 0);
+    let s = [1, 2, 3];
+    assert_eq!(s[..].len(), 3);
+}

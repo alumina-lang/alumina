@@ -1,0 +1,737 @@
+// Diagnostics and error reporting for the self-hosted compiler
+
+use ast::Span;
+use std::collections::Vector;
+use std::fmt::write;
+use std::io::StdioStream;
+use std::string::StringBuf;
+
+enum DiagLevel {
+    Error,
+    Warning,
+    Note,
+    /// A warning its lint is allowed for.
+    Allowed,
+}
+
+/// What `#[allow(lint)]`, `#[deny(lint)]` and `#[warn(lint)]` do with a
+/// lint's warnings in the item they are on.
+enum LintAction {
+    Allow,
+    Deny,
+    Warn,
+}
+
+/// The names `#[allow(...)]` etc. accept (as in alumina-boot, those of all
+/// its diagnostics).
+const LINT_NAMES: [&[u8]; 145] = [
+    "parse_error", "parse_error_missing", "unexpected", "unresolved_path", "cycle_detected",
+    "duplicate_name", "invalid_literal", "invalid_char_literal", "generic_param_count_mismatch",
+    "unexpected_generic_params", "et_cetera_expr_in_unsupported", "et_cetera_in_unsupported",
+    "et_cetera_on_non_tuple", "recursive_without_indirection", "type_hint_required",
+    "type_mismatch", "mismatched_branch_types", "invalid_escape_sequence", "invalid_attribute",
+    "invalid_attribute_detail", "duplicate_attribute", "invalid_bin_op", "invalid_un_op",
+    "cannot_assign_to_r_value", "cannot_assign_to_const", "invalid_cast",
+    "break_outside_of_loop", "continue_outside_of_loop", "param_count_mismatch",
+    "tuple_index_out_of_bounds", "function_or_static_expected_here", "not_callable",
+    "not_callable_field_confusion", "unexpected_generic_args", "unresolved_item",
+    "duplicate_field_initializer", "struct_like_expected_here", "method_not_found",
+    "not_a_method", "default_case_must_be_last", "cannot_reference_local", "missing_lang_item",
+    "range_index_non_slice", "internal_error", "local_with_unknown_type", "unsupported_a_b_i",
+    "unknown_intrinsic", "unknown_lang_item", "cannot_be_a_lang_item",
+    "intrinsics_are_special_mkay", "extern_c_generic_params", "constant_string_expected",
+    "cannot_const_evaluate", "invalid_value_for_enum_variant", "user_defined", "const_message",
+    "defer_in_defer", "yield_in_defer", "macro_et_cetera_outside_of_macro",
+    "dollared_outside_of_macro", "not_a_pointer", "not_a_tuple", "no_macro_et_cetera_args",
+    "multiple_macro_et_ceteras", "recursive_macro_call", "not_a_macro",
+    "not_enough_macro_arguments", "macro_et_cetera_in_macro_et_cetera",
+    "cannot_macro_et_cetera_here", "is_a_macro", "recursive_static_initialization",
+    "not_in_a_function_scope", "yield_outside_of_coroutine", "unknown_builtin_macro",
+    "not_a_protocol", "function_must_have_body", "protocol_fns_cannot_be_extern",
+    "var_args_can_only_be_extern", "extern_coroutine", "protocol_coroutine",
+    "coroutine_return_type", "protocol_match", "protocol_mismatch", "protocol_mismatch_detail",
+    "cyclic_protocol_bound", "multiple_main_functions", "unpopulated_item",
+    "generic_args_in_path", "builtin_types_are_special_mkay", "invalid_type_operator",
+    "invalid_transparent", "no_span_information", "no_free_standing_impl", "cannot_be_a_test",
+    "invalid_test_case_signature", "extern_static_must_have_type",
+    "extern_static_cannot_be_generic", "can_only_close_over_locals", "closures_are_not_fns",
+    "non_protocol_dyn", "builtin_protocol_dyn", "mixin_only_protocol", "indirect_dyn",
+    "non_dynnable_function", "invalid_format_string", "cannot_read_file",
+    "typedef_without_target", "type_with_infinite_size", "integer_out_of_range",
+    "float_out_of_range", "align_and_packed", "ir_inline_local_defs", "ir_inline_flow_control",
+    "ir_inline_early_return", "macros_cannot_define_items", "macros_cannot_define_lambdas",
+    "const_panic", "zst_pointer_difference", "tuple_call_arg_count", "tuple_call_arg_type",
+    "too_many_loop_vars", "too_many_enum_variants", "protocols_are_special_mkay",
+    "invalid_type_for_value", "defer_in_a_loop", "duplicate_name_shadow", "uninitialized_field",
+    "union_initializer_override", "self_confusion", "align1", "unused_must_use",
+    "unused_variable", "unused_closure_binding", "unused_parameter", "unused_import",
+    "im_so_meta_even_this_acronym", "top_level_block_without_attributes", "constant_condition",
+    "pure_statement", "const_only", "dead_code", "zst_pointer_offset", "unknown_attribute",
+    "unnecessary_cast", "while_true"
+];
+
+/// Whether `#[allow(name)]` etc. name a lint (or all of them).
+fn is_lint_name(name: &[u8]) -> bool {
+    name == "warnings" || LINT_NAMES.as_slice().iter().any(|=name, n: &[u8]| -> bool { n == name })
+}
+
+struct LintOverride {
+    span: Span,
+    /// The lint, or "" for all of them (`warnings`).
+    lint: &[u8],
+    action: LintAction,
+}
+
+struct SourceFile {
+    path: &[u8],
+    contents: &[u8],
+    // Line start offsets for line number lookup
+    line_starts: &[u32],
+}
+
+impl SourceFile {
+    fn line_col(self: &SourceFile, offset: u32) -> (u32, u32) {
+        // Binary search for line number
+        let lo: usize = 0;
+        let hi: usize = self.line_starts.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.line_starts[mid] <= offset {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let line = lo as u32; // 1-based
+        let col = offset - self.line_starts[lo - 1] + 1; // 1-based
+        (line, col)
+    }
+}
+
+fn compute_line_starts(contents: &[u8], arena: &mut aluminac_common::arena::Arena) -> &[u32] {
+    // Count lines first (one more line than the number of newlines).
+    let count: usize = 1 + contents.iter().filter(|b: u8| -> bool { b == '\n' }).count();
+    let starts = arena.alloc_slice::<u32>(count);
+    starts[0] = 0;
+    let idx: usize = 1;
+    for (i, byte) in contents.iter().enumerate() {
+        if byte == '\n' && idx < count {
+            starts[idx] = (i + 1) as u32;
+            idx += 1;
+        }
+    }
+    starts[0..idx]
+}
+
+// Strongly-typed diagnostic kinds used across all compiler phases
+// (parsing, monomorphization, codegen)
+enum CodeDiagKind {
+    // Type resolution
+    UnresolvedType = 0i32,
+    InvalidDeref = 1i32,
+    TupleIndexOutOfBounds = 2i32,
+
+    // Name resolution
+    UnresolvedField = 10i32,
+    UnresolvedMethod = 11i32,
+    UnresolvedFunction = 12i32,
+    NotCallable = 13i32,
+
+    // Intrinsics / codegen builtins
+    UnknownIntrinsic = 20i32,
+    LlvmIntrinsicTypeMismatch = 21i32,
+
+    // Recursion / limits
+    DepthOverflow = 30i32,
+
+    // Codegen
+    CodegenMissingLocal = 40i32,
+    CodegenMissingFunction = 41i32,
+    CodegenMissingGlobal = 42i32,
+    CodegenFieldOOB = 43i32,
+    CodegenUnhandledNode = 44i32,
+
+    // Type checking
+    TypeMismatch = 45i32,
+
+    // Syntax errors
+    SyntaxError = 50i32,
+    SyntaxMissing = 51i32,
+
+    // Mono stack note
+    InstantiationNote = 90i32,
+
+    // Generic / free-form (escape hatch)
+    GenericError = 99i32,
+}
+
+struct _CodeDiagNameData {
+    name: &[u8],
+}
+
+struct _CodeDiagPairData {
+    name: &[u8],
+    type_name: &[u8],
+}
+
+union _CodeDiagData {
+    name: _CodeDiagNameData,
+    pair: _CodeDiagPairData,
+}
+
+struct CodeDiagnostic {
+    level: DiagLevel,
+    span: Span,
+    kind: CodeDiagKind,
+    _data: _CodeDiagData,
+    /// For a warning, its lint (e.g. `unused_variable`), if it has one.
+    lint: &[u8],
+    /// Whether it is a note on the diagnostic before it (given or not with
+    /// it, see `DiagnosticContext::attach`).
+    attached: bool,
+}
+
+impl CodeDiagnostic {
+    fn _new(level: DiagLevel, span: Span, kind: CodeDiagKind) -> CodeDiagnostic {
+        CodeDiagnostic { level: level, span: span, kind: kind, _data: std::mem::zeroed::<_CodeDiagData>(), lint: "", attached: false }
+    }
+
+    fn _new_named(level: DiagLevel, span: Span, kind: CodeDiagKind, name: &[u8]) -> CodeDiagnostic {
+        let d = CodeDiagnostic::_new(level, span, kind);
+        d._data.name.name = name;
+        d
+    }
+
+    fn _new_pair(level: DiagLevel, span: Span, kind: CodeDiagKind, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        let d = CodeDiagnostic::_new(level, span, kind);
+        d._data.pair.name = name;
+        d._data.pair.type_name = type_name;
+        d
+    }
+
+    // --- Error constructors ---
+
+    fn unresolved_type(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::UnresolvedType)
+    }
+
+    fn invalid_deref(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::InvalidDeref)
+    }
+
+    fn tuple_index_oob(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::TupleIndexOutOfBounds)
+    }
+
+    fn unresolved_field(span: Span, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::UnresolvedField, name, type_name)
+    }
+
+    fn unresolved_method(span: Span, name: &[u8], type_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::UnresolvedMethod, name, type_name)
+    }
+
+    fn unresolved_function(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnresolvedFunction, name)
+    }
+
+    fn not_callable(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::NotCallable)
+    }
+
+    fn unknown_intrinsic(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::UnknownIntrinsic, name)
+    }
+
+    fn llvm_intrinsic_type_mismatch(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::LlvmIntrinsicTypeMismatch, name)
+    }
+
+    fn depth_overflow(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::DepthOverflow)
+    }
+
+    fn syntax_error(span: Span, text: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::SyntaxError, text)
+    }
+
+    fn syntax_missing(span: Span, kind: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::SyntaxMissing, kind)
+    }
+
+    fn type_mismatch(span: Span, expected: &[u8], got: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_pair(DiagLevel::Error, span, CodeDiagKind::TypeMismatch, expected, got)
+    }
+
+    fn generic_error(span: Span, msg: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::GenericError, msg)
+    }
+
+    // --- Internal compiler errors (codegen found the IR inconsistent) ---
+
+    fn codegen_missing_local(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::CodegenMissingLocal)
+    }
+
+    fn codegen_missing_function(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::CodegenMissingFunction, name)
+    }
+
+    fn codegen_missing_global(span: Span, name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::CodegenMissingGlobal, name)
+    }
+
+    fn codegen_field_oob(span: Span) -> CodeDiagnostic {
+        CodeDiagnostic::_new(DiagLevel::Error, span, CodeDiagKind::CodegenFieldOOB)
+    }
+
+    fn codegen_unhandled_node(span: Span, tag_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Error, span, CodeDiagKind::CodegenUnhandledNode, tag_name)
+    }
+
+    // --- Warning constructors ---
+
+    fn generic_warning(span: Span, msg: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Warning, span, CodeDiagKind::GenericError, msg)
+    }
+
+    /// A warning of a lint (which `#[allow(lint)]` etc. apply to).
+    fn lint(span: Span, lint: &[u8], msg: &[u8]) -> CodeDiagnostic {
+        let d = CodeDiagnostic::generic_warning(span, msg);
+        d.lint = lint;
+        d
+    }
+
+    // --- Note constructors ---
+
+    fn instantiation_note(span: Span, fn_name: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Note, span, CodeDiagKind::InstantiationNote, fn_name)
+    }
+
+    fn generic_note(span: Span, msg: &[u8]) -> CodeDiagnostic {
+        CodeDiagnostic::_new_named(DiagLevel::Note, span, CodeDiagKind::GenericError, msg)
+    }
+
+    // --- Formattable implementation (deferred formatting) ---
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &CodeDiagnostic, f: &mut F) -> std::fmt::Result {
+        switch self.kind {
+            CodeDiagKind::UnresolvedType => f.write_str("could not resolve type"),
+            CodeDiagKind::InvalidDeref => f.write_str("cannot dereference non-pointer type"),
+            CodeDiagKind::TupleIndexOutOfBounds => f.write_str("tuple index out of bounds"),
+            CodeDiagKind::UnresolvedField => {
+                if self._data.pair.type_name.len() > 0usize {
+                    write!(f, "could not resolve field '{}' on type '{}'", self._data.pair.name, self._data.pair.type_name)
+                } else {
+                    write!(f, "could not resolve field '{}'", self._data.pair.name)
+                }
+            },
+            CodeDiagKind::UnresolvedMethod =>
+                write!(f, "could not resolve method '{}' on type '{}'", self._data.pair.name, self._data.pair.type_name),
+            CodeDiagKind::UnresolvedFunction =>
+                write!(f, "could not resolve function '{}'", self._data.name.name),
+            CodeDiagKind::NotCallable => f.write_str("expression is not callable"),
+            CodeDiagKind::UnknownIntrinsic =>
+                write!(f, "unknown intrinsic '{}'", self._data.name.name),
+            CodeDiagKind::LlvmIntrinsicTypeMismatch =>
+                write!(f, "LLVM intrinsic '{}' return type does not match Alumina type", self._data.name.name),
+            CodeDiagKind::DepthOverflow =>
+                f.write_str("monomorphization depth limit exceeded (possible infinite recursion)"),
+            CodeDiagKind::CodegenMissingLocal => f.write_str("internal compiler error: codegen: local variable not found"),
+            CodeDiagKind::CodegenMissingFunction =>
+                write!(f, "internal compiler error: codegen: function '{}' not found", self._data.name.name),
+            CodeDiagKind::CodegenMissingGlobal =>
+                write!(f, "internal compiler error: codegen: global '{}' not found", self._data.name.name),
+            CodeDiagKind::TypeMismatch =>
+                write!(f, "type mismatch: expected '{}', got '{}'", self._data.pair.name, self._data.pair.type_name),
+            CodeDiagKind::CodegenFieldOOB => f.write_str("internal compiler error: codegen: field index out of bounds"),
+            CodeDiagKind::CodegenUnhandledNode =>
+                write!(f, "internal compiler error: codegen: unhandled IR node '{}'", self._data.name.name),
+            CodeDiagKind::SyntaxError =>
+                write!(f, "syntax error: unexpected `{}`", self._data.name.name),
+            CodeDiagKind::SyntaxMissing =>
+                write!(f, "syntax error: missing `{}`", self._data.name.name),
+            CodeDiagKind::InstantiationNote =>
+                write!(f, "in instantiation of '{}'", self._data.name.name),
+            CodeDiagKind::GenericError => f.write_str(self._data.name.name),
+            _ => f.write_str("unknown compiler error"),
+        }
+    }
+}
+
+/// A macro invocation code was expanded from.
+struct Expansion {
+    /// Where the macro was invoked (itself possibly in an expansion).
+    call_site: Span,
+    macro_name: &[u8],
+}
+
+struct DiagnosticContext {
+    files: std::collections::Vector<SourceFile>,
+    /// The macro expansions spans refer to (`Span::expansion` - 1).
+    expansions: std::collections::Vector<Expansion>,
+    /// The lint levels given by attributes (see `apply_lint_overrides`).
+    overrides: std::collections::Vector<LintOverride>,
+    /// How many diagnostics `apply_lint_overrides` has seen.
+    overrides_applied: usize,
+    /// The lint warnings given (see `emit`).
+    lints_seen: std::collections::HashSet<u64>,
+    /// The diagnostics given (see `emit`).
+    seen: std::collections::HashSet<u64>,
+    /// Whether the last diagnostic was dropped (so are its attached notes).
+    dropped: bool,
+    errors: std::collections::Vector<CodeDiagnostic>,
+    has_errors: bool,
+    has_warnings: bool,
+}
+
+impl DiagnosticContext {
+    fn new() -> DiagnosticContext {
+        DiagnosticContext {
+            files: std::collections::Vector::new(),
+            expansions: std::collections::Vector::new(),
+            overrides: std::collections::Vector::new(),
+            overrides_applied: 0,
+            lints_seen: std::collections::HashSet::new(),
+            seen: std::collections::HashSet::new(),
+            dropped: false,
+            errors: std::collections::Vector::new(),
+            has_errors: false,
+            has_warnings: false,
+        }
+    }
+
+    fn add_file(self: &mut DiagnosticContext, path: &[u8], contents: &[u8], arena: &mut aluminac_common::arena::Arena) -> u32 {
+        let id = self.files.len() as u32;
+        let line_starts = compute_line_starts(contents, arena);
+        self.files.push(SourceFile {
+            path: path,
+            contents: contents,
+            line_starts: line_starts,
+        });
+        id
+    }
+
+    fn add_override(self: &mut DiagnosticContext, o: LintOverride) {
+        self.overrides.push(o);
+    }
+
+    /// Apply the lint levels to the warnings emitted since the last time
+    /// (as alumina-boot: the innermost attribute on an item around a
+    /// warning decides, and `warnings` stands for every lint). Denied
+    /// warnings become errors.
+    fn apply_lint_overrides(self: &mut DiagnosticContext) {
+        for i in self.overrides_applied..self.errors.len() {
+            let diag = &self.errors[i];
+            if diag.level != DiagLevel::Warning || diag.lint.is_empty() {
+                continue;
+            }
+            let action = LintAction::Warn;
+            let innermost: u32 = 0xffffffffu32;
+            for o in self.overrides.iter_ref() {
+                let applies = (o.lint.is_empty() || o.lint == diag.lint)
+                    && o.span.file_id == diag.span.file_id
+                    && o.span.start <= diag.span.start && diag.span.end <= o.span.end;
+                if applies && o.span.end - o.span.start < innermost {
+                    innermost = o.span.end - o.span.start;
+                    action = o.action;
+                }
+            }
+            switch action {
+                LintAction::Allow => diag.level = DiagLevel::Allowed,
+                LintAction::Deny => {
+                    diag.level = DiagLevel::Error;
+                    self.has_errors = true;
+                }
+                _ => {}
+            }
+        }
+        self.overrides_applied = self.errors.len();
+    }
+
+    /// Where code as written is (the outermost macro invocation, for code
+    /// produced by macros).
+    fn written_span(self: &DiagnosticContext, span: Span) -> Span {
+        let result = span;
+        while result.expansion != 0 && (result.expansion as usize) <= self.expansions.len() {
+            result = self.expansions[result.expansion as usize - 1].call_site;
+        }
+        result
+    }
+
+    /// Record a macro expansion, for the spans of the code it produces.
+    fn add_expansion(self: &mut DiagnosticContext, call_site: Span, macro_name: &[u8]) -> u32 {
+        self.expansions.push(Expansion { call_site: call_site, macro_name: macro_name });
+        self.expansions.len() as u32
+    }
+
+    fn emit(self: &mut DiagnosticContext, diag: CodeDiagnostic) {
+        if diag.attached {
+            if self.dropped {
+                return;
+            }
+        } else {
+            self.dropped = false;
+        }
+        // A lint's warning is given once for a place (not for each instance
+        // of generic code).
+        if !diag.lint.is_empty() {
+            let key = 1469598103934665603u64;
+            for b in diag.lint {
+                key = (key ^ (b as u64)) * 1099511628211u64;
+            }
+            key = key ^ (((diag.span.file_id as u64) << 40) | ((diag.span.start as u64) << 8)) ^ (diag.span.end as u64);
+            if !self.lints_seen.insert(key) {
+                self.dropped = true;
+                return;
+            }
+        }
+        // A diagnostic is given once (as in alumina-boot): code can be
+        // lowered more than once, e.g. a macro's argument that it expands in
+        // two places (`println!`'s), and gives the same diagnostic each time.
+        if !diag.attached && !self.seen.insert(self.diagnostic_key(&diag)) {
+            self.dropped = true;
+            return;
+        }
+        switch diag.level {
+            DiagLevel::Error => { self.has_errors = true; },
+            DiagLevel::Warning => { self.has_warnings = true; },
+            _ => {},
+        };
+        self.errors.push(diag);
+    }
+
+    /// What tells diagnostics apart: the level, kind, message and place
+    /// (where the code is written: its macro expansions do not count).
+    fn diagnostic_key(self: &DiagnosticContext, diag: &CodeDiagnostic) -> u64 {
+        let message = StringBuf::new();
+        defer message.free();
+        let _ = write!(&message, "{}", *diag);
+        let span = self.written_span(diag.span);
+        let key = 1469598103934665603u64;
+        for b in message.as_slice() {
+            key = (key ^ (b as u64)) * 1099511628211u64;
+        }
+        for v in [diag.level as u64, diag.kind as u64, span.file_id as u64, span.start as u64, span.end as u64] {
+            key = (key ^ v) * 1099511628211u64;
+        }
+        key
+    }
+
+    /// The number of errors given (so far).
+    fn error_count(self: &DiagnosticContext) -> usize {
+        self.errors.iter_ref().filter(|d: &CodeDiagnostic| -> bool { d.level == DiagLevel::Error }).count()
+    }
+
+    /// A note on the diagnostic given last (given only with it).
+    fn attach(self: &mut DiagnosticContext, note: CodeDiagnostic) {
+        note.attached = true;
+        self.emit(note);
+    }
+
+    fn emit_all(self: &DiagnosticContext) {
+        let stderr = StdioStream::stderr();
+        let f = std::io::BufferedWriter::new(&stderr, 4096);
+        defer {
+            let _ = f.flush();
+            f.free();
+        };
+        // Dedup adjacent identical diagnostics by (kind, span). The mono
+        // pass can re-emit the same error if a generic instantiates twice
+        // with the same shape — only show it once.
+        let prev_kind: i32 = -1i32;
+        let prev_file: u32 = 0u32;
+        let prev_start: u32 = 0u32;
+        let prev_end: u32 = 0u32;
+        let allowed = false;
+        for i in 0usize..self.errors.len() {
+            let diag = &self.errors[i];
+            // (With the notes of an allowed warning.)
+            if diag.attached {
+                if allowed {
+                    continue;
+                }
+            } else {
+                allowed = diag.level == DiagLevel::Allowed;
+            }
+            // Compare against the previous unsuppressed diagnostic.
+            let cur_kind = diag.kind as i32;
+            if i > 0usize
+                && cur_kind == prev_kind
+                && diag.span.file_id == prev_file
+                && diag.span.start == prev_start
+                && diag.span.end == prev_end {
+                continue;
+            }
+            prev_kind = cur_kind;
+            prev_file = diag.span.file_id;
+            prev_start = diag.span.start;
+            prev_end = diag.span.end;
+            if diag.level == DiagLevel::Allowed {
+                continue;
+            }
+            let level_str: &[u8] = switch diag.level {
+                DiagLevel::Error => "error",
+                DiagLevel::Warning => "warning",
+                _ => "note",
+            };
+
+            let _ = write!(&f, "{}: {}", level_str, diag);
+
+            // Show location if span has meaningful data (skip empty/sentinel spans)
+            let has_location = diag.span.file_id < self.files.len() as u32
+                && (diag.span.start != 0u32 || diag.span.end != 0u32);
+            if has_location {
+                let file = &self.files[diag.span.file_id as usize];
+                let (line, col) = file.line_col(diag.span.start);
+                let _ = write!(&f, "\n  --> {}:{}:{}", file.path, line, col);
+                // Render the source snippet for errors and warnings, but
+                // suppress for Notes (mono instantiation chains can be 5-10
+                // frames deep and rendering each as a full snippet floods).
+                let render_snippet = switch diag.level {
+                    DiagLevel::Error => true,
+                    DiagLevel::Warning => true,
+                    _ => false,
+                };
+                if render_snippet {
+                    let _ = self.render_source_snippet(&f, file, diag.span, line, col);
+                }
+            }
+            // The macro invocations the code comes from, innermost first.
+            let expansion = diag.span.expansion;
+            let depth = 0;
+            while expansion != 0 && (expansion as usize) <= self.expansions.len() && depth < 32 {
+                let exp = self.expansions[expansion as usize - 1];
+                if exp.call_site.file_id < self.files.len() as u32 && !exp.call_site.is_empty() {
+                    let file = &self.files[exp.call_site.file_id as usize];
+                    let (line, col) = file.line_col(exp.call_site.start);
+                    let _ = write!(&f, "\nnote: in this expansion of `{}!`\n  --> {}:{}:{}", exp.macro_name, file.path, line, col);
+                }
+                expansion = exp.call_site.expansion;
+                depth += 1;
+            }
+            if diag.level == DiagLevel::Warning && !diag.lint.is_empty() {
+                let _ = write!(&f, "\n  note: ignore with `#[allow({})]`", diag.lint);
+            }
+            let _ = f.write_str("\n");
+        }
+    }
+
+    /// Render a source snippet for the span, with a caret underline beneath
+    /// the offending column. Format (matches rust/alumina-boot conventions):
+    ///
+    ///    |
+    /// 76 |         buf.free();
+    ///    |         ^^^^^^^^^^
+    ///
+    /// Multi-line spans render only the first line and elide the rest with
+    /// `...`. Lines longer than MAX_SNIPPET_COLS are truncated.
+    fn render_source_snippet<F: std::fmt::Formatter<F>>(
+        self: &DiagnosticContext,
+        f: &mut F,
+        file: &SourceFile,
+        span: ast::Span,
+        line: u32,
+        col: u32,
+    ) -> std::fmt::Result {
+        let MAX_SNIPPET_COLS: usize = 200;
+        // The line (`line` is 1-based), without its line break.
+        let line_idx = (line - 1u32) as usize;
+        if line_idx >= file.line_starts.len() {
+            return std::fmt::Result::ok(());
+        }
+        let start_off = file.line_starts[line_idx] as usize;
+        let end_off = if line_idx + 1 < file.line_starts.len() {
+            file.line_starts[line_idx + 1] as usize
+        } else {
+            file.contents.len()
+        };
+        while end_off > start_off && (file.contents[end_off - 1] == '\n' || file.contents[end_off - 1] == '\r') {
+            end_off -= 1;
+        }
+        let line_bytes = file.contents[start_off..end_off];
+        let truncated = line_bytes.len() > MAX_SNIPPET_COLS;
+        if truncated {
+            line_bytes = line_bytes[..MAX_SNIPPET_COLS];
+        }
+
+        // The caret starts at column `col` (1-based) and covers the span (on
+        // this line, at least one character).
+        let indent = (col - 1u32) as usize;
+        let span_len = if span.end > span.start { (span.end - span.start) as usize } else { 1usize };
+        let line_remaining = if line_bytes.len() > indent { line_bytes.len() - indent } else { 1usize };
+        let caret_len = std::cmp::max(std::cmp::min(span_len, line_remaining), 1usize);
+
+        //     |
+        //  76 | buf.free();
+        //     | ^^^^^^^^^^
+        let gutter = std::fmt::repeat(" ", count_digits(line) as usize + 1);
+        write!(f, "\n{}|\n {} | {}{}\n{}| {}{}",
+            gutter, line, line_bytes, if truncated { " ..." } else { "" },
+            gutter, std::fmt::repeat(" ", indent), std::fmt::repeat("^", caret_len))
+    }
+
+    fn free(self: &mut DiagnosticContext) {
+        self.files.free();
+        self.errors.free();
+        self.lints_seen.free();
+        self.seen.free();
+    }
+}
+
+fn count_digits(n: u32) -> u32 {
+    if n == 0u32 { return 1u32; }
+    let count: u32 = 0;
+    let v = n;
+    while v > 0u32 {
+        v = v / 10u32;
+        count = count + 1u32;
+    }
+    count
+}
+
+
+#[cfg(test)]
+mod tests {
+    fn span(start: u32, end: u32) -> Span {
+        Span { file_id: 0, start: start, end: end, expansion: 0 }
+    }
+
+    fn lint_at(start: u32, end: u32) -> CodeDiagnostic {
+        CodeDiagnostic::lint(span(start, end), "unused_variable", "unused variable")
+    }
+
+    #[test]
+    fn test_innermost_lint_level_wins() {
+        let diag = DiagnosticContext::new();
+        defer diag.free();
+        diag.add_override(LintOverride { span: span(0, 100), lint: "", action: LintAction::Deny });
+        diag.add_override(LintOverride { span: span(10, 50), lint: "unused_variable", action: LintAction::Allow });
+        diag.emit(lint_at(20, 30));
+        diag.emit(lint_at(60, 70));
+        diag.emit(CodeDiagnostic::lint(span(20, 30), "unused_parameter", "unused parameter"));
+        diag.apply_lint_overrides();
+        // allow(unused_variable) within deny(warnings); deny(warnings) alone;
+        // deny(warnings), which unused_parameter is one of.
+        assert!(diag.errors[0].level == DiagLevel::Allowed);
+        assert!(diag.errors[1].level == DiagLevel::Error);
+        assert!(diag.errors[2].level == DiagLevel::Error);
+        assert!(diag.has_errors);
+    }
+
+    #[test]
+    fn test_lint_given_once_per_place() {
+        let diag = DiagnosticContext::new();
+        defer diag.free();
+        diag.emit(lint_at(1, 2));
+        diag.attach(CodeDiagnostic::generic_note(span(3, 4), "in instantiation of ..."));
+        // (Another instance of the same generic code: dropped, with its note.)
+        diag.emit(lint_at(1, 2));
+        diag.attach(CodeDiagnostic::generic_note(span(5, 6), "in instantiation of ..."));
+        // (A note of its own is kept.)
+        diag.emit(CodeDiagnostic::generic_note(span(7, 8), "hello"));
+        assert_eq!(diag.errors.len(), 3);
+        assert!(diag.errors[1].attached && !diag.errors[2].attached);
+        assert!(diag.has_warnings && !diag.has_errors);
+    }
+}

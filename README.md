@@ -159,14 +159,12 @@ Otherwise, follow the instructions to build it from source.
 
 ## Prerequisites
 
-To compile `alumina-boot` compiler from source, these prerequisites are needed:
+The compiler, `aluminac`, is written in Alumina and generates native code with LLVM. It is bootstrapped with `alumina-boot`, the original compiler written in Rust. Supported platforms are Linux (x86_64 and aarch64) and macOS (arm64). To build it, you need:
 
   - A C compiler (GCC or Clang) and Make
-  - A Rust toolchain (`rustup install stable`)
+  - A Rust toolchain (`rustup install stable`), for `alumina-boot`
+  - LLVM 22 (e.g. `apt install llvm-22-dev` from [apt.llvm.org](https://apt.llvm.org), or `brew install llvm`). If `llvm-config-22` is not on your `PATH`, pass `LLVM_CONFIG=/path/to/llvm-config` to `make`.
   - Node.js and Tree-sitter CLI (`npm install -g tree-sitter-cli` or `cargo install tree-sitter-cli`)
-
-Additionally, to compile the tools, such as `alumina-doc`, these prerequisites are needed:
-
   - Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`):
    ```bash
    git clone https://github.com/tree-sitter/tree-sitter
@@ -175,70 +173,58 @@ Additionally, to compile the tools, such as `alumina-doc`, these prerequisites a
    sudo make install
    # sudo ldconfig
    ```
-  - [`libbacktrace`](https://github.com/ianlancetaylor/libbacktrace/) is an optional dependency for nice stack backtraces on panics. If disabled, pass `STD_BACKTRACE=1` when building `aluminac` to use the libc's backtrace function instead.
-   ```bash
-   git clone https://github.com/ianlancetaylor/libbacktrace
-   cd libbacktrace
-   ./configure
-   make
-   sudo make install
-   ```
+  - Python 3, to run the tests
 
 ## Building
 
-To compile `alumina-boot` compiler from source, run:
-```
-make alumina-boot
-```
-
-Now you are able to compile Alumina code, e.g.
+To build the compiler, run:
 
 ```
-./alumina-boot --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world.c
-cc hello_world.c -o hello_world
+make
+```
+
+This builds `alumina-boot`, bootstraps `aluminac` with it and leaves `./aluminac` (a link to `build/debug/aluminac`; use `make RELEASE=1` for an optimized build). Now you are able to compile Alumina code, e.g.
+
+```
+./aluminac --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world
 ./hello_world
 ```
 
-If you wish to run the tests, simply add `--cfg test`. In this case the `main()` function will be replaced by the test runner.
+Add `--test` to build the unit test runner instead (the `main()` function is replaced by it), and `--cfg threading` (linking with `-lpthread`) for multithreading:
 
 ```
-./alumina-boot --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world_test.c
-cc hello_world_test.c -o hello_world_test
-./hello_world_test
-```
-
-If you wish to compile with multithreading enabled, add `--cfg threading` and link with `libpthread`.
-
-```
-./alumina-boot --cfg threading --sysroot ./sysroot hello_world=./examples/threading.alu -o threading.c
-cc threading.c -o threading -lpthread
+./aluminac --sysroot ./sysroot --cfg threading --link-args -lpthread threading=./examples/threading.alu -o threading
 ./threading
 ```
 
+## Debugging
 
-To compile the self-hosted compiler, run:
+Compile with `-g` for debug information (DWARF; on macOS aluminac also runs `dsymutil`). Debuggers see Alumina's names: functions by their paths (`main::geometry::Square::area`, `std::collections::vector::Vector::push<i32>`), types as they are written (`&[u8]`, `(i32, bool)`, `std::option::Option<i32>`), in backtraces, breakpoints (`b main::add`) and expressions. `tools/lldb/alumina-lldb` is lldb with formatters for the standard library's types:
+
 ```
-make aluminac
+(&[u8]) name = "hello"
+(std::collections::vector::Vector<i32>) v = len=2 { [0] = 10, [1] = 20 }
+(std::option::Option<i32>) some = some(7)
+(std::collections::hashmap::HashMap<i32, &[u8], std::hash::xxhash::Xxh64>) m = len=1 { [0] = (1, "one") }
 ```
 
-See the [language guide](./docs/lang_guide.md), assorted [examples](./examples), [standard library](./sysroot) for a tour of the language.
+(or load them in any lldb with `command script import tools/lldb/alumina_lldb.py`; that also lets `step` enter the standard library, which lldb skips by default because C++'s is also `std::`).
 
+`make install` installs `aluminac`, `alumina-lldb` and the standard library into `PREFIX` (`/usr/local` by default); set `ALUMINA_SYSROOT` to `$PREFIX/share/alumina` to use it without `--sysroot`.
+
+`alumina-boot` alone (it compiles Alumina to C) can be built with `make boot`.
 
 # Contributing
 
 Issues, pull requests, and feature requests are most welcome. Standard library is covered with tests, and there are also documentation tests (all examples from the standard library are compiled and executed as test cases).
 
-To run the standard library tests
+To run all the tests (the compiler's, the standard library's, the language's and the documentation's):
 
 ```shell
-make test-std
+make test
 ```
 
-To run the documentation tests
-
-```shell
-make test-docs
-```
+or a part of them, e.g. `make test-std` (the standard library), `make test-docs` (the documentation) or `make test-debuginfo` (programs run in lldb, which it needs: `lldb-22` or `lldb`, or `LLDB=<path>`). `make check` runs everything CI does, including the bootstrap check (the compiler, compiled by itself, compiles itself to the same code).
 
 Standard library contributions are especially welcome! Ideas for contribution:
 

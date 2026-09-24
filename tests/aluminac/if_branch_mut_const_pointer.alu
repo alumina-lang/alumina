@@ -1,0 +1,11 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// BOOT_DIVERGES: alumina-boot's Ty::gcd joins `&mut T` and `&T` to `&mut T`, which is not assignable from `&T` (its assignable_from treats `&T` as the supertype); the join is `&T`.
+// if/else arms of types `&mut T` and `&T` unify to `&T`.
+fn main() -> i32 {
+    let x = 1;
+    let y = 2;
+    let r = if x == 1 { &x } else { &y as &i32 };
+    let s = if x != 1 { &y as &i32 } else { &x };
+    if *r != 1 || *s != 1 { return 1; }
+    0
+}

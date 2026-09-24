@@ -1,0 +1,44 @@
+// Locals in their lexical scopes; the compiler's own are hidden.
+fn main() {
+    let x = 1;
+    let total = 0;
+    {
+        let x = "inner";
+        println!("{}", x); // #break
+    }
+    for i in 0..3 {
+        total += i; // #break
+    }
+    let pairs = [(1, 'a'), (2, 'b')];
+    for (n, ch) in pairs {
+        total += n; // #break
+    }
+    println!("{} {}", x, total); // #break
+}
+
+// lldb: frame variable
+// lldb: continue
+// lldb: frame variable
+// lldb: breakpoint disable 2
+// lldb: continue
+// lldb: frame variable
+// lldb: breakpoint disable 3
+// lldb: continue
+// lldb: frame variable
+// check: (i32) x = 1
+// check: (&[u8]) x = "inner"
+// check-not: __
+// check: stop reason = breakpoint 2.1
+// check: (i32) i = 0
+// check-not: __
+// check: stop reason = breakpoint 3.1
+// check: (i32) n = 1
+// check: (u8) ch = 97
+// check-not: __
+// check: stop reason = breakpoint 4.1
+// check: (i32) total = 6
+// check-not: (i32) i =
+// check-not: (i32) n =
+// check-not: "inner"
+// check-not: __
+// check: kill

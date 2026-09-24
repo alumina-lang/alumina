@@ -1,0 +1,15 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `#[location("file", line)]` sets what `file!`, `line!` (counted from the
+// start of the item, attributes included) and `column!` (0) report in it,
+// as in alumina-boot.
+
+#[location("gen/generated.alu", 100)]
+fn located() -> bool {
+    std::file!() == "gen/generated.alu" && std::line!() == 102 && std::column!() == 0
+}
+
+fn main() -> i32 {
+    if !located() { return 1; }
+    if std::file!() == "gen/generated.alu" { return 2; }
+    0
+}

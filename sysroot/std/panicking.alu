@@ -124,7 +124,7 @@ mod internal {
     use fmt::{Formatter, Formattable};
     use sync::{Atomic, Ordering};
 
-    #[cfg(not(any(target_os = "macos", target_os = "android")))]
+    #[cfg(all(boot, not(any(target_os = "macos", target_os = "android"))))]
     {
         type jmp_buf = [libc::intptr_t; 5];
 
@@ -137,6 +137,26 @@ mod internal {
         fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> ! {
             intrinsics::codegen_func::<!>("__builtin_longjmp", &buf[0] as &mut (), arg);
         }
+    }
+    /// Aluminac doesn't recognise `intrinsics::codegen_func`, so on Linux it
+    /// uses libc's `_setjmp` / `longjmp` extern directly (skipping signal-mask
+    /// save/restore, matching the GCC-builtin path's behaviour). The symbol
+    /// is renamed via `#[link_name("_setjmp")]` so the function is callable
+    /// as `setjmp` while linking to glibc's `_setjmp`. `setjmp` MUST be
+    /// called directly — wrapping in a non-extern fn would drop the
+    /// returns_twice annotation at the actual call site and LLVM would
+    /// reorder around the call as if it returned once.
+    ///
+    /// The jmp_buf size matches glibc's `__jmp_buf` for x86_64 / aarch64
+    /// Linux (200 bytes — 25 c_longs).
+    #[cfg(all(not(boot), not(any(target_os = "macos", target_os = "android"))))]
+    {
+        type jmp_buf = [libc::c_long; 25];
+
+        #[returns_twice]
+        #[link_name("_setjmp")]
+        extern "C" fn setjmp(buf: &jmp_buf) -> libc::c_int;
+        extern "C" fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> !;
     }
     #[cfg(any(target_os = "macos", target_os = "android"))]
     {

@@ -1,0 +1,14 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// `stringify!` takes the text of its argument (as in alumina-boot's lang
+// tests, a path through a generic parameter, `T::associated_type`, is fine
+// there; aluminac does not resolve the argument at all).
+
+fn generic<T>(_: ()) -> bool {
+    std::assert_eq!(std::stringify!(_ as T::associated_type), "_ as T::associated_type");
+    true
+}
+
+fn main() -> i32 {
+    if !generic::<i32>(()) { return 1; }
+    0
+}

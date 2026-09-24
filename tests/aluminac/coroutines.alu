@@ -1,0 +1,51 @@
+// ALUMINAC_FLAGS: --sysroot sysroot --cfg coroutines --link-args build/debug/minicoro.o
+// BOOT_DIVERGES: needs minicoro linked (cross_check compiles C without it)
+// Coroutines (`fn*` / `yield`), as in alumina-boot: a generator, a
+// coroutine receiving values, and cancellation running `defer`s.
+
+use std::runtime::Coroutine;
+
+fn* count(n: i32) -> Coroutine<i32> {
+    for i in 0..n {
+        yield i;
+    }
+}
+
+fn* accumulate() -> Coroutine<i32, i32> {
+    let total = 0;
+    loop {
+        total += yield total;
+    }
+}
+
+static DEFERRED: i32 = 0;
+
+fn mark_deferred() { DEFERRED = 1; }
+
+fn* cancellable() -> Coroutine<i32> {
+    defer mark_deferred();
+    yield 1;
+    yield 2;
+}
+
+fn main() -> i32 {
+    let sum = 0;
+    let gen = count(5);
+    defer gen.free();
+    for v in gen {
+        sum += v;
+    }
+    if sum != 10 { return 1; }
+
+    let acc = accumulate();
+    defer acc.free();
+    acc.send(0);
+    acc.send(5);
+    if acc.send(7).unwrap() != 12 { return 2; }
+
+    let c = cancellable();
+    if c.next().unwrap() != 1 { return 3; }
+    c.close();
+    if DEFERRED != 1 { return 4; }
+    0
+}

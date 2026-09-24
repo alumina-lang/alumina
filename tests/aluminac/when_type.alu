@@ -1,0 +1,40 @@
+// When-types: conditional type aliases evaluated at compile time.
+
+extern "intrinsic" fn size_of<T>() -> usize;
+extern "intrinsic" fn type_id<T>() -> usize;
+
+fn is_same<T1, T2>() -> bool {
+    type_id::<T1>() == type_id::<T2>()
+}
+
+type unsigned_of<T> = when is_same::<T, i8>() {
+    u8
+} else when is_same::<T, i16>() {
+    u16
+} else when is_same::<T, i32>() {
+    u32
+} else when is_same::<T, i64>() {
+    u64
+} else {
+    T
+};
+
+type big_or_small<T> = when size_of::<T>() > 4usize {
+    u64
+} else {
+    u8
+};
+
+fn main(args: &[&[u8]]) -> i32 {
+    // unsigned_of maps signed -> unsigned
+    if size_of::<unsigned_of<i32>>() != 4usize { return 1i32; }
+    if size_of::<unsigned_of<i64>>() != 8usize { return 2i32; }
+    // Falls through to else (identity)
+    if size_of::<unsigned_of<u8>>() != 1usize { return 3i32; }
+
+    // Size-based conditional types
+    if size_of::<big_or_small<i64>>() != 8usize { return 4i32; }
+    if size_of::<big_or_small<i8>>() != 1usize { return 5i32; }
+
+    0i32
+}

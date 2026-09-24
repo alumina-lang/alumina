@@ -1,0 +1,71 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+
+// Closures with captures passed to iterator combinators must have
+// their `Tm` (return type in the `F: Fn(T) -> Tm` bound) properly
+// inferred for the chained `Option::map` / iterator-stage calls
+// downstream.
+//
+// The bug: Fn-bound inference at `try_lower_method_call` only handled
+// FnPointer / Fn / Lambda arg expressions; it didn't recognize
+// IrTyTag::Closure values. So when MapIterator::next called
+// `option.map(self._fun)`, Option::map's Tm stayed unbound, defaulted
+// to void, and the closure's pointer return got truncated through
+// Option<void>'s 1-byte payload. Symptom: `xs.iter().map(closure_capturing_x).next()`
+// returned a garbage address instead of the captured x.
+//
+// Surfaced as the runtime argv-mangling in sysroot's
+// `Command::spawn` → `ExecParams::new`'s
+// `args_idxs.iter().map(|&ptr, idx| ptr + idx).chain(...).to_vector()`
+// — every argv entry pointed to the same heap garbage instead of
+// "/bin/echo", "hello", etc.
+
+fn main() -> i32 {
+    // Capture a pointer, return it from the closure, expect the same
+    // address back through the iterator chain.
+    let x: &u8 = "hello".as_ptr();
+
+    let xs: std::collections::Vector<i32> = std::collections::Vector::new();
+    defer xs.free();
+    xs.push(1i32);
+    xs.push(2i32);
+
+    let r = xs.iter().map(|&x, _v: i32| -> &u8 { x }).to_vector();
+    defer r.free();
+
+    if r.len() != 2usize { return 1; }
+    if r[0] as &void as usize != x as &void as usize { return 2; }
+    if r[1] as &void as usize != x as &void as usize { return 3; }
+
+    // Pointer arithmetic in the closure body — same shape as
+    // sysroot's ExecParams argv builder.
+    let buf: [u8; 16];
+    for i in 0usize..16usize { buf[i] = ('A' + i as u8) as u8; }
+    let base: &u8 = &buf[0];
+
+    let idxs: std::collections::Vector<usize> = std::collections::Vector::new();
+    defer idxs.free();
+    idxs.push(0usize);
+    idxs.push(5usize);
+    idxs.push(10usize);
+
+    let ptrs = idxs.iter().map(|&base, idx: usize| -> &u8 { base + idx }).to_vector();
+    defer ptrs.free();
+
+    if ptrs.len() != 3usize { return 4; }
+    if *ptrs[0] != 'A' { return 5; }
+    if *ptrs[1] != ('A' + 5u8) as u8 { return 6; }
+    if *ptrs[2] != ('A' + 10u8) as u8 { return 7; }
+
+    // Closure captured by reference, used via IteratorExt chain —
+    // make sure the chain doesn't drop the captured Tm either.
+    let count: i32 = 100i32;
+    let collected = (0i32..3i32).map(|=count, v: i32| -> i32 { v + count }).to_vector();
+    defer collected.free();
+
+    if collected.len() != 3usize { return 8; }
+    if collected[0] != 100i32 { return 9; }
+    if collected[1] != 101i32 { return 10; }
+    if collected[2] != 102i32 { return 11; }
+
+    0
+}

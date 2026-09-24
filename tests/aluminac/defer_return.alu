@@ -1,0 +1,33 @@
+// A `defer` whose expression returns (or uses `?`): the deferred expressions
+// run once at each exit, not again for the `return` among them.
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+use std::result::{Result, try};
+
+static COUNT: i32 = 0;
+
+fn bump() -> Result<i32, ()> {
+    COUNT += 1;
+    if COUNT > 100 { Result::err(()) } else { Result::ok(COUNT) }
+}
+
+fn with_try() -> Result<i32, ()> {
+    defer { bump()?; };
+    Result::ok(1)
+}
+
+fn early(x: i32) -> i32 {
+    defer if x > 0 { return 7; };
+    if x > 5 {
+        return 3;
+    }
+    x
+}
+
+fn main() {
+    assert_eq!(with_try().unwrap(), 1);
+    assert_eq!(COUNT, 1);
+    assert_eq!(early(10), 7);
+    assert_eq!(early(1), 7);
+    assert_eq!(early(0), 0);
+}

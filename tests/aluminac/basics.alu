@@ -1,0 +1,60 @@
+// Basic language features: structs, enums, generics, arrays, loops.
+
+enum Color {
+    Red = 0i32,
+    Green = 1i32,
+    Blue = 2i32,
+}
+
+fn color_val(c: Color) -> i32 {
+    switch c {
+        Color::Red => 10i32,
+        Color::Green => 20i32,
+        Color::Blue => 30i32,
+        _ => 0i32,
+    }
+}
+
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn identity<T>(x: T) -> T { x }
+
+fn main(args: &[&[u8]]) -> i32 {
+    // Enum switch
+    if color_val(Color::Red) != 10i32 { return 1i32; }
+    if color_val(Color::Green) != 20i32 { return 2i32; }
+    if color_val(Color::Blue) != 30i32 { return 3i32; }
+
+    // Generic struct
+    let p: Pair<i32, bool> = Pair::<i32, bool> { first: 42i32, second: true };
+    if p.first != 42i32 { return 4i32; }
+    if !p.second { return 5i32; }
+
+    // Generic function
+    if identity::<i32>(42i32) != 42i32 { return 6i32; }
+
+    // Arrays
+    let arr: [i32; 4] = [10i32, 20i32, 30i32, 40i32];
+    if arr[0] + arr[1] + arr[2] + arr[3] != 100i32 { return 7i32; }
+
+    // While loop
+    let i = 0i32;
+    let sum = 0i32;
+    while i < 10i32 {
+        sum = sum + i;
+        i = i + 1i32;
+    }
+    if sum != 45i32 { return 8i32; }
+
+    // For-range loop
+    sum = 0i32;
+    for i in 0i32..5i32 {
+        sum = sum + i;
+    }
+    if sum != 10i32 { return 9i32; }
+
+    0i32
+}

@@ -1,0 +1,1218 @@
+// Pass 1: Scope building
+//
+// Walks the tree-sitter parse tree to build scopes and register all named items
+// (functions, structs, enums, protocols, type aliases, statics, macros, etc.)
+
+use parser::*;
+
+use ast::*;
+use ir::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use aluminac_common::arena::Arena;
+use aluminac_common::node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use aluminac_common::common::{child_by, children_by, NodeVisitorExt};
+use tree_sitter::{Node, TSFieldId, TSTreeCursor};
+
+use std::collections::{HashMap, Vector};
+use std::option::{Option, try};
+
+/// The lang items there are (as in alumina-boot).
+const LANG_ITEMS: [&[u8]; 99] = [
+    "builtin_array", "builtin_bool", "builtin_callable", "builtin_f32", "builtin_f64",
+    "builtin_i128", "builtin_i16", "builtin_i32", "builtin_i64", "builtin_i8", "builtin_isize",
+    "builtin_never", "builtin_tuple", "builtin_u128", "builtin_u16", "builtin_u32",
+    "builtin_u64", "builtin_u8", "builtin_usize", "coroutine", "coroutine_new",
+    "coroutine_yield", "dyn", "dyn_const_cast", "dyn_const_coerce", "dyn_data", "dyn_new",
+    "dyn_self", "dyn_vtable_index", "entrypoint_glue", "enum_variant_new",
+    "field_descriptor_new", "field_descriptor_new_unnamed", "format_arg", "operator_eq",
+    "operator_gt", "operator_gte", "operator_lt", "operator_lte", "operator_neq", "proto_any",
+    "proto_array", "proto_array_of", "proto_callable", "proto_closure", "proto_const",
+    "proto_enum", "proto_floating_point", "proto_function_pointer", "proto_integer",
+    "proto_meta", "proto_named_function", "proto_none", "proto_numeric", "proto_pointer",
+    "proto_pointer_of", "proto_primitive", "proto_range", "proto_range_of",
+    "proto_same_base_as", "proto_same_layout_as", "proto_signed", "proto_static",
+    "proto_struct", "proto_tuple", "proto_union", "proto_unsigned", "proto_zero_sized", "range",
+    "range_from", "range_from_new", "range_full", "range_full_new", "range_inclusive",
+    "range_inclusive_new", "range_new", "range_to", "range_to_inclusive",
+    "range_to_inclusive_new", "range_to_new", "slice", "slice_const_cast", "slice_const_coerce",
+    "slice_index", "slice_new", "slice_range_index", "slice_slicify", "static_for_iter",
+    "static_for_next", "type_descriptor_new", "typeop_arguments_of",
+    "typeop_array_with_length_of", "typeop_function_pointer_of", "typeop_generic_args_of",
+    "typeop_pointer_with_mut_of", "typeop_replace_generic_args_of", "typeop_return_type_of",
+    "typeop_underlying_function_of", "typeop_underlying_type_of"
+];
+
+struct Pass1 {
+    ctx: &mut ParseContext,
+    current_scope: u32,
+    in_container: bool,   // inside struct/enum/protocol/impl
+    current_enum_id: Option<Id>,
+    impl_generic_param_ids: &[Id],
+    impl_generic_param_names: &[&[u8]],
+    // The enclosing `impl Foo<...>` block node, so pass2 can re-parse its
+    // generic params *with bounds* (the impl-level bounds like
+    // `Rg: RangeOf<T>` are otherwise dropped when prepended to a method's
+    // generic_params).
+    impl_decl: Option<Node>,
+    skip_item: bool,      // set by parse_attributes when #[cfg] evaluates to false
+    // The functions of the `impl` block being visited (one of a type's
+    // blocks may shadow a function of another, with a warning).
+    impl_fn_names: std::collections::HashSet<&[u8]>,
+    // The item whose attributes are being parsed (what lint levels apply to).
+    attr_owner: Node,
+    // `impl` blocks (and their scopes), visited once all the items they may
+    // be of are declared (an `impl` may come before its type).
+    deferred_impls: Vector<(Node, u32)>,
+    visiting_deferred: bool,
+}
+
+impl Pass1 {
+    fn new(ctx: &mut ParseContext, root_scope: u32) -> Pass1 {
+        Pass1 {
+            ctx: ctx,
+            current_scope: root_scope,
+            in_container: false,
+            current_enum_id: Option::none(),
+            impl_generic_param_ids: &[],
+            impl_generic_param_names: &[],
+            impl_decl: Option::none(),
+            skip_item: false,
+            impl_fn_names: std::collections::HashSet::new(),
+            attr_owner: std::mem::zeroed::<Node>(),
+            deferred_impls: Vector::new(),
+            visiting_deferred: false,
+        }
+    }
+
+    /// Declare an item in the current scope, whose names must be unique
+    /// (as in alumina-boot).
+    fn declare(self: &mut Pass1, item: NamedItem) {
+        let existing = self.ctx.scopes.get(self.current_scope).items.get(&item.name);
+        if existing.is_some() && !item.name.is_empty() {
+            let previous = existing.unwrap();
+            if item.kind.tag == NamedItemTag::GenericParam && previous.kind.tag == NamedItemTag::GenericParam {
+                // (The generic parameters of a type's `impl` blocks share
+                // its scope.)
+            } else if item.kind.tag == NamedItemTag::Method && previous.kind.tag == NamedItemTag::Method
+                && !self.impl_fn_names.contains(&item.name) {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(item.span, "duplicate_name_shadow",
+                    std::fmt::format!("duplicate function name \"{}\" (this function will shadow a previous one)", item.name).unwrap().as_slice()));
+            } else if self.ctx.scopes.get(self.current_scope).kind != ScopeKind::Block {
+                self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(item.span,
+                    std::fmt::format!("duplicate name `{}`", item.name).unwrap().as_slice()));
+            }
+        }
+        if item.kind.tag == NamedItemTag::Method {
+            self.impl_fn_names.insert(item.name);
+        }
+        self.ctx.scopes.add_item(self.current_scope, item);
+    }
+
+    fn run(self: &mut Pass1, root: Node) {
+        self.visit_node(root);
+        self.visiting_deferred = true;
+        let prev = self.current_scope;
+        for (node, scope_idx) in self.deferred_impls.iter() {
+            self.current_scope = scope_idx;
+            self.visit_impl_p1(node);
+        }
+        self.current_scope = prev;
+        self.visiting_deferred = false;
+        self.deferred_impls.free();
+    }
+
+    fn visit_node(self: &mut Pass1, node: Node) {
+        let sym = node.symbol() as usize;
+        let kind = NODE_KINDS[sym];
+        switch kind {
+            NodeKind::SourceFile => self.visit_source_file_p1(node),
+            NodeKind::ModDefinition => self.visit_mod_p1(node),
+            NodeKind::FunctionDefinition => self.visit_function_p1(node),
+            NodeKind::StructDefinition => self.visit_struct_p1(node),
+            NodeKind::EnumDefinition => self.visit_enum_p1(node),
+            NodeKind::EnumItem => self.visit_enum_item_p1(node),
+            NodeKind::ProtocolDefinition => self.visit_protocol_p1(node),
+            NodeKind::TypeDefinition => self.visit_type_def_p1(node),
+            NodeKind::ImplBlock => self.visit_impl_p1(node),
+            NodeKind::UseDeclaration => self.visit_use_p1(node),
+            NodeKind::StaticDeclaration => self.visit_static_p1(node),
+            NodeKind::ConstDeclaration => self.visit_const_p1(node),
+            NodeKind::MacroDefinition => self.visit_macro_def_p1(node),
+            NodeKind::StructField => self.visit_struct_field_p1(node),
+            NodeKind::Parameter => self.visit_parameter_p1(node),
+            NodeKind::GenericArgumentList => self.visit_generic_args_p1(node),
+            NodeKind::ParameterList => self.visit_parameter_list_p1(node),
+            NodeKind::MacroParameterList => self.visit_macro_param_list_p1(node),
+            NodeKind::MacroParameter => self.visit_macro_param_p1(node),
+            NodeKind::TopLevelBlock => self.visit_top_level_block_p1(node),
+            NodeKind::TopLevelAttributes => {},
+            NodeKind::Mixin => self.visit_mixin_p1(node),
+            NodeKind::DocComment => {},
+            NodeKind::FileDocComment => {},
+            NodeKind::LineComment => {},
+            NodeKind::BlockComment => {},
+            _ => {
+                // For unknown nodes, visit children
+                self.visit_children(node);
+            },
+        }
+    }
+
+    fn visit_children(self: &mut Pass1, node: Node) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            self.visit_node(child);
+        }
+    }
+
+    fn visit_children_by_field(self: &mut Pass1, node: Node, field: FieldKind) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, field, &cursor) {
+            self.visit_node(child);
+        }
+    }
+
+    fn get_name(self: &mut Pass1, node: Node) -> &[u8] {
+        let name_node = child_by!(node, FieldKind::Name);
+        if name_node.is_none() {
+            return "";
+        }
+        self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()))
+    }
+
+    fn parse_attributes(self: &mut Pass1, node: Node) -> &[Attribute] {
+        let attr_node = child_by!(node, FieldKind::Attributes);
+        if attr_node.is_none() {
+            return &[];
+        }
+        self.attr_owner = node;
+        self.parse_attribute_list(attr_node.unwrap())
+    }
+
+    fn parse_attribute_list(self: &mut Pass1, node: Node) -> &[Attribute] {
+        let attrs: Vector<Attribute> = Vector::new();
+        defer attrs.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind != NodeKind::AttributeItem && kind != NodeKind::TopLevelAttributeItem {
+                continue;
+            }
+            let meta = child_by!(child, FieldKind::Inner);
+            if meta.is_some() {
+                self.parse_attribute(meta.unwrap(), &attrs);
+            }
+        }
+
+        if attrs.is_empty() {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<Attribute>(attrs.as_slice())
+    }
+
+    /// The single bare-word argument of an attribute, e.g. `always` in
+    /// `#[inline(always)]`.
+    fn word_arg(self: &mut Pass1, meta: Node) -> Option<&[u8]> {
+        let args = self.ctx.meta_args(meta)?;
+        if args.len() != 1 || NODE_KINDS[args[0].symbol() as usize] != NodeKind::MetaItem {
+            return Option::none();
+        }
+        Option::some(self.ctx.node_text(child_by!(args[0], FieldKind::Name)?))
+    }
+
+    /// The single unsigned integer argument of an attribute, e.g. `8` in
+    /// `#[align(8)]`.
+    fn integer_arg(self: &mut Pass1, meta: Node) -> Option<usize> {
+        let args = self.ctx.meta_args(meta)?;
+        if args.len() != 1 || NODE_KINDS[args[0].symbol() as usize] != NodeKind::IntegerLiteral {
+            return Option::none();
+        }
+        let text = self.ctx.node_text(args[0]);
+        if text.is_empty() || !text.iter().all(|c: u8| -> bool { c >= '0' && c <= '9' }) {
+            return Option::none();
+        }
+        Option::some(parse_usize(text))
+    }
+
+    /// The single literal argument of an attribute, e.g. `"strlen"` in
+    /// `#[link_name("strlen")]` (unescaped) or `8` in `#[align(8)]`.
+    fn literal_arg(self: &mut Pass1, meta: Node) -> Option<&[u8]> {
+        let args = self.ctx.meta_args(meta)?;
+        if args.len() != 1 {
+            return Option::none();
+        }
+        let text = self.ctx.node_text(args[0]);
+        switch NODE_KINDS[args[0].symbol() as usize] {
+            NodeKind::StringLiteral => Option::some(unescape_string(text[1..text.len() - 1], self.ctx.arena) as &[u8]),
+            NodeKind::IntegerLiteral => Option::some(text),
+            _ => Option::none(),
+        }
+    }
+
+    /// Lower one attribute (given its meta item) into `attrs`. A `#[cfg]`
+    /// that does not hold marks the current item as skipped instead.
+    fn parse_attribute(self: &mut Pass1, meta: Node, attrs: &mut Vector<Attribute>) {
+        let name_node = child_by!(meta, FieldKind::Name);
+        if name_node.is_none() {
+            return;
+        }
+        let name = self.ctx.node_text(name_node.unwrap());
+        // Most attributes can be given once (as in alumina-boot).
+        let tags: &[AttrTag] = switch name {
+            "align" => &[AttrTag::Align],
+            "packed" => &[AttrTag::Packed],
+            "cold" => &[AttrTag::Cold],
+            "tuple_args" => &[AttrTag::TupleArgs],
+            "transparent" => &[AttrTag::Transparent],
+            "inline" => &[AttrTag::Inline, AttrTag::AlwaysInline, AttrTag::NeverInline, AttrTag::InlineIr],
+            "builtin" => &[AttrTag::Builtin],
+            "export" => &[AttrTag::Export],
+            "returns_twice" => &[AttrTag::ReturnsTwice],
+            "thread_local" => &[AttrTag::ThreadLocal],
+            "link_name" => &[AttrTag::LinkName],
+            "const" => &[AttrTag::ConstOnly, AttrTag::NoConst],
+            _ => &[],
+        };
+        if attrs.iter().any(|=tags, a: Attribute| -> bool { tags.iter().any(|=a, t: AttrTag| -> bool { t == a.tag }) }) {
+            self.ctx.error(meta, std::fmt::format!("duplicate attribute `{}`", name).unwrap().as_slice());
+            return;
+        }
+        switch name {
+            "cfg" => {
+                if !self.ctx.eval_cfg_attribute(meta) {
+                    self.skip_item = true;
+                }
+            }
+            "cfg_attr" => {
+                // #[cfg_attr(predicate, attr, ...)]: the trailing attributes
+                // apply only when the predicate holds.
+                let args = self.ctx.meta_args(meta).unwrap_or(&[]);
+                if args.len() < 2 {
+                    self.ctx.error(meta, "`cfg_attr` expects a predicate followed by at least one attribute");
+                    return;
+                }
+                if self.ctx.eval_cfg(args[0]) {
+                    for attr in args[1..] {
+                        if NODE_KINDS[attr.symbol() as usize] == NodeKind::MetaItem {
+                            self.parse_attribute(attr, attrs);
+                        } else {
+                            self.ctx.error(attr, "expected an attribute");
+                        }
+                    }
+                }
+            }
+            "inline" => {
+                // #[inline] is a hint; #[inline(always)] / #[inline(never)] /
+                // #[inline(ir)] select the kind explicitly.
+                if self.ctx.meta_args(meta).is_none() {
+                    attrs.push(Attribute::inline_attr());
+                    return;
+                }
+                switch self.word_arg(meta).unwrap_or("") {
+                    "always" => attrs.push(Attribute::always_inline()),
+                    "never" => attrs.push(Attribute::never_inline()),
+                    "ir" => attrs.push(Attribute::inline_ir()),
+                    _ => self.ctx.error(meta, "invalid attribute"),
+                }
+            }
+            "cold" => attrs.push(Attribute::cold()),
+            "export" => attrs.push(Attribute::export()),
+            "test" => {
+                // Aluminac retains a dedicated AttrTag::Test for marking
+                // test-mode root-monos, but also stores a Custom("test") so
+                // reflection / attributed lookups see it like alumina-boot
+                // does (`#[test]` is just a Custom attribute there).
+                attrs.push(Attribute::test());
+                attrs.push(Attribute::custom(self.ctx.intern_str("test")));
+            }
+            "thread_local" => attrs.push(Attribute::thread_local()),
+            "static_ctor" => attrs.push(Attribute::static_ctor()),
+            "no_return" => attrs.push(Attribute::no_return()),
+            "transparent" => attrs.push(Attribute::transparent()),
+            "must_use" => attrs.push(Attribute::must_use()),
+            "no_mangle" => attrs.push(Attribute::no_mangle()),
+            "const_only" => attrs.push(Attribute::const_only()),
+            "no_const" => attrs.push(Attribute::no_const()),
+            "const" => {
+                // alumina-boot syntax: `#[const(always)]` maps to
+                // `const_only`, `#[const(never)]` to `no_const`. Anything
+                // else is stored as Custom("const") for `has_attribute`.
+                switch self.word_arg(meta).unwrap_or("") {
+                    "always" => attrs.push(Attribute::const_only()),
+                    "never" => attrs.push(Attribute::no_const()),
+                    _ => self.ctx.error(meta, "invalid attribute"),
+                }
+            }
+            "tuple_args" => attrs.push(Attribute::tuple_args()),
+            "packed" => {
+                // #[packed] defaults to alignment 1; #[packed(N)] sets it to N.
+                let val: usize = 1;
+                if self.ctx.meta_args(meta).is_some() {
+                    let arg = self.integer_arg(meta);
+                    if arg.is_none() {
+                        self.ctx.error(meta, "invalid attribute");
+                        return;
+                    }
+                    val = arg.unwrap();
+                }
+                if val == 0 || (val & (val - 1)) != 0 {
+                    self.ctx.error(meta, "invalid attribute (packed alignment must be a power of two)");
+                } else if attrs.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Align }) {
+                    self.ctx.error(meta, "`#[align(...)]` cannot be used together with `#[packed]`");
+                } else {
+                    attrs.push(Attribute::packed(val));
+                }
+            }
+            "builtin" => attrs.push(Attribute::builtin()),
+            "returns_twice" => attrs.push(Attribute::returns_twice()),
+            "test_main" => attrs.push(Attribute::test_main()),
+            "align" => {
+                let val = self.integer_arg(meta);
+                if val.is_none() {
+                    self.ctx.error(meta, "invalid attribute");
+                } else if val.unwrap() == 1 {
+                    self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(self.ctx.make_span(meta), "align1",
+                        "`#[align(1)]` has no effect, did you mean to use `#[packed]`?"));
+                } else if val.unwrap() == 0 || (val.unwrap() & (val.unwrap() - 1)) != 0 {
+                    self.ctx.error(meta, "invalid attribute (alignment must be a power of two)");
+                } else if attrs.iter().any(|a: Attribute| -> bool { a.tag == AttrTag::Packed }) {
+                    self.ctx.error(meta, "`#[align(...)]` cannot be used together with `#[packed]`");
+                } else {
+                    attrs.push(Attribute::align(val.unwrap()));
+                }
+            }
+            "link_name" => {
+                let link_name = self.literal_arg(meta);
+                if link_name.is_some() {
+                    attrs.push(Attribute::link_name(self.ctx.intern_str(link_name.unwrap())));
+                } else {
+                    self.ctx.error(meta, "`link_name` expects a string argument");
+                }
+            }
+            "lang" => {
+                let lang_name = self.word_arg(meta);
+                if lang_name.is_none() {
+                    self.ctx.error(meta, "invalid attribute");
+                } else if !LANG_ITEMS.as_slice().iter().any(|=lang_name, l: &[u8]| -> bool { l == lang_name.unwrap() }) {
+                    self.ctx.error(meta, std::fmt::format!("unknown lang item {}", lang_name.unwrap()).unwrap().as_slice());
+                } else {
+                    attrs.push(Attribute::lang(self.ctx.intern_str(lang_name.unwrap())));
+                }
+            }
+            // Lint levels and documentation attributes only affect
+            // diagnostics and are not stored on items (as in alumina-boot).
+            "allow", "deny", "warn" => self.ctx.lint_level(meta, name, self.attr_owner),
+            "docs" => {}
+            "location", "obsolete", "diag::hide_from_backtrace" => attrs.push(Attribute::custom(self.ctx.intern_str(name))),
+            // Anything else is a Custom attribute, so tools (and the
+            // `has_attribute` intrinsic) can find it by name. Unless it is
+            // namespaced (`tool::name`), it is probably a mistake (as in
+            // alumina-boot).
+            _ => {
+                if !std::string::contains(name, "::") {
+                    self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(self.ctx.make_span(meta), "unknown_attribute",
+                        std::fmt::format!("unknown attribute `{}`", name).unwrap().as_slice()));
+                }
+                attrs.push(Attribute::custom(self.ctx.intern_str(name)));
+            }
+        }
+    }
+
+    fn visit_source_file_p1(self: &mut Pass1, node: Node) {
+        // File-level attributes (`#![cfg(...)]`) apply to the whole file.
+        let _ = self.parse_attributes(node);
+        if self.skip_item {
+            self.skip_item = false;
+            return;
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+    }
+
+    fn visit_top_level_block_p1(self: &mut Pass1, node: Node) {
+        // Check cfg attributes on top-level blocks
+        let attr_node = child_by!(node, FieldKind::Attributes);
+        if attr_node.is_none() {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::lint(self.ctx.make_span(node),
+                "top_level_block_without_attributes", "redundant top level block (no attributes)"));
+        }
+        if attr_node.is_some() {
+            self.attr_owner = node;
+            let _ = self.parse_attribute_list(attr_node.unwrap());
+            if self.skip_item {
+                self.skip_item = false;
+                return;
+            }
+        }
+        self.visit_children_by_field(node, FieldKind::Items);
+    }
+
+    fn visit_mod_p1(self: &mut Pass1, node: Node) {
+        // Honour `#[cfg(...)]` on mod declarations. Without this, gated
+        // modules (e.g. embedded `#[cfg(all(test, test_std))] mod tests`)
+        // would be unconditionally registered and their inner test
+        // functions discovered by `attributed::<()>("test")` regardless
+        // of cfg.
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        let name = self.get_name(node);
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::module(child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, FieldKind::Body);
+        self.current_scope = prev;
+    }
+
+    fn visit_function_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+        self.ctx.scopes.fn_scope_owners.insert(child_scope, (id._value, name));
+
+        let item_kind = if self.in_container {
+            NamedItemKind::method(id, id) // simplified: both type and fn ids are the same
+        } else {
+            NamedItemKind::function(id)
+        };
+
+        self.declare(NamedItem {
+            name: name,
+            kind: item_kind,
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_functions.push(PendingFunction {
+            node: node,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_method: self.in_container,
+            impl_generic_param_ids: self.impl_generic_param_ids,
+            impl_generic_param_names: self.impl_generic_param_names,
+            impl_decl: self.impl_decl,
+        });
+
+        // Visit generic params and parameters in child scope
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_some() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Parameters);
+
+        self.current_scope = prev;
+    }
+
+    fn visit_struct_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        // Check if it's a union
+        let kind_node = child_by!(node, FieldKind::Kind);
+        let is_union = kind_node.is_some() && self.ctx.node_text(kind_node.unwrap()) == "union";
+
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::struct_kind_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_structs.push(PendingStruct {
+            node: node,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_union: is_union,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_some() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+    }
+
+    fn visit_enum_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::enum_kind_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_enums.push(PendingEnum {
+            node: node,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+        });
+
+        let prev = self.current_scope;
+        let prev_enum = self.current_enum_id;
+        self.current_scope = child_scope;
+        self.current_enum_id = Option::some(id);
+        self.visit_children_by_field(node, FieldKind::Body);
+        self.current_scope = prev;
+        self.current_enum_id = prev_enum;
+    }
+
+    fn visit_enum_item_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let variant_id = self.ctx.next_id();
+
+        if self.current_enum_id.is_some() {
+            self.declare(NamedItem {
+                name: name,
+                kind: NamedItemKind::enum_variant(self.current_enum_id.unwrap(), variant_id),
+                span: self.ctx.make_span(node),
+            });
+        }
+    }
+
+    fn visit_struct_field_p1(self: &mut Pass1, _node: Node) {
+        // Fields are collected during pass 2
+    }
+
+    fn visit_protocol_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Protocol, Option::some(self.current_scope));
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::protocol_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_protocols.push(PendingProtocol {
+            node: node,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+        });
+
+        let prev = self.current_scope;
+        let prev_container = self.in_container;
+        self.current_scope = child_scope;
+        self.in_container = true;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_some() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+        self.in_container = prev_container;
+    }
+
+    fn visit_impl_p1(self: &mut Pass1, node: Node) {
+        if !self.visiting_deferred {
+            self.deferred_impls.push((node, self.current_scope));
+            return;
+        }
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let name = self.get_name(node);
+
+        // The type must be declared in the same scope (as in alumina-boot;
+        // the linear scopes of a block's items count as one).
+        let scope_idx = self.current_scope;
+        let declared = self.ctx.scopes.get(scope_idx).items.get(&name);
+        while declared.is_none() && self.ctx.scopes.get(scope_idx).kind == ScopeKind::Block
+            && self.ctx.scopes.get(scope_idx).parent.is_some() {
+            scope_idx = self.ctx.scopes.get(scope_idx).parent.unwrap();
+            declared = self.ctx.scopes.get(scope_idx).items.get(&name);
+        }
+        if declared.is_none() {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.ctx.make_span(node),
+                "cannot have an `impl` block without a corresponding type"));
+        } else if declared.unwrap().kind.tag != scope::NamedItemTag::Struct && declared.unwrap().kind.tag != scope::NamedItemTag::Enum {
+            self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.ctx.make_span(node),
+                std::fmt::format!("duplicate name `{}`", name).unwrap().as_slice()));
+        }
+        let prev_fn_names = self.impl_fn_names;
+        self.impl_fn_names = std::collections::HashSet::new();
+        defer {
+            self.impl_fn_names.free();
+            self.impl_fn_names = prev_fn_names;
+        };
+
+        // Try to resolve the type to find its scope
+        let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+        let child_scope = if resolved.is_some() {
+            let item = resolved.unwrap();
+            if (item.kind.tag == scope::NamedItemTag::Struct || item.kind.tag == scope::NamedItemTag::Enum) && item.kind.scope_idx != 0 {
+                // Use the type's existing scope
+                item.kind.scope_idx
+            } else {
+                self.ctx.scopes.create_scope(ScopeKind::Impl, Option::some(self.current_scope))
+            }
+        } else {
+            self.ctx.scopes.create_scope(ScopeKind::Impl, Option::some(self.current_scope))
+        };
+
+        self.ctx.pending_impls.push(PendingImpl {
+            node: node,
+            scope_idx: child_scope,
+            target_type_scope: self.current_scope,
+        });
+
+        let prev = self.current_scope;
+        let prev_container = self.in_container;
+        let prev_impl_gp = self.impl_generic_param_ids;
+        let prev_impl_gp_names = self.impl_generic_param_names;
+        let prev_impl_decl = self.impl_decl;
+        self.current_scope = child_scope;
+        self.in_container = true;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_some() {
+            let type_args_node = type_args.unwrap();
+            // Visit to register generic params in scope
+            self.visit_node(type_args_node);
+            // Collect the IDs (and names) of the generic params we just
+            // registered. Multiple impl blocks of the same struct write into
+            // the SAME (struct-shared) scope, so later impls overwrite K /
+            // V / H. Capturing the ids+names per-impl lets pass2 rebind the
+            // correct ones in each method's function scope before parsing
+            // its types.
+            self.impl_generic_param_ids = self.collect_generic_param_ids(type_args_node);
+            self.impl_generic_param_names = self.collect_generic_param_names(type_args_node);
+            // Stash the impl block's byte range so pass2 can re-parse the
+            // generic params *with bounds* (collect_* above only captures
+            // ids/names — the `Rg: RangeOf<T>` bounds are needed for
+            // RangeOf-bound type inference of the impl generics).
+            self.impl_decl = Option::some(node);
+        } else {
+            self.impl_generic_param_ids = &[];
+            self.impl_generic_param_names = &[];
+            self.impl_decl = Option::none();
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+        self.in_container = prev_container;
+        self.impl_generic_param_ids = prev_impl_gp;
+        self.impl_generic_param_names = prev_impl_gp_names;
+        self.impl_decl = prev_impl_decl;
+    }
+
+    fn visit_type_def_p1(self: &mut Pass1, node: Node) {
+        let attrs = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::type_alias(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_type_aliases.push(PendingTypeAlias {
+            node: node,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attrs,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_some() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.current_scope = prev;
+    }
+
+    fn visit_use_p1(self: &mut Pass1, node: Node) {
+        let _ = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let arg = child_by!(node, FieldKind::Argument);
+        if arg.is_none() {
+            return;
+        }
+        self.process_use(arg.unwrap(), &[]);
+    }
+
+    fn process_use(self: &mut Pass1, node: Node, prefix: &[&[u8]]) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::ScopedIdentifier => {
+                // use a::b::c; - import c from path a::b
+                // Inside a grouped list (`use outer::{a::b, ...}`), prefix
+                // carries [outer]; combine it with our own segments so the
+                // alias path becomes [outer, a, b] not [a, b].
+                let own_segments = self.collect_path_segments(node);
+                if !own_segments.is_empty() {
+                    let name = own_segments[own_segments.len() - 1];
+                    let segments = if !prefix.is_empty() {
+                        let combined = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + own_segments.len());
+                        for i in 0usize..prefix.len() {
+                            combined[i] = prefix[i];
+                        }
+                        for i in 0usize..own_segments.len() {
+                            combined[prefix.len() + i] = own_segments[i];
+                        }
+                        combined as &[&[u8]]
+                    } else {
+                        own_segments
+                    };
+                    self.declare(NamedItem {
+                        name: name,
+                        kind: NamedItemKind::use_alias(self.current_scope, segments),
+                        span: self.ctx.make_span(node),
+                    });
+                }
+            },
+            NodeKind::Identifier => {
+                let name = self.ctx.intern_str(self.ctx.node_text(node));
+                let full_path = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + 1);
+                for i in 0usize..prefix.len() {
+                    full_path[i] = prefix[i];
+                }
+                full_path[prefix.len()] = name;
+                self.declare(NamedItem {
+                    name: name,
+                    kind: NamedItemKind::use_alias(self.current_scope, full_path),
+                    span: self.ctx.make_span(node),
+                });
+            },
+            NodeKind::UseWildcard => {
+                // use a::*; - star import
+                let path_node = child_by!(node, FieldKind::Path);
+                if path_node.is_some() {
+                    let segments = self.collect_path_segments(path_node.unwrap());
+                    // Resolve the module path to get its scope
+                    let resolved = self.ctx.scopes.resolve_path(self.current_scope, segments);
+                    if resolved.is_some() {
+                        let item = resolved.unwrap();
+                        if item.kind.tag == scope::NamedItemTag::Module && item.kind.scope_idx != 0 {
+                            self.ctx.scopes.add_star_import(self.current_scope, item.kind.scope_idx, self.ctx.arena);
+                        }
+                    }
+                }
+            },
+            NodeKind::UseAsClause => {
+                let path_node = child_by!(node, FieldKind::Path);
+                let alias_node = child_by!(node, FieldKind::Alias);
+                if path_node.is_some() && alias_node.is_some() {
+                    // In a use list (`use a::{b as c}`) the path is relative
+                    // to the list's prefix.
+                    let relative = self.collect_path_segments(path_node.unwrap());
+                    let segments = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + relative.len());
+                    prefix.copy_to_nonoverlapping(&segments[0]);
+                    relative.copy_to_nonoverlapping(&segments[prefix.len()]);
+                    let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
+                    self.declare(NamedItem {
+                        name: alias,
+                        kind: NamedItemKind::use_alias(self.current_scope, segments),
+                        span: self.ctx.make_span(node),
+                    });
+                }
+            },
+            NodeKind::ScopedUseList => {
+                let path_node = child_by!(node, FieldKind::Path);
+                let new_prefix = if path_node.is_some() {
+                    self.collect_path_segments(path_node.unwrap())
+                } else {
+                    prefix
+                };
+                let list_node = child_by!(node, FieldKind::List);
+                if list_node.is_some() {
+                    let list = list_node.unwrap();
+                    let cursor = list.walk();
+                    defer cursor.free();
+                    for child in list.children(&cursor) {
+                        if child.is_named() && !child.is_extra() {
+                            self.process_use(child, new_prefix);
+                        }
+                    }
+                }
+            },
+            NodeKind::UseList => {
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in node.children(&cursor) {
+                    if child.is_named() && !child.is_extra() {
+                        self.process_use(child, prefix);
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn collect_path_segments(self: &mut Pass1, node: Node) -> &[&[u8]] {
+        let segments: Vector<&[u8]> = Vector::new();
+        defer segments.free();
+        self.collect_path_segments_inner(node, &segments);
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(segments.as_slice())
+    }
+
+    fn collect_path_segments_inner(self: &mut Pass1, node: Node, segments: &mut Vector<&[u8]>) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::Identifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::TypeIdentifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::ScopedIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if path.is_some() {
+                    self.collect_path_segments_inner(path.unwrap(), segments);
+                } else if std::string::starts_with(self.ctx.node_text(node), "::") {
+                    // (`::x`: from the root module, an empty first segment.)
+                    segments.push("");
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if name.is_some() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if path.is_some() {
+                    self.collect_path_segments_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if name.is_some() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            _ => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+        }
+    }
+
+    fn visit_static_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        // `extern "C" static foo: T;` — the grammar exposes `extern` as a
+        // separate field on static_declaration. Convert it to an
+        // AttrTag::Extern attribute so the mono pass (which scans the
+        // attribute list looking for Extern to decide whether to emit
+        // the global as external linkage) sees it. Without this, an
+        // extern static silently emits as an internal global initialized
+        // to zero, and references resolve to that zero — the symptom
+        // that surfaced with sysroot's `process::unix::internal::environ`
+        // staying null after the std/process unification.
+        let extern_node = child_by!(node, FieldKind::Extern);
+        if extern_node.is_some() {
+            let abi: &[u8] = "C";
+            let abi_node = child_by!(node, FieldKind::Abi);
+            if abi_node.is_some() {
+                let abi_text = self.ctx.node_text(abi_node.unwrap());
+                if abi_text.len() >= 2 && abi_text[0] == '"' {
+                    abi = self.ctx.intern_str(abi_text[1..abi_text.len()-1]);
+                }
+            }
+            let new_attrs = self.ctx.arena.alloc_slice::<Attribute>(attributes.len() + 1);
+            for ai in 0usize..attributes.len() {
+                new_attrs[ai] = attributes[ai];
+            }
+            new_attrs[attributes.len()] = Attribute::extern_attr(abi);
+            attributes = new_attrs as &[Attribute];
+        }
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        let has_generic_params = type_args.is_some();
+        let body_scope = if has_generic_params {
+            self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope))
+        } else {
+            self.current_scope
+        };
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::static_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_statics.push(PendingStatic {
+            node: node,
+            scope_idx: body_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_const: false,
+            has_generic_params: has_generic_params,
+        });
+
+        if has_generic_params {
+            let prev = self.current_scope;
+            self.current_scope = body_scope;
+            self.visit_node(type_args.unwrap());
+            self.current_scope = prev;
+        }
+    }
+
+    fn visit_const_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        let has_generic_params = type_args.is_some();
+        let body_scope = if has_generic_params {
+            self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope))
+        } else {
+            self.current_scope
+        };
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::const_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_statics.push(PendingStatic {
+            node: node,
+            scope_idx: body_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_const: true,
+            has_generic_params: has_generic_params,
+        });
+
+        if has_generic_params {
+            let prev = self.current_scope;
+            self.current_scope = body_scope;
+            self.visit_node(type_args.unwrap());
+            self.current_scope = prev;
+        }
+    }
+
+    fn visit_macro_def_p1(self: &mut Pass1, node: Node) {
+        let attrs = self.parse_attributes(node);
+        if self.skip_item { self.skip_item = false; return; }
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        // Check for #[builtin] attribute
+        let is_builtin = attrs.iter().any(|attr: Attribute| -> bool { attr.tag == AttrTag::Builtin });
+
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::macro_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_macros.push(PendingMacro {
+            node: node,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            is_builtin: is_builtin,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, FieldKind::Parameters);
+        self.current_scope = prev;
+    }
+
+    fn visit_generic_args_p1(self: &mut Pass1, node: Node) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if placeholder.is_some() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let id = self.ctx.next_id();
+                    self.declare(NamedItem {
+                        name: name,
+                        kind: NamedItemKind::generic_param(id),
+                        span: self.ctx.make_span(child),
+                    });
+                }
+            }
+        }
+    }
+
+    fn collect_generic_param_ids(self: &mut Pass1, type_args_node: Node) -> &[Id] {
+        let ids: Vector<Id> = Vector::new();
+        defer ids.free();
+
+        let cursor = type_args_node.walk();
+        defer cursor.free();
+        for child in children_by!(type_args_node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if placeholder.is_some() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+                    if resolved.is_some() {
+                        let resolved_item = resolved.unwrap();
+                        if resolved_item.kind.tag == scope::NamedItemTag::GenericParam {
+                            ids.push(resolved_item.kind.id());
+                        }
+                    }
+                }
+            }
+        }
+
+        if ids.is_empty() {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<Id>(ids.as_slice())
+    }
+
+    /// Parallel to `collect_generic_param_ids` but returns the source-level
+    /// names (e.g. ["K", "V", "H"]). Pass2's build_function uses these to
+    /// re-bind each impl's K/V/H in the method's function scope, so a later
+    /// impl block (which overwrites K in the struct's shared scope) doesn't
+    /// steer this method's type references to the wrong id.
+    fn collect_generic_param_names(self: &mut Pass1, type_args_node: Node) -> &[&[u8]] {
+        let names: Vector<&[u8]> = Vector::new();
+        defer names.free();
+
+        let cursor = type_args_node.walk();
+        defer cursor.free();
+        for child in children_by!(type_args_node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if placeholder.is_some() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+                    if resolved.is_some() {
+                        let resolved_item = resolved.unwrap();
+                        if resolved_item.kind.tag == scope::NamedItemTag::GenericParam {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        if names.is_empty() {
+            return &[];
+        }
+        self.ctx.arena.alloc_slice_copy::<&[u8]>(names.as_slice())
+    }
+
+    fn visit_parameter_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::param(id),
+            span: self.ctx.make_span(node),
+        });
+    }
+
+    fn visit_parameter_list_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Parameter);
+    }
+
+    fn visit_macro_param_list_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Parameter);
+    }
+
+    fn visit_macro_param_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        self.declare(NamedItem {
+            name: name,
+            kind: NamedItemKind::param(id),
+            span: self.ctx.make_span(node),
+        });
+    }
+
+    fn visit_mixin_p1(self: &mut Pass1, node: Node) {
+        // A mixin can introduce its own generic params: `mixin<T: Bound> Proto<X<T>>;`.
+        // These are scoped to the mixin only — they must NOT pollute the enclosing
+        // impl's scope. Create a child scope, register the mixin's generic params
+        // there, and use it as the type-resolution scope so the protocol type ref
+        // (the `Proto<X<T>>` part) sees them. The registered ids feed into
+        // PendingMixin.impl_generic_param_ids alongside the impl's own (so `mono`'s
+        // dispatch substitution can bind them from the dispatch type's args).
+        let mixin_type_args = child_by!(node, FieldKind::TypeArguments);
+        let type_scope_idx = self.current_scope;
+        let combined_gp_ids = self.impl_generic_param_ids;
+        if mixin_type_args.is_some() {
+            let mixin_type_args_node = mixin_type_args.unwrap();
+            let mixin_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+            let prev = self.current_scope;
+            self.current_scope = mixin_scope;
+            self.visit_node(mixin_type_args_node);
+            let mixin_ids = self.collect_generic_param_ids(mixin_type_args_node);
+            self.current_scope = prev;
+            type_scope_idx = mixin_scope;
+            if !mixin_ids.is_empty() {
+                if self.impl_generic_param_ids.is_empty() {
+                    combined_gp_ids = mixin_ids;
+                } else {
+                    let combined = self.ctx.arena.alloc_slice::<Id>(self.impl_generic_param_ids.len() + mixin_ids.len());
+                    for ci in 0usize..self.impl_generic_param_ids.len() {
+                        combined[ci] = self.impl_generic_param_ids[ci];
+                    }
+                    for ci in 0usize..mixin_ids.len() {
+                        combined[self.impl_generic_param_ids.len() + ci] = mixin_ids[ci];
+                    }
+                    combined_gp_ids = combined as &[Id];
+                }
+            }
+        }
+
+        self.ctx.pending_mixins.push(PendingMixin {
+            node: node,
+            impl_scope_idx: self.current_scope,
+            type_scope_idx: type_scope_idx,
+            impl_generic_param_ids: combined_gp_ids,
+        });
+    }
+}

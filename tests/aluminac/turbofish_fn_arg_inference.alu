@@ -1,0 +1,70 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Regression: a turbofish-applied generic fn passed as an argument to a
+// generic method that infers the function's return type via `F: Fn(T) -> U`
+// must mono with the correct return type — even when multiple monos of the
+// inner source function exist by the time the inference runs.
+//
+// Root cause was twofold:
+//   1. `make_fn_ty` cached IrTy::Fn by source `id` alone, so the first mono
+//      of `Result::unwrap` populated the cache and subsequent monos
+//      (different type args) all received the FIRST mono's mangled name
+//      back from the cache.
+//   2. The downstream lookups in `try_lower_method_call`'s inference loop
+//      and `lower_call`'s Fn/Closure return-type resolution matched on
+//      `id` only and didn't break on first match, so multiple monos of
+//      the same source function meant the LAST id-match's return type
+//      won — picking up an unrelated mono (e.g. Result::unwrap<()> from
+//      the panic chain) when the caller meant a specific one.
+// Pre-fix, the test below would mono `MapIterator<..., U=()>` and emit
+// `Option<()>` instead of `Option<i32>`.
+
+use std::iter::Iterator;
+
+struct InnerErr {}
+type InnerResult = Result<i32, InnerErr>;
+
+struct InnerIter {
+    _values: [i32; 3],
+    _pos: usize,
+}
+impl InnerIter {
+    fn next(self: &mut InnerIter) -> Option<InnerResult> {
+        if self._pos >= 3 { return Option::none(); }
+        let v = self._values[self._pos];
+        self._pos = self._pos + 1;
+        Option::some(Result::ok(v))
+    }
+    mixin Iterator<InnerIter, InnerResult>;
+    mixin std::iter::IteratorExt<InnerIter, InnerResult>;
+}
+
+struct Outer {
+    _inner: InnerIter,
+}
+
+impl Outer {
+    fn new() -> Outer {
+        Outer { _inner: InnerIter { _values: [100, 200, 300], _pos: 0 } }
+    }
+    fn next(self: &mut Outer) -> Option<InnerResult> {
+        use std::option::try;
+        let ret = self._inner.next()?;
+        Option::some(ret.map(|v: i32| -> i32 { v }))
+    }
+    mixin Iterator<Outer, InnerResult>;
+    mixin std::iter::IteratorExt<Outer, InnerResult>;
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    // No warm-up direct call — pre-fix this triggered the mono-cache state
+    // dependency and produced `Option<()>` instead of `Option<i32>`.
+    let iter = Outer::new().map(Result::unwrap::<i32, InnerErr>);
+    let v0 = iter.next().unwrap();
+    if v0 != 100 { return 1; }
+    let v1 = iter.next().unwrap();
+    if v1 != 200 { return 2; }
+    let v2 = iter.next().unwrap();
+    if v2 != 300 { return 3; }
+    if iter.next().is_some() { return 4; }
+    0
+}

@@ -1,0 +1,95 @@
+//! The set of active conditional-compilation keys.
+//!
+//! Mirrors alumina-boot's model: every cfg key is either a bare flag
+//! (`--cfg threading`) or carries a value (`--cfg target_os=linux`), and a
+//! predicate `key = "value"` matches only a key with exactly that value,
+//! while a bare `key` predicate matches whenever the key is present.
+
+use std::collections::HashMap;
+
+struct CfgSet {
+    _entries: HashMap<&[u8], Option<&[u8]>>,
+}
+
+impl CfgSet {
+    fn new() -> CfgSet {
+        CfgSet { _entries: HashMap::new() }
+    }
+
+    /// Set a bare flag, replacing any previous value of the key.
+    fn add_flag(self: &mut CfgSet, key: &[u8]) {
+        self._entries.insert(key, Option::none());
+    }
+
+    /// Set a key to a value, replacing any previous value of the key.
+    fn add(self: &mut CfgSet, key: &[u8], value: &[u8]) {
+        self._entries.insert(key, Option::some(value));
+    }
+
+    /// Set a key to a value unless the key has already been set. Used for
+    /// compiler-provided defaults that `--cfg` may override.
+    fn add_default(self: &mut CfgSet, key: &[u8], value: &[u8]) {
+        if !self.has(key) {
+            self.add(key, value);
+        }
+    }
+
+    /// Add a `--cfg` command line specification: `key` or `key=value`.
+    fn add_spec(self: &mut CfgSet, spec: &[u8]) {
+        let eq = spec.iter().find_index(|c: u8| -> bool { c == '=' });
+        if eq.is_some() {
+            let idx = eq.unwrap();
+            self.add(spec[..idx], spec[idx + 1..]);
+        } else {
+            self.add_flag(spec);
+        }
+    }
+
+    fn has(self: &CfgSet, key: &[u8]) -> bool {
+        self._entries.contains(&key)
+    }
+
+    /// The value of a key: `none` if the key is absent, `some(none)` if it
+    /// is a bare flag.
+    fn get(self: &CfgSet, key: &[u8]) -> Option<Option<&[u8]>> {
+        self._entries.get(&key)
+    }
+
+    /// Whether the predicate `key` (when `expected` is none) or
+    /// `key = "expected"` holds.
+    fn matches(self: &CfgSet, key: &[u8], expected: Option<&[u8]>) -> bool {
+        let actual = self.get(key);
+        if actual.is_none() {
+            return false;
+        }
+        if expected.is_none() {
+            return true;
+        }
+        let value = actual.unwrap();
+        value.is_some() && value.unwrap() == expected.unwrap()
+    }
+
+    fn free(self: &mut CfgSet) {
+        self._entries.free();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_specs() {
+        let cfg = CfgSet::new();
+        defer cfg.free();
+        cfg.add_spec("target_os=macos");
+        cfg.add_spec("debug");
+        assert!(cfg.matches("target_os", Option::some("macos")));
+        assert!(!cfg.matches("target_os", Option::some("linux")));
+        assert!(cfg.matches("target_os", Option::none()));
+        assert!(cfg.matches("debug", Option::none()));
+        assert!(!cfg.matches("debug", Option::some("1")));
+        assert!(!cfg.has("threading"));
+        // (A default does not override a value.)
+        cfg.add_default("target_os", "linux");
+        assert!(cfg.matches("target_os", Option::some("macos")));
+    }
+}

@@ -1,0 +1,31 @@
+// ALUMINAC_FLAGS: --sysroot sysroot --cfg feature_a --cfg level=3
+// `#[cfg_attr(predicate, attr)]` applies `attr` only when the predicate
+// holds (aluminac used to ignore cfg_attr entirely), and cfg keys follow
+// alumina-boot's key/value model: a bare `key` predicate matches a key
+// with any value, `key = "value"` only that exact value.
+
+// With feature_a set, the first `one` is compiled out through cfg_attr.
+#[cfg_attr(feature_a, cfg(nonexistent))]
+fn one() -> i32 { 1 }
+#[cfg_attr(not(feature_a), cfg(nonexistent))]
+fn one() -> i32 { 2 }
+
+#[cfg(level)]
+fn has_level() -> bool { true }
+#[cfg(not(level))]
+fn has_level() -> bool { false }
+
+#[cfg(level = "3")]
+const LEVEL: i32 = 3;
+#[cfg(not(level = "3"))]
+const LEVEL: i32 = 0;
+
+fn main() -> i32 {
+    if one() != 2 { return 1; }
+    if !has_level() { return 2; }
+    if LEVEL != 3 { return 3; }
+    if !std::cfg!("feature_a") || !std::cfg!("level") || std::cfg!("nonexistent") { return 4; }
+    // target_* keys are always set, with the same spellings as alumina-boot.
+    if !std::cfg!("target_os") || !std::cfg!("target_arch") || !std::cfg!("target_family") { return 5; }
+    0
+}

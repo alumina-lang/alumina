@@ -1,0 +1,1918 @@
+// Const evaluator: an IR interpreter for constant expressions.
+//
+// Evaluates IrExpr nodes at compile time, producing ConstValue results.
+// Used for enum variant values, `when` conditions, const items, array lengths,
+// and `const_eval`/`const_bake` intrinsics.
+
+use ast::*;
+use ir::*;
+use layout::{compute_type_size, compute_type_align, layout_of, AggregateLayout};
+use aluminac_common::arena::Arena;
+use std::collections::HashMap;
+use std::option::Option;
+use std::result::try;
+use std::fmt::write;
+
+const MAX_RECURSION_DEPTH: usize = 100;
+const MAX_ITERATIONS: usize = 1000000;
+
+/// Why an evaluation stopped short of a value: a failure, or control flow
+/// passing through the evaluation of enclosing expressions (`break`,
+/// `continue`, `return`, the end of an iteration).
+enum EvalError {
+    Unsupported = 1i32,
+    Overflow = 2i32,
+    DivZero = 3i32,
+    IndexOob = 4i32,
+    TooDeep = 5i32,
+    TooManyIters = 6i32,
+    Break = 7i32,
+    Continue = 8i32,
+    Return = 9i32,
+    StopIter = 10i32,
+    ConstPanic = 11i32,
+    Unreachable = 12i32,
+    UseAfterFree = 13i32,
+    InvalidFree = 14i32,
+    HeapInResult = 15i32,
+}
+
+impl EvalError {
+    /// Whether this is a failure (not control flow such as `break`).
+    fn is_failure(self: &EvalError) -> bool {
+        switch *self {
+            EvalError::Break, EvalError::Continue, EvalError::Return, EvalError::StopIter => false,
+            _ => true,
+        }
+    }
+
+    /// Why an evaluation failed, in alumina-boot's words.
+    fn reason(self: &EvalError) -> &[u8] {
+        switch *self {
+            EvalError::Overflow => "arithmetic overflow",
+            EvalError::DivZero => "division by zero",
+            EvalError::IndexOob => "index out of bounds",
+            EvalError::TooDeep => "max recursion depth exceeded",
+            EvalError::TooManyIters => "max iterations exceeded",
+            EvalError::Unreachable => "reached unreachable code",
+            EvalError::ConstPanic => "panic during constant evaluation",
+            EvalError::UseAfterFree => "dynamically allocated memory used after being freed",
+            EvalError::InvalidFree => "invalid pointer used to free memory",
+            EvalError::HeapInResult => "contains dynamically allocated memory during constant evaluation (hint: use std::runtime::bake to bake the value into rodata)",
+            _ => "not constant or unsupported expression",
+        }
+    }
+
+    // (For Result::unwrap's panic message.)
+    fn fmt<F: std::fmt::Formatter<F>>(self: &EvalError, f: &mut F) -> std::fmt::Result {
+        write!(f, "EvalError({})", *self as i32)
+    }
+}
+
+/// Where the evaluator first gave up on an expression it cannot evaluate,
+/// so that "cannot evaluate at compile time" can point at the culprit.
+struct ConstEvalFailure {
+    /// Why the evaluation failed.
+    code: EvalError,
+    /// The innermost enclosing source span (synthesized IR has none).
+    span: Span,
+    /// The kind of IR node that could not be evaluated.
+    what: &[u8],
+    /// The function being evaluated when it happened ("" at the top level).
+    function: &[u8],
+    /// The calls it happened in, innermost first.
+    calls: &[ConstEvalCall],
+}
+
+/// A call made during a constant evaluation.
+struct ConstEvalCall {
+    /// The call (its span is empty in synthesized code).
+    span: Span,
+    function: &[u8],
+}
+
+/// An allocation of the evaluator's heap (`const_alloc`).
+struct HeapAlloc {
+    /// The elements (an array).
+    value: ConstValue,
+    elem_ty: &IrTy,
+    live: bool,
+    /// Whether it is to be kept as a constant (`const_bake`).
+    baked: bool,
+}
+
+/// Everything a constant evaluation produced.
+struct ConstEvalOutcome {
+    value: Option<ConstValue>,
+    /// The allocations the value may point to.
+    heap: &HashMap<usize, HeapAlloc>,
+    panic_msg: &[u8],
+    warning_msg: &[u8],
+    note_msg: &[u8],
+    failure: Option<ConstEvalFailure>,
+}
+
+struct ConstEvaluator {
+    arena: &mut Arena,
+    // Variable storage: shared across call frames via pointer
+    variables: &mut HashMap<usize, ConstValue>,
+    // Variable remapping for THIS call frame: original_id -> fresh_id
+    remapped: HashMap<usize, usize>,
+    // Fresh ID generation for remapping
+    id_gen: &mut IdGen,
+    // Function lookup (already monomorphized)
+    ir_functions: &[IrFunction],
+    // Global variable lookup (for const globals)
+    ir_globals: &[IrGlobal],
+    // Cached const-evaluated values for const globals
+    const_values: &HashMap<usize, ConstValue>,
+    // Return slot for function calls
+    return_slot: ConstValue,
+    has_return: bool,
+    // Limits
+    remaining_depth: usize,
+    steps_remaining: usize,
+    // Type layout
+    pointer_size: usize,
+    // Last const_panic message, if one fired during eval. Empty otherwise.
+    panic_msg: &[u8],
+    // First const_warning / const_note message captured during eval. Single-
+    // slot design surfaces only the first of each — adequate for the sysroot's
+    // current `if in_const_context()`-gated usage.
+    warning_msg: &[u8],
+    note_msg: &[u8],
+    failure: Option<ConstEvalFailure>,
+    current_fn: &[u8],
+    // The heap (shared across call frames).
+    heap: &mut HashMap<usize, HeapAlloc>,
+    // Whether values are as at run time (`in_const_context()` is false),
+    // for code that is decided when compiling (as alumina-boot's
+    // `ConstEvaluator::for_codegen`).
+    run_time: bool,
+}
+
+impl ConstEvaluator {
+    fn new(
+        arena: &mut Arena,
+        variables: &mut HashMap<usize, ConstValue>,
+        id_gen: &mut IdGen,
+        ir_functions: &[IrFunction],
+        ir_globals: &[IrGlobal],
+        const_values: &HashMap<usize, ConstValue>,
+        pointer_size: usize,
+    ) -> ConstEvaluator {
+        ConstEvaluator {
+            arena: arena,
+            variables: variables,
+            remapped: HashMap::new(),
+            id_gen: id_gen,
+            ir_functions: ir_functions,
+            ir_globals: ir_globals,
+            const_values: const_values,
+            return_slot: ConstValue::make_void(),
+            has_return: false,
+            remaining_depth: MAX_RECURSION_DEPTH,
+            steps_remaining: MAX_ITERATIONS,
+            pointer_size: pointer_size,
+            panic_msg: "",
+            warning_msg: "",
+            note_msg: "",
+            failure: Option::none(),
+            current_fn: "",
+            heap: arena.alloc(HashMap::new::<usize, HeapAlloc>()),
+            run_time: false,
+        }
+    }
+
+    fn step(self: &mut ConstEvaluator) -> bool {
+        if self.steps_remaining == 0 {
+            return false;
+        }
+        self.steps_remaining -= 1;
+        true
+    }
+
+    fn var_id(self: &ConstEvaluator, id: Id) -> usize {
+        let remapped = self.remapped.get(&id._value);
+        remapped.unwrap_or(id._value)
+    }
+
+    fn store_var(self: &mut ConstEvaluator, id: Id, val: ConstValue) {
+        let vid = self.var_id(id);
+        self.variables.insert(vid, val);
+    }
+
+    // Main entry point: evaluate an expression to an rvalue
+    fn eval(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let r = self.eval_inner(expr)?;
+        // Materialize lvalues
+        if r.tag == CValTag::Lvalue {
+            let loaded = self.materialize_lvalue(r.lvalue());
+            if loaded.is_err() && loaded.unwrap_err().is_failure() {
+                self.note_failure(expr, loaded.unwrap_err());
+            }
+            return loaded;
+        }
+        Result::ok(r)
+    }
+
+    /// The live allocation `id`.
+    fn live_alloc(self: &ConstEvaluator, id: Id) -> Result<HeapAlloc, EvalError> {
+        let alloc = self.heap.get(&id._value);
+        if alloc.is_none() { return Result::err(EvalError::Unsupported); }
+        if !alloc.unwrap().live { return Result::err(EvalError::UseAfterFree); }
+        Result::ok(alloc.unwrap())
+    }
+
+    fn materialize_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue) -> Result<ConstValue, EvalError> {
+        switch lv.tag {
+            CLVTag::Variable => {
+                // (A variable of the code around the evaluation has no value to
+                // compute with, but can be passed on, e.g. to a method that
+                // only needs its type.)
+                let v = self.variables.get(&self.var_id(Id { _value: lv.id()._value }));
+                Result::ok(v.unwrap_or(ConstValue::make_uninitialized()))
+            }
+            CLVTag::Alloc => self.live_alloc(lv.id()).map(|a: HeapAlloc| -> ConstValue { a.value }),
+            CLVTag::Field => {
+                let base = self.materialize_lvalue(lv.inner())?;
+                self.access_field(base, lv.field_idx())
+            }
+            CLVTag::Index => {
+                let base = self.materialize_lvalue(lv.inner())?;
+                self.access_index(base, lv.index())
+            }
+            CLVTag::TupleIndex => {
+                let base = self.materialize_lvalue(lv.inner())?;
+                self.access_tuple_index(base, lv.index())
+            }
+            _ => Result::err(EvalError::Unsupported),
+        }
+    }
+
+    fn access_field(self: &ConstEvaluator, val: ConstValue, field_idx: u32) -> Result<ConstValue, EvalError> {
+        switch val.tag {
+            CValTag::Struct => {
+                for i in 0usize..val.fields().len() {
+                    if val.fields()[i].field_idx == field_idx {
+                        return Result::ok(val.fields()[i].value);
+                    }
+                }
+                Result::ok(ConstValue::make_uninitialized())
+            }
+            CValTag::Tuple => {
+                // Tuples, and slices (a (pointer, length) pair).
+                self.access_tuple_index(val, field_idx as usize)
+            }
+            CValTag::Bytes => {
+                // The fat-pointer fields of a string/byte-string slice: the data
+                // pointer (a Bytes value doubles as a pointer into the bytes)
+                // and the length.
+                switch field_idx {
+                    0 => Result::ok(val),
+                    1 => Result::ok(ConstValue::make_int((val.bytes().len() - val.bytes_offset()) as u64, BuiltinType::USize)),
+                    _ => Result::err(EvalError::Unsupported),
+                }
+            }
+            _ => Result::err(EvalError::Unsupported),
+        }
+    }
+
+    fn access_index(self: &ConstEvaluator, val: ConstValue, idx: usize) -> Result<ConstValue, EvalError> {
+        switch val.tag {
+            CValTag::Array => {
+                if idx < val.elems().len() {
+                    Result::ok(val.elems()[idx])
+                } else {
+                    Result::err(EvalError::IndexOob)
+                }
+            }
+            CValTag::Bytes => {
+                // String / byte-string literal: bytes-buffer with running offset.
+                // Indexing reads the byte at offset+idx; usize::MAX (from a wrapping
+                // 0usize-1) trips the OOB check via the >= len comparison.
+                let off = val.bytes_offset() + idx;
+                if off >= val.bytes().len() {
+                    Result::err(EvalError::IndexOob)
+                } else {
+                    Result::ok(ConstValue::make_int(val.bytes()[off] as u64, BuiltinType::U8))
+                }
+            }
+            _ => Result::err(EvalError::Unsupported),
+        }
+    }
+
+    /// Keep the live allocations the value reaches as constants.
+    fn bake(self: &mut ConstEvaluator, val: ConstValue) {
+        switch val.tag {
+            CValTag::Pointer => {
+                let root = val.lvalue().root();
+                if root.tag == CLVTag::Alloc {
+                    let alloc = self.heap.get(&root.id()._value);
+                    if alloc.is_some() && alloc.unwrap().live && !alloc.unwrap().baked {
+                        let baked = alloc.unwrap();
+                        baked.baked = true;
+                        self.heap.insert(root.id()._value, baked);
+                        self.bake(baked.value);
+                    }
+                }
+            }
+            CValTag::Tuple, CValTag::Array => for elem in val.elems() { self.bake(elem); },
+            CValTag::Struct => for field in val.fields() { self.bake(field.value); },
+            _ => {}
+        }
+    }
+
+    /// Whether the value reaches an allocation that is not baked.
+    fn reaches_unbaked(self: &ConstEvaluator, val: ConstValue) -> bool {
+        switch val.tag {
+            CValTag::Pointer => {
+                let root = val.lvalue().root();
+                if root.tag != CLVTag::Alloc { return false; }
+                let alloc = self.heap.get(&root.id()._value);
+                alloc.is_none() || !alloc.unwrap().baked
+            }
+            CValTag::Tuple, CValTag::Array => val.elems().iter().any(|=self, e: ConstValue| -> bool { self.reaches_unbaked(e) }),
+            CValTag::Struct => val.fields().iter().any(|=self, f: ConstField| -> bool { self.reaches_unbaked(f.value) }),
+            _ => false,
+        }
+    }
+
+    /// The result of evaluating `expr` at the top level: it must not point
+    /// into the heap other than into baked allocations.
+    fn eval_top(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let result = self.eval(expr);
+        if result.is_ok() && self.reaches_unbaked(result.unwrap()) {
+            if self.failure.is_none() {
+                self.failure = Option::some(ConstEvalFailure {
+                    code: EvalError::HeapInResult, span: expr.span, what: "expression", function: "", calls: &[],
+                });
+            }
+            return Result::err(EvalError::HeapInResult);
+        }
+        result
+    }
+
+    /// Evaluate an expression at the top level: its value (see `eval_top`),
+    /// and what else the evaluation produced.
+    fn outcome(self: &mut ConstEvaluator, expr: &IrExpr) -> ConstEvalOutcome {
+        let result = self.eval_top(expr);
+        ConstEvalOutcome {
+            value: result.get(),
+            heap: self.heap,
+            panic_msg: self.panic_msg,
+            warning_msg: self.warning_msg,
+            note_msg: self.note_msg,
+            failure: self.failure,
+        }
+    }
+
+    /// The bytes of a constant string (a `&[u8]` value).
+    fn extract_string(self: &mut ConstEvaluator, val: ConstValue) -> Option<&[u8]> {
+        if val.tag == CValTag::Bytes {
+            return Option::some(val.bytes()[val.bytes_offset()..]);
+        }
+        if val.tag != CValTag::Tuple || val.elems().len() != 2 {
+            return Option::none();
+        }
+        let len = val.elems()[1].as_usize();
+        if len.is_none() { return Option::none(); }
+        let ptr = val.elems()[0];
+        if ptr.tag == CValTag::Bytes {
+            let start = ptr.bytes_offset();
+            if start + len.unwrap() > ptr.bytes().len() { return Option::none(); }
+            return Option::some(ptr.bytes()[start..start + len.unwrap()]);
+        }
+        if ptr.tag != CValTag::Pointer { return Option::none(); }
+        let text = self.arena.alloc_slice::<u8>(len.unwrap());
+        for i in 0usize..len.unwrap() {
+            let lv = ptr.lvalue();
+            let elem = if lv.tag == CLVTag::Index {
+                self.arena.alloc(ConstLValue::mk_index(lv.inner(), lv.index() + i)) as &ConstLValue
+            } else if i == 0 {
+                lv
+            } else {
+                return Option::none();
+            };
+            let byte = self.materialize_lvalue(elem);
+            if byte.is_err() || byte.unwrap().tag != CValTag::Int { return Option::none(); }
+            text[i] = byte.unwrap().int_val() as u8;
+        }
+        Option::some(text as &[u8])
+    }
+
+    fn access_tuple_index(self: &ConstEvaluator, val: ConstValue, idx: usize) -> Result<ConstValue, EvalError> {
+        if val.tag == CValTag::Tuple {
+            if idx < val.elems().len() {
+                Result::ok(val.elems()[idx])
+            } else {
+                Result::ok(ConstValue::make_uninitialized())
+            }
+        } else {
+            Result::err(EvalError::Unsupported)
+        }
+    }
+
+    fn eval_inner(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let result = self.eval_node(expr);
+        if result.is_err() && result.unwrap_err().is_failure() {
+            self.note_failure(expr, result.unwrap_err());
+        }
+        result
+    }
+
+    /// Record the innermost expression whose evaluation failed, and the
+    /// innermost source span around it.
+    fn note_failure(self: &mut ConstEvaluator, expr: &IrExpr, code: EvalError) {
+        if self.failure.is_none() {
+            self.failure = Option::some(ConstEvalFailure {
+                code: code,
+                span: expr.span,
+                what: std::typing::Type::new::<IrTag>().variant_name(expr.tag).unwrap_or("expression"),
+                function: self.current_fn,
+                calls: &[],
+            });
+        } else if self.failure.unwrap().span.is_empty() && !expr.span.is_empty() {
+            let failure = self.failure.unwrap();
+            failure.span = expr.span;
+            self.failure = Option::some(failure);
+        }
+    }
+
+    fn eval_node(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        if !self.step() {
+            return Result::err(EvalError::TooManyIters);
+        }
+
+        switch expr.tag {
+        IrTag::IntLit => {
+            let bt = self.irty_to_builtin(expr.ty);
+            Result::ok(ConstValue::make_bits(mask_to_width(expr.int_val_u128(), bt.bit_width()), bt))
+        }
+        IrTag::FloatLit => {
+            let bt = self.irty_to_builtin(expr.ty);
+            Result::ok(ConstValue::make_float(expr.float_val(), bt))
+        }
+        IrTag::BoolLit => Result::ok(ConstValue::make_bool(expr.bool_val())),
+        IrTag::StringLit => Result::ok(ConstValue::make_bytes(expr.str_val(), 0)),
+        IrTag::Void => Result::ok(ConstValue::make_void()),
+        IrTag::NullLit => Result::ok(ConstValue::make_int(0u64, BuiltinType::USize)),
+
+        IrTag::Cast => self.eval_cast(expr),
+        IrTag::Binary => self.eval_binary(expr),
+        IrTag::Unary => self.eval_unary(expr),
+        IrTag::Local, IrTag::Param => {
+            let lv = self.arena.alloc(ConstLValue::variable(Id { _value: self.var_id(expr.id()) }));
+            Result::ok(ConstValue::make_lvalue(lv))
+        }
+        IrTag::Block => self.eval_block(expr),
+        IrTag::If => self.eval_if(expr),
+        IrTag::Let => self.eval_let(expr),
+        IrTag::Assign => self.eval_assign(expr),
+        IrTag::Return => {
+            if expr.opt_expr().is_some() {
+                let val = self.eval(expr.opt_expr().unwrap())?;
+                self.return_slot = val;
+            } else {
+                self.return_slot = ConstValue::make_void();
+            }
+            self.has_return = true;
+            Result::err(EvalError::Return)
+        }
+        IrTag::Call => self.eval_call(expr),
+        IrTag::FieldAccess => self.eval_field_access(expr),
+        IrTag::Index => self.eval_index(expr),
+        IrTag::TupleLit => self.eval_tuple_lit(expr),
+        IrTag::ArrayLit => self.eval_array_lit(expr),
+        IrTag::StructLit => self.eval_struct_lit(expr),
+        IrTag::Ref => self.eval_ref(expr),
+        IrTag::Deref => self.eval_deref(expr),
+        IrTag::Unreachable, IrTag::Trap => Result::err(EvalError::Unreachable),
+        IrTag::ConstPanic, IrTag::ConstWarning, IrTag::ConstNote => {
+            let msg = expr.str_val();
+            if !expr.items().is_empty() {
+                let value = self.eval(expr.items()[0])?;
+                let text = self.extract_string(value);
+                if text.is_none() { return Result::err(EvalError::Unsupported); }
+                msg = text.unwrap();
+            }
+            // (Only the first warning and note are kept.)
+            switch expr.tag {
+                IrTag::ConstPanic => {
+                    self.panic_msg = msg;
+                    return Result::err(EvalError::ConstPanic);
+                }
+                IrTag::ConstWarning => if self.warning_msg.is_empty() { self.warning_msg = msg; },
+                _ => if self.note_msg.is_empty() { self.note_msg = msg; },
+            }
+            Result::ok(ConstValue::make_void())
+        }
+        IrTag::ConstAlloc => {
+            let len_r = self.eval(expr.items()[0])?;
+            let len = len_r.as_usize();
+            if len.is_none() { return Result::err(EvalError::Unsupported); }
+            let elem_ty = expr.ty.inner();
+            let elems = self.arena.alloc_slice::<ConstValue>(len.unwrap());
+            let elem = self.make_uninitialized(elem_ty);
+            for i in 0usize..len.unwrap() {
+                elems[i] = elem;
+            }
+            let id = self.id_gen.next_id();
+            self.heap.insert(id._value, HeapAlloc {
+                value: ConstValue::make_array(elems), elem_ty: elem_ty, live: true, baked: false,
+            });
+            let first = self.arena.alloc(ConstLValue::mk_index(self.arena.alloc(ConstLValue::alloc(id)), 0));
+            Result::ok(ConstValue::make_pointer(first, elem_ty))
+        }
+        IrTag::ConstFree => {
+            let ptr = self.eval(expr.items()[0])?;
+            if ptr.tag == CValTag::Int && ptr.int_val() == 0 {
+                return Result::ok(ConstValue::make_void());  // (null)
+            }
+            // A pointer to the start of a live allocation.
+            if ptr.tag != CValTag::Pointer || ptr.lvalue().tag != CLVTag::Index || ptr.lvalue().index() != 0
+                || ptr.lvalue().inner().tag != CLVTag::Alloc {
+                return Result::err(EvalError::InvalidFree);
+            }
+            let id = ptr.lvalue().inner().id();
+            let alloc = self.heap.get(&id._value);
+            if alloc.is_none() || !alloc.unwrap().live {
+                return Result::err(EvalError::InvalidFree);
+            }
+            let freed = alloc.unwrap();
+            freed.live = false;
+            self.heap.insert(id._value, freed);
+            Result::ok(ConstValue::make_void())
+        }
+        IrTag::ConstBake => {
+            let value = self.eval(expr.items()[0]);
+            if value.is_ok() { self.bake(value.unwrap()); }
+            value
+        }
+        IrTag::InConstContext => Result::ok(ConstValue::make_bool(!self.run_time)),
+        IrTag::Undef => Result::ok(ConstValue::make_uninitialized()),
+        IrTag::Zeroed => Result::ok(self.make_zeroed(expr.ty)),
+        IrTag::FnRef => Result::ok(ConstValue::make_fn_ptr(*expr.fn_ref())),
+        IrTag::GlobalRef => self.eval_global_ref(expr),
+        IrTag::While => self.eval_while(expr),
+        IrTag::Loop => self.eval_loop(expr),
+        IrTag::Break => Result::err(EvalError::Break),
+        IrTag::Continue => Result::err(EvalError::Continue),
+        IrTag::Transmute => self.eval_transmute(expr),
+        IrTag::LlvmIntrinsic => self.eval_llvm_intrinsic(expr),
+        _ => Result::err(EvalError::Unsupported),
+        }
+    }
+
+    fn eval_global_ref(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let target_id = expr.global_ref().id._value;
+        // Check cached const values first
+        let cached = self.const_values.get(&target_id);
+        if cached.is_some() {
+            return Result::ok(cached.unwrap());
+        }
+        // Fall back to evaluating the global's init expression (of a
+        // constant: a static's value is not its initial one)
+        for i in 0usize..self.ir_globals.len() {
+            if self.ir_globals[i].id._value == target_id {
+                if self.ir_globals[i].init.is_some() && self.ir_globals[i].is_const {
+                    return self.eval(self.ir_globals[i].init.unwrap());
+                }
+                break;
+            }
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    fn irty_to_builtin(self: &ConstEvaluator, ty: &IrTy) -> BuiltinType {
+        switch ty.tag {
+        IrTyTag::Builtin => ty.builtin(),
+        IrTyTag::Enum => {
+            if ty.enum_ref().underlying.tag == IrTyTag::Builtin {
+                ty.enum_ref().underlying.builtin()
+            } else {
+                BuiltinType::I32 // default
+            }
+        }
+        IrTyTag::Pointer, IrTyTag::FnPointer => BuiltinType::USize,
+        _ => BuiltinType::Void,
+        }
+    }
+
+    // ========== Binary operations ==========
+
+    fn eval_binary(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let lhs_r = self.eval(expr.lhs())?;
+
+        // Short-circuit for && and ||
+        if expr.bin_op() == BinOp::And {
+            if lhs_r.tag == CValTag::Bool {
+                if !lhs_r.is_truthy() {
+                    return Result::ok(ConstValue::make_bool(false));
+                }
+                let rhs_r = self.eval(expr.rhs())?;
+                return Result::ok(ConstValue::make_bool(rhs_r.is_truthy()));
+            }
+        } else if expr.bin_op() == BinOp::Or {
+            if lhs_r.tag == CValTag::Bool {
+                if lhs_r.is_truthy() {
+                    return Result::ok(ConstValue::make_bool(true));
+                }
+                let rhs_r = self.eval(expr.rhs())?;
+                return Result::ok(ConstValue::make_bool(rhs_r.is_truthy()));
+            }
+        }
+
+        let rhs_r = self.eval(expr.rhs())?;
+
+        let lhs = lhs_r;
+        let rhs = rhs_r;
+
+        // Integer binary ops
+        if lhs.tag == CValTag::Int && rhs.tag == CValTag::Int {
+            return int_bin_op(lhs, rhs, expr.bin_op());
+        }
+        // Float binary ops
+        if lhs.tag == CValTag::Float && rhs.tag == CValTag::Float {
+            return self.float_bin_op(lhs, rhs, expr.bin_op());
+        }
+        // Bool comparisons
+        if lhs.tag == CValTag::Bool && rhs.tag == CValTag::Bool {
+            return self.bool_bin_op(lhs, rhs, expr.bin_op());
+        }
+        // Pointer arithmetic
+        if lhs.tag == CValTag::Bytes {
+            return self.bytes_bin_op(lhs, rhs, expr.bin_op());
+        }
+        if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Int {
+            return self.pointer_int_bin_op(lhs, rhs, expr.bin_op());
+        }
+        // The difference of (and comparisons between) pointers to the same
+        // place or to elements of the same array.
+        if lhs.tag == CValTag::Pointer && rhs.tag == CValTag::Pointer {
+            let (a, b) = (lhs.lvalue(), rhs.lvalue());
+            let positions: Option<(u64, u64)> = if self.same_lvalue(a, b) {
+                Option::some((0u64, 0u64))
+            } else if a.tag == CLVTag::Index && b.tag == CLVTag::Index && self.same_lvalue(a.inner(), b.inner()) {
+                Option::some((a.index() as u64, b.index() as u64))
+            } else {
+                Option::none()
+            };
+            if positions.is_some() {
+                let (i, j) = positions.unwrap();
+                return switch expr.bin_op() {
+                    BinOp::Sub => Result::ok(ConstValue::make_int(i - j, BuiltinType::ISize)),
+                    _ => int_bin_op(ConstValue::make_int(i, BuiltinType::USize), ConstValue::make_int(j, BuiltinType::USize), expr.bin_op()),
+                };
+            }
+            // (Pointers into different places differ, but are not ordered.)
+            switch expr.bin_op() {
+                BinOp::Eq => return Result::ok(ConstValue::make_bool(false)),
+                BinOp::Ne => return Result::ok(ConstValue::make_bool(true)),
+                _ => {}
+            }
+        }
+        // Functions are equal if they are the same function.
+        if lhs.tag == CValTag::FnPtr && rhs.tag == CValTag::FnPtr {
+            let same = lhs.fn_ref().mangled_name == rhs.fn_ref().mangled_name;
+            switch expr.bin_op() {
+                BinOp::Eq => return Result::ok(ConstValue::make_bool(same)),
+                BinOp::Ne => return Result::ok(ConstValue::make_bool(!same)),
+                _ => {}
+            }
+        }
+
+        Result::err(EvalError::Unsupported)
+    }
+
+    fn float_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
+        let a = lhs.float_val();
+        let b = rhs.float_val();
+        let bt = lhs.builtin_type();
+
+        switch op {
+        BinOp::Add => Result::ok(ConstValue::make_float(a + b, bt)),
+        BinOp::Sub => Result::ok(ConstValue::make_float(a - b, bt)),
+        BinOp::Mul => Result::ok(ConstValue::make_float(a * b, bt)),
+        BinOp::Div => Result::ok(ConstValue::make_float(a / b, bt)),
+        BinOp::Eq => Result::ok(ConstValue::make_bool(a == b)),
+        BinOp::Ne => Result::ok(ConstValue::make_bool(a != b)),
+        BinOp::Lt => Result::ok(ConstValue::make_bool(a < b)),
+        BinOp::Le => Result::ok(ConstValue::make_bool(a <= b)),
+        BinOp::Gt => Result::ok(ConstValue::make_bool(a > b)),
+        BinOp::Ge => Result::ok(ConstValue::make_bool(a >= b)),
+        _ => Result::err(EvalError::Unsupported),
+        }
+    }
+
+    fn bool_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
+        let a = lhs.int_val() != 0u64;
+        let b = rhs.int_val() != 0u64;
+
+        switch op {
+        BinOp::Eq => Result::ok(ConstValue::make_bool(a == b)),
+        BinOp::Ne => Result::ok(ConstValue::make_bool(a != b)),
+        BinOp::And, BinOp::BitAnd => Result::ok(ConstValue::make_bool(a && b)),
+        BinOp::Or, BinOp::BitOr => Result::ok(ConstValue::make_bool(a || b)),
+        BinOp::BitXor => Result::ok(ConstValue::make_bool(a != b)),
+        _ => Result::err(EvalError::Unsupported),
+        }
+    }
+
+    fn bytes_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
+        // Byte pointer + integer offset
+        if rhs.tag == CValTag::Int {
+            if op == BinOp::Add {
+                let new_off = lhs.bytes_offset() + (rhs.int_val() as usize);
+                if new_off > lhs.bytes().len() {
+                    return Result::err(EvalError::IndexOob);
+                }
+                return Result::ok(ConstValue::make_bytes(lhs.bytes(), new_off));
+            } else if op == BinOp::Sub {
+                let offset = rhs.int_val() as usize;
+                if offset > lhs.bytes_offset() {
+                    return Result::err(EvalError::IndexOob);
+                }
+                return Result::ok(ConstValue::make_bytes(lhs.bytes(), lhs.bytes_offset() - offset));
+            }
+        }
+        // Byte pointer - byte pointer, and comparisons (into the same
+        // string, which, as in alumina-boot, is decided by value).
+        if rhs.tag == CValTag::Bytes && lhs.bytes() == rhs.bytes() {
+            let (a, b) = (lhs.bytes_offset() as u64, rhs.bytes_offset() as u64);
+            return switch op {
+                BinOp::Sub => Result::ok(ConstValue::make_int(a - b, BuiltinType::ISize)),
+                _ => int_bin_op(ConstValue::make_int(a, BuiltinType::USize), ConstValue::make_int(b, BuiltinType::USize), op),
+            };
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    /// Whether two lvalues denote the same place.
+    fn same_lvalue(self: &ConstEvaluator, a: &ConstLValue, b: &ConstLValue) -> bool {
+        if a.tag != b.tag {
+            return false;
+        }
+        switch a.tag {
+            CLVTag::Variable, CLVTag::Alloc, CLVTag::ConstItem => a.id()._value == b.id()._value,
+            CLVTag::Field => a.field_idx() == b.field_idx() && self.same_lvalue(a.inner(), b.inner()),
+            CLVTag::Index, CLVTag::TupleIndex => a.index() == b.index() && self.same_lvalue(a.inner(), b.inner()),
+            _ => false,
+        }
+    }
+
+    fn pointer_int_bin_op(self: &ConstEvaluator, lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
+        if lhs.lvalue().tag == CLVTag::Index {
+            let offset = lhs.lvalue().index();
+            let new_offset: usize = 0;
+            if op == BinOp::Add {
+                new_offset = offset + (rhs.int_val() as usize);
+            } else if op == BinOp::Sub {
+                if (rhs.int_val() as usize) > offset {
+                    return Result::err(EvalError::IndexOob);
+                }
+                new_offset = offset - (rhs.int_val() as usize);
+            } else {
+                return Result::err(EvalError::Unsupported);
+            }
+            let new_lv = self.arena.alloc(ConstLValue::mk_index(lhs.lvalue().inner(), new_offset));
+            return Result::ok(ConstValue::make_pointer(new_lv, lhs.pointee_ty()));
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== Unary operations ==========
+
+    fn eval_unary(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let inner = self.eval(expr.lhs())?;
+
+        switch inner.tag {
+            CValTag::Bool => {
+                if expr.un_op() == UnOp::Not {
+                    return Result::ok(ConstValue::make_bool(!inner.is_truthy()));
+                }
+            }
+            CValTag::Int => {
+                let bt = inner.builtin_type();
+                let width = bt.bit_width();
+                let bits = mask_to_width(inner.bits(), width);
+                if expr.un_op() == UnOp::Neg {
+                    // (Negating the minimum overflows.)
+                    if bt.is_signed() && bits == 1u128 << (width - 1) {
+                        return Result::err(EvalError::Overflow);
+                    }
+                    return Result::ok(ConstValue::make_bits(mask_to_width(0u128 - bits, width), bt));
+                } else if expr.un_op() == UnOp::BitNot {
+                    return Result::ok(ConstValue::make_bits(mask_to_width(~bits, width), bt));
+                } else if expr.un_op() == UnOp::Not {
+                    return Result::ok(ConstValue::make_bool(bits == 0));
+                }
+            }
+            CValTag::Float => {
+                if expr.un_op() == UnOp::Neg {
+                    return Result::ok(ConstValue::make_float(-inner.float_val(), inner.builtin_type()));
+                }
+            }
+            _ => {}
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== Cast ==========
+
+    fn eval_cast(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let inner = self.eval(expr.lhs())?;
+        let target_bt = self.irty_to_builtin(expr.ir_ty());
+
+        // Same type - no-op
+        if inner.tag == CValTag::Int && target_bt == inner.builtin_type() {
+            return Result::ok(inner);
+        }
+
+        // Int -> Int
+        if inner.tag == CValTag::Int && target_bt.is_integer() {
+            // (Sign- or zero-extended, then truncated.)
+            let width = inner.builtin_type().bit_width();
+            let bits = mask_to_width(inner.bits(), width);
+            let extended = if inner.builtin_type().is_signed() { sign_extend(bits, width) as u128 } else { bits };
+            return Result::ok(ConstValue::make_bits(mask_to_width(extended, target_bt.bit_width()), target_bt));
+        }
+
+        // Bool -> Int
+        if inner.tag == CValTag::Bool && target_bt.is_integer() {
+            return Result::ok(ConstValue::make_bits(inner.bits(), target_bt));
+        }
+
+        // Int -> Bool
+        if inner.tag == CValTag::Int && target_bt == BuiltinType::Bool {
+            return Result::ok(ConstValue::make_bool(inner.int_val() != 0u64));
+        }
+
+        // Int -> Float
+        if inner.tag == CValTag::Int && target_bt.is_float() {
+            let width = inner.builtin_type().bit_width();
+            let bits = mask_to_width(inner.bits(), width);
+            let fval: f64 = if width > 64 {
+                if inner.builtin_type().is_signed() { sign_extend(bits, width) as f64 } else { bits as f64 }
+            } else if inner.builtin_type().is_signed() {
+                sign_extend(bits, width) as i64 as f64
+            } else {
+                bits as u64 as f64
+            };
+            if target_bt == BuiltinType::F32 {
+                fval = (fval as f32) as f64;
+            }
+            return Result::ok(ConstValue::make_float(fval, target_bt));
+        }
+
+        // Float -> Int
+        if inner.tag == CValTag::Float && target_bt.is_integer() {
+            let f = inner.float_val();
+            let bits: u128 = if target_bt.bit_width() > 64 {
+                if target_bt.is_signed() { (f as i128) as u128 } else { f as u128 }
+            } else if target_bt.is_signed() {
+                (f as i64) as u128
+            } else {
+                (f as u64) as u128
+            };
+            return Result::ok(ConstValue::make_bits(mask_to_width(bits, target_bt.bit_width()), target_bt));
+        }
+
+        // Float -> Float (f64 -> f32 or f32 -> f64)
+        if inner.tag == CValTag::Float && target_bt.is_float() {
+            let fval = inner.float_val();
+            if target_bt == BuiltinType::F32 {
+                fval = (fval as f32) as f64;
+            }
+            return Result::ok(ConstValue::make_float(fval, target_bt));
+        }
+
+        // Pointer casts (ptr -> ptr, fn -> fn_ptr, int -> ptr, ptr -> int).
+        // (`irty_to_builtin` gives usize for a pointer type, so check the
+        // target type itself.)
+        let to_pointer = expr.ir_ty().tag == IrTyTag::Pointer || expr.ir_ty().tag == IrTyTag::FnPointer;
+        if inner.tag == CValTag::Pointer {
+            if !to_pointer && target_bt.is_integer() {
+                // ptr -> int: unsupported in general
+                return Result::err(EvalError::Unsupported);
+            }
+            // A pointer to an array cast to a pointer to its elements (as in
+            // an array-to-slice coercion) points to the first element.
+            let from = inner.pointee_ty();
+            if to_pointer && expr.ir_ty().tag == IrTyTag::Pointer && from.tag == IrTyTag::Array
+                && from.inner().same_as(expr.ir_ty().inner()) {
+                let first = self.arena.alloc(ConstLValue::mk_index(inner.lvalue(), 0));
+                return Result::ok(ConstValue::make_pointer(first, expr.ir_ty().inner()));
+            }
+            // Otherwise, ptr -> ptr only changes the type.
+            let pointee = if expr.ir_ty().tag == IrTyTag::Pointer { expr.ir_ty().inner() } else { from };
+            return Result::ok(ConstValue::make_pointer(inner.lvalue(), pointee));
+        }
+        if inner.tag == CValTag::FnPtr {
+            return Result::ok(inner);
+        }
+        // (An uninitialized value stays one.)
+        if inner.tag == CValTag::Uninitialized {
+            return Result::ok(inner);
+        }
+        // Slice to slice (`&mut [T]` to `&[T]`) only changes the type.
+        if expr.ir_ty().tag == IrTyTag::Slice && (inner.tag == CValTag::Tuple || inner.tag == CValTag::Bytes) {
+            return Result::ok(inner);
+        }
+
+        // Int -> Pointer (e.g. dangling pointer from align value)
+        if inner.tag == CValTag::Int && (expr.ty.tag == IrTyTag::Pointer || expr.ty.tag == IrTyTag::FnPointer) {
+            // Store as int, will work for dangling pointers
+            return Result::ok(inner);
+        }
+
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== Block ==========
+
+    fn eval_block(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // Items are the block's statements + trailing expression
+        // Last item is the block's value
+        if expr.items().is_empty() {
+            return Result::ok(ConstValue::make_void());
+        }
+
+        // Build label index for goto support
+        // (We don't have IR labels in aluminac's IR, but we handle break/continue via
+        // the structured control flow in eval_while/eval_loop)
+
+        for i in 0usize..expr.items().len() - 1 {
+            self.eval(expr.items()[i])?;
+        }
+
+        // Last item is the value
+        self.eval(expr.items()[expr.items().len() - 1])
+    }
+
+    // ========== If ==========
+
+    fn eval_if(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let cond_r = self.eval(expr.cond())?;
+
+        if cond_r.is_truthy() {
+            self.eval(expr.lhs())
+        } else if expr.opt_expr().is_some() {
+            self.eval(expr.opt_expr().unwrap())
+        } else {
+            Result::ok(ConstValue::make_void())
+        }
+    }
+
+    // ========== Let ==========
+
+    fn eval_let(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // IrTag::Let: id, opt_expr = initializer, ir_ty = type
+        if expr.opt_expr().is_some() {
+            let init_r = self.eval(expr.opt_expr().unwrap())?;
+            self.store_var(expr.id(), init_r);
+        } else {
+            // (As alumina-boot, reading it before it is assigned fails.)
+            self.store_var(expr.id(), self.make_uninitialized(expr.ir_ty()));
+        }
+        Result::ok(ConstValue::make_void())
+    }
+
+    // ========== Assign ==========
+
+    fn eval_assign(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // lhs is the target (lvalue), rhs is the value
+        let target_r = self.eval_inner(expr.lhs())?;
+        let val_r = self.eval(expr.rhs())?;
+
+        let target = target_r;
+        if target.tag == CValTag::Lvalue {
+            self.assign_to_lvalue(target.lvalue(), val_r)
+        } else {
+            Result::err(EvalError::Unsupported)
+        }
+    }
+
+    fn assign_to_lvalue(self: &mut ConstEvaluator, lv: &ConstLValue, val: ConstValue) -> Result<ConstValue, EvalError> {
+        switch lv.tag {
+            CLVTag::Variable => {
+                self.variables.insert(lv.id()._value, val);
+                return Result::ok(ConstValue::make_void());
+            }
+            CLVTag::Alloc => {
+                let live = self.live_alloc(lv.id());
+                if live.is_err() { return Result::err(live.unwrap_err()); }
+                let alloc = live.unwrap();
+                alloc.value = val;
+                self.heap.insert(lv.id()._value, alloc);
+                return Result::ok(ConstValue::make_void());
+            }
+            CLVTag::Field => {
+                // Read base, update field, write back
+                let base = self.materialize_lvalue(lv.inner())?;
+                if base.tag == CValTag::Struct {
+                    // Create new fields array with updated field
+                    let new_fields = self.arena.alloc_slice::<ConstField>(base.fields().len());
+                    let found = false;
+                    for i in 0usize..base.fields().len() {
+                        if base.fields()[i].field_idx == lv.field_idx() {
+                            new_fields[i] = ConstField { field_idx: lv.field_idx(), value: val };
+                            found = true;
+                        } else {
+                            new_fields[i] = base.fields()[i];
+                        }
+                    }
+                    if !found {
+                        // Add new field - need to grow
+                        let grown = self.arena.alloc_slice::<ConstField>(base.fields().len() + 1);
+                        for i in 0usize..base.fields().len() {
+                            grown[i] = new_fields[i];
+                        }
+                        grown[base.fields().len()] = ConstField { field_idx: lv.field_idx(), value: val };
+                        return self.assign_to_lvalue(lv.inner(), ConstValue::make_struct(grown));
+                    }
+                    return self.assign_to_lvalue(lv.inner(), ConstValue::make_struct(new_fields));
+                }
+                // A field of a tuple or a slice (a (pointer, length) pair; the
+                // pair of a string's bytes becomes a tuple once its fields
+                // change separately).
+                let elems: Option<&[ConstValue]> = if base.tag == CValTag::Tuple {
+                    Option::some(base.elems())
+                } else if base.tag == CValTag::Bytes {
+                    let pair = self.arena.alloc_slice::<ConstValue>(2);
+                    pair[0] = base;
+                    pair[1] = ConstValue::make_int((base.bytes().len() - base.bytes_offset()) as u64, BuiltinType::USize);
+                    Option::some(pair as &[ConstValue])
+                } else {
+                    Option::none()
+                };
+                if elems.is_some() && (lv.field_idx() as usize) < elems.unwrap().len() {
+                    let new_elems = self.arena.alloc_slice::<ConstValue>(elems.unwrap().len());
+                    elems.unwrap().copy_to(&new_elems[0]);
+                    new_elems[lv.field_idx() as usize] = val;
+                    return self.assign_to_lvalue(lv.inner(), ConstValue::make_tuple(new_elems));
+                }
+                return Result::err(EvalError::Unsupported);
+            }
+            CLVTag::Index => {
+                let base = self.materialize_lvalue(lv.inner())?;
+                if base.tag == CValTag::Array {
+                    if lv.index() >= base.elems().len() {
+                        return Result::err(EvalError::IndexOob);
+                    }
+                    let new_elems = self.arena.alloc_slice::<ConstValue>(base.elems().len());
+                    for i in 0usize..base.elems().len() {
+                        if i == lv.index() {
+                            new_elems[i] = val;
+                        } else {
+                            new_elems[i] = base.elems()[i];
+                        }
+                    }
+                    return self.assign_to_lvalue(lv.inner(), ConstValue::make_array(new_elems));
+                }
+                return Result::err(EvalError::Unsupported);
+            }
+            CLVTag::TupleIndex => {
+                let base = self.materialize_lvalue(lv.inner())?;
+                if base.tag == CValTag::Tuple {
+                    if lv.index() >= base.elems().len() {
+                        return Result::err(EvalError::IndexOob);
+                    }
+                    let new_elems = self.arena.alloc_slice::<ConstValue>(base.elems().len());
+                    for i in 0usize..base.elems().len() {
+                        if i == lv.index() {
+                            new_elems[i] = val;
+                        } else {
+                            new_elems[i] = base.elems()[i];
+                        }
+                    }
+                    return self.assign_to_lvalue(lv.inner(), ConstValue::make_tuple(new_elems));
+                }
+                return Result::err(EvalError::Unsupported);
+            }
+            _ => {}
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== Field access ==========
+
+    fn eval_field_access(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let base = self.eval_inner(expr.lhs())?;
+
+        if base.tag == CValTag::Lvalue {
+            let new_lv = self.arena.alloc(ConstLValue::mk_field(base.lvalue(), expr.field_idx()));
+            return Result::ok(ConstValue::make_lvalue(new_lv));
+        }
+
+        // Tuple field access (field_idx used as index)
+        if base.tag == CValTag::Tuple {
+            return self.access_tuple_index(base, expr.field_idx() as usize);
+        }
+        self.access_field(base, expr.field_idx())
+    }
+
+    // ========== Index ==========
+
+    fn eval_index(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // (A pointer is indexed through its value, an array in place.)
+        let base_r = if expr.lhs().ty.tag == IrTyTag::Pointer { self.eval(expr.lhs()) } else { self.eval_inner(expr.lhs()) }?;
+        let idx_r = self.eval(expr.rhs())?;
+
+        let idx = idx_r.as_usize();
+        if idx.is_none() { return Result::err(EvalError::Unsupported); }
+        let idx_val = idx.unwrap();
+
+        let base = base_r;
+        if base.tag == CValTag::Lvalue {
+            let new_lv = self.arena.alloc(ConstLValue::mk_index(base.lvalue(), idx_val));
+            return Result::ok(ConstValue::make_lvalue(new_lv));
+        }
+        if base.tag == CValTag::Array || base.tag == CValTag::Bytes {
+            return self.access_index(base, idx_val);
+        }
+        if base.tag == CValTag::Pointer {
+            // `ptr[i]`: the element `i` places after the one `ptr` points to.
+            let lv = base.lvalue();
+            if lv.tag == CLVTag::Index {
+                let new_lv = self.arena.alloc(ConstLValue::mk_index(lv.inner(), lv.index() + idx_val));
+                return Result::ok(ConstValue::make_lvalue(new_lv));
+            }
+            if idx_val == 0 {
+                return Result::ok(ConstValue::make_lvalue(lv));
+            }
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== Composite literals ==========
+
+    fn eval_tuple_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let elems = self.arena.alloc_slice::<ConstValue>(expr.items().len());
+        for i in 0usize..expr.items().len() {
+            elems[i] = self.eval(expr.items()[i])?;
+        }
+        Result::ok(ConstValue::make_tuple(elems))
+    }
+
+    fn eval_array_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let elems = self.arena.alloc_slice::<ConstValue>(expr.items().len());
+        for i in 0usize..expr.items().len() {
+            elems[i] = self.eval(expr.items()[i])?;
+        }
+        Result::ok(ConstValue::make_array(elems))
+    }
+
+    fn eval_struct_lit(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // IrTag::StructLit: items are field value exprs, ordered by struct field position
+        let fields = self.arena.alloc_slice::<ConstField>(expr.items().len());
+        for i in 0usize..expr.items().len() {
+            fields[i] = ConstField {
+                field_idx: i as u32,
+                value: self.eval(expr.items()[i])?,
+            };
+        }
+        if expr.ty.tag == IrTyTag::Slice && fields.len() == 2 {
+            // A slice is a (pointer, length) pair.
+            let elems = self.arena.alloc_slice::<ConstValue>(2);
+            elems[0] = fields[0].value;
+            elems[1] = fields[1].value;
+            return Result::ok(ConstValue::make_tuple(elems));
+        }
+        Result::ok(ConstValue::make_struct(fields))
+    }
+
+    // ========== Ref/Deref ==========
+
+    fn eval_ref(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // `&*p` is `p` (which may point into a string's bytes, which are
+        // not places of their own).
+        if expr.lhs().tag == IrTag::Deref {
+            return self.eval(expr.lhs().lhs());
+        }
+        let inner = self.eval_inner(expr.lhs())?;
+
+        if inner.tag == CValTag::Lvalue {
+            return Result::ok(ConstValue::make_pointer(inner.lvalue(), expr.lhs().ty));
+        }
+        // For non-lvalue values (e.g. inline tuple/struct literals), store in a
+        // temporary variable so we can take a reference to it.
+        let tmp_id = self.id_gen.next_id();
+        self.variables.insert(tmp_id._value, inner);
+        let lv = self.arena.alloc(ConstLValue::variable(tmp_id));
+        Result::ok(ConstValue::make_pointer(lv, expr.lhs().ty))
+    }
+
+    fn eval_deref(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let inner = self.eval(expr.lhs())?;
+
+        if inner.tag == CValTag::Pointer {
+            return Result::ok(ConstValue::make_lvalue(inner.lvalue()));
+        }
+        if inner.tag == CValTag::Bytes {
+            if inner.bytes_offset() >= inner.bytes().len() {
+                return Result::err(EvalError::IndexOob);
+            }
+            return Result::ok(ConstValue::make_int(inner.bytes()[inner.bytes_offset()] as u64, BuiltinType::U8));
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== While loop ==========
+
+    fn eval_while(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // cond = condition, lhs = body, opt_expr = continue action (for for-loops)
+        loop {
+            let cond_r = self.eval(expr.cond())?;
+            if !cond_r.is_truthy() {
+                break;
+            }
+            let body_r = self.eval(expr.lhs());
+            if body_r.is_err() {
+                if body_r.unwrap_err() == EvalError::Break {
+                    break;
+                }
+                if body_r.unwrap_err() == EvalError::Continue {
+                    if expr.opt_expr().is_some() {
+                        self.eval(expr.opt_expr().unwrap())?;
+                    }
+                    continue;
+                }
+                return body_r;
+            }
+            if expr.opt_expr().is_some() {
+                self.eval(expr.opt_expr().unwrap())?;
+            }
+        }
+        Result::ok(ConstValue::make_void())
+    }
+
+    // ========== Loop ==========
+
+    fn eval_loop(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // lhs = body
+        loop {
+            let body_r = self.eval(expr.lhs());
+            if body_r.is_err() {
+                if body_r.unwrap_err() == EvalError::Break {
+                    break;
+                }
+                if body_r.unwrap_err() == EvalError::Continue {
+                    continue;
+                }
+                return body_r;
+            }
+        }
+        Result::ok(ConstValue::make_void())
+    }
+
+    // ========== Function call ==========
+
+    fn eval_call(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        if self.remaining_depth == 0 {
+            return Result::err(EvalError::TooDeep);
+        }
+
+        // Find the function to call
+        let target_name: &[u8] = "";
+        if expr.call_target().tag == CallKind::Direct {
+            target_name = expr.call_target().fn_ref.mangled_name;
+        } else {
+            // Indirect call: try to eval the callee
+            let callee_r = self.eval(expr.call_target().callee)?;
+            if callee_r.tag == CValTag::FnPtr {
+                target_name = callee_r.fn_ref().mangled_name;
+            } else {
+                return Result::err(EvalError::Unsupported);
+            }
+        }
+
+        // Find function body in already-monomorphized IR
+        let func = self.ir_functions.iter_ref().find(|=target_name, e: &IrFunction| -> bool {
+            e.mangled_name == target_name
+        });
+        if func.is_none() { return Result::err(EvalError::Unsupported); }
+        let f = func.unwrap();
+        if f.body.is_none() { return Result::err(EvalError::Unsupported); }
+
+        // Evaluate arguments
+        let arg_values = self.arena.alloc_slice::<ConstValue>(expr.items().len());
+        for i in 0usize..expr.items().len() {
+            arg_values[i] = self.eval(expr.items()[i])?;
+        }
+
+        // Create child evaluator sharing the same variable store.
+        // Remap all param/local IDs to fresh ones so recursive calls don't collide,
+        // while pointer-based mutations (&mut self) go through to the shared store.
+        let child_remapped: HashMap<usize, usize> = HashMap::new();
+
+        // Remap and bind parameters
+        for i in 0usize..f.params.len() {
+            let fresh = self.id_gen.next_id();
+            child_remapped.insert(f.params[i].id._value, fresh._value);
+            if i < arg_values.len() {
+                self.variables.insert(fresh._value, arg_values[i]);
+            }
+        }
+
+        // Remap and initialize local variables
+        for i in 0usize..f.local_defs.len() {
+            let fresh = self.id_gen.next_id();
+            child_remapped.insert(f.local_defs[i].id._value, fresh._value);
+            self.variables.insert(fresh._value, ConstValue::make_uninitialized());
+        }
+
+        let child = ConstEvaluator {
+            arena: self.arena,
+            variables: self.variables,
+            remapped: child_remapped,
+            id_gen: self.id_gen,
+            ir_functions: self.ir_functions,
+            ir_globals: self.ir_globals,
+            const_values: self.const_values,
+            return_slot: ConstValue::make_void(),
+            has_return: false,
+            remaining_depth: self.remaining_depth - 1,
+            steps_remaining: self.steps_remaining,
+            pointer_size: self.pointer_size,
+            panic_msg: "",
+            warning_msg: "",
+            note_msg: "",
+            failure: Option::none(),
+            current_fn: f.name,
+            heap: self.heap,
+            run_time: self.run_time,
+        };
+
+        // Evaluate function body
+        let result = child.eval(f.body.unwrap());
+        if self.failure.is_none() && child.failure.is_some() {
+            // (In this call.)
+            let failure = child.failure.unwrap();
+            let calls = self.arena.alloc_slice::<ConstEvalCall>(failure.calls.len() + 1);
+            failure.calls.copy_to(&calls[0]);
+            calls[failure.calls.len()] = ConstEvalCall { span: expr.span, function: f.name };
+            failure.calls = calls;
+            self.failure = Option::some(failure);
+        }
+
+        // Propagate remaining steps back
+        self.steps_remaining = child.steps_remaining;
+        // Propagate panic / warning / note messages — anything captured in
+        // the callee should reach the outermost try_const_eval caller.
+        if !child.panic_msg.is_empty() {
+            self.panic_msg = child.panic_msg;
+        }
+        if self.warning_msg.is_empty() && !child.warning_msg.is_empty() {
+            self.warning_msg = child.warning_msg;
+        }
+        if self.note_msg.is_empty() && !child.note_msg.is_empty() {
+            self.note_msg = child.note_msg;
+        }
+
+        if result.is_ok() {
+            return result;
+        }
+
+        // Handle return
+        if result.unwrap_err() == EvalError::Return && child.has_return {
+            return Result::ok(child.return_slot);
+        }
+
+        // Propagate other errors
+        result
+    }
+
+    // ========== Transmute ==========
+
+    fn eval_transmute(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        // For simple cases: int-to-int of same size, float-to-int, int-to-float
+        let inner = self.eval(expr.lhs())?;
+        if inner.tag == CValTag::Uninitialized {
+            // (No value, e.g. a variable of the code around the evaluation.)
+            return Result::err(EvalError::Unsupported);
+        }
+        let target_bt = self.irty_to_builtin(expr.ir_ty());
+
+        // Int -> Float (reinterpret bits via pointer cast)
+        if inner.tag == CValTag::Int && target_bt == BuiltinType::F32 {
+            let bits = inner.int_val() as u32;
+            let f = *(&bits as &f32);
+            return Result::ok(ConstValue::make_float(f as f64, BuiltinType::F32));
+        }
+        if inner.tag == CValTag::Int && target_bt == BuiltinType::F64 {
+            let bits = inner.int_val();
+            let f = *(&bits as &f64);
+            return Result::ok(ConstValue::make_float(f, BuiltinType::F64));
+        }
+
+        // Float -> Int (reinterpret bits via pointer cast)
+        if inner.tag == CValTag::Float && target_bt.is_integer() {
+            if inner.builtin_type() == BuiltinType::F32 {
+                let f32_val = inner.float_val() as f32;
+                let bits = *(&f32_val as &u32);
+                return Result::ok(ConstValue::make_int(bits as u64, target_bt));
+            } else {
+                let fval = inner.float_val();
+                let bits = *(&fval as &u64);
+                return Result::ok(ConstValue::make_int(bits, target_bt));
+            }
+        }
+
+        // Int -> Int of same size: just reinterpret
+        if inner.tag == CValTag::Int && target_bt.is_integer() {
+            let result = mask_to_width(inner.bits(), target_bt.bit_width());
+            return Result::ok(ConstValue::make_bits(result, target_bt));
+        }
+
+        // Otherwise, through the value's bytes (e.g. `[u8; 4]` <-> `u32`).
+        let from_ty = expr.lhs().ty;
+        let to_ty = expr.ir_ty();
+        let size = compute_type_size(from_ty, self.pointer_size);
+        if size != compute_type_size(to_ty, self.pointer_size) {
+            return Result::err(EvalError::Unsupported);
+        }
+        let bytes = self.arena.alloc_slice::<u8>(size);
+        for i in 0usize..size {
+            bytes[i] = 0;
+        }
+        if !self.to_bytes(inner, from_ty, bytes) {
+            return Result::err(EvalError::Unsupported);
+        }
+        self.from_bytes(bytes, to_ty).ok_or(EvalError::Unsupported)
+    }
+
+    /// The field offsets of a struct or tuple type.
+    fn field_offsets(self: &ConstEvaluator, ty: &IrTy) -> &[usize] {
+        let is_struct = ty.tag == IrTyTag::Struct;
+        let n = if is_struct { ty.struct_ref().fields.len() } else { ty.elems().len() };
+        let offsets = self.arena.alloc_slice::<usize>(n);
+        let aggregate = if is_struct { AggregateLayout::of_struct(&ty.struct_ref()) } else { AggregateLayout::new(false, false, 1) };
+        for i in 0usize..n {
+            let field_ty = if is_struct { ty.struct_ref().fields[i].ty } else { ty.elems()[i] };
+            offsets[i] = aggregate.add(layout_of(field_ty, self.pointer_size));
+        }
+        offsets
+    }
+
+    /// Write a value's in-memory representation (little-endian) into `out`,
+    /// if it is one of plain data: numbers, booleans, and arrays, tuples and
+    /// structs of them. (Unset parts stay zero.)
+    fn to_bytes(self: &ConstEvaluator, value: ConstValue, ty: &IrTy, out: &mut [u8]) -> bool {
+        switch value.tag {
+            CValTag::Uninitialized, CValTag::Void => true,
+            CValTag::Int, CValTag::Bool => {
+                let bits = value.bits();
+                for i in 0usize..std::cmp::min(out.len(), 16) {
+                    out[i] = (bits >> (8 * i)) as u8;
+                }
+                true
+            }
+            CValTag::Float => {
+                let bits: u64 = if value.builtin_type() == BuiltinType::F32 {
+                    let f = value.float_val() as f32;
+                    *(&f as &u32) as u64
+                } else {
+                    let f = value.float_val();
+                    *(&f as &u64)
+                };
+                for i in 0usize..std::cmp::min(out.len(), 8) {
+                    out[i] = (bits >> (8 * i)) as u8;
+                }
+                true
+            }
+            CValTag::Array => {
+                if ty.tag != IrTyTag::Array { return false; }
+                let elem_size = compute_type_size(ty.inner(), self.pointer_size);
+                for (i, elem) in value.elems().iter().enumerate() {
+                    if !self.to_bytes(elem, ty.inner(), out[i * elem_size..(i + 1) * elem_size]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            CValTag::Tuple => {
+                if ty.tag != IrTyTag::Tuple { return false; }
+                let offsets = self.field_offsets(ty);
+                for (i, elem) in value.elems().iter().enumerate() {
+                    let elem_ty = ty.elems()[i];
+                    let size = compute_type_size(elem_ty, self.pointer_size);
+                    if !self.to_bytes(elem, elem_ty, out[offsets[i]..offsets[i] + size]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            CValTag::Struct => {
+                if ty.tag != IrTyTag::Struct || ty.struct_ref().is_union { return false; }
+                let offsets = self.field_offsets(ty);
+                for field in value.fields() {
+                    let field_ty = ty.struct_ref().fields[field.field_idx as usize].ty;
+                    let offset = offsets[field.field_idx as usize];
+                    let size = compute_type_size(field_ty, self.pointer_size);
+                    if !self.to_bytes(field.value, field_ty, out[offset..offset + size]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The value of type `ty` whose in-memory representation is `bytes`.
+    fn from_bytes(self: &ConstEvaluator, bytes: &[u8], ty: &IrTy) -> Option<ConstValue> {
+        switch ty.tag {
+            IrTyTag::Builtin => {
+                let wide: u128 = 0;
+                for i in 0usize..std::cmp::min(bytes.len(), 16) {
+                    wide |= (bytes[i] as u128) << (8 * i);
+                }
+                let bits = wide as u64;
+                let bt = ty.builtin();
+                if bt == BuiltinType::Bool {
+                    Option::some(ConstValue::make_bool(bits != 0))
+                } else if bt == BuiltinType::F32 {
+                    let b = bits as u32;
+                    Option::some(ConstValue::make_float(*(&b as &f32) as f64, bt))
+                } else if bt == BuiltinType::F64 {
+                    Option::some(ConstValue::make_float(*(&bits as &f64), bt))
+                } else if bt.is_integer() && bytes.len() <= 16 {
+                    Option::some(ConstValue::make_bits(wide, bt))
+                } else {
+                    Option::none()
+                }
+            }
+            IrTyTag::Array => {
+                let elem_size = compute_type_size(ty.inner(), self.pointer_size);
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size());
+                for i in 0usize..ty.array_size() {
+                    elems[i] = std::option::try!(self.from_bytes(bytes[i * elem_size..(i + 1) * elem_size], ty.inner()));
+                }
+                Option::some(ConstValue::make_array(elems))
+            }
+            IrTyTag::Tuple => {
+                let offsets = self.field_offsets(ty);
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.elems().len());
+                for (i, elem_ty) in ty.elems().iter().enumerate() {
+                    let size = compute_type_size(elem_ty, self.pointer_size);
+                    elems[i] = std::option::try!(self.from_bytes(bytes[offsets[i]..offsets[i] + size], elem_ty));
+                }
+                Option::some(ConstValue::make_tuple(elems))
+            }
+            IrTyTag::Struct => {
+                if ty.struct_ref().is_union { return Option::none(); }
+                let offsets = self.field_offsets(ty);
+                let fields = self.arena.alloc_slice::<ConstField>(ty.struct_ref().fields.len());
+                for (i, field) in ty.struct_ref().fields.iter().enumerate() {
+                    let size = compute_type_size(field.ty, self.pointer_size);
+                    fields[i] = ConstField { field_idx: i as u32, value: std::option::try!(self.from_bytes(bytes[offsets[i]..offsets[i] + size], field.ty)) };
+                }
+                Option::some(ConstValue::make_struct(fields))
+            }
+            _ => Option::none(),
+        }
+    }
+
+    // ========== LLVM intrinsic interpretation ==========
+    //
+    // Folds `intrinsics::llvm("llvm.{ctpop,ctlz,cttz,bswap}", ...)` calls at
+    // const time so the bit-twiddling methods on integer types compose with
+    // const items and array sizes. Anything else falls through to Unsupported
+    // and the caller (e.g. const-item lowering) keeps the runtime IR.
+    fn eval_llvm_intrinsic(self: &mut ConstEvaluator, expr: &IrExpr) -> Result<ConstValue, EvalError> {
+        let name = expr.str_val();
+        let items = expr.items();
+        if items.is_empty() {
+            return Result::err(EvalError::Unsupported);
+        }
+        let arg_r = self.eval(items[0])?;
+        // expect.i1 is the only bool-typed hint; the bit-twiddlers all need int.
+        if arg_r.tag == CValTag::Bool && name == "llvm.expect.i1" {
+            return Result::ok(arg_r);
+        }
+        if arg_r.tag != CValTag::Int {
+            return Result::err(EvalError::Unsupported);
+        }
+        let bt = arg_r.builtin_type();
+        let width = bt.bit_width();
+        let val = mask_to_width(arg_r.bits(), width);
+        if name == "llvm.ctpop" {
+            let (count, v) = (0u128, val);
+            while v != 0 {
+                count += v & 1;
+                v = v >> 1;
+            }
+            // ctpop returns iN matching input; the caller's `as u32` cast
+            // narrows it. We return the same width here.
+            return Result::ok(ConstValue::make_bits(count, bt));
+        } else if name == "llvm.ctlz" {
+            // Second arg is is_zero_undef i1; we ignore it (alumina's
+            // leading_zeros wrapper always passes false → defined for zero).
+            let count = 0u128;
+            while count < width as u128 && (val & (1u128 << (width - 1 - count as u32))) == 0 {
+                count += 1;
+            }
+            return Result::ok(ConstValue::make_bits(count, bt));
+        } else if name == "llvm.cttz" {
+            let count = 0u128;
+            while count < width as u128 && (val & (1u128 << (count as u32))) == 0 {
+                count += 1;
+            }
+            return Result::ok(ConstValue::make_bits(count, bt));
+        } else if name == "llvm.bswap" {
+            // Reverse byte order within `width` bits. width is a multiple of 16
+            // for valid bswap calls; an 8-bit caller would have been lowered
+            // as identity by the sysroot wrapper, not as bswap.
+            let (result, v) = (0u128, val);
+            for _i in 0u32..width / 8 {
+                result = (result << 8) | (v & 0xFF);
+                v = v >> 8;
+            }
+            return Result::ok(ConstValue::make_bits(result, bt));
+        }
+        Result::err(EvalError::Unsupported)
+    }
+
+    // ========== Zeroed value construction ==========
+
+    /// An uninitialized value of type `ty` (an aggregate of uninitialized
+    /// elements, so that they can be assigned one by one).
+    fn make_uninitialized(self: &mut ConstEvaluator, ty: &IrTy) -> ConstValue {
+        switch ty.tag {
+            IrTyTag::Array => {
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size());
+                let elem = self.make_uninitialized(ty.inner());
+                for i in 0usize..ty.array_size() {
+                    elems[i] = elem;
+                }
+                ConstValue::make_array(elems)
+            }
+            IrTyTag::Tuple => {
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.elems().len());
+                for (i, elem) in ty.elems().iter().enumerate() {
+                    elems[i] = self.make_uninitialized(elem);
+                }
+                ConstValue::make_tuple(elems)
+            }
+            IrTyTag::Struct, IrTyTag::Closure => {
+                let fields = self.arena.alloc_slice::<ConstField>(ty.struct_ref().fields.len());
+                for (i, field) in ty.struct_ref().fields.iter().enumerate() {
+                    fields[i] = ConstField { field_idx: i as u32, value: self.make_uninitialized(field.ty) };
+                }
+                ConstValue::make_struct(fields)
+            }
+            _ => if ty.is_zero_sized() { self.make_zeroed(ty) } else { ConstValue::make_uninitialized() },
+        }
+    }
+
+    fn make_zeroed(self: &mut ConstEvaluator, ty: &IrTy) -> ConstValue {
+        switch ty.tag {
+            IrTyTag::Builtin => {
+                if ty.builtin() == BuiltinType::Bool {
+                    ConstValue::make_bool(false)
+                } else if ty.builtin().is_integer() {
+                    ConstValue::make_int(0u64, ty.builtin())
+                } else if ty.builtin().is_float() {
+                    ConstValue::make_float(0.0, ty.builtin())
+                } else {
+                    ConstValue::make_void()
+                }
+            }
+            IrTyTag::Pointer, IrTyTag::FnPointer => ConstValue::make_int(0u64, BuiltinType::USize),
+            IrTyTag::Slice => {
+                // (pointer, length)
+                let elems = self.arena.alloc_slice::<ConstValue>(2);
+                elems[0] = ConstValue::make_int(0u64, BuiltinType::USize);
+                elems[1] = ConstValue::make_int(0u64, BuiltinType::USize);
+                ConstValue::make_tuple(elems)
+            }
+            IrTyTag::Array => {
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.array_size());
+                let zero = self.make_zeroed(ty.inner());
+                for i in 0usize..ty.array_size() {
+                    elems[i] = zero;
+                }
+                ConstValue::make_array(elems)
+            }
+            IrTyTag::Tuple => {
+                let elems = self.arena.alloc_slice::<ConstValue>(ty.elems().len());
+                for i in 0usize..ty.elems().len() {
+                    elems[i] = self.make_zeroed(ty.elems()[i]);
+                }
+                ConstValue::make_tuple(elems)
+            }
+            IrTyTag::Struct, IrTyTag::Closure => {
+                let fields = self.arena.alloc_slice::<ConstField>(ty.struct_ref().fields.len());
+                for i in 0usize..ty.struct_ref().fields.len() {
+                    fields[i] = ConstField {
+                        field_idx: i as u32,
+                        value: self.make_zeroed(ty.struct_ref().fields[i].ty),
+                    };
+                }
+                ConstValue::make_struct(fields)
+            }
+            IrTyTag::Enum => {
+                let underlying_bt = if ty.enum_ref().underlying.tag == IrTyTag::Builtin {
+                    ty.enum_ref().underlying.builtin()
+                } else {
+                    BuiltinType::I32
+                };
+                ConstValue::make_int(0u64, underlying_bt)
+            }
+            _ => ConstValue::make_void(),
+        }
+    }
+}
+
+// ========== Integer arithmetic ==========
+
+fn int_bin_op(lhs: ConstValue, rhs: ConstValue, op: BinOp) -> Result<ConstValue, EvalError> {
+    let bt = lhs.builtin_type();
+    let is_signed = bt.is_signed();
+    let width = bt.bit_width();
+    // The operands as of the type's width, and as signed values.
+    let (a, b) = (mask_to_width(lhs.bits(), width), mask_to_width(rhs.bits(), width));
+    let (sa, sb) = (sign_extend(a, width), sign_extend(b, width));
+
+    switch op {
+    BinOp::Eq => return Result::ok(ConstValue::make_bool(a == b)),
+    BinOp::Ne => return Result::ok(ConstValue::make_bool(a != b)),
+    BinOp::Lt => return Result::ok(ConstValue::make_bool(if is_signed { sa < sb } else { a < b })),
+    BinOp::Le => return Result::ok(ConstValue::make_bool(if is_signed { sa <= sb } else { a <= b })),
+    BinOp::Gt => return Result::ok(ConstValue::make_bool(if is_signed { sa > sb } else { a > b })),
+    BinOp::Ge => return Result::ok(ConstValue::make_bool(if is_signed { sa >= sb } else { a >= b })),
+    BinOp::And => return Result::ok(ConstValue::make_bool(a != 0 && b != 0)),
+    BinOp::Or => return Result::ok(ConstValue::make_bool(a != 0 || b != 0)),
+    _ => {}
+    }
+
+    // Arithmetic on the bits, masked to the width. Signed overflow is an
+    // error (it is undefined at run time), as in alumina-boot.
+    let result: u128 = switch op {
+    BinOp::Add, BinOp::Sub, BinOp::Mul => {
+        if is_signed && signed_overflows(sa, sb, op, width) {
+            return Result::err(EvalError::Overflow);
+        }
+        switch op {
+            BinOp::Add => a + b,
+            BinOp::Sub => a - b,
+            _ => a * b,
+        }
+    }
+    BinOp::Div, BinOp::Rem => {
+        if b == 0 {
+            return Result::err(EvalError::DivZero);
+        }
+        // (The minimum divided by -1 overflows.)
+        if is_signed && sb == -1i128 && a == 1u128 << (width - 1) {
+            return Result::err(EvalError::Overflow);
+        }
+        if op == BinOp::Div {
+            if is_signed { (sa / sb) as u128 } else { a / b }
+        } else {
+            if is_signed { (sa % sb) as u128 } else { a % b }
+        }
+    }
+    BinOp::BitAnd => a & b,
+    BinOp::BitOr => a | b,
+    BinOp::BitXor => a ^ b,
+    BinOp::Shl, BinOp::Shr => {
+        if b >= width as u128 {
+            return Result::err(EvalError::Overflow);
+        }
+        let shift = b as u32;
+        if op == BinOp::Shl {
+            a << shift
+        } else if is_signed {
+            (sa >> shift) as u128
+        } else {
+            a >> shift
+        }
+    }
+    _ => return Result::err(EvalError::Unsupported),
+    };
+    Result::ok(ConstValue::make_bits(mask_to_width(result, width), bt))
+}
+
+/// Whether `a op b` (addition, subtraction or multiplication) of signed
+/// values of the given width overflows.
+fn signed_overflows(a: i128, b: i128, op: BinOp, width: u32) -> bool {
+    if width < 128 {
+        // (Exact in 128 bits.)
+        let r = switch op {
+            BinOp::Add => a + b,
+            BinOp::Sub => a - b,
+            _ => a * b,
+        };
+        let max = ((1u128 << (width - 1)) - 1) as i128;
+        return r > max || r < -max - 1;
+    }
+    // (Wrapping, on the bits.)
+    let r = (switch op {
+        BinOp::Add => (a as u128) + (b as u128),
+        BinOp::Sub => (a as u128) - (b as u128),
+        _ => (a as u128) * (b as u128),
+    }) as i128;
+    switch op {
+        BinOp::Add => ((a ^ r) & (b ^ r)) < 0,
+        BinOp::Sub => ((a ^ b) & (a ^ r)) < 0,
+        _ => a != 0 && (if a == -1i128 { b == sign_extend(1u128 << 127, 128) } else { r / a != b }),
+    }
+}
+
+/// The low `width` bits of `val`.
+fn mask_to_width(val: u128, width: u32) -> u128 {
+    if width >= 128 {
+        return val;
+    }
+    if width == 0 {
+        return 0;
+    }
+    val & ((1u128 << width) - 1)
+}
+
+/// The value of the low `width` bits of `val` as a signed integer.
+fn sign_extend(val: u128, width: u32) -> i128 {
+    if width == 0 || width >= 128 {
+        return val as i128;
+    }
+    ((val << (128u32 - width)) as i128) >> (128u32 - width)
+}
+
+#[cfg(test)]
+mod tests {
+    use ast::{BinOp, BuiltinType};
+    use ir::ConstValue;
+
+    fn int(v: i128, bt: BuiltinType) -> ConstValue {
+        ConstValue::make_bits(mask_to_width(v as u128, bt.bit_width()), bt)
+    }
+
+    /// `a op b` of type `bt`, as a signed value (or the error).
+    fn eval(a: i128, op: BinOp, b: i128, bt: BuiltinType) -> Result<i128, EvalError> {
+        let r = int_bin_op(int(a, bt), int(b, bt), op)?;
+        Result::ok(if r.builtin_type() == BuiltinType::Bool { r.bits() as i128 } else { sign_extend(r.bits(), bt.bit_width()) })
+    }
+
+    fn fails(a: i128, op: BinOp, b: i128, bt: BuiltinType, error: EvalError) -> bool {
+        let r = eval(a, op, b, bt);
+        r.is_err() && r.unwrap_err() == error
+    }
+
+    #[test]
+    fn test_unsigned_wraps() {
+        assert_eq!(eval(250, BinOp::Add, 10, BuiltinType::U8).unwrap(), 4);
+        assert_eq!(eval(0, BinOp::Sub, 1, BuiltinType::U16).unwrap(), -1); // 0xffff
+        assert_eq!(int_bin_op(int(0, BuiltinType::U128), int(1, BuiltinType::U128), BinOp::Sub).unwrap().bits(), u128::max_value());
+    }
+
+    #[test]
+    fn test_signed_overflow() {
+        assert!(fails(127, BinOp::Add, 1, BuiltinType::I8, EvalError::Overflow));
+        assert!(fails(-128, BinOp::Sub, 1, BuiltinType::I8, EvalError::Overflow));
+        assert!(fails(65536, BinOp::Mul, 65536, BuiltinType::I32, EvalError::Overflow));
+        assert!(fails(i128::max_value(), BinOp::Add, 1, BuiltinType::I128, EvalError::Overflow));
+        assert!(fails(i128::min_value(), BinOp::Mul, -1, BuiltinType::I128, EvalError::Overflow));
+        assert!(fails(-1, BinOp::Mul, i128::min_value(), BuiltinType::I128, EvalError::Overflow));
+        assert!(fails(i64::min_value() as i128, BinOp::Div, -1, BuiltinType::I64, EvalError::Overflow));
+        // (Not overflows.)
+        assert_eq!(eval(-128, BinOp::Add, 127, BuiltinType::I8).unwrap(), -1);
+        assert_eq!(eval(i128::min_value(), BinOp::Add, 1, BuiltinType::I128).unwrap(), i128::min_value() + 1);
+        assert_eq!(eval(-3, BinOp::Mul, 7, BuiltinType::I128).unwrap(), -21);
+    }
+
+    #[test]
+    fn test_division() {
+        assert_eq!(eval(-7, BinOp::Div, 2, BuiltinType::I8).unwrap(), -3);
+        assert_eq!(eval(-7, BinOp::Rem, 2, BuiltinType::I8).unwrap(), -1);
+        assert_eq!(eval(250, BinOp::Div, 7, BuiltinType::U8).unwrap(), 35);
+        assert!(fails(1, BinOp::Div, 0, BuiltinType::U32, EvalError::DivZero));
+        assert!(fails(1, BinOp::Rem, 0, BuiltinType::I64, EvalError::DivZero));
+    }
+
+    #[test]
+    fn test_shifts() {
+        assert_eq!(eval(-8, BinOp::Shr, 1, BuiltinType::I32).unwrap(), -4);
+        assert_eq!(eval(-100, BinOp::Shr, 3, BuiltinType::I128).unwrap(), -13);
+        assert_eq!(eval(0x80000000, BinOp::Shr, 31, BuiltinType::U32).unwrap(), 1);
+        assert_eq!(eval(1, BinOp::Shl, 100, BuiltinType::U128).unwrap(), 1i128 << 100);
+        assert!(fails(1, BinOp::Shl, 8, BuiltinType::U8, EvalError::Overflow));
+    }
+
+    #[test]
+    fn test_comparisons() {
+        assert_eq!(eval(-1, BinOp::Lt, 1, BuiltinType::I8).unwrap(), 1);
+        assert_eq!(eval(-1, BinOp::Lt, 1, BuiltinType::U8).unwrap(), 0); // 255 < 1
+        assert_eq!(eval(i128::min_value(), BinOp::Lt, 0, BuiltinType::I128).unwrap(), 1);
+        assert_eq!(eval(-1, BinOp::Eq, 255, BuiltinType::U8).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_sign_extend() {
+        assert_eq!(sign_extend(0xff, 8), -1);
+        assert_eq!(sign_extend(0x7f, 8), 127);
+        assert_eq!(sign_extend(1u128 << 127, 128), i128::min_value());
+        assert_eq!(mask_to_width(u128::max_value(), 12), 0xfff);
+    }
+}

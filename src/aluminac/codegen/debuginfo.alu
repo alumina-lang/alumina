@@ -1,0 +1,338 @@
+// Debug information (DWARF): the types of values as they are written in
+// Alumina (`&[u8]`, `Vector<i32>`, `(i32, bool)`), with their members, and
+// the namespaces (modules, and types for their methods) of functions and
+// types, so that a debugger shows `std::collections::vector::Vector<i32>`
+// and `v.len`. (alumina-boot, which emits C, gets as far as `#line`
+// directives: C's types, and names mangled.)
+
+use llvm::*;
+use ir::*;
+use ast::*;
+use codegen::CodegenCtx;
+use std::collections::Vector;
+use std::string::StringBuf;
+use std::fmt::write;
+
+const DW_TAG_STRUCTURE_TYPE: u32 = 0x13;
+const DW_TAG_UNION_TYPE: u32 = 0x17;
+const DW_ATE_BOOLEAN: u32 = 0x02;
+const DW_ATE_FLOAT: u32 = 0x04;
+const DW_ATE_SIGNED: u32 = 0x05;
+const DW_ATE_UNSIGNED: u32 = 0x07;
+/// DIFlagPrototyped: a function type with its parameters.
+const DI_FLAG_PROTOTYPED: u32 = 1u32 << 8;
+
+/// The namespace `a::b` (nested as `a`, then `b`), or the compile unit for
+/// the root module.
+fn namespace(ctx: &mut CodegenCtx, path: &[u8]) -> LLVMMetadataRef {
+    if path.is_empty() {
+        return ctx.di_compile_unit;
+    }
+    let cached = ctx.di_namespace_cache.get(&path);
+    if cached.is_some() {
+        return cached.unwrap();
+    }
+    // (The last `::`, not in type arguments: `main::g<a::B>`.)
+    let last = 0usize;
+    let end = path_segment_end(path, 0);
+    while end < path.len() {
+        last = end + 2;
+        end = path_segment_end(path, last);
+    }
+    let (parent, name) = if last > 0 {
+        (namespace(ctx, path[..last - 2]), path[last..])
+    } else {
+        (ctx.di_compile_unit, path)
+    };
+    let ns = LLVMDIBuilderCreateNameSpace(ctx.di_builder, parent, name_ptr(name), name.len(), 0i32);
+    ctx.di_namespace_cache.insert(path, ns);
+    ns
+}
+
+/// The name of a type as it is written in source code, with the paths of the
+/// structs and enums in it (`&[std::string::StringBuf]`).
+fn type_name(ctx: &mut CodegenCtx, ty: &IrTy) -> &[u8] {
+    make_type_name(ctx, ty, true)
+}
+
+/// The name of a struct or enum in its namespace (`Vector<std::string::StringBuf>`).
+fn short_type_name(ctx: &mut CodegenCtx, ty: &IrTy) -> &[u8] {
+    make_type_name(ctx, ty, false)
+}
+
+fn make_type_name(ctx: &mut CodegenCtx, ty: &IrTy, qualified: bool) -> &[u8] {
+    let buf = StringBuf::new();
+    defer buf.free();
+    write_type_name(&buf, ty, qualified);
+    ctx.arena.alloc_slice_copy(buf.as_slice())
+}
+
+/// The debug information type of `ty` (null for `()` and `!`).
+fn di_type(ctx: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+    if ty as &void as usize == 0 {
+        return null_md();
+    }
+    // (Structs by their identity: the same struct can have several IrTys.)
+    if ty.tag == IrTyTag::Struct {
+        let key = ctx.struct_cache_key(&ty.struct_ref());
+        let cached = ctx.di_struct_cache.get(&key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+        return struct_type(ctx, ty);
+    }
+    let key = TypeKey { ty: ty };
+    let cached = ctx.di_type_cache.get(&key);
+    if cached.is_some() {
+        return cached.unwrap();
+    }
+    let result = create_type(ctx, ty);
+    ctx.di_type_cache.insert(key, result);
+    result
+}
+
+/// A type compared by structure (slices, tuples, ... are not interned: one
+/// debug information type for all copies, or a debugger sees conflicting
+/// definitions of one name).
+struct TypeKey {
+    ty: &IrTy,
+}
+
+impl TypeKey {
+    fn equals(self: &TypeKey, other: &TypeKey) -> bool {
+        self.ty.same_as(other.ty)
+    }
+
+    fn hash<H: std::hash::Hasher<H>>(self: &TypeKey, hasher: &mut H) {
+        self.ty.hash_structure(hasher);
+    }
+
+    mixin std::cmp::Equatable<TypeKey>;
+}
+
+fn null_md() -> LLVMMetadataRef {
+    std::mem::zeroed::<LLVMMetadataRef>()
+}
+
+fn name_ptr(name: &[u8]) -> &libc::c_char {
+    if name.is_empty() { &"\0"[0] as &libc::c_char } else { &name[0] as &libc::c_char }
+}
+
+fn size_bits(ctx: &mut CodegenCtx, ty: &IrTy) -> u64 {
+    let llvm_ty = ctx.llvm_type(ty);
+    if LLVMGetTypeKind(llvm_ty) == LLVMTypeKind::Void { 0u64 } else { LLVMABISizeOfType(ctx.target_data, llvm_ty) * 8 }
+}
+
+fn align_bits(ctx: &mut CodegenCtx, ty: &IrTy) -> u32 {
+    ctx.alignment_of(ty) * 8
+}
+
+fn create_type(ctx: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+    switch ty.tag {
+        IrTyTag::Void, IrTyTag::Never => null_md(),
+        IrTyTag::Builtin => builtin_type(ctx, ty),
+        IrTyTag::Pointer => pointer_type(ctx, di_type(ctx, ty.inner()), type_name(ctx, ty)),
+        IrTyTag::Slice => {
+            // (A struct of the pointer and the length, named as the slice.)
+            let bits = (ctx.pointer_size * 8) as u64;
+            let elem_ptr = pointer_type(ctx, di_type(ctx, ty.inner()), "");
+            let usize_ty = builtin_type(ctx, ctx_usize(ctx));
+            let members: [LLVMMetadataRef; 2];
+            members[0] = member(ctx, "ptr", bits, bits as u32, 0u64, elem_ptr);
+            members[1] = member(ctx, "len", bits, bits as u32, bits, usize_ty);
+            composite(ctx, DW_TAG_STRUCTURE_TYPE, ctx.di_compile_unit, type_name(ctx, ty), 2 * bits, bits as u32, members[..])
+        }
+        IrTyTag::Array => {
+            // (An array of `()` has nothing to describe, as `()`.)
+            let elem = di_type(ctx, ty.inner());
+            if elem as usize == 0 {
+                return null_md();
+            }
+            let subrange = LLVMDIBuilderGetOrCreateSubrange(ctx.di_builder, 0i64, ty.array_size() as i64);
+            LLVMDIBuilderCreateArrayType(ctx.di_builder, size_bits(ctx, ty), align_bits(ctx, ty), elem, &subrange, 1u32)
+        }
+        IrTyTag::Tuple => {
+            // (A struct with members `__0`, `__1`, ...)
+            let llvm_ty = ctx.llvm_type(ty);
+            let members: Vector<LLVMMetadataRef> = Vector::new();
+            defer members.free();
+            for (i, elem) in ty.elems().iter().enumerate() {
+                let index = ctx.llvm_field_index(ty, i as u32);
+                let offset = LLVMOffsetOfElement(ctx.target_data, llvm_ty, index) * 8;
+                // (`()` and `!` have no type to describe: no member.)
+                let elem_di = di_type(ctx, elem);
+                if elem_di as usize == 0 {
+                    continue;
+                }
+                let buf = StringBuf::new();
+                write!(&buf, "__{}", i).unwrap();
+                let name = ctx.arena.alloc_slice_copy(buf.as_slice());
+                buf.free();
+                members.push(member(ctx, name, size_bits(ctx, elem), align_bits(ctx, elem), offset, elem_di));
+            }
+            composite(ctx, DW_TAG_STRUCTURE_TYPE, ctx.di_compile_unit, type_name(ctx, ty),
+                size_bits(ctx, ty), align_bits(ctx, ty), members.as_slice())
+        }
+        IrTyTag::FnPointer => {
+            let signature = subroutine_type(ctx, ty.elems(), ty.ret_ty());
+            pointer_type(ctx, signature, type_name(ctx, ty))
+        }
+        IrTyTag::Enum => enum_type(ctx, ty),
+        IrTyTag::Closure, IrTyTag::Fn => {
+            // (Values of zero size, or a closure's captures as a struct: the
+            // closure's struct type, when it has one, is a Struct.)
+            composite(ctx, DW_TAG_STRUCTURE_TYPE, ctx.di_compile_unit, type_name(ctx, ty),
+                size_bits(ctx, ty), align_bits(ctx, ty), &[])
+        }
+        _ => {
+            let name = type_name(ctx, ty);
+            LLVMDIBuilderCreateUnspecifiedType(ctx.di_builder, name_ptr(name), name.len())
+        }
+    }
+}
+
+fn ctx_usize(ctx: &mut CodegenCtx) -> &IrTy {
+    ctx.arena.alloc(IrTy::mk_builtin(BuiltinType::USize))
+}
+
+fn builtin_type(ctx: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+    let bt = ty.builtin();
+    let pointer_bits = (ctx.pointer_size * 8) as u64;
+    let (encoding, bits) = switch bt {
+        BuiltinType::Bool => (DW_ATE_BOOLEAN, 8u64),
+        BuiltinType::I8 => (DW_ATE_SIGNED, 8u64),
+        BuiltinType::I16 => (DW_ATE_SIGNED, 16u64),
+        BuiltinType::I32 => (DW_ATE_SIGNED, 32u64),
+        BuiltinType::I64 => (DW_ATE_SIGNED, 64u64),
+        BuiltinType::I128 => (DW_ATE_SIGNED, 128u64),
+        BuiltinType::ISize => (DW_ATE_SIGNED, pointer_bits),
+        BuiltinType::U8 => (DW_ATE_UNSIGNED, 8u64),
+        BuiltinType::U16 => (DW_ATE_UNSIGNED, 16u64),
+        BuiltinType::U32 => (DW_ATE_UNSIGNED, 32u64),
+        BuiltinType::U64 => (DW_ATE_UNSIGNED, 64u64),
+        BuiltinType::U128 => (DW_ATE_UNSIGNED, 128u64),
+        BuiltinType::USize => (DW_ATE_UNSIGNED, pointer_bits),
+        BuiltinType::F32 => (DW_ATE_FLOAT, 32u64),
+        BuiltinType::F64 => (DW_ATE_FLOAT, 64u64),
+        _ => return null_md(),
+    };
+    let name = bt.name();
+    let base = LLVMDIBuilderCreateBasicType(ctx.di_builder, name_ptr(name), name.len(), bits, encoding, 0u32);
+    // (Debuggers show a C++ basic type by C's name for its size, `int` for
+    // `i32`, but a typedef by its own.)
+    LLVMDIBuilderCreateTypedef(ctx.di_builder, base, name_ptr(name), name.len(), null_md(), 0u32,
+        ctx.di_compile_unit, 0u32)
+}
+
+fn pointer_type(ctx: &mut CodegenCtx, pointee: LLVMMetadataRef, name: &[u8]) -> LLVMMetadataRef {
+    let pointer = LLVMDIBuilderCreatePointerType(ctx.di_builder, pointee, (ctx.pointer_size * 8) as u64, 0u32, 0u32,
+        name_ptr(""), 0usize);
+    if name.is_empty() {
+        return pointer;
+    }
+    // (Debuggers show a pointer as C's `T *` whatever its name, but a
+    // typedef of it by its name, `&T`.)
+    LLVMDIBuilderCreateTypedef(ctx.di_builder, pointer, name_ptr(name), name.len(), null_md(), 0u32,
+        ctx.di_compile_unit, 0u32)
+}
+
+fn member(ctx: &mut CodegenCtx, name: &[u8], size: u64, align: u32, offset: u64, ty: LLVMMetadataRef) -> LLVMMetadataRef {
+    LLVMDIBuilderCreateMemberType(ctx.di_builder, ctx.di_compile_unit, name_ptr(name), name.len(),
+        null_md(), 0u32, size, align, offset, 0u32, ty)
+}
+
+fn composite(ctx: &mut CodegenCtx, tag: u32, scope: LLVMMetadataRef, name: &[u8], size: u64, align: u32,
+             members: &[LLVMMetadataRef]) -> LLVMMetadataRef {
+    let elements = if members.is_empty() { null as &LLVMMetadataRef } else { &members[0] };
+    if tag == DW_TAG_UNION_TYPE {
+        LLVMDIBuilderCreateUnionType(ctx.di_builder, scope, name_ptr(name), name.len(), null_md(), 0u32,
+            size, align, 0u32, elements, members.len() as u32, 0u32, name_ptr(""), 0usize)
+    } else {
+        LLVMDIBuilderCreateStructType(ctx.di_builder, scope, name_ptr(name), name.len(), null_md(), 0u32,
+            size, align, 0u32, null_md(), elements, members.len() as u32, 0u32, null_md(), name_ptr(""), 0usize)
+    }
+}
+
+/// A struct or union, in its namespace, with its fields. (It may contain
+/// itself through pointers: a placeholder stands for it while its members
+/// are described.)
+fn struct_type(ctx: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+    let s = ty.struct_ref();
+    let key = ctx.struct_cache_key(&s);
+    let tag = if s.is_union { DW_TAG_UNION_TYPE } else { DW_TAG_STRUCTURE_TYPE };
+    let scope = namespace(ctx, s.namespace);
+    let name = short_type_name(ctx, ty);
+    let size = size_bits(ctx, ty);
+    let align = align_bits(ctx, ty);
+    let placeholder = LLVMDIBuilderCreateReplaceableCompositeType(ctx.di_builder, tag, name_ptr(name), name.len(),
+        scope, null_md(), 0u32, 0u32, size, align, 0u32, name_ptr(""), 0usize);
+    ctx.di_struct_cache.insert(key, placeholder);
+
+    let llvm_ty = ctx.llvm_type(ty);
+    let members: Vector<LLVMMetadataRef> = Vector::new();
+    defer members.free();
+    for (i, field) in s.fields.iter().enumerate() {
+        let field_di = di_type(ctx, field.ty);
+        if field_di as usize == 0 {
+            continue;
+        }
+        let offset = if s.is_union || s.is_zero_sized || LLVMGetTypeKind(llvm_ty) != LLVMTypeKind::Struct {
+            0u64
+        } else {
+            LLVMOffsetOfElement(ctx.target_data, llvm_ty, ctx.llvm_field_index(ty, i as u32)) * 8
+        };
+        members.push(member(ctx, field.name, size_bits(ctx, field.ty), align_bits(ctx, field.ty), offset, field_di));
+    }
+    let result = composite(ctx, tag, scope, name, size, align, members.as_slice());
+    LLVMMetadataReplaceAllUsesWith(placeholder, result);
+    ctx.di_struct_cache.insert(key, result);
+    result
+}
+
+fn enum_type(ctx: &mut CodegenCtx, ty: &IrTy) -> LLVMMetadataRef {
+    let e = ty.enum_ref();
+    let underlying = if e.underlying as &void as usize != 0 { e.underlying } else { ctx.arena.alloc(IrTy::mk_builtin(BuiltinType::I32)) as &IrTy };
+    let is_unsigned = underlying.tag == IrTyTag::Builtin && !underlying.builtin().is_signed();
+    let enumerators = ctx.arena.alloc_slice::<LLVMMetadataRef>(e.variants.len());
+    for (i, variant) in e.variants.iter().enumerate() {
+        enumerators[i] = LLVMDIBuilderCreateEnumerator(ctx.di_builder, name_ptr(variant.name), variant.name.len(),
+            variant.value as i64, if is_unsigned { 1i32 } else { 0i32 });
+    }
+    let name = short_type_name(ctx, ty);
+    LLVMDIBuilderCreateEnumerationType(ctx.di_builder, namespace(ctx, e.namespace), name_ptr(name), name.len(),
+        null_md(), 0u32, size_bits(ctx, underlying), align_bits(ctx, underlying),
+        if enumerators.is_empty() { null as &LLVMMetadataRef } else { &enumerators[0] }, enumerators.len() as u32,
+        di_type(ctx, underlying))
+}
+
+/// The type of a function taking `params` and returning `ret`.
+fn subroutine_type(ctx: &mut CodegenCtx, params: &[&IrTy], ret: &IrTy) -> LLVMMetadataRef {
+    // (The result first, null for none; parameters of `()` are left out.)
+    let types: Vector<LLVMMetadataRef> = Vector::new();
+    defer types.free();
+    types.push(di_type(ctx, ret));
+    for param in params {
+        let param_di = di_type(ctx, param);
+        if param_di as usize != 0 {
+            types.push(param_di);
+        }
+    }
+    LLVMDIBuilderCreateSubroutineType(ctx.di_builder, null_md(), &types[0], types.len() as u32, DI_FLAG_PROTOTYPED)
+}
+
+/// The name of a function in debug information: its own name, with the
+/// type arguments of a generic one (`max<i32>`).
+fn function_name(ctx: &mut CodegenCtx, f: &IrFunction) -> &[u8] {
+    // (The name in the symbol, when it has one: a closure's `{closure#0}`.)
+    let symbol_name = symbol_last_name(f.mangled_name);
+    if symbol_name.is_some() {
+        return symbol_name.unwrap();
+    }
+    if f.type_args.is_empty() {
+        return f.name;
+    }
+    let buf = StringBuf::new();
+    defer buf.free();
+    write_fn_name(&buf, f.name, f.type_args);
+    ctx.arena.alloc_slice_copy(buf.as_slice())
+}

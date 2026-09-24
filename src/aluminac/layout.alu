@@ -1,0 +1,188 @@
+//! Size and alignment of IR types.
+//!
+//! Follows alumina-boot (`src/alumina-boot/src/ir/layout.rs`). This is the
+//! single source of truth for layout: `size_of`/`align_of`, field offsets
+//! in reflection, and codegen's LLVM types (which are built to agree with
+//! it, e.g. for unions and `#[align]`).
+
+use ast::*;
+use ir::*;
+
+struct Layout {
+    size: usize,
+    align: usize,
+}
+
+impl Layout {
+    fn new(size: usize, align: usize) -> Layout {
+        Layout { size: size, align: align }
+    }
+
+    fn zero_sized() -> Layout {
+        Layout::new(0, 1)
+    }
+}
+
+/// Incremental layout of a struct, union or tuple: fields are added in
+/// order, each `add` returning the field's offset.
+struct AggregateLayout {
+    size: usize,
+    align: usize,
+    is_union: bool,
+    is_packed: bool,
+    /// `#[align(N)]`, or the N of `#[packed(N)]`.
+    custom_align: usize,
+}
+
+impl AggregateLayout {
+    fn new(is_union: bool, is_packed: bool, custom_align: usize) -> AggregateLayout {
+        AggregateLayout {
+            size: 0,
+            align: 1,
+            is_union: is_union,
+            is_packed: is_packed,
+            custom_align: custom_align,
+        }
+    }
+
+    /// The layout of a struct (or closure environment) with its attributes.
+    fn of_struct(s: &IrStructRef) -> AggregateLayout {
+        let custom_align: usize = 1;
+        for attr in s.attributes {
+            if attr.tag == AttrTag::Align || attr.tag == AttrTag::Packed {
+                custom_align = attr.int_val();
+            }
+        }
+        AggregateLayout::new(s.is_union, s.is_packed, custom_align)
+    }
+
+    /// Add a field, returning its offset.
+    fn add(self: &mut AggregateLayout, field: Layout) -> usize {
+        let field_align = if self.is_packed {
+            std::cmp::min(field.align, self.custom_align)
+        } else {
+            field.align
+        };
+        self.align = std::cmp::max(self.align, field_align);
+        if self.is_union {
+            self.size = std::cmp::max(self.size, field.size);
+            0
+        } else {
+            let offset = round_up(self.size, field_align);
+            self.size = offset + field.size;
+            offset
+        }
+    }
+
+    fn finish(self: &AggregateLayout) -> Layout {
+        let align = if self.is_packed { self.align } else { std::cmp::max(self.align, self.custom_align) };
+        Layout::new(round_up(self.size, align), align)
+    }
+}
+
+fn round_up(n: usize, align: usize) -> usize {
+    (n + align - 1) / align * align
+}
+
+fn layout_of(ty: &IrTy, pointer_size: usize) -> Layout {
+    switch ty.tag {
+        IrTyTag::Builtin => {
+            let size = switch ty.builtin() {
+                BuiltinType::Void, BuiltinType::Never => 0usize,
+                BuiltinType::Bool, BuiltinType::U8, BuiltinType::I8 => 1,
+                BuiltinType::U16, BuiltinType::I16 => 2,
+                BuiltinType::U32, BuiltinType::I32, BuiltinType::F32 => 4,
+                BuiltinType::U64, BuiltinType::I64, BuiltinType::F64 => 8,
+                BuiltinType::U128, BuiltinType::I128 => 16,
+                BuiltinType::USize, BuiltinType::ISize => pointer_size,
+                _ => 0,
+            };
+            Layout::new(size, std::cmp::max(size, 1))
+        }
+        IrTyTag::Pointer, IrTyTag::FnPointer => Layout::new(pointer_size, pointer_size),
+        // A slice is a (pointer, length) pair.
+        IrTyTag::Slice => Layout::new(2 * pointer_size, pointer_size),
+        IrTyTag::Array => {
+            let elem = layout_of(ty.inner(), pointer_size);
+            Layout::new(elem.size * ty.array_size(), elem.align)
+        }
+        IrTyTag::Tuple => {
+            let aggregate = AggregateLayout::new(false, false, 1);
+            for elem in ty.elems() {
+                aggregate.add(layout_of(elem, pointer_size));
+            }
+            aggregate.finish()
+        }
+        IrTyTag::Struct, IrTyTag::Closure => {
+            let aggregate = AggregateLayout::of_struct(&ty.struct_ref());
+            for field in ty.struct_ref().fields {
+                aggregate.add(layout_of(field.ty, pointer_size));
+            }
+            aggregate.finish()
+        }
+        IrTyTag::Enum => layout_of(ty.enum_ref().underlying, pointer_size),
+        // Function items, protocols, ...
+        _ => Layout::zero_sized(),
+    }
+}
+
+fn compute_type_size(ty: &IrTy, pointer_size: usize) -> usize {
+    layout_of(ty, pointer_size).size
+}
+
+fn compute_type_align(ty: &IrTy, pointer_size: usize) -> usize {
+    layout_of(ty, pointer_size).align
+}
+
+#[cfg(test)]
+mod tests {
+    use ir::IrTy;
+    use ast::BuiltinType;
+
+    fn builtin(bt: BuiltinType) -> Layout {
+        layout_of(&IrTy::mk_builtin(bt), 8)
+    }
+
+    /// The offsets of fields added to `aggregate`, and its layout.
+    fn place(aggregate: AggregateLayout, fields: &[Layout], offsets: &[usize]) -> Layout {
+        for (i, field) in fields.iter().enumerate() {
+            assert_eq!(aggregate.add(field), offsets[i]);
+        }
+        aggregate.finish()
+    }
+
+    fn same(a: Layout, size: usize, align: usize) -> bool {
+        a.size == size && a.align == align
+    }
+
+    #[test]
+    fn test_struct_layout() {
+        let (u8_, i32_) = (builtin(BuiltinType::U8), builtin(BuiltinType::I32));
+        assert!(same(place(AggregateLayout::new(false, false, 1), &[u8_, i32_], &[0, 4]), 8, 4));
+        // #[packed], #[packed(2)], #[packed(16)]
+        assert!(same(place(AggregateLayout::new(false, true, 1), &[i32_, u8_, u8_], &[0, 4, 5]), 6, 1));
+        assert!(same(place(AggregateLayout::new(false, true, 2), &[u8_, i32_], &[0, 2]), 6, 2));
+        assert!(same(place(AggregateLayout::new(false, true, 16), &[u8_, i32_], &[0, 4]), 8, 4));
+        // #[align(8)]
+        assert!(same(place(AggregateLayout::new(false, false, 8), &[u8_], &[0]), 8, 8));
+    }
+
+    #[test]
+    fn test_union_layout() {
+        let fields = [builtin(BuiltinType::I32), builtin(BuiltinType::F64), builtin(BuiltinType::U8)];
+        assert!(same(place(AggregateLayout::new(true, false, 1), &fields, &[0, 0, 0]), 8, 8));
+    }
+
+    #[test]
+    fn test_type_layout() {
+        let u8_ = IrTy::mk_builtin(BuiltinType::U8);
+        let i64_ = IrTy::mk_builtin(BuiltinType::I64);
+        let i16_ = IrTy::mk_builtin(BuiltinType::I16);
+        assert!(same(layout_of(&IrTy::mk_tuple(&[&u8_, &i64_]), 8), 16, 8));
+        assert!(same(layout_of(&IrTy::mk_array(&i16_, 3), 8), 6, 2));
+        assert!(same(layout_of(&IrTy::mk_pointer(&u8_, true), 8), 8, 8));
+        assert!(same(layout_of(&IrTy::mk_slice(&u8_, true), 8), 16, 8));
+        assert!(same(layout_of(&IrTy::mk_void(), 8), 0, 1));
+        assert!(same(builtin(BuiltinType::U128), 16, 16));
+    }
+}

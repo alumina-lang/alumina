@@ -327,6 +327,62 @@ impl Path {
         self.strip_prefix(other).is_some()
     }
 
+    /// Returns the final component of the path, if it is a file or
+    /// directory name (not the root, `.` or `..`).
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert_eq!(Path::new("/home/user/file.tar.gz").file_name(), Option::some("file.tar.gz"));
+    /// assert_eq!(Path::new("dir/").file_name(), Option::some("dir"));
+    /// assert_eq!(Path::new("..").file_name(), Option::none());
+    /// assert_eq!(Path::new("/").file_name(), Option::none());
+    /// ```
+    fn file_name(self: &Path) -> Option<&[u8]> {
+        let last = self.iter().last();
+        if last.is_some() && last.unwrap().kind == PathSegmentKind::Normal {
+            Option::some(last.unwrap().value)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Returns the file name without its extension.
+    ///
+    /// The extension is everything after the last `.` of the file name,
+    /// unless that `.` is its first character (`.bashrc` has none).
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert_eq!(Path::new("dir/file.tar.gz").file_stem(), Option::some("file.tar"));
+    /// assert_eq!(Path::new(".bashrc").file_stem(), Option::some(".bashrc"));
+    /// assert_eq!(Path::new("/").file_stem(), Option::none());
+    /// ```
+    fn file_stem(self: &Path) -> Option<&[u8]> {
+        self.file_name().map(|name: &[u8]| -> &[u8] {
+            internal::split_extension(name).0
+        })
+    }
+
+    /// Returns the extension of the file name, if any (see [Path::file_stem]).
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert_eq!(Path::new("dir/file.tar.gz").extension(), Option::some("gz"));
+    /// assert_eq!(Path::new(".bashrc").extension(), Option::none());
+    /// assert_eq!(Path::new("Makefile").extension(), Option::none());
+    /// ```
+    fn extension(self: &Path) -> Option<&[u8]> {
+        self.file_name().and_then(|name: &[u8]| -> Option<&[u8]> {
+            internal::split_extension(name).1
+        })
+    }
+
     /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Path, f: &mut F) -> fmt::Result {
         let has_root = false;
@@ -605,6 +661,22 @@ impl PathBuf {
     }
 }
 
+#[docs(no_index)]
+mod internal {
+    use string::rfind_char;
+
+    /// Splits a file name into stem and extension at the last `.`, except
+    /// a leading one (`.bashrc` has no extension).
+    fn split_extension(name: &[u8]) -> (&[u8], Option<&[u8]>) {
+        let dot = name.rfind_char('.');
+        if dot.is_none() || dot.unwrap() == 0 {
+            (name, Option::none())
+        } else {
+            (name[..dot.unwrap()], Option::some(name[dot.unwrap() + 1..]))
+        }
+    }
+}
+
 #[cfg(all(test, test_std))]
 #[docs(hide)]
 mod tests {
@@ -656,6 +728,20 @@ mod tests {
     }
 
     use fmt::format_in;
+
+    #[test]
+    fn test_file_name_stem_extension() {
+        assert_eq!(Path::new("/a/b/file.tar.gz").file_name(), Option::some("file.tar.gz"));
+        assert_eq!(Path::new("/a/b/file.tar.gz").file_stem(), Option::some("file.tar"));
+        assert_eq!(Path::new("/a/b/file.tar.gz").extension(), Option::some("gz"));
+        assert_eq!(Path::new("file.").extension(), Option::some(""));
+        assert_eq!(Path::new(".bashrc").file_stem(), Option::some(".bashrc"));
+        assert_eq!(Path::new(".bashrc").extension(), Option::none());
+        assert_eq!(Path::new("a/b/").file_name(), Option::some("b"));
+        assert_eq!(Path::new("a/..").file_name(), Option::none());
+        assert_eq!(Path::new("/").file_stem(), Option::none());
+        assert_eq!(Path::new("").extension(), Option::none());
+    }
 
     #[test]
     fn test_path_fmt() {

@@ -1,0 +1,36 @@
+// ALUMINAC_FLAGS: --sysroot sysroot
+// Every kind of call gives its arguments the parameters' types as hints,
+// so e.g. `util::cast`'s result type is inferred from the parameter it is
+// passed to. (The `#[lang(slice_new)]` path used to lower the length
+// without one, instantiating `cast<usize, ()>` -- which broke the
+// entrypoint glue's argv slices.)
+
+use std::mem::slice;
+use std::util::cast;
+
+fn takes_u64(x: u64) -> u64 { x }
+
+struct S {}
+impl S {
+    fn take(self: &S, x: u16) -> u16 { x }
+}
+
+fn ufcs_take(s: &S, x: u8) -> u8 { x }
+
+fn main(args: &[&[u8]]) -> i32 {
+    let text = "hello\0";
+    let n = libc::strlen(&text[0] as &libc::c_char);
+
+    let a = slice::from_raw(&text[0], cast(n));
+    if a.len() != 5 { return 1; }
+    if takes_u64(cast(n)) != 5 { return 2; }
+    let s = S {};
+    if s.take(cast(n)) != 5u16 { return 3; }
+    if s.ufcs_take(cast(n)) != 5u8 { return 4; }
+    let f = takes_u64;
+    if f(cast(n)) != 5 { return 5; }
+
+    // The entrypoint glue builds `args` the same way.
+    if args.len() < 1 || args[0].len() == 0 || args[0][args[0].len() - 1] == 0 { return 6; }
+    0
+}

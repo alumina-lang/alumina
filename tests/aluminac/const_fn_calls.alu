@@ -1,0 +1,27 @@
+// Verify const-evaluable function calls support a range of patterns:
+//   - Single-arg pure function.
+//   - Multi-arg pure function.
+//   - Recursive function (factorial).
+//   - Branching with if/else.
+
+fn double(x: i32) -> i32 { x * 2i32 }
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn factorial(n: i32) -> i32 {
+    if n <= 1i32 { 1i32 } else { n * factorial(n - 1i32) }
+}
+fn fib(n: i32) -> i32 {
+    if n < 2i32 { n } else { fib(n - 1i32) + fib(n - 2i32) }
+}
+
+const D: i32 = double(21i32);
+const S: i32 = add(10i32, 20i32);
+const F: i32 = factorial(5i32);
+const FIB: i32 = fib(10i32);
+
+fn main() -> i32 {
+    if D != 42i32 { return 1i32; }
+    if S != 30i32 { return 2i32; }
+    if F != 120i32 { return 3i32; }
+    if FIB != 55i32 { return 4i32; }
+    0i32
+}

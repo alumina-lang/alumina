@@ -1,0 +1,34 @@
+// Zero-sized parameters and results are not in a function's signature (as
+// if they were not there): C sees the other parameters where they would be
+// without them (c/zst_abi.c).
+// ALUMINAC_FLAGS: --sysroot sysroot
+// EXPECTED_QUIET
+
+struct Empty {}
+#[align(8)] struct AlignedEmpty {}
+fn f() {}
+
+#[export] fn zst_unit(_a: (), b: i32) -> i32 { b }
+#[export] fn zst_empty(_a: Empty, b: i32) -> i32 { b }
+#[export] fn zst_aligned(_a: AlignedEmpty, b: i32) -> i32 { b }
+#[export] fn zst_array(_a: [u64; 0], b: i32) -> i32 { b }
+#[export] fn zst_tuple(_a: ((), Empty), b: i32) -> i32 { b }
+#[export] fn zst_fn_item(_a: typeof(f), b: i32) -> i32 { b }
+#[export] fn zst_many(_u: (), a: i32, _e: Empty, b: i32, _f: typeof(f), c: i32, _t: ((), ())) -> i32 {
+    a * 100 + b * 10 + c
+}
+#[export] fn zst_result() -> Empty { Empty {} }
+
+extern "C" fn c_calls_alumina() -> i32;
+extern "C" fn c_takes_with_zsts(u: (), a: i32, e: Empty, g: typeof(f), b: i32) -> i32;
+
+fn main() {
+    let total = c_calls_alumina();
+    if total != 1 + 2 + 3 + 4 + 5 + 6 + 789 {
+        panic!("C called the Alumina functions with ZSTs wrongly: {}", total);
+    }
+    let taken = c_takes_with_zsts((), 4, Empty {}, f, 2);
+    if taken != 42 {
+        panic!("Alumina called C with ZSTs wrongly: {}", taken);
+    }
+}

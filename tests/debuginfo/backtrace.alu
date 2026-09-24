@@ -1,0 +1,51 @@
+// Functions by their names in backtraces: modules, methods, generics.
+mod geometry {
+    struct Square { side: i32 }
+
+    impl Square {
+        fn area(self: &Square) -> i32 {
+            report(self.side * self.side)
+        }
+    }
+
+    fn report<T>(value: T) -> T {
+        println!("{}", value); // #break
+        value
+    }
+}
+
+fn twice<T>(value: T) -> T {
+    fn double(x: i32) -> i32 {
+        geometry::report(x * 2)
+    }
+    let apply = |x: i32| -> i32 { double(x) };
+    let _ = apply(1);
+    value
+}
+
+fn main() {
+    let s = geometry::Square { side: 3 };
+    let a = twice(s.area());
+    std::process::exit(a - 9);
+}
+
+// lldb: bt 3
+// lldb: frame select 1
+// lldb: frame variable self
+// check: frame #0:
+// check: backtrace`main::geometry::report<i32>(value=9) at backtrace.alu:12
+// check: frame #1:
+// check: backtrace`main::geometry::Square::area(self=
+// check: frame #2:
+// check: backtrace`main::main at backtrace.alu:28
+// check: (&main::geometry::Square) self = 0x
+// lldb: continue
+// lldb: bt 4
+// check: frame #0:
+// check: backtrace`main::geometry::report<i32>(value=2)
+// check: frame #1:
+// check: backtrace`main::twice<i32>::double(x=1)
+// check: frame #2:
+// check: backtrace`main::twice<i32>::{closure#0}(x=1)
+// check: frame #3:
+// check: backtrace`main::twice<i32>(value=9)
