@@ -407,13 +407,13 @@ impl FnCodegen {
     /// passes it.
     fn build_return(self: &mut FnCodegen, value: LLVMValueRef) {
         if self.sig.sret {
-            let v = self.coerce_value(value, self.sig.ret_original);
+            let v = self.exact_value("returned value", value, self.sig.ret_original);
             LLVMBuildStore(self.ctx.builder, v, LLVMGetParam(self.llvm_fn, 0u32));
             LLVMBuildRetVoid(self.ctx.builder);
         } else if self.sig.ret_void {
             LLVMBuildRetVoid(self.ctx.builder);
         } else {
-            let v = self.coerce_value(value, self.sig.ret_original);
+            let v = self.exact_value("returned value", value, self.sig.ret_original);
             LLVMBuildRet(self.ctx.builder, self.to_abi(v, self.sig.ret, self.sig.ret_original));
         }
     }
@@ -489,7 +489,7 @@ impl FnCodegen {
             return;
         }
         if (self.ret_slot as usize) != 0 {
-            LLVMBuildStore(self.ctx.builder, self.coerce_value(value, self.sig.ret_original), self.ret_slot);
+            LLVMBuildStore(self.ctx.builder, self.exact_value("returned value", value, self.sig.ret_original), self.ret_slot);
         }
         LLVMBuildBr(self.ctx.builder, self.cleanup_bb.unwrap());
     }
@@ -796,7 +796,7 @@ impl FnCodegen {
             }
             let ptr = self.gen_lvalue(expr.lhs());
             let target_ty = self.ctx.llvm_type(expr.ty);
-            self.coerce_value(ptr, target_ty)
+            self.exact_value("reference", ptr, target_ty)
         }
         IrTag::Deref => {
             let ptr_val = self.gen_expr(expr.lhs());
@@ -911,7 +911,7 @@ impl FnCodegen {
                         // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
                         let member = self.ctx.llvm_field_index(expr.ty, i as u32);
                         let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, member);
-                        let coerced = self.coerce_value(field_val, expected_ty);
+                        let coerced = self.exact_value("struct field", field_val, expected_ty);
                         let field_ptr = LLVMBuildStructGEP2(
                             self.ctx.builder, llvm_ty, alloca, member,
                             self.temp_cname()
@@ -938,7 +938,7 @@ impl FnCodegen {
                     // Coerce value to expected field type (e.g. i32 -> i64 for usize fields)
                     let member = self.ctx.llvm_field_index(expr.ty, i as u32);
                     let expected_ty = LLVMStructGetTypeAtIndex(llvm_ty, member);
-                    let coerced = self.coerce_value(elem_val, expected_ty);
+                    let coerced = self.exact_value("tuple element", elem_val, expected_ty);
                     let elem_ptr = LLVMBuildStructGEP2(
                         self.ctx.builder, llvm_ty, alloca, member,
                         self.temp_cname()
@@ -1831,7 +1831,7 @@ impl FnCodegen {
         for (i, arg) in args.iter().enumerate() {
             let value = self.gen_expr(arg);
             if i < sig.params.len() {
-                let v = self.coerce_value(value, sig.originals[i]);
+                let v = self.exact_value("argument", value, sig.originals[i]);
                 arg_vals.push(self.to_abi(v, sig.params[i], sig.originals[i]));
             } else {
                 arg_vals.push(if LLVMGetTypeKind(LLVMTypeOf(value)) == LLVMTypeKind::Void { LLVMGetUndef(self.ctx.zst_member_type()) } else { value });
@@ -2001,10 +2001,10 @@ impl FnCodegen {
                     // merge_bb after both coercions are placed.
                     let then_terminator = LLVMGetBasicBlockTerminator(then_end_bb);
                     LLVMPositionBuilderBefore(self.ctx.builder, then_terminator);
-                    let coerced_then = self.coerce_value(then_val, phi_ty);
+                    let coerced_then = self.exact_value("`if` branch", then_val, phi_ty);
                     let else_terminator = LLVMGetBasicBlockTerminator(else_end_bb);
                     LLVMPositionBuilderBefore(self.ctx.builder, else_terminator);
-                    let coerced_else = self.coerce_value(else_val, phi_ty);
+                    let coerced_else = self.exact_value("`if` branch", else_val, phi_ty);
                     LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);
                     let phi = LLVMBuildPhi(self.ctx.builder, phi_ty, self.temp_cname());
                     let vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(2);
@@ -2019,7 +2019,7 @@ impl FnCodegen {
                     let phi = LLVMBuildPhi(self.ctx.builder, phi_ty, self.temp_cname());
                     let vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
                     let bbs = self.ctx.arena.alloc_slice::<LLVMBasicBlockRef>(1);
-                    vals[0] = self.coerce_value(then_val, phi_ty);
+                    vals[0] = self.exact_value("`if` branch", then_val, phi_ty);
                     bbs[0] = then_end_bb;
                     LLVMAddIncoming(phi, &vals[0], &bbs[0], 1);
                     return phi;
@@ -2027,7 +2027,7 @@ impl FnCodegen {
                     let phi = LLVMBuildPhi(self.ctx.builder, phi_ty, self.temp_cname());
                     let vals = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
                     let bbs = self.ctx.arena.alloc_slice::<LLVMBasicBlockRef>(1);
-                    vals[0] = self.coerce_value(else_val, phi_ty);
+                    vals[0] = self.exact_value("`if` branch", else_val, phi_ty);
                     bbs[0] = else_end_bb;
                     LLVMAddIncoming(phi, &vals[0], &bbs[0], 1);
                     return phi;
@@ -2168,7 +2168,31 @@ impl FnCodegen {
         }
     }
 
-    /// Coerce a value to a target type, handling type mismatches safely
+    /// `val` where a value of `target_ty` is expected (as `what`, e.g. an
+    /// argument). Mono gives values the types expected of them, so a value of
+    /// another LLVM type is a compiler bug: an internal error (not converted,
+    /// which would compile it into something else). A `!` or `()` value
+    /// (void) is none: `undef`.
+    fn exact_value(self: &mut FnCodegen, what: &[u8], val: LLVMValueRef, target_ty: LLVMTypeRef) -> LLVMValueRef {
+        let val_ty = LLVMTypeOf(val);
+        if val_ty == target_ty {
+            return val;
+        }
+        if LLVMGetTypeKind(val_ty) == LLVMTypeKind::Void {
+            return LLVMGetUndef(target_ty);
+        }
+        let found = LLVMPrintTypeToString(val_ty);
+        let expected = LLVMPrintTypeToString(target_ty);
+        self.ctx.diag.emit(diagnostics::CodeDiagnostic::generic_error(self.ir_fn.span,
+            std::fmt::format!("internal compiler error: {} of LLVM type `{}` where `{}` is expected (in `{}`)",
+                what, std::ffi::CString::from_raw(found).as_slice(), std::ffi::CString::from_raw(expected).as_slice(),
+                self.ir_fn.mangled_name).unwrap().as_slice()));
+        LLVMDisposeMessage(found);
+        LLVMDisposeMessage(expected);
+        LLVMGetUndef(target_ty)
+    }
+
+    /// Coerce a value to a target type (a cast's, an intrinsic's result).
     fn coerce_value(self: &mut FnCodegen, val: LLVMValueRef, target_ty: LLVMTypeRef) -> LLVMValueRef {
         let val_ty = LLVMTypeOf(val);
         let val_kind = LLVMGetTypeKind(val_ty);

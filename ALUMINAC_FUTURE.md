@@ -678,8 +678,11 @@ evaluates the place first (alumina-boot's lang tests expect it; its
   item for all instances, so every instance sees the first one's value (as
   in alumina-boot). Should be an error (Rust: "can't use generic parameters
   from outer item") or per instance.
-- An unresolved method on a temporary (`[1, 2, 3].iter_ref()`) is
-  reported twice.
+- Codegen does not convert values to the LLVM types expected of them
+  (arguments, results, fields, `&`, branches of an `if`): mono gives them
+  those types, and a value of another type is an internal compiler error
+  (it was converted, e.g. an `i32` argument to a pointer, which hid a type
+  check missing in mono). Casts and intrinsics' results are converted.
 - ~~On macOS, `-g` output has no usable debug info~~: aluminac runs
   `dsymutil` after linking.
 - Debug information (2026-09-24; alumina-boot had `#line` only): DWARF as
