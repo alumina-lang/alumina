@@ -12,13 +12,11 @@ use aluminac::scope::*;
 use aluminac::diagnostics::DiagnosticContext;
 use aluminac::cfg::CfgSet;
 use aluminac::target::Target;
-use tree_sitter::{Parser, Tree, TSLanguage};
+use tree_sitter::Tree;
 use std::collections::Vector;
 use std::option::Option;
 use std::string::{StringBuf, starts_with, ends_with, contains};
 use std::fs::{Path, PathBuf, FileType, read_directory};
-
-extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
 extern "C" fn exit(code: i32) -> !;
 
@@ -309,8 +307,7 @@ impl Compiler {
         self.register_builtins(root_scope);
 
         // Parse all source files
-        let parser = Parser::new();
-        let _ = parser.set_language(tree_sitter_alumina());
+        let parser = aluminac_common::common::parser();
 
         // Two-phase parsing: first register all names across all files (Pass 1),
         // then parse all function bodies (Pass 2). This ensures cross-module
@@ -713,6 +710,13 @@ fn parse_args(args: &[&[u8]]) -> (CompilerOptions, Vector<SourceArg>) {
         }
         i += 1;
     }
+    // (As alumina-boot, the sysroot can be given in the environment.)
+    if options.sysroot.is_empty() {
+        let from_env = libc::getenv(&"ALUMINA_SYSROOT\0"[0] as &libc::c_char);
+        if from_env != null {
+            options.sysroot = std::ffi::CString::from_raw(from_env)[..];
+        }
+    }
 
     (options, files)
 }
@@ -729,7 +733,7 @@ fn print_usage() {
         "  -O/-O1/-O2/-O3/-Os  Optimization level (default: -O0)\n",
         "  -g                  Emit DWARF debug info\n",
         "  -d, --debug         Debug mode (enables cfg(debug), e.g. bounds checks)\n",
-        "  --sysroot <dir>     Path to the standard library\n",
+        "  --sysroot <dir>     Path to the standard library (default: $ALUMINA_SYSROOT)\n",
         "  --target <triple>   Target triple (default: the host)\n",
         "  --cfg <key[=value]> Set a conditional compilation key\n",
         "  --test              Build the unit test runner\n",

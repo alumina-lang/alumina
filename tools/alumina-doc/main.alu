@@ -4,7 +4,7 @@ use std::collections::Vector;
 use std::cmp::sort_by;
 use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, replace, trim, trim_start};
 
-use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
+use tree_sitter::{Node, Parser};
 
 use aluminac_common::common::{NodeVisitorExt, child_by, children_by};
 use aluminac_common::arena::Arena;
@@ -15,8 +15,6 @@ use alumina_doc::common::{Item, ItemKind, Path, ParseContext, DoctestWriter, Ite
 use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
 use alumina_doc::markdown::write_docstring;
 use std::collections::HashSet;
-
-extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
 macro w($self, $fmt, $args...) {
     std::fmt::write!($self.writer, $fmt, $args$...).from_fmt!()?
@@ -493,8 +491,7 @@ struct Processor {
 
 impl Processor {
     fn new(output_dir: std::fs::PathBuf, doctest_writer: &mut DoctestWriter) -> Processor {
-        let parser = Parser::new();
-        parser.set_language(tree_sitter_alumina()).unwrap();
+        let parser = aluminac_common::common::parser();
 
         Processor {
             parser: parser,
