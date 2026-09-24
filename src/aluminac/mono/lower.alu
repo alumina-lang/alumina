@@ -6369,7 +6369,7 @@ impl Mono {
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_named_function") {
                     is_match = val_ty.tag == IrTyTag::Fn;
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_callable") {
-                    is_match = val_ty.tag == IrTyTag::Fn || val_ty.tag == IrTyTag::FnPointer || val_ty.tag == IrTyTag::Closure;
+                    is_match = self.matches_callable(val_ty, proto_args);
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_range") {
                     is_match = self.is_range_ty(val_ty);
                 } else if self.ctx.is_lang_item(proto_id_value, "proto_any") {
@@ -6532,9 +6532,64 @@ impl Mono {
             resolved.tag == IrTyTag::Protocol && self.ctx.is_lang_item(resolved.proto_id(), "proto_callable")
         };
         if is_callable {
+            let resolved = self.resolve_type(bound);
+            if resolved.tag == IrTyTag::Protocol {
+                return self.matches_callable(ty, resolved.proto_type_args());
+            }
             return ty.tag == IrTyTag::Fn || ty.tag == IrTyTag::FnPointer || ty.tag == IrTyTag::Closure;
         }
         self.type_matches(ty, bound)
+    }
+
+    /// Whether `ty` is a function (a named one, a pointer or a closure) with
+    /// the signature of `Callable<(A...), R>` (`Fn(A...) -> R`), given its
+    /// type arguments: the same parameter and return types, as in
+    /// alumina-boot.
+    fn matches_callable(self: &mut Mono, ty: &IrTy, proto_args: &[&IrTy]) -> bool {
+        self.callable_mismatch(ty, proto_args).is_none()
+    }
+
+    /// Why `ty` does not match `Callable<(A...), R>` (see `matches_callable`).
+    fn callable_mismatch(self: &mut Mono, ty: &IrTy, proto_args: &[&IrTy]) -> Option<&[u8]> {
+        let (params, ret): (&[&IrTy], &IrTy) = switch ty.tag {
+            IrTyTag::FnPointer => (ty.elems(), ty.ret_ty()),
+            IrTyTag::Fn, IrTyTag::Closure => {
+                let fn_ref = if ty.tag == IrTyTag::Fn { ty.fn_item_ref() } else { ty.closure_fn() };
+                let idx = self.ctx.fn_indices.get(&fn_ref.mangled_name);
+                if idx.is_none() {
+                    // (Not lowered yet: nothing to compare.)
+                    return Option::none();
+                }
+                let f = self.ctx.ir_functions[idx.unwrap()];
+                // (A closure's first parameter is its environment.)
+                let skip = if ty.tag == IrTyTag::Closure && f.params.len() > 0 { 1usize } else { 0usize };
+                let types = self.ctx.arena.alloc_slice::<&IrTy>(f.params.len() - skip);
+                for i in 0usize..types.len() {
+                    types[i] = f.params[i + skip].ty;
+                }
+                (types as &[&IrTy], f.return_type)
+            }
+            _ => return Option::some("not a function"),
+        };
+        if proto_args.len() != 2 {
+            return Option::none();
+        }
+        let expected: &[&IrTy] = if proto_args[0].tag == IrTyTag::Tuple {
+            proto_args[0].elems()
+        } else if proto_args[0].is_void() {
+            &[]
+        } else {
+            std::mem::slice::from_raw(&proto_args[0], 1)
+        };
+        if params.len() != expected.len() {
+            Option::some("wrong number of arguments")
+        } else if !same_types(params, expected) {
+            Option::some("argument types do not match")
+        } else if !ret.same_as(proto_args[1]) {
+            Option::some("return type does not match")
+        } else {
+            Option::none()
+        }
     }
 
     fn report_unsatisfied_bound(self: &mut Mono, ty: &IrTy, bound: &Ty, negated: bool, span: Span) {
@@ -6548,8 +6603,16 @@ impl Mono {
         } else {
             Option::none()
         };
+        let callable_mismatch = if !negated && bound_ir.tag == IrTyTag::Protocol
+            && self.ctx.is_lang_item(bound_ir.proto_id(), "proto_callable") {
+            self.callable_mismatch(ty, bound_ir.proto_type_args())
+        } else {
+            Option::none()
+        };
         let message = if negated {
             std::fmt::format!("type `{}` matches `{}`, which it must not", ty_name, bound_name)
+        } else if callable_mismatch.is_some() {
+            std::fmt::format!("type `{}` does not match `{}` ({})", ty_name, bound_name, callable_mismatch.unwrap())
         } else if missing.is_some() {
             std::fmt::format!("type `{}` does not match `{}` (missing method `{}`)", ty_name, bound_name, missing.unwrap())
         } else {
