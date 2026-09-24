@@ -258,11 +258,6 @@ impl FnCodegen {
             self.ctx.context, self.llvm_fn, &"\0"[0] as &libc::c_char
         );
 
-        // Create body block
-        let body_bb = LLVMAppendBasicBlockInContext(
-            self.ctx.context, self.llvm_fn, &"body\0"[0] as &libc::c_char
-        );
-
         // Position at entry to create allocas
         LLVMPositionBuilderAtEnd(self.ctx.builder, self.entry_bb);
 
@@ -365,17 +360,11 @@ impl FnCodegen {
             }
         }
 
-        // Branch from entry to body, at the function's line: the first
-        // location in the entry block, after the parameters are stored, is
-        // where the prologue ends for debuggers (a breakpoint on the function).
-        if (self.di_subprogram as usize) != 0 {
-            LLVMSetCurrentDebugLocation2(self.ctx.builder, LLVMDIBuilderCreateDebugLocation(self.ctx.context,
-                self.di_line, 0u32, self.di_subprogram, std::mem::zeroed::<LLVMMetadataRef>()));
-        }
-        LLVMBuildBr(self.ctx.builder, body_bb);
-
-        // Generate body
-        LLVMPositionBuilderAtEnd(self.ctx.builder, body_bb);
+        // The body follows in the entry block (as clang's), after the
+        // parameters are stored, which have no location: its first location
+        // is where the prologue ends for debuggers (a breakpoint on the
+        // function), on every target. (Allocas go at the start of the entry
+        // block, see `entry_alloca`.)
         // (From the function's line: every call must have a location.)
         if (self.di_subprogram as usize) != 0 {
             LLVMSetCurrentDebugLocation2(self.ctx.builder, LLVMDIBuilderCreateDebugLocation(self.ctx.context,
@@ -456,9 +445,10 @@ impl FnCodegen {
         let current = LLVMGetInsertBlock(self.ctx.builder);
         // (Positioning before an instruction takes its debug location too.)
         let loc = LLVMGetCurrentDebugLocation2(self.ctx.builder);
-        let terminator = LLVMGetBasicBlockTerminator(self.entry_bb);
-        if (terminator as usize) != 0 {
-            LLVMPositionBuilderBefore(self.ctx.builder, terminator);
+        // (At the start of the entry block, which the body continues.)
+        let first = LLVMGetFirstInstruction(self.entry_bb);
+        if (first as usize) != 0 {
+            LLVMPositionBuilderBefore(self.ctx.builder, first);
         } else {
             LLVMPositionBuilderAtEnd(self.ctx.builder, self.entry_bb);
         }
