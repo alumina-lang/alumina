@@ -202,7 +202,7 @@ cc hello_world.c -o hello_world
 If you wish to run the tests, simply add `--cfg test`. In this case the `main()` function will be replaced by the test runner.
 
 ```
-./alumina-boot --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world_test.c
+./alumina-boot --cfg test --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world_test.c
 cc hello_world_test.c -o hello_world_test
 ./hello_world_test
 ```
